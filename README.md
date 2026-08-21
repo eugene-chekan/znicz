@@ -2,11 +2,12 @@
 
 Cross-platform audiophile TUI music player with a native MCP server for AI agent control.
 
-## Features (Phase 1)
+## Features
 
 - Local file playback (FLAC, WAV, ALAC, MP3, and more via Symphonia)
 - Bit-perfect-friendly output via cpal (ALSA on Linux, WASAPI on Windows)
-- TUI with now playing, queue, transport controls
+- TUI with now playing (title, artist, album), queue, transport controls
+- Music library: folder scan, tag indexing, search and album browse
 - MCP server: tools, resources, prompts, and bundled Agent Skills
 
 ## Build
@@ -51,6 +52,25 @@ znicz --device "device-name" track.flac
 znicz mcp
 ```
 
+### Music library
+
+```bash
+# Index a folder (subfolders included). Rescans skip unchanged files.
+znicz scan ~/Music
+
+# Index, then drop entries whose files were deleted
+znicz scan ~/Music --prune
+
+# Search by title, artist or album
+znicz search portishead
+
+# List albums
+znicz albums
+```
+
+The index is a SQLite file, by default `~/.local/share/znicz/library.db`
+(`%APPDATA%\znicz\library.db` on Windows).
+
 ## Keybindings (TUI)
 
 | Key | Action |
@@ -75,6 +95,10 @@ bit_perfect = true
 
 [mcp]
 skills_dirs = []
+
+[library]
+# Optional. Defaults to the user data directory.
+path = "~/.local/share/znicz/library.db"
 ```
 
 ## MCP (Cursor)
@@ -110,7 +134,8 @@ bit perfect or resampled.
 
 | Crate | Role |
 |-------|------|
-| `znicz-core` | Audio engine, player state |
+| `znicz-core` | Audio engine, player state, tag reading |
+| `znicz-library` | SQLite music index: scan, search, albums |
 | `znicz-tui` | Ratatui frontend |
 | `znicz-mcp` | MCP server + skills |
 | `znicz` | CLI binary |

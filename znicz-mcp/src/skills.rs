@@ -172,7 +172,7 @@ mod tests {
         )
         .ok();
 
-        let registry = SkillRegistry::load(&[dir.clone()]);
+        let registry = SkillRegistry::load(std::slice::from_ref(&dir));
         assert!(registry.entries().iter().any(|e| e.name == "test-skill"));
 
         std::fs::remove_dir_all(&dir).ok();

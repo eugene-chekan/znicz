@@ -5,7 +5,7 @@ High-level phases for Znicz. Each phase builds on the previous ones.
 | Phase | Name | Status | Doc |
 |-------|------|--------|-----|
 | **1** | Local playback MVP | **Done** | [README](../../README.md), [Playback pipeline](../Domain/Playback-Pipeline.md) |
-| **2** | Library and metadata | Planned | [Formats and metadata](../Domain/Formats-and-Metadata.md) |
+| **2** | Library and metadata | **Done** | [Formats and metadata](../Domain/Formats-and-Metadata.md), [Library](../Architecture/Library.md) |
 | **3** | Playlists | Planned | [Formats and metadata](../Domain/Formats-and-Metadata.md#playlists-phase-3) |
 | **4** | Radio streams | Planned | [Formats and metadata](../Domain/Formats-and-Metadata.md#radio-phase-4) |
 | **5** | Album art in the TUI | Planned | [Phase 5 plan](Phase-5-Album-Art.md) |
@@ -18,13 +18,19 @@ High-level phases for Znicz. Each phase builds on the previous ones.
 - MCP server with tools, resources, prompts, skills
 - Bit-perfect-friendly device rate matching
 
-## Phase 2
+## Phase 2 (done)
 
-- Tag reading (title, artist, album) via lofty
-- Folder scan and SQLite library
-- MCP: `search_library`, `get_track`, `browse_album`
+- Tag reading (title, artist, album, year, track number) via lofty
+- TUI shows the real title and an "Artist — Album" line
+- `znicz-library` crate: folder scan into SQLite, search, album browse
+- CLI: `znicz scan`, `znicz search`, `znicz albums`
+- MCP: `scan_library`, `search_library`, `get_track`, `browse_album`,
+  `list_albums`, `library_stats`, `library_prune`
 
-Phase 5 **reuses** Phase 2 picture extraction; see [Phase 5 — Album art](Phase-5-Album-Art.md).
+Details: [Library architecture](../Architecture/Library.md).
+
+Phase 5 **reuses** this tag reading for embedded cover art; see
+[Phase 5 — Album art](Phase-5-Album-Art.md).
 
 ## Phase 3
 

@@ -23,7 +23,26 @@ We use the Rust SDK [`rmcp`](https://crates.io/crates/rmcp).
 
 Tools call the same `Command`s as the TUI. No second player.
 
-Later-phase tools (`search_library`, radio, …) exist but return “not implemented”.
+Library tools (`scan_library`, `search_library`, `get_track`, `browse_album`,
+`list_albums`, `library_stats`, `library_prune`) talk to
+[`znicz-library`](Library.md). Playlist and radio tools still return “not
+implemented” until Phases 3 and 4.
+
+## Tools wait for the player
+
+A tool that changes something must report what actually happened. Sending a
+command and immediately reading state gives the **previous** snapshot, because
+the player thread has not run yet — that was [Issue #1](../Issues.md).
+
+So mutating tools use `PlayerHandle::send_blocking`, which waits until the engine
+has applied the command and returns the engine's own result:
+
+- the returned state shows the change
+- a real failure (missing file, unusable device) becomes an MCP error instead of
+  a silent stale snapshot
+
+The TUI still uses the non-blocking `send`, because it redraws on its own tick
+and must never stall on a slow file.
 
 ## Skills (SEP-2640 style)
 

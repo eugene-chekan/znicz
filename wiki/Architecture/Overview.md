@@ -1,10 +1,12 @@
 # Architecture overview
 
-Znicz is one workspace with four crates. Each crate has one job.
+Znicz is one workspace with five crates. Each crate has one job.
 
 ```
 AI host (Cursor) --stdio--> znicz-mcp --commands--> znicz-core --> DAC
 Human keys ---------------> znicz-tui --commands--> znicz-core --> DAC
+                                  │
+                                  └──queries──> znicz-library (SQLite index)
 ```
 
 `znicz` (the binary) starts either the TUI or the MCP server. Both talk to the same player type: `PlayerHandle`.
@@ -22,8 +24,18 @@ Human keys ---------------> znicz-tui --commands--> znicz-core --> DAC
 | TUI / MCP | Core | `Command` enum (play, pause, seek, …) |
 | Core | TUI / MCP | `PlayerState` + `PlayerEvent` |
 | Decoder thread | Audio callback | `f32` samples in a lock-free ring |
+| MCP / CLI | Library | search and album queries |
 
-Commands travel on a [crossbeam channel](https://docs.rs/crossbeam-channel/). State lives in an `Arc<RwLock<PlayerState>>` so many readers can clone a snapshot.
+Commands travel on a [crossbeam channel](https://docs.rs/crossbeam-channel/) inside a `CommandEnvelope`, which can carry a reply channel. State lives in an `Arc<RwLock<PlayerState>>` so many readers can clone a snapshot.
+
+Two ways to send a command:
+
+| Method | Waits? | Used by |
+|--------|--------|---------|
+| `send` | No | TUI (redraws on its own tick) |
+| `send_blocking` | Yes, and returns the engine's result | MCP tools, scripts |
+
+`send_blocking` exists because reading state right after a fire-and-forget send returns the old snapshot. See [MCP](MCP.md#tools-wait-for-the-player).
 
 ## Config
 
@@ -37,6 +49,10 @@ bit_perfect = true
 
 [mcp]
 skills_dirs = []
+
+[library]
+# Defaults to ~/.local/share/znicz/library.db on Linux
+path = "~/.local/share/znicz/library.db"
 ```
 
 `bit_perfect` is a flag for later policy (skip software volume, refuse resampling). Phase 1 still has a software volume control.
@@ -47,3 +63,4 @@ skills_dirs = []
 - [Threads](Audio-Threading.md)
 - [TUI](TUI.md)
 - [MCP](MCP.md)
+- [Music library](Library.md)

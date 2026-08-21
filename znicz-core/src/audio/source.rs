@@ -10,8 +10,37 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use symphonia::core::units::Time;
 
+use symphonia::core::codecs::CodecParameters;
+
 use crate::error::{Result, ZniczError};
+use crate::metadata::{read_tags, title_from_path};
 use crate::player::state::TrackInfo;
+
+/// Build track info from the decoder's view of the file plus its tags.
+fn track_info(path: &Path, codec_params: &CodecParameters) -> TrackInfo {
+    let tags = read_tags(path);
+    let title = tags
+        .title
+        .clone()
+        .unwrap_or_else(|| title_from_path(path));
+
+    let duration = codec_params.n_frames.and_then(|frames| {
+        codec_params
+            .sample_rate
+            .map(|rate| std::time::Duration::from_secs_f64(frames as f64 / rate as f64))
+    });
+
+    TrackInfo {
+        path: path.to_path_buf(),
+        title,
+        codec: codec_params.codec.to_string(),
+        sample_rate: codec_params.sample_rate.unwrap_or(0),
+        channels: codec_params.channels.map(|c| c.count() as u16).unwrap_or(0),
+        bits_per_sample: codec_params.bits_per_sample,
+        duration,
+        tags,
+    }
+}
 
 fn format_options() -> FormatOptions {
     FormatOptions {
@@ -73,32 +102,7 @@ pub fn probe_track(path: &Path) -> Result<TrackInfo> {
         .or_else(|| probed.format.tracks().first())
         .ok_or_else(|| ZniczError::Decode("no audio track".into()))?;
 
-    let codec_params = track.codec_params.clone();
-    let codec = codec_params.codec.to_string();
-    let sample_rate = codec_params.sample_rate.unwrap_or(0);
-    let channels = codec_params.channels.map(|c| c.count() as u16).unwrap_or(0);
-    let bits_per_sample = codec_params.bits_per_sample;
-    let duration = codec_params
-        .n_frames
-        .and_then(|frames| codec_params.sample_rate.map(|rate| {
-            std::time::Duration::from_secs_f64(frames as f64 / rate as f64)
-        }));
-
-    let title = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("Unknown")
-        .to_string();
-
-    Ok(TrackInfo {
-        path: path.to_path_buf(),
-        title,
-        codec,
-        sample_rate,
-        channels,
-        bits_per_sample,
-        duration,
-    })
+    Ok(track_info(path, &track.codec_params))
 }
 
 pub struct AudioDecoder {
@@ -140,23 +144,7 @@ impl AudioDecoder {
             .make(&codec_params, &DecoderOptions::default())
             .map_err(|e| ZniczError::Decode(e.to_string()))?;
 
-        let track_info = TrackInfo {
-            path: path.to_path_buf(),
-            title: path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("Unknown")
-                .to_string(),
-            codec: codec_params.codec.to_string(),
-            sample_rate,
-            channels,
-            bits_per_sample: codec_params.bits_per_sample,
-            duration: codec_params
-                .n_frames
-                .and_then(|frames| codec_params.sample_rate.map(|rate| {
-                    std::time::Duration::from_secs_f64(frames as f64 / rate as f64)
-                })),
-        };
+        let track_info = track_info(path, &codec_params);
 
         Ok((
             Self {

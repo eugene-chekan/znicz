@@ -32,6 +32,7 @@ Goals:
 | Folder | What it is |
 |--------|------------|
 | `znicz-core` | The brain: decode files, send samples to the sound card, keep queue state |
+| `znicz-library` | The index: scan folders, store tags in SQLite, search |
 | `znicz-tui` | The screen: keys, now playing, progress bar |
 | `znicz-mcp` | The AI interface: tools, resources, prompts, skills |
 | `znicz` | The program you run (`znicz`, `znicz mcp`) |
@@ -54,6 +55,7 @@ Goals:
 - [Threads and the realtime rule](Architecture/Audio-Threading.md)
 - [TUI](Architecture/TUI.md)
 - [MCP server](Architecture/MCP.md)
+- [Music library](Architecture/Library.md)
 
 ### Plans
 

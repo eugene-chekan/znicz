@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
 use znicz_core::{AudioConfig, AudioOutput, Command, spawn_player};
+use znicz_library::Library;
 use znicz_mcp::run_stdio;
 use znicz_tui::App;
 
@@ -33,12 +34,40 @@ enum Commands {
         #[arg(long, help = "Additional skills directory")]
         skills_dir: Vec<PathBuf>,
     },
+
+    /// Scan folders into the music library
+    Scan {
+        #[arg(value_name = "DIR", help = "Folders to scan")]
+        dirs: Vec<PathBuf>,
+
+        #[arg(long, help = "Drop entries whose files are gone")]
+        prune: bool,
+    },
+
+    /// Search the music library
+    Search {
+        #[arg(value_name = "QUERY")]
+        query: String,
+
+        #[arg(long, default_value_t = 25, help = "Maximum results")]
+        limit: usize,
+    },
+
+    /// List albums in the music library
+    Albums,
 }
 
 #[derive(Debug, Deserialize, Default)]
 struct Config {
     audio: AudioSection,
     mcp: McpSection,
+    library: LibrarySection,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct LibrarySection {
+    /// Where the database file lives. Defaults to the user data directory.
+    path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -77,13 +106,15 @@ fn main() -> color_eyre::Result<()> {
         return Ok(());
     }
 
+    let library_path = library_path(&config);
+
     let audio_config = AudioConfig {
         device_id: cli.device.or(config.audio.device),
         volume: config.audio.volume.unwrap_or(1.0),
         bit_perfect: config.audio.bit_perfect.unwrap_or(true),
     };
 
-  match cli.command {
+    match cli.command {
         Some(Commands::Mcp { skills_dir }) => {
             let mut dirs: Vec<PathBuf> = config
                 .mcp
@@ -92,7 +123,16 @@ fn main() -> color_eyre::Result<()> {
                 .map(expand_path)
                 .collect();
             dirs.extend(skills_dir);
-            run_mcp(audio_config, dirs)?;
+            run_mcp(audio_config, dirs, library_path)?;
+        }
+        Some(Commands::Scan { dirs, prune }) => {
+            scan_library(library_path, &dirs, prune)?;
+        }
+        Some(Commands::Search { query, limit }) => {
+            search_library(library_path, &query, limit)?;
+        }
+        Some(Commands::Albums) => {
+            list_albums(library_path)?;
         }
         None => {
             run_tui(audio_config, &cli.files)?;
@@ -100,6 +140,23 @@ fn main() -> color_eyre::Result<()> {
     }
 
     Ok(())
+}
+
+/// Where the library database lives: config first, then the default location.
+fn library_path(config: &Config) -> Option<PathBuf> {
+    config
+        .library
+        .path
+        .clone()
+        .map(expand_path)
+        .or_else(znicz_library::default_database_path)
+}
+
+fn open_library(path: Option<PathBuf>) -> color_eyre::Result<Library> {
+    let path = path.ok_or_else(|| {
+        color_eyre::eyre::eyre!("cannot work out where to keep the library; set [library].path")
+    })?;
+    Ok(Library::open(&path)?)
 }
 
 fn load_config(path: Option<&std::path::Path>) -> Config {
@@ -156,12 +213,106 @@ fn run_tui(audio_config: AudioConfig, files: &[PathBuf]) -> color_eyre::Result<(
     Ok(())
 }
 
-fn run_mcp(audio_config: AudioConfig, skills_dirs: Vec<PathBuf>) -> color_eyre::Result<()> {
+fn run_mcp(
+    audio_config: AudioConfig,
+    skills_dirs: Vec<PathBuf>,
+    library_path: Option<PathBuf>,
+) -> color_eyre::Result<()> {
     let (player, _thread) = spawn_player(audio_config);
+
+    // A broken library must not stop the player tools from working.
+    let library = library_path.and_then(|path| match Library::open(&path) {
+        Ok(library) => Some(library),
+        Err(e) => {
+            tracing::warn!(path = %path.display(), error = %e, "library unavailable");
+            None
+        }
+    });
+
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
-        .block_on(run_stdio(player, skills_dirs))
+        .block_on(run_stdio(player, skills_dirs, library))
         .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
+    Ok(())
+}
+
+fn scan_library(
+    library_path: Option<PathBuf>,
+    dirs: &[PathBuf],
+    prune: bool,
+) -> color_eyre::Result<()> {
+    if dirs.is_empty() && !prune {
+        println!("nothing to do: pass one or more folders, or --prune");
+        return Ok(());
+    }
+
+    let mut library = open_library(library_path)?;
+
+    for dir in dirs {
+        println!("scanning {} ...", dir.display());
+        let report = library.scan(dir)?;
+        println!(
+            "  {} files: {} added, {} updated, {} unchanged, {} failed",
+            report.seen, report.added, report.updated, report.unchanged, report.failed
+        );
+    }
+
+    if prune {
+        let removed = library.remove_missing()?;
+        println!("removed {removed} missing entries");
+    }
+
+    println!("library now holds {} tracks", library.track_count()?);
+    Ok(())
+}
+
+fn search_library(
+    library_path: Option<PathBuf>,
+    query: &str,
+    limit: usize,
+) -> color_eyre::Result<()> {
+    let library = open_library(library_path)?;
+    let tracks = library.search(query, limit)?;
+
+    if tracks.is_empty() {
+        println!("no matches for {query:?}");
+        return Ok(());
+    }
+
+    for track in &tracks {
+        let detail = track.artist_album().unwrap_or_else(|| "—".to_string());
+        println!("{}  ({})", track.title, detail);
+        println!("    {}", track.path.display());
+    }
+    println!("{} match(es)", tracks.len());
+    Ok(())
+}
+
+fn list_albums(library_path: Option<PathBuf>) -> color_eyre::Result<()> {
+    let library = open_library(library_path)?;
+    let albums = library.albums()?;
+
+    if albums.is_empty() {
+        println!("library is empty; run `znicz scan <dir>` first");
+        return Ok(());
+    }
+
+    for album in &albums {
+        let artist = album.album_artist.as_deref().unwrap_or("Unknown artist");
+        let year = album
+            .year
+            .map(|y| format!(" ({y})"))
+            .unwrap_or_default();
+        println!(
+            "{} — {}{}  [{} {}]",
+            artist,
+            album.album,
+            year,
+            album.track_count,
+            if album.track_count == 1 { "track" } else { "tracks" }
+        );
+    }
+    println!("{} album(s)", albums.len());
     Ok(())
 }

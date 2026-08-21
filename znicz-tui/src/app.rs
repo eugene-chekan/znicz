@@ -163,24 +163,35 @@ mod ui {
             state.position.as_secs_f64() / total.as_secs_f64()
         };
 
+        // Artist and album come from tags; empty for files without them.
+        let artist_album = state
+            .current_track
+            .as_ref()
+            .and_then(|t| t.artist_album())
+            .unwrap_or_default();
+
         let inner = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),
+                Constraint::Length(4),
                 Constraint::Length(1),
                 Constraint::Length(3),
             ])
             .margin(1)
             .split(area);
 
-        let title = Paragraph::new(Line::from(vec![
-            Span::styled(
+        let title = Paragraph::new(vec![
+            Line::from(Span::styled(
                 track,
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
-            ),
-        ]))
+            )),
+            Line::from(Span::styled(
+                artist_album,
+                Style::default().fg(Color::Gray),
+            )),
+        ])
         .block(Block::default().borders(Borders::ALL).title("Now Playing"));
 
         let gauge = Gauge::default()

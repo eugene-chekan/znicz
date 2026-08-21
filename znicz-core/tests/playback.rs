@@ -98,6 +98,59 @@ fn track_plays_for_its_real_duration() {
     );
 }
 
+/// Tags must reach the player state, not just the file name.
+#[test]
+fn track_info_carries_tags() {
+    let dir = std::env::temp_dir().join("znicz-tags-test");
+    std::fs::create_dir_all(&dir).expect("create dir");
+    let flac = dir.join("01-track.flac");
+
+    let made = std::process::Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=1"])
+        .args(["-metadata", "title=Real Title"])
+        .args(["-metadata", "artist=Real Artist"])
+        .args(["-metadata", "album=Real Album"])
+        .args(["-c:a", "flac"])
+        .arg(&flac)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+
+    if !made {
+        eprintln!("ffmpeg not available, skipping");
+        std::fs::remove_dir_all(&dir).ok();
+        return;
+    }
+
+    let info = znicz_core::probe_track(&flac).expect("probe track");
+
+    assert_eq!(info.title, "Real Title", "title should come from tags");
+    assert_eq!(info.artist(), Some("Real Artist"));
+    assert_eq!(info.album(), Some("Real Album"));
+    assert_eq!(
+        info.artist_album().as_deref(),
+        Some("Real Artist — Real Album")
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Files without tags still get a usable name.
+#[test]
+fn untagged_file_falls_back_to_file_name() {
+    let wav = std::env::temp_dir().join("znicz-untagged.wav");
+    write_silent_wav(&wav, 44_100, 2, 1);
+
+    let info = znicz_core::probe_track(&wav).expect("probe track");
+
+    assert_eq!(info.title, "znicz-untagged");
+    assert_eq!(info.artist(), None);
+    assert_eq!(info.artist_album(), None);
+
+    std::fs::remove_file(&wav).ok();
+}
+
 /// Write a silent PCM WAV file.
 fn write_silent_wav(path: &Path, sample_rate: u32, channels: u16, seconds: u32) {
     use std::io::Write;

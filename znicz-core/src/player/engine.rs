@@ -3,14 +3,14 @@ use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::{Receiver, Sender, unbounded};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded, unbounded};
 
 use crate::audio::convert::{RateConverter, adapt_channels};
 use crate::audio::feeder::{DecodeStep, Feeder, PumpOutcome};
 use crate::audio::output::AudioOutput;
 use crate::audio::source::AudioDecoder;
 use crate::error::{Result, ZniczError};
-use crate::player::commands::{Command, PlayerEvent};
+use crate::player::commands::{Command, CommandEnvelope, PlayerEvent};
 use crate::player::state::{PlaybackStatus, PlayerState};
 
 #[derive(Debug, Clone)]
@@ -30,19 +30,44 @@ impl Default for AudioConfig {
     }
 }
 
+/// How long `send_blocking` waits for the engine before giving up.
+pub const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+
 #[derive(Clone)]
 pub struct PlayerHandle {
-    command_tx: Sender<Command>,
+    command_tx: Sender<CommandEnvelope>,
     state: Arc<RwLock<PlayerState>>,
     event_rx: Receiver<PlayerEvent>,
 }
 
 impl PlayerHandle {
+    /// Queue a command without waiting. State may still be stale right after
+    /// this returns, so only use it where a later redraw picks up the change.
     pub fn send(&self, command: Command) -> Result<()> {
         self.command_tx
-            .send(command)
+            .send(CommandEnvelope::new(command))
             .map_err(|e| ZniczError::Player(e.to_string()))?;
         Ok(())
+    }
+
+    /// Queue a command and wait until the engine has applied it.
+    ///
+    /// Returns the engine's own result, so a failure (missing file, unusable
+    /// device) reaches the caller instead of only being logged as an event.
+    /// After this returns `Ok`, [`PlayerHandle::state`] reflects the command.
+    pub fn send_blocking(&self, command: Command) -> Result<()> {
+        self.send_blocking_timeout(command, COMMAND_TIMEOUT)
+    }
+
+    pub fn send_blocking_timeout(&self, command: Command, timeout: Duration) -> Result<()> {
+        let (ack_tx, ack_rx) = bounded(1);
+        self.command_tx
+            .send(CommandEnvelope::with_ack(command, ack_tx))
+            .map_err(|e| ZniczError::Player(e.to_string()))?;
+
+        ack_rx
+            .recv_timeout(timeout)
+            .map_err(|_| ZniczError::Player("player did not answer in time".into()))?
     }
 
     pub fn state(&self) -> PlayerState {
@@ -95,7 +120,7 @@ pub fn spawn_player(config: AudioConfig) -> (PlayerHandle, JoinHandle<()>) {
 struct PlayerEngine {
     config: AudioConfig,
     state: Arc<RwLock<PlayerState>>,
-    command_rx: Receiver<Command>,
+    command_rx: Receiver<CommandEnvelope>,
     event_tx: Sender<PlayerEvent>,
     output: AudioOutput,
     decoder: Option<AudioDecoder>,
@@ -114,7 +139,7 @@ impl PlayerEngine {
     fn new(
         config: AudioConfig,
         state: Arc<RwLock<PlayerState>>,
-        command_rx: Receiver<Command>,
+        command_rx: Receiver<CommandEnvelope>,
         event_tx: Sender<PlayerEvent>,
     ) -> Self {
         let output = AudioOutput::new();
@@ -136,10 +161,25 @@ impl PlayerEngine {
 
     fn run(&mut self) {
         loop {
-            while let Ok(cmd) = self.command_rx.try_recv() {
-                if let Err(e) = self.handle_command(cmd) {
-                    self.emit_error(e.to_string());
+            // Waiting on the channel replaces a plain sleep: commands are
+            // picked up the moment they arrive, so an acknowledged command
+            // does not wait out a sleep interval.
+            let idle = if self.decoder.is_some() || self.draining_since.is_some() {
+                Duration::from_millis(5)
+            } else {
+                Duration::from_millis(50)
+            };
+
+            match self.command_rx.recv_timeout(idle) {
+                Ok(envelope) => {
+                    self.apply(envelope);
+                    // Take anything else already queued before pumping audio.
+                    while let Ok(envelope) = self.command_rx.try_recv() {
+                        self.apply(envelope);
+                    }
                 }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => return,
             }
 
             self.pump_decode();
@@ -149,12 +189,21 @@ impl PlayerEngine {
             }
 
             self.tick_position();
+        }
+    }
 
-            if self.decoder.is_some() || self.draining_since.is_some() {
-                thread::sleep(Duration::from_millis(5));
-            } else {
-                thread::sleep(Duration::from_millis(50));
-            }
+    /// Run one command and answer the caller if it asked to be told.
+    fn apply(&mut self, envelope: CommandEnvelope) {
+        let CommandEnvelope { command, ack } = envelope;
+        let result = self.handle_command(command);
+
+        if let Err(e) = &result {
+            self.emit_error(e.to_string());
+        }
+
+        if let Some(ack) = ack {
+            // A caller that gave up waiting is fine; ignore the send error.
+            ack.send(result).ok();
         }
     }
 
@@ -275,7 +324,9 @@ impl PlayerEngine {
         state.status = PlaybackStatus::Playing;
         state.position = Duration::ZERO;
 
-        self.event_tx.send(PlayerEvent::TrackStarted(track_info)).ok();
+        self.event_tx
+            .send(PlayerEvent::TrackStarted(Box::new(track_info)))
+            .ok();
         self.emit_state_changed();
         Ok(())
     }

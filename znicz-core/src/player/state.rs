@@ -3,6 +3,8 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::metadata::TrackTags;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlaybackStatus {
     Stopped,
@@ -13,12 +15,16 @@ pub enum PlaybackStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackInfo {
     pub path: PathBuf,
+    /// Title tag when present, otherwise the file name.
     pub title: String,
     pub codec: String,
     pub sample_rate: u32,
     pub channels: u16,
     pub bits_per_sample: Option<u32>,
     pub duration: Option<Duration>,
+    /// Tags read from the file. Empty when the file carries none.
+    #[serde(default)]
+    pub tags: TrackTags,
 }
 
 impl TrackInfo {
@@ -33,6 +39,19 @@ impl TrackInfo {
             self.sample_rate / 1000,
             bits
         )
+    }
+
+    pub fn artist(&self) -> Option<&str> {
+        self.tags.artist.as_deref()
+    }
+
+    pub fn album(&self) -> Option<&str> {
+        self.tags.album.as_deref()
+    }
+
+    /// "Artist — Album", or whichever half we have.
+    pub fn artist_album(&self) -> Option<String> {
+        self.tags.summary()
     }
 }
 

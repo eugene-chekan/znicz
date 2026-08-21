@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 znicz-core = { path = "../znicz-core" }
+znicz-library = { path = "../znicz-library" }
 znicz-tui = { path = "../znicz-tui" }
 znicz-mcp = { path = "../znicz-mcp" }
 clap.workspace = true

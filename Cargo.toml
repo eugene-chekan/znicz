@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["znicz-core", "znicz-tui", "znicz-mcp", "znicz"]
+members = ["znicz-core", "znicz-library", "znicz-tui", "znicz-mcp", "znicz"]
 
 [workspace.package]
 version = "0.1.0"
@@ -28,3 +28,8 @@ rmcp = { version = "0.3", features = ["server", "transport-io"] }
 schemars = { version = "1.2", features = ["derive"] }
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
+lofty = "0.25"
+# `bundled` compiles SQLite from source so Linux and Windows builds do not need
+# a system SQLite installed.
+rusqlite = { version = "0.40", features = ["bundled"] }
+walkdir = "2.5"

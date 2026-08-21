@@ -14,6 +14,7 @@
 - [Audio threads](Architecture/Audio-Threading.md)
 - [TUI](Architecture/TUI.md)
 - [MCP](Architecture/MCP.md)
+- [Library](Architecture/Library.md)
 - [Ownership](Rust/Ownership.md)
 - [Threads](Rust/Threads-and-Channels.md)
 - [Traits](Rust/Traits.md)
