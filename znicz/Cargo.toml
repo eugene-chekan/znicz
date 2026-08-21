@@ -1,0 +1,24 @@
+[package]
+name = "znicz"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "znicz"
+path = "src/main.rs"
+
+[dependencies]
+znicz-core = { path = "../znicz-core" }
+znicz-tui = { path = "../znicz-tui" }
+znicz-mcp = { path = "../znicz-mcp" }
+clap.workspace = true
+color-eyre.workspace = true
+serde.workspace = true
+toml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tokio.workspace = true
+dirs.workspace = true

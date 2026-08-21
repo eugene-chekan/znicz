@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = ["znicz-core", "znicz-tui", "znicz-mcp", "znicz"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["Eugene"]
+rust-version = "1.85"
+
+[workspace.dependencies]
+symphonia = { version = "0.5", features = ["all"] }
+cpal = "0.15"
+rtrb = "0.3"
+crossbeam-channel = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+ratatui = "0.29"
+crossterm = "0.28"
+color-eyre = "0.6"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+rmcp = { version = "0.3", features = ["server", "transport-io"] }
+schemars = { version = "1.2", features = ["derive"] }
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
