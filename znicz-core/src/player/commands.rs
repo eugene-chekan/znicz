@@ -37,10 +37,17 @@ pub enum Command {
     Stop,
     Seek(Duration),
     SetVolume(f32),
+    SetMuted(bool),
     NextTrack,
     PreviousTrack,
     QueueAdd(Vec<PathBuf>),
     QueueClear,
+    /// Start the queue entry at this index.
+    QueuePlayIndex(usize),
+    /// Drop one queue entry.
+    QueueRemove(usize),
+    SetRepeat(crate::player::state::RepeatMode),
+    SetShuffle(bool),
     SetDevice(String),
 }
 

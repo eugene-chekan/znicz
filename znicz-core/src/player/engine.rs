@@ -11,7 +11,16 @@ use crate::audio::output::AudioOutput;
 use crate::audio::source::AudioDecoder;
 use crate::error::{Result, ZniczError};
 use crate::player::commands::{Command, CommandEnvelope, PlayerEvent};
-use crate::player::state::{PlaybackStatus, PlayerState};
+use crate::player::state::{OutputInfo, PlaybackStatus, PlayerState, RepeatMode};
+
+/// Non-zero starting point for the shuffle generator.
+fn seed_from_clock() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0x9E3779B97F4A7C15)
+        | 1
+}
 
 #[derive(Debug, Clone)]
 pub struct AudioConfig {
@@ -128,6 +137,8 @@ struct PlayerEngine {
     converter: Option<RateConverter>,
     draining_since: Option<Instant>,
     last_position_tick: Instant,
+    /// Seed for shuffle picks.
+    rng: u64,
 }
 
 /// Keep some headroom before decoding another packet.
@@ -156,6 +167,7 @@ impl PlayerEngine {
             converter: None,
             draining_since: None,
             last_position_tick: Instant::now(),
+            rng: seed_from_clock(),
         }
     }
 
@@ -224,8 +236,21 @@ impl PlayerEngine {
             Command::Seek(pos) => self.seek(pos)?,
             Command::SetVolume(vol) => {
                 let v = vol.clamp(0.0, 1.0);
-                self.output.set_volume(v);
-                self.state.write().unwrap().volume = v;
+                let effective = {
+                    let mut state = self.state.write().unwrap();
+                    state.volume = v;
+                    state.effective_volume()
+                };
+                self.output.set_volume(effective);
+                self.emit_state_changed();
+            }
+            Command::SetMuted(muted) => {
+                let effective = {
+                    let mut state = self.state.write().unwrap();
+                    state.muted = muted;
+                    state.effective_volume()
+                };
+                self.output.set_volume(effective);
                 self.emit_state_changed();
             }
             Command::NextTrack => self.next_track()?,
@@ -243,12 +268,23 @@ impl PlayerEngine {
                 self.event_tx.send(PlayerEvent::QueueChanged).ok();
                 self.emit_state_changed();
             }
+            Command::QueuePlayIndex(index) => self.play_queue_index(index)?,
+            Command::QueueRemove(index) => self.remove_from_queue(index)?,
+            Command::SetRepeat(mode) => {
+                self.state.write().unwrap().repeat = mode;
+                self.emit_state_changed();
+            }
+            Command::SetShuffle(on) => {
+                self.state.write().unwrap().shuffle = on;
+                self.emit_state_changed();
+            }
             Command::SetDevice(id) => {
                 self.config.device_id = Some(id);
                 if let Some(decoder) = &self.decoder {
                     let rate = decoder.sample_rate();
                     let ch = decoder.channels();
-                    self.output.open_stream(rate, ch, self.config.device_id.as_deref())?;
+                    self.output
+                        .open_stream(rate, ch, self.config.device_id.as_deref())?;
                 }
                 self.emit_state_changed();
             }
@@ -261,13 +297,11 @@ impl PlayerEngine {
         let sample_rate = decoder.sample_rate();
         let channels = decoder.channels();
 
-        self.output.open_stream(
-            sample_rate,
-            channels,
-            self.config.device_id.as_deref(),
-        )?;
+        self.output
+            .open_stream(sample_rate, channels, self.config.device_id.as_deref())?;
         self.output.set_paused(false);
-        self.output.set_volume(self.state.read().unwrap().volume);
+        self.output
+            .set_volume(self.state.read().unwrap().effective_volume());
 
         {
             let mut state = self.state.write().unwrap();
@@ -307,7 +341,15 @@ impl PlayerEngine {
         self.feeder.reset();
         self.last_position_tick = Instant::now();
 
+        let output_info = OutputInfo {
+            sample_rate: output_rate,
+            channels: output_channels,
+            sample_format: self.output.sample_format().unwrap_or("?").to_string(),
+            bit_perfect: output_rate == sample_rate && output_channels == channels,
+        };
+
         let mut state = self.state.write().unwrap();
+        state.output = Some(output_info);
         if state.queue.is_empty() {
             state.queue = vec![path.clone()];
             state.queue_position = 0;
@@ -342,6 +384,8 @@ impl PlayerEngine {
         state.status = PlaybackStatus::Stopped;
         state.position = Duration::ZERO;
         state.current_track = None;
+        state.output = None;
+        drop(state);
 
         self.emit_state_changed();
         Ok(())
@@ -371,19 +415,106 @@ impl PlayerEngine {
     }
 
     fn next_track(&mut self) -> Result<()> {
-        let state = self.state.read().unwrap();
-        if state.queue.is_empty() {
-            return Ok(());
+        match self.pick_next(false) {
+            Some(index) => self.play_queue_index(index),
+            None => Ok(()),
         }
-        let next_pos = if state.queue_position + 1 < state.queue.len() {
-            state.queue_position + 1
-        } else {
-            return Ok(());
+    }
+
+    /// Which queue entry to play next, or `None` to stop.
+    ///
+    /// `auto` marks the end of a track, where "repeat one" replays it. Pressing
+    /// next always moves on instead.
+    fn pick_next(&mut self, auto: bool) -> Option<usize> {
+        let (len, current, repeat, shuffle) = {
+            let state = self.state.read().unwrap();
+            (
+                state.queue.len(),
+                state.queue_position,
+                state.repeat,
+                state.shuffle,
+            )
         };
-        let path = state.queue[next_pos].clone();
-        drop(state);
-        self.state.write().unwrap().queue_position = next_pos;
-        self.play_path(path)?;
+
+        if len == 0 {
+            return None;
+        }
+        if auto && repeat == RepeatMode::One {
+            return Some(current);
+        }
+        if shuffle {
+            return Some(self.random_index(len, current));
+        }
+        if current + 1 < len {
+            return Some(current + 1);
+        }
+        if repeat == RepeatMode::All {
+            return Some(0);
+        }
+        None
+    }
+
+    /// A queue slot other than the current one, so shuffle does not repeat a
+    /// track straight away.
+    fn random_index(&mut self, len: usize, current: usize) -> usize {
+        if len <= 1 {
+            return 0;
+        }
+        // xorshift64: plenty for picking tracks, and keeps the dependency list short.
+        self.rng ^= self.rng << 13;
+        self.rng ^= self.rng >> 7;
+        self.rng ^= self.rng << 17;
+
+        let pick = (self.rng % (len as u64 - 1)) as usize;
+        if pick >= current { pick + 1 } else { pick }
+    }
+
+    fn play_queue_index(&mut self, index: usize) -> Result<()> {
+        let path = {
+            let state = self.state.read().unwrap();
+            match state.queue.get(index) {
+                Some(path) => path.clone(),
+                None => return Ok(()),
+            }
+        };
+        self.state.write().unwrap().queue_position = index;
+        self.play_path(path)
+    }
+
+    fn remove_from_queue(&mut self, index: usize) -> Result<()> {
+        let playing_removed = {
+            let mut state = self.state.write().unwrap();
+            if index >= state.queue.len() {
+                return Ok(());
+            }
+            state.queue.remove(index);
+
+            let playing = state.status != PlaybackStatus::Stopped;
+            if index < state.queue_position {
+                state.queue_position -= 1;
+                false
+            } else {
+                index == state.queue_position && playing
+            }
+        };
+
+        self.event_tx.send(PlayerEvent::QueueChanged).ok();
+
+        // Removing the track under the playhead stops it; anything else keeps playing.
+        if playing_removed {
+            let has_replacement = {
+                let state = self.state.read().unwrap();
+                state.queue_position < state.queue.len()
+            };
+            if has_replacement {
+                let index = self.state.read().unwrap().queue_position;
+                self.play_queue_index(index)?;
+            } else {
+                self.stop()?;
+            }
+        }
+
+        self.emit_state_changed();
         Ok(())
     }
 
@@ -466,16 +597,12 @@ impl PlayerEngine {
         self.feeder.reset();
         self.converter = None;
 
-        let mut state = self.state.write().unwrap();
-        state.status = PlaybackStatus::Stopped;
+        self.state.write().unwrap().status = PlaybackStatus::Stopped;
         self.event_tx.send(PlayerEvent::TrackEnded).ok();
         self.emit_state_changed();
 
-        if state.queue_position + 1 < state.queue.len() {
-            let next = state.queue[state.queue_position + 1].clone();
-            state.queue_position += 1;
-            drop(state);
-            if let Err(e) = self.play_path(next) {
+        if let Some(next) = self.pick_next(true) {
+            if let Err(e) = self.play_queue_index(next) {
                 self.emit_error(e.to_string());
             }
         }

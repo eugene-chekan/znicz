@@ -54,22 +54,47 @@ fn scan_indexes_tagged_files() {
     }
 
     let dir = fixture_dir("scan");
-    write_track(&dir.join("Dummy/01 Mysterons.flac"), "Mysterons", "Portishead", "Dummy", 1);
-    write_track(&dir.join("Dummy/02 Sour Times.flac"), "Sour Times", "Portishead", "Dummy", 2);
-    write_track(&dir.join("Blue/01 So What.flac"), "So What", "Miles Davis", "Kind of Blue", 1);
+    write_track(
+        &dir.join("Dummy/01 Mysterons.flac"),
+        "Mysterons",
+        "Portishead",
+        "Dummy",
+        1,
+    );
+    write_track(
+        &dir.join("Dummy/02 Sour Times.flac"),
+        "Sour Times",
+        "Portishead",
+        "Dummy",
+        2,
+    );
+    write_track(
+        &dir.join("Blue/01 So What.flac"),
+        "So What",
+        "Miles Davis",
+        "Kind of Blue",
+        1,
+    );
     // Not audio: must be ignored.
     std::fs::write(dir.join("Dummy/cover.jpg"), b"not audio").unwrap();
 
     let mut library = Library::open_in_memory().expect("open library");
     let report = library.scan(&dir).expect("scan");
 
-    assert_eq!(report.seen, 3, "should see 3 audio files, report={report:?}");
+    assert_eq!(
+        report.seen, 3,
+        "should see 3 audio files, report={report:?}"
+    );
     assert_eq!(report.added, 3, "should add 3 tracks, report={report:?}");
     assert_eq!(library.track_count().unwrap(), 3);
 
     // Tags, not file names.
     let found = library.search("Portishead", 10).expect("search");
-    assert_eq!(found.len(), 2, "expected 2 Portishead tracks, got {found:?}");
+    assert_eq!(
+        found.len(),
+        2,
+        "expected 2 Portishead tracks, got {found:?}"
+    );
     assert_eq!(found[0].artist.as_deref(), Some("Portishead"));
     assert_eq!(found[0].album.as_deref(), Some("Dummy"));
     assert_eq!(found[0].year, Some(1994));
@@ -131,6 +156,80 @@ fn albums_are_grouped() {
     assert_eq!(first.track_count, 2);
 
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Files without an album tag are indexed but cannot be grouped, so the flat
+/// listing is the only way to reach them.
+#[test]
+fn untagged_files_are_still_listed() {
+    if !ffmpeg_available() {
+        eprintln!("ffmpeg not available, skipping");
+        return;
+    }
+
+    let dir = fixture_dir("untagged");
+    write_untagged(&dir.join("one.flac"));
+    write_untagged(&dir.join("two.flac"));
+
+    let mut library = Library::open_in_memory().expect("open library");
+    library.scan(&dir).expect("scan");
+
+    assert_eq!(library.track_count().unwrap(), 2);
+    assert!(
+        library.albums().expect("albums").is_empty(),
+        "there is no album tag to group by"
+    );
+
+    let all = library.all_tracks(100).expect("all tracks");
+    assert_eq!(all.len(), 2, "the tracks must still be reachable");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn the_flat_listing_respects_its_limit() {
+    if !ffmpeg_available() {
+        eprintln!("ffmpeg not available, skipping");
+        return;
+    }
+
+    let dir = fixture_dir("limit");
+    for i in 0..5 {
+        write_track(
+            &dir.join(format!("{i}.flac")),
+            &format!("T{i}"),
+            "A",
+            "Album",
+            i,
+        );
+    }
+
+    let mut library = Library::open_in_memory().expect("open library");
+    library.scan(&dir).expect("scan");
+
+    assert_eq!(library.all_tracks(3).expect("all tracks").len(), 3);
+    assert_eq!(library.all_tracks(0).expect("all tracks").len(), 0);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A file with no metadata at all.
+fn write_untagged(path: &Path) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("create fixture dir");
+    }
+
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=1"])
+        .args(["-ac", "2", "-ar", "44100"])
+        .args(["-map_metadata", "-1"])
+        .args(["-c:a", "flac"])
+        .arg(path)
+        .status()
+        .expect("run ffmpeg");
+
+    assert!(status.success(), "ffmpeg failed for {}", path.display());
 }
 
 #[test]

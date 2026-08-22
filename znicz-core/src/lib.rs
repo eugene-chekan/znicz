@@ -11,5 +11,7 @@ pub use metadata::{
     title_from_path,
 };
 pub use player::commands::{Command, PlayerEvent};
-pub use player::engine::{spawn_player, AudioConfig, PlayerHandle};
-pub use player::state::{AudioDeviceInfo, PlaybackStatus, PlayerState, TrackInfo};
+pub use player::engine::{AudioConfig, PlayerHandle, spawn_player};
+pub use player::state::{
+    AudioDeviceInfo, OutputInfo, PlaybackStatus, PlayerState, RepeatMode, TrackInfo,
+};

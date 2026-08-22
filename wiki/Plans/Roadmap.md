@@ -6,6 +6,7 @@ High-level phases for Znicz. Each phase builds on the previous ones.
 |-------|------|--------|-----|
 | **1** | Local playback MVP | **Done** | [README](../../README.md), [Playback pipeline](../Domain/Playback-Pipeline.md) |
 | **2** | Library and metadata | **Done** | [Formats and metadata](../Domain/Formats-and-Metadata.md), [Library](../Architecture/Library.md) |
+| **2.5** | TUI and UX | **Done** | [TUI architecture](../Architecture/TUI.md) |
 | **3** | Playlists | Planned | [Formats and metadata](../Domain/Formats-and-Metadata.md#playlists-phase-3) |
 | **4** | Radio streams | Planned | [Formats and metadata](../Domain/Formats-and-Metadata.md#radio-phase-4) |
 | **5** | Album art in the TUI | Planned | [Phase 5 plan](Phase-5-Album-Art.md) |
@@ -31,6 +32,22 @@ Details: [Library architecture](../Architecture/Library.md).
 
 Phase 5 **reuses** this tag reading for embedded cover art; see
 [Phase 5 — Album art](Phase-5-Album-Art.md).
+
+## Phase 2.5 — TUI and UX (done)
+
+Znicz is a terminal player first, so the interface caught up with the engine:
+
+- Three panes (queue, library, devices) switched with `Tab` or `1`/`2`/`3`
+- Library browsing and search from inside the player, not just the CLI
+- Queue shows track titles, resolved on a background thread, and can be
+  played from, reordered by removal, or cleared
+- Signal-path line with a **bit perfect** or **resampled** badge
+- Repeat, shuffle and mute
+- Player errors shown on screen instead of vanishing into the log
+- Vim keys alongside arrows; the help overlay is generated from the keymap
+- Responsive layout down to very small windows
+
+Details: [TUI architecture](../Architecture/TUI.md).
 
 ## Phase 3
 

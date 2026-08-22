@@ -28,17 +28,28 @@ pub struct TrackInfo {
 }
 
 impl TrackInfo {
+    /// One line describing the audio itself, e.g. `FLAC 44.1 kHz 16-bit stereo`.
     pub fn format_description(&self) -> String {
         let bits = self
             .bits_per_sample
-            .map(|b| format!("{}-bit", b))
+            .map(|b| format!("{b}-bit"))
             .unwrap_or_else(|| "unknown depth".to_string());
-        format!(
-            "{} {}kHz/{} ch",
-            self.codec,
-            self.sample_rate / 1000,
-            bits
-        )
+
+        let channels = match self.channels {
+            1 => "mono".to_string(),
+            2 => "stereo".to_string(),
+            n => format!("{n}ch"),
+        };
+
+        // Fractional rates matter here: 44.1 kHz must not read as 44 kHz.
+        let khz = self.sample_rate as f64 / 1000.0;
+        let rate = if (khz.fract() * 10.0).round() == 0.0 {
+            format!("{khz:.0} kHz")
+        } else {
+            format!("{khz:.1} kHz")
+        };
+
+        format!("{} {rate} {bits} {channels}", self.codec)
     }
 
     pub fn artist(&self) -> Option<&str> {
@@ -55,16 +66,69 @@ impl TrackInfo {
     }
 }
 
+/// What to do when the queue runs out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum RepeatMode {
+    #[default]
+    Off,
+    /// Repeat the current track.
+    One,
+    /// Start the queue again from the top.
+    All,
+}
+
+impl RepeatMode {
+    /// Order used by the "cycle repeat" key.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Off => Self::All,
+            Self::All => Self::One,
+            Self::One => Self::Off,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::One => "one",
+            Self::All => "all",
+        }
+    }
+}
+
+/// The stream Znicz actually opened on the sound device.
+///
+/// Compare this with the track to see whether playback is bit perfect.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutputInfo {
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub sample_format: String,
+    /// True when the device took the file's own rate and channel count, so no
+    /// resampling or channel remapping happens.
+    pub bit_perfect: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayerState {
     pub status: PlaybackStatus,
     pub current_track: Option<TrackInfo>,
     pub position: Duration,
     pub volume: f32,
+    /// Silenced without losing the volume setting.
+    #[serde(default)]
+    pub muted: bool,
     pub device_id: Option<String>,
     pub device_name: Option<String>,
+    /// Details of the open output stream, once playback has started.
+    #[serde(default)]
+    pub output: Option<OutputInfo>,
     pub queue: Vec<PathBuf>,
     pub queue_position: usize,
+    #[serde(default)]
+    pub repeat: RepeatMode,
+    #[serde(default)]
+    pub shuffle: bool,
 }
 
 impl Default for PlayerState {
@@ -74,11 +138,105 @@ impl Default for PlayerState {
             current_track: None,
             position: Duration::ZERO,
             volume: 1.0,
+            muted: false,
             device_id: None,
             device_name: None,
+            output: None,
             queue: Vec::new(),
             queue_position: 0,
+            repeat: RepeatMode::default(),
+            shuffle: false,
         }
+    }
+}
+
+impl PlayerState {
+    /// Volume actually sent to the device.
+    pub fn effective_volume(&self) -> f32 {
+        if self.muted { 0.0 } else { self.volume }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn track(sample_rate: u32, channels: u16, bits: Option<u32>) -> TrackInfo {
+        TrackInfo {
+            path: PathBuf::from("/music/a.flac"),
+            title: "A".into(),
+            codec: "FLAC".into(),
+            sample_rate,
+            channels,
+            bits_per_sample: bits,
+            duration: None,
+            tags: TrackTags::default(),
+        }
+    }
+
+    #[test]
+    fn format_description_keeps_the_fractional_rate() {
+        // The most common audiophile rate is 44.1 kHz, not 44.
+        assert_eq!(
+            track(44_100, 2, Some(16)).format_description(),
+            "FLAC 44.1 kHz 16-bit stereo"
+        );
+        assert_eq!(
+            track(96_000, 2, Some(24)).format_description(),
+            "FLAC 96 kHz 24-bit stereo"
+        );
+    }
+
+    #[test]
+    fn format_description_names_the_channel_layout() {
+        assert!(
+            track(48_000, 1, Some(16))
+                .format_description()
+                .ends_with("mono")
+        );
+        assert!(
+            track(48_000, 2, Some(16))
+                .format_description()
+                .ends_with("stereo")
+        );
+        assert!(
+            track(48_000, 6, Some(16))
+                .format_description()
+                .ends_with("6ch")
+        );
+    }
+
+    #[test]
+    fn format_description_admits_an_unknown_bit_depth() {
+        let description = track(44_100, 2, None).format_description();
+        assert!(
+            description.contains("unknown depth"),
+            "a lossy file has no bit depth to report; got {description}"
+        );
+    }
+
+    #[test]
+    fn repeat_cycles_through_every_mode() {
+        let mut mode = RepeatMode::Off;
+        mode = mode.next();
+        assert_eq!(mode, RepeatMode::All);
+        mode = mode.next();
+        assert_eq!(mode, RepeatMode::One);
+        mode = mode.next();
+        assert_eq!(mode, RepeatMode::Off, "cycle must return to the start");
+    }
+
+    #[test]
+    fn muting_silences_without_losing_the_setting() {
+        let mut state = PlayerState {
+            volume: 0.7,
+            ..PlayerState::default()
+        };
+        assert_eq!(state.effective_volume(), 0.7);
+
+        state.muted = true;
+        assert_eq!(state.effective_volume(), 0.0);
+        assert_eq!(state.volume, 0.7, "volume setting must be remembered");
     }
 }
 

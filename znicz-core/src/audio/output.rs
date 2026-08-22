@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -17,6 +17,7 @@ pub struct AudioOutput {
     producer: Option<Producer<f32>>,
     sample_rate: u32,
     channels: u16,
+    sample_format: Option<String>,
     device_name: Option<String>,
     paused: Arc<AtomicBool>,
     volume_bits: Arc<AtomicU32>,
@@ -36,6 +37,7 @@ impl AudioOutput {
             producer: None,
             sample_rate: 44_100,
             channels: 2,
+            sample_format: None,
             device_name: None,
             paused: Arc::new(AtomicBool::new(false)),
             volume_bits: Arc::new(AtomicU32::new(1.0f32.to_bits())),
@@ -62,6 +64,11 @@ impl AudioOutput {
 
     pub fn device_name(&self) -> Option<&str> {
         self.device_name.as_deref()
+    }
+
+    /// Sample format of the open stream, such as `f32` or `i16`.
+    pub fn sample_format(&self) -> Option<&str> {
+        self.sample_format.as_deref()
     }
 
     /// Samples still waiting to be played. Used to show an honest position.
@@ -169,10 +176,13 @@ impl AudioOutput {
             volume_bits,
             flush,
         )?;
-        stream.play().map_err(|e| ZniczError::Audio(e.to_string()))?;
+        stream
+            .play()
+            .map_err(|e| ZniczError::Audio(e.to_string()))?;
 
         self.sample_rate = config.sample_rate.0;
         self.channels = config.channels;
+        self.sample_format = Some(format_name(sample_format).to_string());
         self.device_name = device_name;
         self.producer = Some(producer);
         self.stream = Some(stream);
@@ -209,6 +219,23 @@ impl SampleSink for AudioOutput {
             written += 1;
         }
         written
+    }
+}
+
+/// Short name for a sample format, for showing the signal path in the UI.
+fn format_name(format: SampleFormat) -> &'static str {
+    match format {
+        SampleFormat::I8 => "i8",
+        SampleFormat::I16 => "i16",
+        SampleFormat::I32 => "i32",
+        SampleFormat::I64 => "i64",
+        SampleFormat::U8 => "u8",
+        SampleFormat::U16 => "u16",
+        SampleFormat::U32 => "u32",
+        SampleFormat::U64 => "u64",
+        SampleFormat::F32 => "f32",
+        SampleFormat::F64 => "f64",
+        _ => "?",
     }
 }
 

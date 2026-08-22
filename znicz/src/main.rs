@@ -135,7 +135,7 @@ fn main() -> color_eyre::Result<()> {
             list_albums(library_path)?;
         }
         None => {
-            run_tui(audio_config, &cli.files)?;
+            run_tui(audio_config, &cli.files, library_path)?;
         }
     }
 
@@ -195,7 +195,11 @@ fn list_devices() -> color_eyre::Result<()> {
     Ok(())
 }
 
-fn run_tui(audio_config: AudioConfig, files: &[PathBuf]) -> color_eyre::Result<()> {
+fn run_tui(
+    audio_config: AudioConfig,
+    files: &[PathBuf],
+    library_path: Option<PathBuf>,
+) -> color_eyre::Result<()> {
     let (player, _thread) = spawn_player(audio_config);
 
     if !files.is_empty() {
@@ -208,9 +212,96 @@ fn run_tui(audio_config: AudioConfig, files: &[PathBuf]) -> color_eyre::Result<(
         }
     }
 
-    let mut app = App::new(player);
-    app.run()?;
-    Ok(())
+    // No library is not an error: the browser pane explains how to build one.
+    let library = match open_library(library_path) {
+        Ok(library) => Some(library),
+        Err(e) => {
+            tracing::warn!("library unavailable: {e}");
+            None
+        }
+    };
+
+    // ALSA and other C libraries write warnings straight to stderr, which in a
+    // full-screen interface means drawing over it. Send stderr to a file for as
+    // long as the TUI owns the terminal; nothing is lost, it just moves.
+    let log = stderr::redirect_to_log();
+    let mut app = App::with_library(player, library);
+    let result = app.run();
+    drop(log);
+
+    result
+}
+
+/// Keeping stderr out of the interface.
+mod stderr {
+    use std::path::PathBuf;
+
+    /// Where the diverted output goes.
+    pub fn log_path() -> PathBuf {
+        dirs::cache_dir()
+            .map(|dir| dir.join("znicz"))
+            .unwrap_or_else(std::env::temp_dir)
+            .join("znicz-session.log")
+    }
+
+    /// Point stderr at the log file. Restored when the returned value is dropped.
+    #[cfg(unix)]
+    pub fn redirect_to_log() -> Option<Redirect> {
+        let path = log_path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).ok()?;
+        }
+        let file = std::fs::File::create(&path).ok()?;
+        Redirect::new(&file)
+    }
+
+    #[cfg(not(unix))]
+    pub fn redirect_to_log() -> Option<Redirect> {
+        // WASAPI does not chatter the way ALSA does, so leave stderr alone.
+        None
+    }
+
+    #[cfg(unix)]
+    pub struct Redirect {
+        saved: std::os::fd::OwnedFd,
+    }
+
+    #[cfg(unix)]
+    impl Redirect {
+        fn new(file: &std::fs::File) -> Option<Self> {
+            use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+
+            // SAFETY: dup and dup2 on the process's own stderr. The saved
+            // descriptor is owned from here on and closed by OwnedFd.
+            unsafe {
+                let saved = libc::dup(libc::STDERR_FILENO);
+                if saved < 0 {
+                    return None;
+                }
+                let saved = OwnedFd::from_raw_fd(saved);
+
+                if libc::dup2(file.as_raw_fd(), libc::STDERR_FILENO) < 0 {
+                    return None;
+                }
+                Some(Self { saved })
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for Redirect {
+        fn drop(&mut self) {
+            use std::os::fd::AsRawFd;
+
+            // SAFETY: putting the original stderr back where it was.
+            unsafe {
+                libc::dup2(self.saved.as_raw_fd(), libc::STDERR_FILENO);
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    pub struct Redirect;
 }
 
 fn run_mcp(
@@ -300,17 +391,18 @@ fn list_albums(library_path: Option<PathBuf>) -> color_eyre::Result<()> {
 
     for album in &albums {
         let artist = album.album_artist.as_deref().unwrap_or("Unknown artist");
-        let year = album
-            .year
-            .map(|y| format!(" ({y})"))
-            .unwrap_or_default();
+        let year = album.year.map(|y| format!(" ({y})")).unwrap_or_default();
         println!(
             "{} — {}{}  [{} {}]",
             artist,
             album.album,
             year,
             album.track_count,
-            if album.track_count == 1 { "track" } else { "tracks" }
+            if album.track_count == 1 {
+                "track"
+            } else {
+                "tracks"
+            }
         );
     }
     println!("{} album(s)", albums.len());

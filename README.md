@@ -6,8 +6,11 @@ Cross-platform audiophile TUI music player with a native MCP server for AI agent
 
 - Local file playback (FLAC, WAV, ALAC, MP3, and more via Symphonia)
 - Bit-perfect-friendly output via cpal (ALSA on Linux, WASAPI on Windows)
-- TUI with now playing (title, artist, album), queue, transport controls
+- TUI with a library browser, search, queue management and an output device picker
+- Signal-path display: file format, the stream the device actually opened, and
+  whether playback is bit perfect
 - Music library: folder scan, tag indexing, search and album browse
+- Repeat, shuffle, mute, and errors reported on screen rather than only in the log
 - MCP server: tools, resources, prompts, and bundled Agent Skills
 
 ## Build
@@ -71,17 +74,46 @@ znicz albums
 The index is a SQLite file, by default `~/.local/share/znicz/library.db`
 (`%APPDATA%\znicz\library.db` on Windows).
 
-## Keybindings (TUI)
+## The interface
+
+Three panes, switched with `Tab` or `1`/`2`/`3`:
+
+- **Queue** — what plays next, by track title rather than file name
+- **Library** — albums, album tracks and search results
+- **Devices** — pick the output, and see what the open stream settled on
+
+Above them sits the now-playing header with the seek bar and the signal path,
+for example `FLAC 96 kHz 24-bit stereo → 96 kHz stereo f32  ● bit perfect`. When
+the device will not take the file's own rate the badge reads `▲ resampled`, so a
+silent conversion never goes unnoticed.
+
+Press `?` in the player for the full keymap. The essentials:
 
 | Key | Action |
 |-----|--------|
-| Space | Play / Pause |
-| n | Next track |
-| p | Previous track |
-| + / - | Volume |
-| Left / Right | Seek ±5s |
-| ? | Help |
-| q | Quit |
+| Space | Play / pause |
+| s | Stop |
+| n / N | Next / previous track |
+| → ← or l h | Seek ±5s (`L` / `H` for ±30s) |
+| + / - | Volume, `m` to mute |
+| r / z | Repeat (off, all, one) / shuffle |
+| j k, g G, Ctrl-d Ctrl-u | Move in the list |
+| Enter | Play the selection, or open an album |
+| a / A | Add the selection / everything listed to the queue |
+| d / C | Remove from the queue / clear it |
+| / | Search the library |
+| Tab, 1 2 3 | Switch pane |
+| ? / q | Help / quit |
+
+To see the layout without starting the player:
+
+```bash
+cargo run -p znicz-tui --example preview -- 120 40
+```
+
+While the TUI is running, stderr is redirected to `~/.cache/znicz/znicz-session.log`
+so that ALSA's warnings cannot draw over the interface. Look there if the player
+misbehaves.
 
 ## Configuration
 
