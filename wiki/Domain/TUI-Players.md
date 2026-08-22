@@ -16,23 +16,37 @@ The TUI **does not decode audio**. It only:
 1. Sends **commands** (`Play`, `Pause`, `Seek`) to `znicz-core`
 2. Reads **state** (title, position, volume) and paints it
 
-That split means we can run the same engine from MCP with no screen.
+That split means we can run the same engine from MCP with no screen. It also
+means the interface never has its own copy of the truth to get out of date: each
+frame reads the state fresh.
 
 ## Album art (Phase 5)
 
 The now-playing screen will gain a **cover panel** when Phase 5 ships: embedded JPEG/PNG from tags, rendered with Kitty/Sixel-style protocols where the terminal supports them, and a half-block fallback elsewhere. No Kitty install is required — Znicz emits the graphics protocol from Rust. See [Phase 5 plan](../Plans/Phase-5-Album-Art.md).
 
-## Keys (Phase 1)
+## What a terminal player has to get right
 
-| Key | Action |
-|-----|--------|
-| Space | Play / pause |
-| n | Next |
-| p | Previous |
-| ← / → | Seek 5 seconds |
-| + / − | Volume |
-| ? | Help |
-| q | Quit |
+A terminal gives you a grid of characters and nothing else, which makes a few
+problems specific to this kind of program:
+
+- **Nowhere to print.** The app owns the screen, so a `println!` or a log line
+  either corrupts the display or is never seen. Anything the user needs to know
+  has to be drawn as part of the interface. Znicz turns player errors into
+  messages on the bottom line.
+- **Unknown window size.** A terminal can be 200×60 or 40×10, and it changes
+  while running. Layouts need an order in which parts are dropped.
+- **Characters, not pixels.** Text has to be truncated to fit, and by character
+  rather than byte, or a title like `Łódź nocą` breaks apart.
+- **No pointer.** Every action needs a key, and the keys have to be discoverable,
+  which is what the help overlay is for.
+
+Conventions worth borrowing from other players: `Space` for pause, `/` to search,
+`j`/`k` to move (from vim and `less`), `Tab` to change pane, `?` for help.
+
+## Keys
+
+See the [README table](../../README.md#the-interface) or press `?` in the player.
+Both come from the same keymap in the code, so neither can go stale.
 
 ## Extra reading
 

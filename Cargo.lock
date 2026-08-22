@@ -2657,6 +2657,7 @@ dependencies = [
  "clap",
  "color-eyre",
  "dirs",
+ "libc",
  "serde",
  "tokio",
  "toml",
@@ -2723,4 +2724,5 @@ dependencies = [
  "ratatui",
  "tracing",
  "znicz-core",
+ "znicz-library",
 ]

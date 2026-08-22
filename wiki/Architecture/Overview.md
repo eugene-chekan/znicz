@@ -5,9 +5,13 @@ Znicz is one workspace with five crates. Each crate has one job.
 ```
 AI host (Cursor) --stdio--> znicz-mcp --commands--> znicz-core --> DAC
 Human keys ---------------> znicz-tui --commands--> znicz-core --> DAC
-                                  │
-                                  └──queries──> znicz-library (SQLite index)
+                              │     │
+                              │     └──queries──> znicz-library (SQLite index)
+                              └──queries──────────────┘
 ```
+
+Both front ends can browse the library: the MCP server for agents, and the TUI
+for its library pane.
 
 `znicz` (the binary) starts either the TUI or the MCP server. Both talk to the same player type: `PlayerHandle`.
 
@@ -24,7 +28,12 @@ Human keys ---------------> znicz-tui --commands--> znicz-core --> DAC
 | TUI / MCP | Core | `Command` enum (play, pause, seek, …) |
 | Core | TUI / MCP | `PlayerState` + `PlayerEvent` |
 | Decoder thread | Audio callback | `f32` samples in a lock-free ring |
-| MCP / CLI | Library | search and album queries |
+| TUI / MCP / CLI | Library | search and album queries |
+
+`PlayerState` is the whole of what a front end can see: transport status, current
+track with its tags, position, volume and mute, queue and position within it,
+repeat and shuffle, the chosen device, and `output` — the stream the device
+actually opened, which is what tells the TUI whether playback is bit perfect.
 
 Commands travel on a [crossbeam channel](https://docs.rs/crossbeam-channel/) inside a `CommandEnvelope`, which can carry a reply channel. State lives in an `Arc<RwLock<PlayerState>>` so many readers can clone a snapshot.
 
@@ -32,10 +41,14 @@ Two ways to send a command:
 
 | Method | Waits? | Used by |
 |--------|--------|---------|
-| `send` | No | TUI (redraws on its own tick) |
-| `send_blocking` | Yes, and returns the engine's result | MCP tools, scripts |
+| `send` | No | startup, where the next redraw picks the change up |
+| `send_blocking` | Yes, and returns the engine's result | MCP tools, TUI keys, scripts |
 
 `send_blocking` exists because reading state right after a fire-and-forget send returns the old snapshot. See [MCP](MCP.md#tools-wait-for-the-player).
+
+The TUI uses it for two reasons: the frame drawn right after a keypress shows the
+new volume rather than the old one, and a failure (missing file, unusable device)
+comes back as a value it can display instead of disappearing into the log.
 
 ## Config
 

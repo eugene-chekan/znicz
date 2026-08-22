@@ -99,7 +99,25 @@ impl Library {
 
         let mut statement = self.conn.prepare(&sql)?;
         let rows = statement.query_map(params![pattern, limit as i64], row_to_track)?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    /// Tracks in listening order, for libraries whose files carry no album tag.
+    ///
+    /// Without this, a folder of untagged files is indexed but invisible: album
+    /// grouping has nothing to group by.
+    pub fn all_tracks(&self, limit: usize) -> Result<Vec<Track>> {
+        let sql = format!(
+            "SELECT {COLUMNS} FROM tracks
+             ORDER BY artist, album, disc_number, track_number, title
+             LIMIT ?1"
+        );
+
+        let mut statement = self.conn.prepare(&sql)?;
+        let rows = statement.query_map(params![limit as i64], row_to_track)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
     }
 
     /// Look up one track by its file path.
@@ -130,7 +148,8 @@ impl Library {
         );
         let mut statement = self.conn.prepare(&sql)?;
         let rows = statement.query_map(params![album], row_to_track)?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
     }
 
     /// All albums with a track count.
@@ -157,7 +176,8 @@ impl Library {
             })
         })?;
 
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
     }
 
     /// Remove rows whose file no longer exists. Returns how many were dropped.
