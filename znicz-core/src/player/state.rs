@@ -21,6 +21,9 @@ pub struct TrackInfo {
     pub sample_rate: u32,
     pub channels: u16,
     pub bits_per_sample: Option<u32>,
+    /// Average audio bitrate in kilobits per second, when known.
+    #[serde(default)]
+    pub bitrate_kbps: Option<u32>,
     pub duration: Option<Duration>,
     /// Tags read from the file. Empty when the file carries none.
     #[serde(default)]
@@ -29,27 +32,20 @@ pub struct TrackInfo {
 
 impl TrackInfo {
     /// One line describing the audio itself, e.g. `FLAC 44.1 kHz 16-bit stereo`.
+    ///
+    /// Bit depth is left out when the codec does not have one (MP3, AAC, …).
+    /// Bitrate is included when we have a number.
     pub fn format_description(&self) -> String {
-        let bits = self
-            .bits_per_sample
-            .map(|b| format!("{b}-bit"))
-            .unwrap_or_else(|| "unknown depth".to_string());
+        let mut parts = vec![self.codec.clone(), rate_label(self.sample_rate)];
 
-        let channels = match self.channels {
-            1 => "mono".to_string(),
-            2 => "stereo".to_string(),
-            n => format!("{n}ch"),
-        };
-
-        // Fractional rates matter here: 44.1 kHz must not read as 44 kHz.
-        let khz = self.sample_rate as f64 / 1000.0;
-        let rate = if (khz.fract() * 10.0).round() == 0.0 {
-            format!("{khz:.0} kHz")
-        } else {
-            format!("{khz:.1} kHz")
-        };
-
-        format!("{} {rate} {bits} {channels}", self.codec)
+        if let Some(bits) = self.bits_per_sample {
+            parts.push(format!("{bits}-bit"));
+        }
+        if let Some(kbps) = self.bitrate_kbps {
+            parts.push(format!("{kbps} kbps"));
+        }
+        parts.push(channel_label(self.channels));
+        parts.join(" ")
     }
 
     pub fn artist(&self) -> Option<&str> {
@@ -63,6 +59,24 @@ impl TrackInfo {
     /// "Artist — Album", or whichever half we have.
     pub fn artist_album(&self) -> Option<String> {
         self.tags.summary()
+    }
+}
+
+/// Fractional rates matter here: 44.1 kHz must not read as 44 kHz.
+fn rate_label(sample_rate: u32) -> String {
+    let khz = sample_rate as f64 / 1000.0;
+    if (khz.fract() * 10.0).round() == 0.0 {
+        format!("{khz:.0} kHz")
+    } else {
+        format!("{khz:.1} kHz")
+    }
+}
+
+fn channel_label(channels: u16) -> String {
+    match channels {
+        1 => "mono".to_string(),
+        2 => "stereo".to_string(),
+        n => format!("{n}ch"),
     }
 }
 
@@ -153,7 +167,11 @@ impl Default for PlayerState {
 impl PlayerState {
     /// Volume actually sent to the device.
     pub fn effective_volume(&self) -> f32 {
-        if self.muted { 0.0 } else { self.volume }
+        if self.muted {
+            0.0
+        } else {
+            self.volume
+        }
     }
 }
 
@@ -169,6 +187,7 @@ mod tests {
             sample_rate,
             channels,
             bits_per_sample: bits,
+            bitrate_kbps: None,
             duration: None,
             tags: TrackTags::default(),
         }
@@ -189,30 +208,36 @@ mod tests {
 
     #[test]
     fn format_description_names_the_channel_layout() {
+        assert!(track(48_000, 1, Some(16))
+            .format_description()
+            .ends_with("mono"));
+        assert!(track(48_000, 2, Some(16))
+            .format_description()
+            .ends_with("stereo"));
+        assert!(track(48_000, 6, Some(16))
+            .format_description()
+            .ends_with("6ch"));
+    }
+
+    #[test]
+    fn format_description_omits_a_missing_bit_depth() {
+        // MP3 and AAC have no PCM bit depth worth showing.
+        let mut mp3 = track(44_100, 2, None);
+        mp3.codec = "MP3".into();
+        let description = mp3.format_description();
+        assert_eq!(description, "MP3 44.1 kHz stereo");
         assert!(
-            track(48_000, 1, Some(16))
-                .format_description()
-                .ends_with("mono")
-        );
-        assert!(
-            track(48_000, 2, Some(16))
-                .format_description()
-                .ends_with("stereo")
-        );
-        assert!(
-            track(48_000, 6, Some(16))
-                .format_description()
-                .ends_with("6ch")
+            !description.contains("unknown"),
+            "a missing depth must not be spelled out; got {description}"
         );
     }
 
     #[test]
-    fn format_description_admits_an_unknown_bit_depth() {
-        let description = track(44_100, 2, None).format_description();
-        assert!(
-            description.contains("unknown depth"),
-            "a lossy file has no bit depth to report; got {description}"
-        );
+    fn format_description_includes_bitrate_when_known() {
+        let mut mp3 = track(44_100, 2, None);
+        mp3.codec = "MP3".into();
+        mp3.bitrate_kbps = Some(320);
+        assert_eq!(mp3.format_description(), "MP3 44.1 kHz 320 kbps stereo");
     }
 
     #[test]

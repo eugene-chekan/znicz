@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use znicz_core::{AudioConfig, AudioOutput, Command, PlayerEvent, spawn_player};
+use znicz_core::{spawn_player, AudioConfig, AudioOutput, Command, PlayerEvent};
 
 /// Skip audio tests on machines without an output device (headless CI).
 fn has_output_device() -> bool {
@@ -147,8 +147,65 @@ fn untagged_file_falls_back_to_file_name() {
     assert_eq!(info.title, "znicz-untagged");
     assert_eq!(info.artist(), None);
     assert_eq!(info.artist_album(), None);
+    assert_eq!(
+        info.codec, "WAV",
+        "the format must be a name, not a codec id; got {}",
+        info.codec
+    );
+    assert!(
+        !info.codec.starts_with("0x"),
+        "hex codec ids are not for the UI"
+    );
+    let line = info.format_description();
+    assert!(
+        !line.contains("unknown"),
+        "missing pieces should be omitted; got {line}"
+    );
+    assert!(
+        line.contains("kbps"),
+        "WAV has a known uncompressed bitrate; got {line}"
+    );
 
     std::fs::remove_file(&wav).ok();
+}
+
+/// MP3 is the case that used to print `0x1003` and `unknown depth`.
+#[test]
+fn mp3_probe_uses_a_real_format_name() {
+    let dir = std::env::temp_dir().join("znicz-mp3-probe");
+    std::fs::create_dir_all(&dir).ok();
+    let mp3 = dir.join("track.mp3");
+
+    let made = std::process::Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=1"])
+        .args(["-ac", "2", "-ar", "44100"])
+        .args(["-c:a", "libmp3lame", "-b:a", "192k"])
+        .arg(&mp3)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+
+    if !made {
+        eprintln!("ffmpeg/libmp3lame not available, skipping");
+        std::fs::remove_dir_all(&dir).ok();
+        return;
+    }
+
+    let info = znicz_core::probe_track(&mp3).expect("probe track");
+    assert_eq!(info.codec, "MP3", "got {}", info.codec);
+    assert_eq!(info.bits_per_sample, None, "MP3 has no PCM bit depth");
+    let line = info.format_description();
+    assert!(
+        !line.contains("unknown") && !line.contains("0x"),
+        "got {line}"
+    );
+    assert!(
+        line.contains("kbps") || info.bitrate_kbps.is_some(),
+        "a CBR MP3 should report a bitrate; got {line}"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// Write a silent PCM WAV file.
