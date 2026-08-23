@@ -10,9 +10,7 @@ use std::time::Duration;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use znicz_core::{AudioConfig, Command, PlayerHandle, spawn_player};
-use znicz_tui::app::Pane;
-use znicz_tui::meta::Entry;
-use znicz_tui::{App, views};
+use znicz_tui::{App, Focus, Modal, views};
 
 /// Sizes worth checking: a default terminal, a wide one, a cramped one, and a
 /// window small enough that panes have to be dropped.
@@ -59,33 +57,51 @@ fn dump(terminal: &Terminal<TestBackend>) -> String {
 }
 
 #[test]
-fn every_pane_draws_at_every_size() {
-    let mut app = App::with_library(player(), None);
-    app.player
-        .send_blocking(Command::QueueAdd(vec![
-            PathBuf::from("/music/one.flac"),
-            PathBuf::from("/music/two.flac"),
-        ]))
-        .expect("queue add");
+fn every_view_draws_at_every_size() {
+    for &(width, height) in SIZES {
+        let app = App::with_library(player(), None);
+        let screen = draw(&app, width, height);
+        assert_eq!(
+            screen.lines().count(),
+            height as usize,
+            "library at {width}x{height} should fill the window"
+        );
+    }
 
-    for pane in Pane::ALL {
-        app.pane = pane;
-        for &(width, height) in SIZES {
-            // A panic here is the failure; the assert just uses the result.
-            let screen = draw(&app, width, height);
-            assert_eq!(
-                screen.lines().count(),
-                height as usize,
-                "{pane:?} at {width}x{height} should fill the window"
-            );
-        }
+    for &(width, height) in SIZES {
+        let mut app = App::with_library(player(), None);
+        app.player
+            .send_blocking(Command::QueueAdd(vec![
+                PathBuf::from("/music/one.flac"),
+                PathBuf::from("/music/two.flac"),
+            ]))
+            .expect("queue add");
+        app.queue_open = true;
+        app.focus = Focus::Queue;
+        let screen = draw(&app, width, height);
+        assert_eq!(
+            screen.lines().count(),
+            height as usize,
+            "queue at {width}x{height} should fill the window"
+        );
+    }
+
+    for &(width, height) in SIZES {
+        let mut app = App::with_library(player(), None);
+        app.modal = Modal::Devices;
+        let screen = draw(&app, width, height);
+        assert_eq!(
+            screen.lines().count(),
+            height as usize,
+            "devices at {width}x{height} should fill the window"
+        );
     }
 }
 
 #[test]
 fn the_help_overlay_draws_at_every_size() {
     let mut app = App::with_library(player(), None);
-    app.show_help = true;
+    app.modal = Modal::Help;
 
     for &(width, height) in SIZES {
         let screen = draw(&app, width, height);
@@ -106,8 +122,16 @@ fn an_idle_player_says_so_rather_than_showing_blanks() {
 
     assert!(screen.contains("Nothing playing"));
     assert!(
-        screen.contains("Queue is empty"),
-        "the empty queue should guide the user"
+        screen.contains("Library"),
+        "the library should be the default home"
+    );
+    assert!(
+        !screen.contains("1 Queue"),
+        "the tab bar should not be shown"
+    );
+    assert!(
+        !screen.contains("Queue is empty"),
+        "the queue drawer should be closed on a fresh app"
     );
     assert!(
         screen.contains("stopped"),
@@ -122,7 +146,7 @@ fn queue_rows_show_tags_once_they_are_known() {
 
     app.meta.insert(
         path.clone(),
-        Entry {
+        znicz_tui::meta::Entry {
             title: "Kashmir".into(),
             artist: Some("Led Zeppelin".into()),
             album: Some("Physical Graffiti".into()),
@@ -132,7 +156,8 @@ fn queue_rows_show_tags_once_they_are_known() {
     app.player
         .send_blocking(Command::QueueAdd(vec![path]))
         .expect("queue add");
-    app.pane = Pane::Queue;
+    app.queue_open = true;
+    app.focus = Focus::Queue;
 
     let screen = draw(&app, 90, 24);
     assert!(
@@ -150,7 +175,8 @@ fn a_queue_row_without_tags_falls_back_to_the_file_name() {
             "/music/04 - mystery.flac",
         )]))
         .expect("queue add");
-    app.pane = Pane::Queue;
+    app.queue_open = true;
+    app.focus = Focus::Queue;
 
     let screen = draw(&app, 90, 24);
     assert!(
@@ -161,8 +187,7 @@ fn a_queue_row_without_tags_falls_back_to_the_file_name() {
 
 #[test]
 fn the_library_pane_explains_how_to_fill_it() {
-    let mut app = App::with_library(player(), None);
-    app.pane = Pane::Library;
+    let app = App::with_library(player(), None);
 
     let screen = draw(&app, 90, 24);
     assert!(
@@ -174,7 +199,6 @@ fn the_library_pane_explains_how_to_fill_it() {
 #[test]
 fn the_search_prompt_shows_what_is_being_typed() {
     let mut app = App::with_library(player(), None);
-    app.pane = Pane::Library;
     app.library.begin_search();
     for c in "zeppelin".chars() {
         app.library.push_char(c);
@@ -207,25 +231,25 @@ fn messages_replace_the_hint_line_when_present() {
 }
 
 #[test]
-fn the_focused_pane_is_the_one_shown() {
+fn the_focused_view_is_the_one_shown() {
     let mut app = App::with_library(player(), None);
 
-    app.pane = Pane::Devices;
+    app.modal = Modal::Devices;
     let screen = draw(&app, 90, 24);
     assert!(screen.contains("Devices"));
 
-    app.pane = Pane::Library;
+    app.modal = Modal::None;
     let screen = draw(&app, 90, 24);
     assert!(screen.contains("Library"));
 }
 
 #[test]
 fn a_very_long_title_is_cut_rather_than_wrapped() {
-    let app = App::with_library(player(), None);
+    let mut app = App::with_library(player(), None);
     let path = PathBuf::from("/music/long.flac");
     app.meta.insert(
         path.clone(),
-        Entry {
+        znicz_tui::meta::Entry {
             title: "A".repeat(400),
             artist: Some("B".repeat(400)),
             album: None,
@@ -235,6 +259,8 @@ fn a_very_long_title_is_cut_rather_than_wrapped() {
     app.player
         .send_blocking(Command::QueueAdd(vec![path]))
         .expect("queue add");
+    app.queue_open = true;
+    app.focus = Focus::Queue;
 
     let screen = draw(&app, 60, 20);
     for line in screen.lines() {

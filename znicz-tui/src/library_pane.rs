@@ -168,6 +168,8 @@ impl LibraryPane {
         true
     }
 
+    pub fn pan(&mut self, _delta: isize, _slot: usize) {}
+
     // --- search prompt ---
 
     pub fn begin_search(&mut self) {

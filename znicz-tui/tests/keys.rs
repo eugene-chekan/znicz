@@ -7,8 +7,7 @@ use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use znicz_core::{AudioConfig, Command, PlayerHandle, RepeatMode, spawn_player};
-use znicz_tui::App;
-use znicz_tui::app::Pane;
+use znicz_tui::{App, Focus, Modal};
 
 fn player() -> PlayerHandle {
     let (player, _thread) = spawn_player(AudioConfig::default());
@@ -41,6 +40,123 @@ fn queue(app: &mut App, count: usize) {
         .expect("queue add");
 }
 
+/// Open the queue drawer and focus it so queue keys apply.
+fn open_queue(app: &mut App) {
+    press_char(app, ']');
+    press(app, KeyCode::Tab);
+}
+
+#[test]
+fn the_player_opens_on_the_library() {
+    let app = new_app();
+    assert_eq!(app.focus, Focus::Library);
+    assert!(!app.queue_open);
+    assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn bracket_opens_the_queue_drawer_and_closes_it() {
+    let mut app = new_app();
+    assert!(!app.queue_open);
+
+    press_char(&mut app, ']');
+    assert!(app.queue_open);
+
+    press_char(&mut app, ']');
+    assert!(!app.queue_open);
+}
+
+#[test]
+fn tab_opens_the_drawer_then_swaps_focus_without_closing_it() {
+    let mut app = new_app();
+    assert!(!app.queue_open);
+    assert_eq!(app.focus, Focus::Library);
+
+    press(&mut app, KeyCode::Tab);
+    assert!(app.queue_open, "Tab should open the drawer");
+    assert_eq!(app.focus, Focus::Queue);
+
+    press(&mut app, KeyCode::Tab);
+    assert!(app.queue_open, "Tab should not close the drawer");
+    assert_eq!(app.focus, Focus::Library);
+
+    press(&mut app, KeyCode::BackTab);
+    assert!(app.queue_open);
+    assert_eq!(app.focus, Focus::Queue, "BackTab should swap back");
+}
+
+#[test]
+fn backtab_does_nothing_while_the_drawer_is_closed() {
+    let mut app = new_app();
+    assert_eq!(app.focus, Focus::Library);
+
+    press(&mut app, KeyCode::BackTab);
+    assert_eq!(app.focus, Focus::Library);
+    assert!(!app.queue_open);
+}
+
+#[test]
+fn numbers_no_longer_switch_homes() {
+    let mut app = new_app();
+    assert_eq!(app.focus, Focus::Library);
+
+    press_char(&mut app, '1');
+    assert_eq!(app.focus, Focus::Library);
+    press_char(&mut app, '2');
+    assert_eq!(app.focus, Focus::Library);
+    press_char(&mut app, '3');
+    assert_eq!(app.focus, Focus::Library);
+    assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn comma_toggles_the_devices_modal() {
+    let mut app = new_app();
+    assert_eq!(app.modal, Modal::None);
+
+    press_char(&mut app, ',');
+    assert_eq!(app.modal, Modal::Devices);
+
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn question_mark_still_opens_help_and_the_next_key_only_closes_it() {
+    let mut app = new_app();
+    press_char(&mut app, '?');
+    assert_eq!(app.modal, Modal::Help);
+
+    press_char(&mut app, 'q');
+    assert_eq!(app.modal, Modal::None, "the overlay should close");
+    assert!(!app.should_quit, "and that key must not also quit");
+}
+
+#[test]
+fn esc_closes_search_then_devices_then_the_drawer() {
+    let mut app = new_app();
+
+    // Search: / then Esc
+    press_char(&mut app, '/');
+    assert!(app.library.is_typing());
+    press(&mut app, KeyCode::Esc);
+    assert!(!app.library.is_typing());
+
+    // Devices modal: , then Esc
+    press_char(&mut app, ',');
+    assert_eq!(app.modal, Modal::Devices);
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.modal, Modal::None);
+
+    // Drawer: ] then Esc
+    press_char(&mut app, ']');
+    assert!(app.queue_open);
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(app.focus, Focus::Queue);
+    press(&mut app, KeyCode::Esc);
+    assert!(!app.queue_open);
+}
+
 #[test]
 fn q_quits_and_ctrl_c_quits() {
     let mut app = new_app();
@@ -57,30 +173,12 @@ fn q_quits_and_ctrl_c_quits() {
 fn help_opens_and_any_key_closes_it() {
     let mut app = new_app();
     press_char(&mut app, '?');
-    assert!(app.show_help);
+    assert_eq!(app.modal, Modal::Help);
 
     // While help is up, keys dismiss it rather than doing their usual job.
     press_char(&mut app, 'q');
-    assert!(!app.show_help, "the overlay should close");
+    assert_eq!(app.modal, Modal::None, "the overlay should close");
     assert!(!app.should_quit, "and that key must not also quit");
-}
-
-#[test]
-fn numbers_and_tab_both_switch_panes() {
-    let mut app = new_app();
-    assert_eq!(app.pane, Pane::Queue);
-
-    press_char(&mut app, '2');
-    assert_eq!(app.pane, Pane::Library);
-    press_char(&mut app, '3');
-    assert_eq!(app.pane, Pane::Devices);
-    press_char(&mut app, '1');
-    assert_eq!(app.pane, Pane::Queue);
-
-    press(&mut app, KeyCode::Tab);
-    assert_eq!(app.pane, Pane::Library);
-    press(&mut app, KeyCode::BackTab);
-    assert_eq!(app.pane, Pane::Queue, "Shift-Tab should go back");
 }
 
 #[test]
@@ -148,6 +246,7 @@ fn r_cycles_repeat_and_z_toggles_shuffle() {
 fn d_removes_the_selected_queue_entry() {
     let mut app = new_app();
     queue(&mut app, 3);
+    open_queue(&mut app);
 
     press_char(&mut app, 'j'); // move to the second entry
     press_char(&mut app, 'd');
@@ -165,6 +264,7 @@ fn d_removes_the_selected_queue_entry() {
 fn shift_c_clears_the_whole_queue() {
     let mut app = new_app();
     queue(&mut app, 3);
+    open_queue(&mut app);
 
     press_char(&mut app, 'C');
     assert!(app.state().queue.is_empty());
@@ -173,6 +273,7 @@ fn shift_c_clears_the_whole_queue() {
 #[test]
 fn queue_keys_on_an_empty_queue_do_nothing() {
     let mut app = new_app();
+    open_queue(&mut app);
     for key in ['d', 'C', 'o'] {
         press_char(&mut app, key);
     }
@@ -197,7 +298,6 @@ fn space_on_an_empty_queue_explains_itself() {
 #[test]
 fn slash_opens_the_search_prompt_and_letters_become_text() {
     let mut app = new_app();
-    app.pane = Pane::Library;
 
     press_char(&mut app, '/');
     assert!(app.library.is_typing());
@@ -220,6 +320,7 @@ fn slash_opens_the_search_prompt_and_letters_become_text() {
 fn navigation_keys_move_the_queue_cursor() {
     let mut app = new_app();
     queue(&mut app, 30);
+    open_queue(&mut app);
 
     press_char(&mut app, 'j');
     press_char(&mut app, 'j');
@@ -263,6 +364,7 @@ fn seeking_with_nothing_loaded_is_ignored() {
 fn playing_a_missing_file_shows_an_error() {
     let mut app = new_app();
     queue(&mut app, 1);
+    open_queue(&mut app);
 
     // The queued path does not exist, so Enter must fail visibly.
     press(&mut app, KeyCode::Enter);
@@ -278,6 +380,7 @@ fn playing_a_missing_file_shows_an_error() {
 fn o_jumps_the_cursor_to_the_playing_track() {
     let mut app = new_app();
     queue(&mut app, 10);
+    open_queue(&mut app);
 
     press_char(&mut app, 'G');
     assert_eq!(app.queue_cursor.index(), 9);
@@ -302,6 +405,6 @@ fn unbound_keys_are_ignored() {
         press(&mut app, code);
     }
     assert!(!app.should_quit);
-    assert!(!app.show_help);
-    assert_eq!(app.pane, Pane::Queue);
+    assert_eq!(app.modal, Modal::None);
+    assert_eq!(app.focus, Focus::Library);
 }

@@ -6,20 +6,20 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 use znicz_core::PlayerState;
 
-use crate::app::{App, Pane};
+use crate::app::{App, Focus};
 use crate::format;
 use crate::theme;
 use crate::views;
 use crate::views::now_playing;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &PlayerState) {
-    let focused = app.pane == Pane::Queue;
+    let focused = app.focus == Focus::Queue;
     let width = views::inner_width(area);
 
     if state.queue.is_empty() {
         let block = views::pane_block("Queue", focused, None);
         let hint =
-            views::placeholder("Queue is empty. Press 2 for the library, then a to add tracks.");
+            views::placeholder("Queue is empty. Add tracks from the library with a or A.");
         frame.render_widget(Paragraph::new(hint).block(block), area);
         return;
     }

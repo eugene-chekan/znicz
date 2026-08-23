@@ -9,13 +9,13 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 use znicz_core::PlayerState;
 
-use crate::app::{App, Pane};
+use crate::app::{App, Modal};
 use crate::format;
 use crate::theme;
 use crate::views;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &PlayerState) {
-    let focused = app.pane == Pane::Devices;
+    let focused = app.modal == Modal::Devices;
     let width = views::inner_width(area);
 
     if app.devices.is_empty() {

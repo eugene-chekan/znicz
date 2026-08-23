@@ -11,6 +11,7 @@ use znicz_core::{
 use znicz_library::{Library, Track};
 
 use crate::cursor::Cursor;
+use crate::layout;
 use crate::library_pane::{Item, LibraryPane};
 use crate::meta::{Entry, MetaCache};
 use crate::toast::Toasts;
@@ -25,52 +26,31 @@ const SEEK_SMALL: i64 = 5;
 const SEEK_LARGE: i64 = 30;
 const VOLUME_STEP: f32 = 0.05;
 
-/// The lists the user can move between.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Pane {
-    Queue,
+pub enum Focus {
     Library,
-    Devices,
+    Queue,
 }
 
-impl Pane {
-    pub const ALL: [Pane; 3] = [Pane::Queue, Pane::Library, Pane::Devices];
-
-    pub fn title(self) -> &'static str {
-        match self {
-            Pane::Queue => "Queue",
-            Pane::Library => "Library",
-            Pane::Devices => "Devices",
-        }
-    }
-
-    pub fn index(self) -> usize {
-        match self {
-            Pane::Queue => 0,
-            Pane::Library => 1,
-            Pane::Devices => 2,
-        }
-    }
-
-    pub fn next(self) -> Self {
-        Pane::ALL[(self.index() + 1) % Pane::ALL.len()]
-    }
-
-    pub fn previous(self) -> Self {
-        Pane::ALL[(self.index() + Pane::ALL.len() - 1) % Pane::ALL.len()]
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Modal {
+    None,
+    Help,
+    Devices,
 }
 
 pub struct App {
     pub player: PlayerHandle,
-    pub pane: Pane,
+    pub focus: Focus,
+    pub queue_open: bool,
+    pub modal: Modal,
+    pub list_width: u16,
     pub queue_cursor: Cursor,
     pub library: LibraryPane,
     pub devices: Vec<AudioDeviceInfo>,
     pub device_cursor: Cursor,
     pub meta: MetaCache,
     pub toasts: Toasts,
-    pub show_help: bool,
     pub should_quit: bool,
 }
 
@@ -83,14 +63,16 @@ impl App {
         let devices = AudioOutput::list_devices().unwrap_or_default();
         Self {
             player,
-            pane: Pane::Queue,
+            focus: Focus::Library,
+            queue_open: false,
+            modal: Modal::None,
+            list_width: 80,
             queue_cursor: Cursor::new(),
             library: LibraryPane::new(library),
             devices,
             device_cursor: Cursor::new(),
             meta: MetaCache::new(),
             toasts: Toasts::new(),
-            show_help: false,
             should_quit: false,
         }
     }
@@ -163,13 +145,11 @@ impl App {
     ///
     /// Public so the bindings can be driven from tests without a real terminal.
     pub fn on_key(&mut self, key: KeyEvent) {
-        // The help overlay takes the next key, whatever it is.
-        if self.show_help {
-            self.show_help = false;
+        if self.modal == Modal::Help {
+            self.modal = Modal::None;
             return;
         }
 
-        // While typing a search, letters are text rather than commands.
         if self.library.is_typing() {
             self.on_search_key(key);
             return;
@@ -180,10 +160,34 @@ impl App {
             return;
         }
 
+        if key.code == KeyCode::Esc {
+            self.on_esc();
+            return;
+        }
+
         if self.on_global_key(key) {
             return;
         }
-        self.on_pane_key(key);
+
+        if self.modal == Modal::Devices {
+            self.on_devices_key(key);
+            return;
+        }
+
+        match self.focus {
+            Focus::Queue => self.on_queue_key(key),
+            Focus::Library => self.on_library_key(key),
+        }
+    }
+
+    fn on_esc(&mut self) {
+        if self.modal == Modal::Devices {
+            self.modal = Modal::None;
+        } else if self.focus == Focus::Queue && self.queue_open {
+            self.close_queue();
+        } else {
+            self.library.back();
+        }
     }
 
     fn on_search_key(&mut self, key: KeyEvent) {
@@ -211,11 +215,43 @@ impl App {
         }
     }
 
-    /// Returns true when the key was a global one and needs no pane handling.
+    /// Returns true when the key was a global one and needs no focus handling.
     fn on_global_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
-            KeyCode::Char('?') => self.show_help = true,
+            KeyCode::Char('?') => self.modal = Modal::Help,
+            KeyCode::Char(',') => self.toggle_devices_modal(),
+
+            KeyCode::Char(']') => {
+                if self.queue_open {
+                    self.close_queue();
+                } else {
+                    self.open_queue();
+                }
+            }
+
+            KeyCode::Tab => {
+                if !self.queue_open {
+                    self.open_queue();
+                    self.focus = Focus::Queue;
+                } else if layout::is_sheet(self.list_width, true) {
+                    // no-op in sheet mode
+                } else {
+                    self.swap_focus();
+                }
+            }
+            KeyCode::BackTab => {
+                if !self.queue_open {
+                    // no-op while drawer is closed
+                } else if layout::is_sheet(self.list_width, true) {
+                    // no-op in sheet mode
+                } else {
+                    self.swap_focus();
+                }
+            }
+
+            KeyCode::Char('<') => self.library.pan(-1, 0),
+            KeyCode::Char('>') => self.library.pan(1, 0),
 
             KeyCode::Char(' ') => self.toggle_pause(),
             KeyCode::Char('s') => self.apply(Command::Stop, None),
@@ -233,12 +269,6 @@ impl App {
             KeyCode::Char('r') => self.cycle_repeat(),
             KeyCode::Char('z') => self.toggle_shuffle(),
 
-            KeyCode::Tab => self.pane = self.pane.next(),
-            KeyCode::BackTab => self.pane = self.pane.previous(),
-            KeyCode::Char('1') => self.pane = Pane::Queue,
-            KeyCode::Char('2') => self.pane = Pane::Library,
-            KeyCode::Char('3') => self.pane = Pane::Devices,
-
             KeyCode::Down | KeyCode::Char('j') => self.step(1),
             KeyCode::Up | KeyCode::Char('k') => self.step(-1),
             KeyCode::PageDown => self.page(HALF_PAGE * 2),
@@ -251,12 +281,30 @@ impl App {
         true
     }
 
-    fn on_pane_key(&mut self, key: KeyEvent) {
-        match self.pane {
-            Pane::Queue => self.on_queue_key(key),
-            Pane::Library => self.on_library_key(key),
-            Pane::Devices => self.on_devices_key(key),
+    fn open_queue(&mut self) {
+        self.queue_open = true;
+    }
+
+    fn close_queue(&mut self) {
+        self.queue_open = false;
+        if self.focus == Focus::Queue {
+            self.focus = Focus::Library;
         }
+    }
+
+    fn swap_focus(&mut self) {
+        self.focus = match self.focus {
+            Focus::Library => Focus::Queue,
+            Focus::Queue => Focus::Library,
+        };
+    }
+
+    fn toggle_devices_modal(&mut self) {
+        self.modal = if self.modal == Modal::Devices {
+            Modal::None
+        } else {
+            Modal::Devices
+        };
     }
 
     fn on_queue_key(&mut self, key: KeyEvent) {
@@ -291,9 +339,6 @@ impl App {
     fn on_library_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Char('/') => self.library.begin_search(),
-            KeyCode::Esc => {
-                self.library.back();
-            }
             KeyCode::Char('R') => {
                 self.library.reload_albums();
                 self.toasts.info("library reloaded");
@@ -381,48 +426,58 @@ impl App {
         }
     }
 
-    // --- list movement, applied to whichever pane has focus ---
+    // --- list movement, applied to whichever list has focus ---
 
     fn list_len(&self) -> usize {
-        match self.pane {
-            Pane::Queue => self.player.state().queue.len(),
-            Pane::Library => self.library.len(),
-            Pane::Devices => self.devices.len(),
+        if self.modal == Modal::Devices {
+            self.devices.len()
+        } else if self.focus == Focus::Queue && self.queue_open {
+            self.player.state().queue.len()
+        } else {
+            self.library.len()
         }
     }
 
     fn step(&mut self, delta: isize) {
         let len = self.list_len();
-        match self.pane {
-            Pane::Queue => self.queue_cursor.step(delta, len),
-            Pane::Library => self.library.step(delta),
-            Pane::Devices => self.device_cursor.step(delta, len),
+        if self.modal == Modal::Devices {
+            self.device_cursor.step(delta, len);
+        } else if self.focus == Focus::Queue && self.queue_open {
+            self.queue_cursor.step(delta, len);
+        } else {
+            self.library.step(delta);
         }
     }
 
     fn page(&mut self, delta: isize) {
         let len = self.list_len();
-        match self.pane {
-            Pane::Queue => self.queue_cursor.page(delta, len),
-            Pane::Library => self.library.page(delta),
-            Pane::Devices => self.device_cursor.page(delta, len),
+        if self.modal == Modal::Devices {
+            self.device_cursor.page(delta, len);
+        } else if self.focus == Focus::Queue && self.queue_open {
+            self.queue_cursor.page(delta, len);
+        } else {
+            self.library.page(delta);
         }
     }
 
     fn go_first(&mut self) {
-        match self.pane {
-            Pane::Queue => self.queue_cursor.first(),
-            Pane::Library => self.library.first(),
-            Pane::Devices => self.device_cursor.first(),
+        if self.modal == Modal::Devices {
+            self.device_cursor.first();
+        } else if self.focus == Focus::Queue && self.queue_open {
+            self.queue_cursor.first();
+        } else {
+            self.library.first();
         }
     }
 
     fn go_last(&mut self) {
         let len = self.list_len();
-        match self.pane {
-            Pane::Queue => self.queue_cursor.last(len),
-            Pane::Library => self.library.last(),
-            Pane::Devices => self.device_cursor.last(len),
+        if self.modal == Modal::Devices {
+            self.device_cursor.last(len);
+        } else if self.focus == Focus::Queue && self.queue_open {
+            self.queue_cursor.last(len);
+        } else {
+            self.library.last();
         }
     }
 
@@ -540,22 +595,6 @@ pub fn repeat_label(mode: RepeatMode) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn panes_cycle_in_both_directions() {
-        assert_eq!(Pane::Queue.next(), Pane::Library);
-        assert_eq!(Pane::Devices.next(), Pane::Queue, "forward wraps around");
-        assert_eq!(Pane::Queue.previous(), Pane::Devices, "back wraps around");
-    }
-
-    #[test]
-    fn every_pane_has_a_distinct_title_and_index() {
-        let titles: Vec<&str> = Pane::ALL.iter().map(|p| p.title()).collect();
-        assert_eq!(titles, vec!["Queue", "Library", "Devices"]);
-        for (i, pane) in Pane::ALL.iter().enumerate() {
-            assert_eq!(pane.index(), i);
-        }
-    }
 
     #[test]
     fn repeat_labels_stay_readable() {

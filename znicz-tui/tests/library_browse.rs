@@ -10,7 +10,6 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use znicz_core::{AudioConfig, spawn_player};
 use znicz_library::Library;
-use znicz_tui::app::Pane;
 use znicz_tui::library_pane::Mode;
 use znicz_tui::{App, views};
 
@@ -76,9 +75,7 @@ fn app_with_library(dir: &Path) -> App {
     library.scan(dir).expect("scan");
 
     let (player, _thread) = spawn_player(AudioConfig::default());
-    let mut app = App::with_library(player, Some(library));
-    app.pane = Pane::Library;
-    app
+    App::with_library(player, Some(library))
 }
 
 fn draw(app: &App) -> String {
@@ -242,8 +239,7 @@ fn a_library_with_no_album_tags_falls_back_to_a_track_list() {
     library.scan(&dir).expect("scan");
 
     let (player, _thread) = spawn_player(AudioConfig::default());
-    let mut app = App::with_library(player, Some(library));
-    app.pane = Pane::Library;
+    let app = App::with_library(player, Some(library));
 
     assert_eq!(app.library.mode(), &Mode::AllTracks);
     let screen = draw(&app);

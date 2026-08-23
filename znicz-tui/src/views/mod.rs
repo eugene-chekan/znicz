@@ -11,30 +11,24 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Tabs};
+use ratatui::widgets::{Block, Borders};
 use znicz_core::PlayerState;
 
-use crate::app::{App, Pane};
+use crate::app::{App, Focus, Modal};
 use crate::theme;
 
 /// Below this height the signal-path line is dropped to keep the lists usable.
 const COMPACT_HEIGHT: u16 = 20;
-/// Below this, the tab bar goes too.
-const TINY_HEIGHT: u16 = 12;
 
 pub fn render(frame: &mut Frame, app: &App, state: &PlayerState) {
     let area = frame.area();
     let compact = area.height < COMPACT_HEIGHT;
-    let tiny = area.height < TINY_HEIGHT;
 
-    // Now Playing: borders, title, artist, seek bar, and the signal path.
     let header_height = if compact { 5 } else { 6 };
-    let tabs_height = if tiny { 0 } else { 1 };
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(tabs_height),
             Constraint::Length(header_height),
             Constraint::Min(3),
             Constraint::Length(1),
@@ -42,45 +36,23 @@ pub fn render(frame: &mut Frame, app: &App, state: &PlayerState) {
         ])
         .split(area);
 
-    if !tiny {
-        render_tabs(frame, chunks[0], app);
-    }
-    now_playing::render(frame, chunks[1], state, !compact);
-    render_pane(frame, chunks[2], app, state);
-    status::render_bar(frame, chunks[3], state);
-    status::render_footer(frame, chunks[4], app);
+    now_playing::render(frame, chunks[0], state, !compact);
+    render_list(frame, chunks[1], app, state);
+    status::render_bar(frame, chunks[2], state);
+    status::render_footer(frame, chunks[3], app);
 
-    if app.show_help {
+    if app.modal == Modal::Help {
         help::render(frame, area);
     }
 }
 
-fn render_tabs(frame: &mut Frame, area: Rect, app: &App) {
-    let titles: Vec<Line> = Pane::ALL
-        .iter()
-        .enumerate()
-        .map(|(i, pane)| {
-            Line::from(vec![
-                Span::styled(format!("{} ", i + 1), theme::dim()),
-                Span::raw(pane.title()),
-            ])
-        })
-        .collect();
-
-    let tabs = Tabs::new(titles)
-        .select(app.pane.index())
-        .style(theme::dim())
-        .highlight_style(theme::title())
-        .divider(Span::styled("│", theme::dim()));
-
-    frame.render_widget(tabs, area);
-}
-
-fn render_pane(frame: &mut Frame, area: Rect, app: &App, state: &PlayerState) {
-    match app.pane {
-        Pane::Queue => queue::render(frame, area, app, state),
-        Pane::Library => library::render(frame, area, app),
-        Pane::Devices => devices::render(frame, area, app, state),
+fn render_list(frame: &mut Frame, area: Rect, app: &App, state: &PlayerState) {
+    if app.modal == Modal::Devices {
+        devices::render(frame, area, app, state);
+    } else if app.queue_open && app.focus == Focus::Queue {
+        queue::render(frame, area, app, state);
+    } else {
+        library::render(frame, area, app);
     }
 }
 

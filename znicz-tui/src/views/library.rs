@@ -8,7 +8,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 use znicz_library::{AlbumSummary, Track};
 
-use crate::app::{App, Pane};
+use crate::app::{App, Focus, Modal};
 use crate::format;
 use crate::library_pane::Mode;
 use crate::theme;
@@ -38,7 +38,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         frame.render_widget(Paragraph::new(prompt), prompt_area);
     }
 
-    let focused = app.pane == Pane::Library;
+    let focused = app.focus == Focus::Library && app.modal != Modal::Devices;
     let width = views::inner_width(list_area);
     let title = match app.library.mode() {
         Mode::Albums => "Library".to_string(),

@@ -16,9 +16,8 @@ use znicz_core::{
     spawn_player, AudioConfig, Command, OutputInfo, PlaybackStatus, PlayerState, TrackInfo,
     TrackTags,
 };
-use znicz_tui::app::Pane;
 use znicz_tui::meta::Entry;
-use znicz_tui::{views, App};
+use znicz_tui::{Focus, Modal, views, App};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -38,6 +37,8 @@ fn main() {
         app.meta.insert(path.clone(), entry.clone());
     }
 
+    app.queue_open = true;
+    app.focus = Focus::Queue;
     show(
         "Queue — bit perfect",
         &app,
@@ -55,7 +56,9 @@ fn main() {
         height,
     );
 
-    app.pane = Pane::Library;
+    app.queue_open = false;
+    app.focus = Focus::Library;
+    app.modal = Modal::None;
     show(
         "Library — no library yet",
         &app,
@@ -64,11 +67,13 @@ fn main() {
         height,
     );
 
-    app.pane = Pane::Devices;
+    app.modal = Modal::Devices;
     show("Devices", &app, &playing_state(&queue, true), width, height);
 
-    app.pane = Pane::Queue;
-    app.show_help = true;
+    app.modal = Modal::None;
+    app.queue_open = true;
+    app.focus = Focus::Queue;
+    app.modal = Modal::Help;
     show(
         "Help overlay",
         &app,
@@ -76,7 +81,7 @@ fn main() {
         width,
         height,
     );
-    app.show_help = false;
+    app.modal = Modal::None;
 
     show(
         "Small window (48x14)",

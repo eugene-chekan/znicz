@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use znicz_core::{PlaybackStatus, PlayerState};
 
-use crate::app::{App, repeat_label};
+use crate::app::{App, Focus, Modal, repeat_label};
 use crate::format;
 use crate::keys;
 use crate::theme;
@@ -87,10 +87,20 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
                 ),
             ])
         }
-        None => Line::from(Span::styled(keys::hints(app.pane.title()), theme::dim())),
+        None => Line::from(Span::styled(hints_for(app), theme::dim())),
     };
 
     frame.render_widget(Paragraph::new(line), area);
+}
+
+fn hints_for(app: &App) -> &'static str {
+    if app.modal == Modal::Devices {
+        keys::hints("Devices")
+    } else if app.focus == Focus::Queue && app.queue_open {
+        keys::hints("Queue")
+    } else {
+        keys::hints("Library")
+    }
 }
 
 fn status_text(status: PlaybackStatus) -> &'static str {
