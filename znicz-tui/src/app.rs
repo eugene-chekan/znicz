@@ -46,6 +46,8 @@ pub struct App {
     pub modal: Modal,
     pub list_width: u16,
     pub title_slot: usize,
+    pub queue_h_offset: usize,
+    pub queue_title_slot: usize,
     pub queue_cursor: Cursor,
     pub library: LibraryPane,
     pub devices: Vec<AudioDeviceInfo>,
@@ -67,8 +69,10 @@ impl App {
             focus: Focus::Library,
             queue_open: false,
             modal: Modal::None,
-            list_width: 80,
+            list_width: 100,
             title_slot: 0,
+            queue_h_offset: 0,
+            queue_title_slot: 0,
             queue_cursor: Cursor::new(),
             library: LibraryPane::new(library),
             devices,
@@ -252,14 +256,17 @@ impl App {
                 }
             }
 
-            KeyCode::Char('<') => self.library.pan(-1, self.title_slot()),
-            KeyCode::Char('>') => self.library.pan(1, self.title_slot()),
-
             KeyCode::Char(' ') => self.toggle_pause(),
             KeyCode::Char('s') => self.apply(Command::Stop, None),
             KeyCode::Char('n') => self.apply(Command::NextTrack, None),
             KeyCode::Char('N') | KeyCode::Char('p') => self.apply(Command::PreviousTrack, None),
 
+            KeyCode::Right if key.modifiers.contains(KeyModifiers::ALT) => {
+                self.pan_titles(1);
+            }
+            KeyCode::Left if key.modifiers.contains(KeyModifiers::ALT) => {
+                self.pan_titles(-1);
+            }
             KeyCode::Right | KeyCode::Char('l') => self.seek_relative(SEEK_SMALL),
             KeyCode::Left | KeyCode::Char('h') => self.seek_relative(-SEEK_SMALL),
             KeyCode::Char('L') => self.seek_relative(SEEK_LARGE),
@@ -415,21 +422,13 @@ impl App {
                 .insert(track.path.clone(), entry_from_track(track));
         }
 
-        let was_empty = self.player.state().queue.is_empty();
         self.apply(
-            Command::QueueAdd(paths.clone()),
+            Command::QueueAdd(paths),
             Some(match count {
                 1 => "added 1 track".to_string(),
                 n => format!("added {n} tracks"),
             }),
         );
-
-        // An idle player with a fresh queue should just start.
-        if was_empty && self.player.state().status == PlaybackStatus::Stopped {
-            if let Some(first) = paths.first() {
-                self.apply(Command::Play(first.clone()), None);
-            }
-        }
     }
 
     // --- list movement, applied to whichever list has focus ---
@@ -450,6 +449,7 @@ impl App {
             self.device_cursor.step(delta, len);
         } else if self.focus == Focus::Queue && self.queue_open {
             self.queue_cursor.step(delta, len);
+            self.queue_h_offset = 0;
         } else {
             self.library.step(delta);
         }
@@ -461,6 +461,7 @@ impl App {
             self.device_cursor.page(delta, len);
         } else if self.focus == Focus::Queue && self.queue_open {
             self.queue_cursor.page(delta, len);
+            self.queue_h_offset = 0;
         } else {
             self.library.page(delta);
         }
@@ -471,6 +472,7 @@ impl App {
             self.device_cursor.first();
         } else if self.focus == Focus::Queue && self.queue_open {
             self.queue_cursor.first();
+            self.queue_h_offset = 0;
         } else {
             self.library.first();
         }
@@ -482,6 +484,7 @@ impl App {
             self.device_cursor.last(len);
         } else if self.focus == Focus::Queue && self.queue_open {
             self.queue_cursor.last(len);
+            self.queue_h_offset = 0;
         } else {
             self.library.last();
         }
@@ -559,6 +562,57 @@ impl App {
         );
     }
 
+    fn pan_titles(&mut self, dir: isize) {
+        if self.focus == Focus::Queue && self.queue_open {
+            self.pan_queue(dir);
+        } else {
+            self.library.pan(dir, self.title_slot);
+        }
+    }
+
+    fn pan_queue(&mut self, dir: isize) {
+        let max = self.selected_queue_middle().saturating_sub(self.queue_title_slot) as isize;
+        let next = self.queue_h_offset as isize + dir;
+        self.queue_h_offset = next.clamp(0, max.max(0)) as usize;
+    }
+
+    pub fn queue_offset_for(&self, index: usize, len: usize) -> usize {
+        if self.queue_cursor.selected(len) == Some(index) {
+            self.queue_h_offset
+        } else {
+            0
+        }
+    }
+
+    fn queue_label_len(&self, path: &PathBuf) -> usize {
+        match self.meta.get(path) {
+            Some(entry) => entry.label().chars().count(),
+            None => path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("?")
+                .chars()
+                .count(),
+        }
+    }
+
+    fn selected_queue_middle(&self) -> usize {
+        let state = self.player.state();
+        let Some(index) = self.queue_cursor.selected(state.queue.len()) else {
+            return 0;
+        };
+        state
+            .queue
+            .get(index)
+            .map(|path| self.queue_label_len(path))
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn clamp_queue_pan(&mut self) {
+        let max = self.selected_queue_middle().saturating_sub(self.queue_title_slot);
+        self.queue_h_offset = self.queue_h_offset.min(max);
+    }
+
     fn seek_relative(&mut self, seconds: i64) {
         let state = self.player.state();
         if state.current_track.is_none() {
@@ -632,5 +686,77 @@ mod tests {
         let entry = entry_from_track(&track);
         assert_eq!(entry.label(), "Led Zeppelin — Kashmir");
         assert_eq!(entry.duration, Some(Duration::from_secs(508)));
+    }
+
+    fn test_player() -> PlayerHandle {
+        let (player, _thread) = znicz_core::spawn_player(znicz_core::AudioConfig::default());
+        player
+    }
+
+    fn long_album() -> znicz_library::AlbumSummary {
+        znicz_library::AlbumSummary {
+            album: "x".repeat(50),
+            album_artist: None,
+            year: None,
+            track_count: 1,
+            total_secs: Some(125.0),
+        }
+    }
+
+    fn dummy_track(title: &str) -> Track {
+        Track {
+            id: 1,
+            path: PathBuf::from("/music/dummy.flac"),
+            title: title.into(),
+            artist: Some("Artist".into()),
+            album: Some("Album".into()),
+            album_artist: None,
+            genre: None,
+            year: None,
+            track_number: Some(1),
+            disc_number: None,
+            codec: None,
+            sample_rate: None,
+            channels: None,
+            bits_per_sample: None,
+            duration_secs: Some(120.0),
+        }
+    }
+
+    #[test]
+    fn alt_arrows_pan_and_angle_brackets_do_nothing() {
+        let mut app = App::with_library(test_player(), None);
+        app.library.inject_albums_for_test(vec![long_album()]);
+        app.title_slot = 20;
+
+        app.on_key(KeyEvent::new(KeyCode::Char('>'), KeyModifiers::NONE));
+        app.on_key(KeyEvent::new(KeyCode::Char('<'), KeyModifiers::ALT));
+        assert_eq!(
+            app.library.h_offset(),
+            0,
+            "< and > should not pan or bind"
+        );
+
+        app.on_key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT));
+        assert_eq!(app.library.h_offset(), 1, "Alt+→ should pan titles");
+
+        app.on_key(KeyEvent::new(KeyCode::Left, KeyModifiers::ALT));
+        assert_eq!(app.library.h_offset(), 0, "Alt+← should pan back");
+    }
+
+    #[test]
+    fn adding_to_an_empty_queue_does_not_start_playback() {
+        let mut app = App::with_library(test_player(), None);
+        app.library
+            .inject_tracks_for_test(vec![dummy_track("Quiet Add")]);
+        app.on_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+
+        let state = app.player.state();
+        assert_eq!(state.queue.len(), 1, "the track should be queued");
+        assert_eq!(
+            state.status,
+            PlaybackStatus::Stopped,
+            "adding must not start playback"
+        );
     }
 }

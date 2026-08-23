@@ -21,15 +21,15 @@ Ratatui does not keep widgets as a tree you mutate. You describe the layout
 │  4  It Could Be Sweet — Portis.  │  1 ▶ Sour Times  4:11 │
 │  5  Numb — Portishead            │  2   Strangers   3:58 │
 │                    device refused 96 kHz, resampling     │  ← toast in list corner
-└ 12 tracks · < > pan ─────────────┴ 3 tracks · ] close ───┘
+└ 12 tracks · Alt-← → pan ─────────┴ 3 tracks · ] close ───┘
 ▶ Sour Times  Portishead — Dummy  ━━━━━── 1:02/4:11  70%
   FLAC 96 kHz 24-bit 2882 kbps stereo → 96 kHz stereo  ● bit perfect
-  Space pause  a add  ] queue  < > pan  , devices  ? help
+  Space pause  a add  ] queue  Alt-← → pan  , devices  ? help
 ```
 
 The library is the stage and always fills the list region. The queue is an
 overlay drawer on the right (`]` toggles it). Long titles pan horizontally with
-`<` and `>`. Transport is two lines at the bottom; hints stay on their own line
+`Alt-←` and `Alt-→` on the highlighted row only. `<` and `>` are unbound. Transport is two lines at the bottom; hints stay on their own line
 and are never replaced by a toast.
 
 ### Responsive behaviour

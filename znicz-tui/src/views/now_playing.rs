@@ -46,7 +46,7 @@ fn chrome_line(state: &PlayerState, width: usize) -> Line<'static> {
     }
 
     let status_style = status_style(state.status);
-    let sym = format!("{} ", status_symbol(state.status));
+    let sym = status_marker(state.status);
     let title = state
         .current_track
         .as_ref()
@@ -297,6 +297,11 @@ pub fn status_symbol(status: PlaybackStatus) -> &'static str {
     }
 }
 
+/// Play and pause glyphs are different widths; pad so the title does not jump.
+pub fn status_marker(status: PlaybackStatus) -> String {
+    format!("{:<2}", status_symbol(status))
+}
+
 /// Total time of everything queued, when every entry's length is known.
 pub fn total_duration(durations: &[Option<Duration>]) -> Option<Duration> {
     if durations.is_empty() || durations.iter().any(|d| d.is_none()) {
@@ -314,6 +319,16 @@ mod tests {
         assert_eq!(status_symbol(PlaybackStatus::Playing), "▶");
         assert_eq!(status_symbol(PlaybackStatus::Paused), "❚❚");
         assert_eq!(status_symbol(PlaybackStatus::Stopped), "■");
+    }
+
+    #[test]
+    fn play_and_pause_markers_occupy_the_same_columns() {
+        let play = status_marker(PlaybackStatus::Playing);
+        let pause = status_marker(PlaybackStatus::Paused);
+        let stop = status_marker(PlaybackStatus::Stopped);
+        assert_eq!(play.chars().count(), pause.chars().count());
+        assert_eq!(play.chars().count(), stop.chars().count());
+        assert_ne!(play.trim(), pause.trim());
     }
 
     #[test]

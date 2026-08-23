@@ -46,6 +46,8 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
     match crate::layout::drawer(list, app.queue_open) {
         crate::layout::Drawer::Overlay(rect) | crate::layout::Drawer::Sheet(rect) => {
             frame.render_widget(Clear, rect);
+            app.queue_title_slot = queue::title_slot(app, state, crate::views::inner_width(rect));
+            app.clamp_queue_pan();
             queue::render(frame, rect, app, state);
         }
         crate::layout::Drawer::Closed => {}

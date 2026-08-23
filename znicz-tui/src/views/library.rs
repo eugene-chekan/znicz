@@ -40,7 +40,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     let focused = app.focus == Focus::Library && app.modal != Modal::Devices;
     let strip = crate::layout::strip_inner(list_area, app.queue_open);
-    let offset = app.library.h_offset();
     let title = match app.library.mode() {
         Mode::Albums => "Library".to_string(),
         Mode::AllTracks => "Library / all tracks".to_string(),
@@ -66,13 +65,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             .library
             .albums()
             .iter()
-            .map(|album| album_row(album, strip, offset))
+            .enumerate()
+            .map(|(i, album)| album_row(album, strip, app.library.offset_for(i)))
             .collect(),
         _ => app
             .library
             .tracks()
             .iter()
-            .map(|track| track_row(track, strip, offset))
+            .enumerate()
+            .map(|(i, track)| track_row(track, strip, app.library.offset_for(i)))
             .collect(),
     };
 

@@ -2,7 +2,7 @@
 
 use ratatui::layout::Rect;
 
-pub const DRAWER_WIDTH: u16 = 36;
+pub const DRAWER_WIDTH: u16 = 41;
 pub const MIN_STRIP: u16 = 40;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,30 +76,30 @@ mod tests {
     }
 
     #[test]
-    fn a_wide_list_gets_a_36_column_overlay_on_the_right() {
+    fn a_wide_list_gets_a_41_column_overlay_on_the_right() {
         let list = list(100);
         match drawer(list, true) {
             Drawer::Overlay(rect) => {
-                assert_eq!(rect.width, 36);
-                assert_eq!(rect.x, 64);
+                assert_eq!(rect.width, 41);
+                assert_eq!(rect.x, 59);
                 assert_eq!(rect.height, 20);
             }
             other => panic!("expected overlay, got {other:?}"),
         }
-        assert_eq!(strip_width(list, true), 64);
+        assert_eq!(strip_width(list, true), 59);
     }
 
     #[test]
     fn a_narrow_list_becomes_a_full_width_sheet() {
-        // 36 + 40 = 76; at 76 or below the strip would be too thin.
-        let list = list(76);
+        // 41 + 40 = 81; at 81 or below the strip would be too thin.
+        let list = list(81);
         match drawer(list, true) {
             Drawer::Sheet(rect) => assert_eq!(rect, list),
             other => panic!("expected sheet, got {other:?}"),
         }
-        assert_eq!(strip_width(list, true), 76);
-        assert!(is_sheet(76, true));
-        assert!(!is_sheet(77, true));
+        assert_eq!(strip_width(list, true), 81);
+        assert!(is_sheet(81, true));
+        assert!(!is_sheet(82, true));
     }
 
     #[test]
@@ -113,8 +113,8 @@ mod tests {
     #[test]
     fn strip_inner_counts_characters_inside_the_visible_library() {
         let wide = list(100);
-        // overlay: visible 64, minus left border → 63
-        assert_eq!(strip_inner(wide, true), 63);
+        // overlay: visible 59, minus left border → 58
+        assert_eq!(strip_inner(wide, true), 58);
         // closed: inner_width = 80 - 2 for a 80-wide pane; here 100 - 2
         assert_eq!(strip_inner(wide, false), 98);
     }

@@ -27,7 +27,7 @@ pub const GLOBAL: &[Binding] = &[
     b("z", "shuffle"),
     b("]", "open / close queue"),
     b("Tab", "library ↔ queue"),
-    b("< / >", "pan library titles"),
+    b("Alt-← / Alt-→", "pan titles"),
     b(",", "devices"),
     b("?", "this help"),
     b("q", "quit"),
@@ -66,8 +66,8 @@ pub const DEVICES: &[Binding] = &[
 /// Short hints for the footer, per pane.
 pub fn hints(pane: &str) -> &'static str {
     match pane {
-        "Queue" => "Enter play · d remove · C clear · o jump · ] close · ? help",
-        "Library" => "/ search · a add · ] queue · < > pan · , devices · ? help",
+        "Queue" => "Enter play · d remove · C clear · o jump · Alt-← / Alt-→ pan · ] close · ? help",
+        "Library" => "/ search · a add · ] queue · Alt-← / Alt-→ pan · , devices · ? help",
         "Devices" => "Enter select · R rescan · Esc close · ? help",
         _ => "] queue · ? help · q quit",
     }
@@ -97,5 +97,18 @@ mod tests {
             );
         }
         assert!(hints("Queue") != hints("Library"));
+        assert!(
+            hints("Library").contains("Alt-→"),
+            "library hints should show Alt-arrow pan, got {}",
+            hints("Library")
+        );
+        assert!(
+            GLOBAL.iter().any(|b| b.keys.contains("Alt-→")),
+            "global help should document Alt-arrow pan"
+        );
+        assert!(
+            GLOBAL.iter().all(|b| !b.keys.contains('<') && !b.keys.contains('>')),
+            "< and > must not appear in the keymap"
+        );
     }
 }

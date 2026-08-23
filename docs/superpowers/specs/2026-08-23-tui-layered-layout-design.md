@@ -40,10 +40,10 @@ You land in the library, browse or search, and add. `]` opens the queue over the
 │  3  Wandering Star — Portishead  ┌ Queue ────────────────┤
 │  4  It Could Be Sweet — Portis.  │  1 ▶ Sour Times  4:11 │
 │  5  Numb — Portishead            │  2   Strangers   3:58 │
-└ 12 tracks · < > pan ─────────────┴ 3 tracks · ] close ───┘
+└ 12 tracks · Alt-← → pan ─────────┴ 3 tracks · ] close ───┘
 ▶ Sour Times  Portishead — Dummy  ━━━━━── 1:02/4:11  70%
   MP3 44.1 kHz 192 kbps stereo → 44.1 kHz stereo  ● bit perfect
-  Space pause  a add  ] queue  < > pan  , devices  ? help
+  Space pause  a add  ] queue  Alt-← → pan  , devices  ? help
 ```
 
 Vertical split, top to bottom:
@@ -71,8 +71,8 @@ The drawer is an overlay. The library widget is still laid out in the full list 
 
 ### Size
 
-- Side overlay width: **36 columns**.
-- If `list_width <= 36 + 40` (library strip would be under 40 columns), the drawer is a **full-width sheet** instead: it covers the whole list region until closed.
+- Side overlay width: **41 columns**.
+- If `list_width <= 41 + 40` (library strip would be under 40 columns), the drawer is a **full-width sheet** instead: it covers the whole list region until closed.
 - The 40-column rule uses the list region width, not the whole terminal (transport and hints do not count).
 
 ### Open, close, focus
@@ -94,19 +94,19 @@ Adding from the library while the drawer is open updates the queue in place and 
 Rows are composed for the **visible strip**, not for the width sitting under the overlay:
 
 - Drawer closed, or full-width sheet: strip = inner width of the list region.
-- Side overlay: strip = inner width minus 36.
+- Side overlay: strip = inner width minus 41.
 
 Pinned in that strip:
 
 - Left: track number (or the album-list equivalent).
 - Right: duration (or album track-count / time).
 
-The title (and artist) occupy the middle. If that text is wider than the slot, a horizontal offset (`usize` characters, one value for the whole library list) selects which slice is shown. Every row shares the offset so the column does not jitter. Clamped to `[0, max(0, longest_middle - slot_width)]`. Closing the drawer or widening the terminal clamps the offset down.
+The title (and artist) occupy the middle. If that text is wider than the slot, a horizontal offset (`usize` characters) selects which slice is shown. The offset applies only to the **highlighted** row; other rows stay at the start of the title. Moving the cursor resets the offset. Clamped to `[0, max(0, selected_middle - slot_width)]`. Closing the drawer or widening the terminal clamps the offset down.
 
-- `<` decreases the offset (toward the start of the title).
-- `>` increases it (toward the end).
-- These keys always pan the library when the search prompt is not open, including while the queue is focused.
-- `h` / `l` and the arrows still seek. They do not pan.
+- `Alt-←` decreases the offset (toward the start of the title).
+- `Alt-→` increases it (toward the end).
+- These keys pan the focused list (library or queue) when the search prompt is not open.
+- Plain arrows still seek. `<` and `>` are unbound.
 
 Truncation with `…` still applies to the visible slice, counting characters, as `format::truncate` does today.
 

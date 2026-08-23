@@ -132,18 +132,22 @@ impl LibraryPane {
 
     pub fn step(&mut self, delta: isize) {
         self.cursor.step(delta, self.len());
+        self.h_offset = 0;
     }
 
     pub fn page(&mut self, delta: isize) {
         self.cursor.page(delta, self.len());
+        self.h_offset = 0;
     }
 
     pub fn first(&mut self) {
         self.cursor.first();
+        self.h_offset = 0;
     }
 
     pub fn last(&mut self) {
         self.cursor.last(self.len());
+        self.h_offset = 0;
     }
 
     /// Open the album under the cursor. Returns false when there is nothing to open.
@@ -155,6 +159,7 @@ impl LibraryPane {
         self.tracks = self.album_tracks(&name);
         self.mode = Mode::Album(name);
         self.cursor.first();
+        self.h_offset = 0;
         true
     }
 
@@ -165,6 +170,7 @@ impl LibraryPane {
         }
         self.tracks.clear();
         self.cursor.first();
+        self.h_offset = 0;
         // Goes back to albums, or to the flat track list when nothing is tagged.
         self.reload_albums();
         true
@@ -174,15 +180,32 @@ impl LibraryPane {
         self.h_offset
     }
 
+    /// Pan applies to the highlighted row only.
+    pub fn offset_for(&self, index: usize) -> usize {
+        if self.selected_index() == Some(index) {
+            self.h_offset
+        } else {
+            0
+        }
+    }
+
     pub fn clamp_pan(&mut self, slot: usize) {
-        let max = self.longest_middle().saturating_sub(slot);
+        let max = self.selected_middle_len().saturating_sub(slot);
         self.h_offset = self.h_offset.min(max);
     }
 
     pub fn pan(&mut self, delta: isize, slot: usize) {
-        let max = self.longest_middle().saturating_sub(slot) as isize;
+        let max = self.selected_middle_len().saturating_sub(slot) as isize;
         let next = self.h_offset as isize + delta;
         self.h_offset = next.clamp(0, max.max(0)) as usize;
+    }
+
+    fn selected_middle_len(&self) -> usize {
+        match self.selected() {
+            Some(Item::Album(album)) => Self::album_middle(album).chars().count(),
+            Some(Item::Track(track)) => Self::track_middle(track).chars().count(),
+            None => 0,
+        }
     }
 
     pub fn longest_middle(&self) -> usize {
@@ -405,6 +428,59 @@ mod tests {
         let mut pane = LibraryPane::new(None);
         pane.pan(5, 4);
         assert_eq!(pane.h_offset(), 0);
+    }
+
+    #[test]
+    fn pan_offset_applies_only_to_the_selected_row() {
+        let mut pane = LibraryPane::new(None);
+        pane.inject_albums_for_test(vec![
+            long_album("a"),
+            long_album("b"),
+        ]);
+        pane.pan(3, 10);
+        assert_eq!(pane.offset_for(0), 3, "the highlighted row should pan");
+        assert_eq!(pane.offset_for(1), 0, "other rows stay at the start");
+    }
+
+    #[test]
+    fn moving_the_cursor_resets_pan() {
+        let mut pane = LibraryPane::new(None);
+        pane.inject_albums_for_test(vec![long_album("a"), long_album("b")]);
+        pane.pan(4, 10);
+        pane.step(1);
+        assert_eq!(pane.offset_for(0), 0);
+        assert_eq!(pane.h_offset(), 0, "a new highlight starts unpanned");
+    }
+
+    #[test]
+    fn pan_clamps_to_the_selected_row_not_the_longest() {
+        let mut pane = LibraryPane::new(None);
+        pane.inject_albums_for_test(vec![
+            AlbumSummary {
+                album: "Hi".into(),
+                album_artist: None,
+                year: None,
+                track_count: 1,
+                total_secs: None,
+            },
+            long_album("long"),
+        ]);
+        pane.pan(20, 40);
+        assert_eq!(
+            pane.h_offset(),
+            0,
+            "a short highlighted title has nothing to pan"
+        );
+    }
+
+    fn long_album(name: &str) -> AlbumSummary {
+        AlbumSummary {
+            album: name.repeat(50),
+            album_artist: None,
+            year: None,
+            track_count: 1,
+            total_secs: Some(125.0),
+        }
     }
 
     #[test]

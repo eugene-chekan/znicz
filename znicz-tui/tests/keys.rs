@@ -395,13 +395,12 @@ fn o_jumps_the_cursor_to_the_playing_track() {
 }
 
 #[test]
-fn angle_brackets_pan_the_library_and_h_still_seeks() {
+fn angle_brackets_are_unbound() {
     let mut app = new_app();
     press_char(&mut app, '>');
-    press_char(&mut app, '>');
+    press_char(&mut app, '<');
     assert_eq!(app.library.h_offset(), 0);
-    press_char(&mut app, 'h');
-    assert_eq!(app.state().position.as_secs(), 0);
+    assert_eq!(app.focus, Focus::Library);
 }
 
 #[test]
