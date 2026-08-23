@@ -8,3 +8,4 @@
 *.flac
 .env
 .env.*
+.worktrees/
