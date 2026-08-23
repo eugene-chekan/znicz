@@ -40,6 +40,8 @@ pub struct AudioProperties {
     pub sample_rate: Option<u32>,
     pub channels: Option<u16>,
     pub bits_per_sample: Option<u32>,
+    /// Average audio bitrate in kilobits per second.
+    pub audio_bitrate: Option<u32>,
 }
 
 /// Tags plus technical details for one file.
@@ -110,6 +112,7 @@ pub fn read_metadata(path: &Path) -> FileMetadata {
         sample_rate: file_properties.sample_rate(),
         channels: file_properties.channels().map(u16::from),
         bits_per_sample: file_properties.bit_depth().map(u32::from),
+        audio_bitrate: file_properties.audio_bitrate().filter(|kbps| *kbps > 0),
     };
 
     let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) else {
@@ -127,7 +130,10 @@ pub fn read_metadata(path: &Path) -> FileMetadata {
 
     let tags = TrackTags {
         title: tag.title().map(|t| t.to_string()).filter(|s| !s.is_empty()),
-        artist: tag.artist().map(|a| a.to_string()).filter(|s| !s.is_empty()),
+        artist: tag
+            .artist()
+            .map(|a| a.to_string())
+            .filter(|s| !s.is_empty()),
         album: tag.album().map(|a| a.to_string()).filter(|s| !s.is_empty()),
         album_artist: text(ItemKey::AlbumArtist),
         genre: tag.genre().map(|g| g.to_string()).filter(|s| !s.is_empty()),
@@ -191,7 +197,10 @@ mod tests {
     #[test]
     fn audio_extensions_are_recognised() {
         assert!(is_audio_file(Path::new("/music/a.flac")));
-        assert!(is_audio_file(Path::new("/music/a.FLAC")), "case insensitive");
+        assert!(
+            is_audio_file(Path::new("/music/a.FLAC")),
+            "case insensitive"
+        );
         assert!(is_audio_file(Path::new("/music/a.mp3")));
         assert!(!is_audio_file(Path::new("/music/cover.jpg")));
         assert!(!is_audio_file(Path::new("/music/notes.txt")));

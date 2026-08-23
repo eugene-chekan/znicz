@@ -10,15 +10,15 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::Terminal;
 use znicz_core::{
-    AudioConfig, Command, OutputInfo, PlaybackStatus, PlayerState, TrackInfo, TrackTags,
-    spawn_player,
+    spawn_player, AudioConfig, Command, OutputInfo, PlaybackStatus, PlayerState, TrackInfo,
+    TrackTags,
 };
 use znicz_tui::app::Pane;
 use znicz_tui::meta::Entry;
-use znicz_tui::{App, views};
+use znicz_tui::{views, App};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -148,6 +148,7 @@ fn playing_state(queue: &[(PathBuf, Entry)], bit_perfect: bool) -> PlayerState {
             sample_rate: 96_000,
             channels: 2,
             bits_per_sample: Some(24),
+            bitrate_kbps: Some(2882),
             duration: entry.duration,
             tags: TrackTags {
                 title: Some(entry.title.clone()),

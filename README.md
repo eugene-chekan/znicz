@@ -83,9 +83,9 @@ Three panes, switched with `Tab` or `1`/`2`/`3`:
 - **Devices** — pick the output, and see what the open stream settled on
 
 Above them sits the now-playing header with the seek bar and the signal path,
-for example `FLAC 96 kHz 24-bit stereo → 96 kHz stereo f32  ● bit perfect`. When
-the device will not take the file's own rate the badge reads `▲ resampled`, so a
-silent conversion never goes unnoticed.
+for example `FLAC 96 kHz 24-bit 2882 kbps stereo → 96 kHz stereo  ● bit perfect`.
+When the device will not take the file's own rate the badge reads `▲ resampled`,
+so a silent conversion never goes unnoticed.
 
 Press `?` in the player for the full keymap. The essentials:
 

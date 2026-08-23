@@ -2,10 +2,10 @@
 
 use std::time::Duration;
 
-use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
+use ratatui::Frame;
 use znicz_core::{PlaybackStatus, PlayerState};
 
 use crate::format;
@@ -74,6 +74,9 @@ fn seek_line(state: &PlayerState, width: usize) -> Line<'static> {
 /// File format on the left, the open device stream on the right, and whether
 /// the two match.
 ///
+/// Sample format of the device stream (`f32` and similar) is stored on
+/// `OutputInfo` for a later details view, not shown here.
+///
 /// This is the line that matters for an audiophile player: if the device would
 /// not take the file's own rate, Znicz has to resample, and that is a change to
 /// the audio the user should know about rather than guess at.
@@ -88,10 +91,9 @@ fn signal_line(state: &PlayerState, width: usize) -> Line<'static> {
     };
 
     let device = format!(
-        "{} {} {}",
+        "{} {}",
         format::khz(output.sample_rate),
         format::channel_name(output.channels),
-        output.sample_format
     );
 
     let (badge, badge_style) = if output.bit_perfect {

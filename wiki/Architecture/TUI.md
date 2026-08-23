@@ -19,8 +19,8 @@ Ratatui does not keep widgets as a tree you mutate. You describe the layout
 │ In My Time of Dying                   │  title
 │ Led Zeppelin — Physical Graffiti      │  artist — album (from tags)
 │ ━━━━━━━━───────────────  3:32 / 11:04 │  seek bar
-│ FLAC 96 kHz 24-bit stereo → 96 kHz    │  signal path
-│ stereo f32  ● bit perfect             │
+│ FLAC 96 kHz 24-bit 2882 kbps stereo → │  signal path
+│ 96 kHz stereo  ● bit perfect          │
 └──────────────────────── track 2/4 ────┘
 ┌ Queue ────────────────────────────────┐
 │  1   Led Zeppelin — Kashmir      8:28 │  the focused pane
@@ -50,7 +50,15 @@ rather than bytes** so accented titles are never cut mid-character.
 ## The signal path
 
 The line under the seek bar is the audiophile part of the interface. It reads
-`file format → device stream`, then a badge:
+`file format → device stream`, then a badge. Example:
+
+`FLAC 96 kHz 24-bit 2882 kbps stereo → 96 kHz stereo  ● bit perfect`
+
+Left of the arrow is the file (codec name, sample rate, bit depth when the
+codec has one, bitrate when known, channels). Right of the arrow is the stream
+the device actually opened (rate and channels). The device sample format (`f32`
+and similar) is kept in `PlayerState::output` for a later details view, not on
+this line.
 
 - `● bit perfect` — the device accepted the file's own sample rate and channel
   count, so nothing was converted
