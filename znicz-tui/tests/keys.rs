@@ -43,7 +43,6 @@ fn queue(app: &mut App, count: usize) {
 /// Open the queue drawer and focus it so queue keys apply.
 fn open_queue(app: &mut App) {
     press_char(app, ']');
-    press(app, KeyCode::Tab);
 }
 
 #[test]
@@ -61,9 +60,11 @@ fn bracket_opens_the_queue_drawer_and_closes_it() {
 
     press_char(&mut app, ']');
     assert!(app.queue_open);
+    assert_eq!(app.focus, Focus::Queue);
 
     press_char(&mut app, ']');
     assert!(!app.queue_open);
+    assert_eq!(app.focus, Focus::Library);
 }
 
 #[test]
@@ -151,10 +152,10 @@ fn esc_closes_search_then_devices_then_the_drawer() {
     // Drawer: ] then Esc
     press_char(&mut app, ']');
     assert!(app.queue_open);
-    press(&mut app, KeyCode::Tab);
     assert_eq!(app.focus, Focus::Queue);
     press(&mut app, KeyCode::Esc);
     assert!(!app.queue_open);
+    assert_eq!(app.focus, Focus::Library);
 }
 
 #[test]

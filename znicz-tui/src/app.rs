@@ -283,13 +283,12 @@ impl App {
 
     fn open_queue(&mut self) {
         self.queue_open = true;
+        self.focus = Focus::Queue;
     }
 
     fn close_queue(&mut self) {
         self.queue_open = false;
-        if self.focus == Focus::Queue {
-            self.focus = Focus::Library;
-        }
+        self.focus = Focus::Library;
     }
 
     fn swap_focus(&mut self) {
