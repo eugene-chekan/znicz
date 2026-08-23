@@ -250,8 +250,8 @@ impl App {
                 }
             }
 
-            KeyCode::Char('<') => self.library.pan(-1, 0),
-            KeyCode::Char('>') => self.library.pan(1, 0),
+            KeyCode::Char('<') => self.library.pan(-1, self.title_slot()),
+            KeyCode::Char('>') => self.library.pan(1, self.title_slot()),
 
             KeyCode::Char(' ') => self.toggle_pause(),
             KeyCode::Char('s') => self.apply(Command::Stop, None),
@@ -289,6 +289,12 @@ impl App {
     fn close_queue(&mut self) {
         self.queue_open = false;
         self.focus = Focus::Library;
+        self.library.clamp_pan(self.title_slot());
+    }
+
+    fn title_slot(&self) -> usize {
+        let list = ratatui::layout::Rect::new(0, 0, self.list_width.max(1), 10);
+        crate::layout::strip_inner(list, self.queue_open).saturating_sub(8)
     }
 
     fn swap_focus(&mut self) {

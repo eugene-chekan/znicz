@@ -40,6 +40,7 @@ pub struct LibraryPane {
     input: Option<String>,
     /// Why the pane is empty, when it is.
     notice: Option<String>,
+    h_offset: usize,
 }
 
 impl LibraryPane {
@@ -54,6 +55,7 @@ impl LibraryPane {
             cursor: Cursor::new(),
             input: None,
             notice: None,
+            h_offset: 0,
         };
         pane.reload_albums();
         pane
@@ -168,7 +170,52 @@ impl LibraryPane {
         true
     }
 
-    pub fn pan(&mut self, _delta: isize, _slot: usize) {}
+    pub fn h_offset(&self) -> usize {
+        self.h_offset
+    }
+
+    pub fn clamp_pan(&mut self, slot: usize) {
+        let max = self.longest_middle().saturating_sub(slot);
+        self.h_offset = self.h_offset.min(max);
+    }
+
+    pub fn pan(&mut self, delta: isize, slot: usize) {
+        let max = self.longest_middle().saturating_sub(slot) as isize;
+        let next = self.h_offset as isize + delta;
+        self.h_offset = next.clamp(0, max.max(0)) as usize;
+    }
+
+    pub fn longest_middle(&self) -> usize {
+        match self.mode {
+            Mode::Albums => self
+                .albums
+                .iter()
+                .map(Self::album_middle)
+                .map(|s| s.chars().count())
+                .max()
+                .unwrap_or(0),
+            _ => self
+                .tracks
+                .iter()
+                .map(Self::track_middle)
+                .map(|s| s.chars().count())
+                .max()
+                .unwrap_or(0),
+        }
+    }
+
+    pub fn album_middle(album: &AlbumSummary) -> String {
+        let year = album.year.map(|y| format!(" ({y})")).unwrap_or_default();
+        let artist = album.album_artist.as_deref().unwrap_or("Unknown artist");
+        format!("{}{year} — {artist}", album.album)
+    }
+
+    pub fn track_middle(track: &Track) -> String {
+        match track.artist.as_deref() {
+            Some(artist) => format!("{} — {artist}", track.title),
+            None => track.title.clone(),
+        }
+    }
 
     // --- search prompt ---
 
@@ -334,6 +381,13 @@ mod tests {
         pane.begin_search();
         pane.push_char(' ');
         assert_eq!(pane.submit_search(), "search cancelled");
+    }
+
+    #[test]
+    fn empty_pane_pan_stays_at_zero() {
+        let mut pane = LibraryPane::new(None);
+        pane.pan(5, 4);
+        assert_eq!(pane.h_offset(), 0);
     }
 
     #[test]

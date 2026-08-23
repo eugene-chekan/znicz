@@ -10,7 +10,7 @@ use znicz_library::{AlbumSummary, Track};
 
 use crate::app::{App, Focus, Modal};
 use crate::format;
-use crate::library_pane::Mode;
+use crate::library_pane::{LibraryPane, Mode};
 use crate::theme;
 use crate::views;
 
@@ -39,7 +39,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     let focused = app.focus == Focus::Library && app.modal != Modal::Devices;
-    let width = views::inner_width(list_area);
+    let strip = crate::layout::strip_inner(list_area, app.queue_open);
+    let offset = app.library.h_offset();
     let title = match app.library.mode() {
         Mode::Albums => "Library".to_string(),
         Mode::AllTracks => "Library / all tracks".to_string(),
@@ -65,13 +66,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             .library
             .albums()
             .iter()
-            .map(|album| album_row(album, width))
+            .map(|album| album_row(album, strip, offset))
             .collect(),
         _ => app
             .library
             .tracks()
             .iter()
-            .map(|track| track_row(track, width))
+            .map(|track| track_row(track, strip, offset))
             .collect(),
     };
 
@@ -94,10 +95,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_stateful_widget(list, list_area, &mut state);
 }
 
-fn album_row(album: &AlbumSummary, width: usize) -> ListItem<'static> {
-    let year = album.year.map(|y| format!(" ({y})")).unwrap_or_default();
-    let artist = album.album_artist.as_deref().unwrap_or("Unknown artist");
-
+fn album_row(album: &AlbumSummary, strip: usize, offset: usize) -> ListItem<'static> {
     let right = match album.total_secs {
         Some(secs) => format!(
             "{} · {}",
@@ -107,32 +105,35 @@ fn album_row(album: &AlbumSummary, width: usize) -> ListItem<'static> {
         None => tracks_label(album.track_count),
     };
 
-    let left = format!("{}{year} — {artist}", album.album);
-    let left = format::truncate(&left, width.saturating_sub(right.chars().count() + 2));
-    let pad = width.saturating_sub(left.chars().count() + right.chars().count());
+    let fixed = right.chars().count() + 2;
+    let middle = format::pan(
+        &LibraryPane::album_middle(album),
+        offset,
+        strip.saturating_sub(fixed),
+    );
+    let pad = strip.saturating_sub(middle.chars().count() + right.chars().count());
 
     ListItem::new(Line::from(vec![
-        Span::styled(left, theme::text()),
+        Span::styled(middle, theme::text()),
         Span::raw(" ".repeat(pad)),
         Span::styled(right, theme::dim()),
     ]))
 }
 
-fn track_row(track: &Track, width: usize) -> ListItem<'static> {
+fn track_row(track: &Track, strip: usize, offset: usize) -> ListItem<'static> {
     let number = track
         .track_number
         .map(|n| format!("{n:>2} "))
         .unwrap_or_else(|| "   ".to_string());
     let time = format::duration_opt(track.duration_secs.map(Duration::from_secs_f64));
 
-    let label = match track.artist.as_deref() {
-        Some(artist) => format!("{} — {artist}", track.title),
-        None => track.title.clone(),
-    };
-
     let fixed = number.chars().count() + time.chars().count() + 2;
-    let label = format::truncate(&label, width.saturating_sub(fixed));
-    let pad = width
+    let label = format::pan(
+        &LibraryPane::track_middle(track),
+        offset,
+        strip.saturating_sub(fixed),
+    );
+    let pad = strip
         .saturating_sub(fixed + label.chars().count())
         .saturating_add(1);
 

@@ -60,6 +60,12 @@ pub fn progress_bar(ratio: f64, width: usize) -> (String, String) {
     (done, todo)
 }
 
+/// Skip `offset` characters, then truncate to `width`.
+pub fn pan(text: &str, offset: usize, width: usize) -> String {
+    let sliced: String = text.chars().skip(offset).collect();
+    truncate(&sliced, width)
+}
+
 /// Cut a string to `max` columns, ending with `…` when something was dropped.
 ///
 /// Counts characters rather than bytes so non-ASCII titles are not cut mid-character.
@@ -133,6 +139,14 @@ mod tests {
         let (done, todo) = progress_bar(4.2, 8);
         assert_eq!(done.chars().count(), 8);
         assert!(todo.is_empty());
+    }
+
+    #[test]
+    fn pan_skips_then_truncates() {
+        assert_eq!(pan("abcdefghij", 0, 5), "abcd…");
+        assert_eq!(pan("abcdefghij", 2, 5), "cdef…");
+        assert_eq!(pan("abcdefghij", 8, 5), "ij");
+        assert_eq!(pan("short", 0, 10), "short");
     }
 
     #[test]
