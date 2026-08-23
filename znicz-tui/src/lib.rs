@@ -5,6 +5,7 @@
 //! frame from [`znicz_core::PlayerHandle`], so the interface owns no copy of it.
 
 pub mod app;
+pub mod layout;
 pub mod cursor;
 pub mod format;
 pub mod keys;
