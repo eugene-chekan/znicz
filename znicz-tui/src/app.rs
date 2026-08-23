@@ -45,6 +45,7 @@ pub struct App {
     pub queue_open: bool,
     pub modal: Modal,
     pub list_width: u16,
+    pub title_slot: usize,
     pub queue_cursor: Cursor,
     pub library: LibraryPane,
     pub devices: Vec<AudioDeviceInfo>,
@@ -67,6 +68,7 @@ impl App {
             queue_open: false,
             modal: Modal::None,
             list_width: 80,
+            title_slot: 0,
             queue_cursor: Cursor::new(),
             library: LibraryPane::new(library),
             devices,
@@ -293,8 +295,7 @@ impl App {
     }
 
     fn title_slot(&self) -> usize {
-        let list = ratatui::layout::Rect::new(0, 0, self.list_width.max(1), 10);
-        crate::layout::strip_inner(list, self.queue_open).saturating_sub(8)
+        self.title_slot
     }
 
     fn swap_focus(&mut self) {

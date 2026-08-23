@@ -92,7 +92,7 @@ fn main() {
     );
 }
 
-fn show(label: &str, app: &App, state: &PlayerState, width: u16, height: u16) {
+fn show(label: &str, app: &mut App, state: &PlayerState, width: u16, height: u16) {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
     terminal
         .draw(|frame| views::render(frame, app, state))

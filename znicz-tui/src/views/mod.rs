@@ -11,48 +11,71 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use znicz_core::PlayerState;
 
-use crate::app::{App, Focus, Modal};
+use crate::app::{App, Modal};
+use crate::format;
 use crate::theme;
+use crate::toast::Level;
 
 /// Below this height the signal-path line is dropped to keep the lists usable.
 const COMPACT_HEIGHT: u16 = 20;
 
-pub fn render(frame: &mut Frame, app: &App, state: &PlayerState) {
+pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
     let area = frame.area();
     let compact = area.height < COMPACT_HEIGHT;
-
-    let header_height = if compact { 5 } else { 6 };
+    let transport = if compact { 1 } else { 2 };
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(header_height),
             Constraint::Min(3),
-            Constraint::Length(1),
+            Constraint::Length(transport),
             Constraint::Length(1),
         ])
         .split(area);
 
-    now_playing::render(frame, chunks[0], state, !compact);
-    render_list(frame, chunks[1], app, state);
-    status::render_bar(frame, chunks[2], state);
-    status::render_footer(frame, chunks[3], app);
+    let list = chunks[0];
+    app.list_width = list.width;
+    app.title_slot = crate::layout::strip_inner(list, app.queue_open).saturating_sub(8);
+    app.library.clamp_pan(app.title_slot);
 
-    if app.modal == Modal::Help {
-        help::render(frame, area);
+    library::render(frame, list, app);
+
+    match crate::layout::drawer(list, app.queue_open) {
+        crate::layout::Drawer::Overlay(rect) | crate::layout::Drawer::Sheet(rect) => {
+            frame.render_widget(Clear, rect);
+            queue::render(frame, rect, app, state);
+        }
+        crate::layout::Drawer::Closed => {}
     }
+
+    now_playing::render_transport(frame, chunks[1], state, !compact);
+    status::render_footer(frame, chunks[2], app);
+
+    match app.modal {
+        Modal::Help => help::render(frame, area),
+        Modal::Devices => devices::render_modal(frame, area, app, state),
+        Modal::None => {}
+    }
+
+    render_toasts(frame, list, app);
 }
 
-fn render_list(frame: &mut Frame, area: Rect, app: &App, state: &PlayerState) {
-    if app.modal == Modal::Devices {
-        devices::render(frame, area, app, state);
-    } else if app.queue_open && app.focus == Focus::Queue {
-        queue::render(frame, area, app, state);
-    } else {
-        library::render(frame, area, app);
+fn render_toasts(frame: &mut Frame, list: Rect, app: &App) {
+    let shown = app.toasts.visible();
+    let max_width = ((list.width as usize) * 40 / 100).clamp(8, 40) as u16;
+    let areas = crate::layout::toast_areas(list, shown.len() as u16, max_width);
+    for (toast, area) in shown.iter().zip(areas) {
+        frame.render_widget(Clear, area);
+        let style = match toast.level {
+            Level::Info => theme::text(),
+            Level::Warn => theme::warn(),
+            Level::Error => theme::bad(),
+        };
+        let text = format::truncate(&toast.text, area.width as usize);
+        frame.render_widget(Paragraph::new(Span::styled(text, style)), area);
     }
 }
 

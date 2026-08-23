@@ -6,13 +6,32 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 use znicz_core::PlayerState;
 
 use crate::app::{App, Modal};
 use crate::format;
 use crate::theme;
 use crate::views;
+
+pub fn render_modal(frame: &mut Frame, area: Rect, app: &App, state: &PlayerState) {
+    let popup = centered_modal(area);
+    frame.render_widget(Clear, popup);
+    render(frame, popup, app, state);
+}
+
+fn centered_modal(area: Rect) -> Rect {
+    let width = ((area.width as u32 * 70 / 100).max(40) as u16).min(area.width);
+    let height = ((area.height as u32 * 70 / 100).max(8) as u16).min(area.height);
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    Rect {
+        x,
+        y,
+        width,
+        height,
+    }
+}
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &PlayerState) {
     let focused = app.modal == Modal::Devices;
