@@ -17,7 +17,7 @@ use znicz_core::{
     TrackTags,
 };
 use znicz_tui::meta::Entry;
-use znicz_tui::{Focus, Modal, views, App};
+use znicz_tui::{views, App, Focus, Modal};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -37,10 +37,21 @@ fn main() {
         app.meta.insert(path.clone(), entry.clone());
     }
 
+    app.queue_open = false;
+    app.focus = Focus::Library;
+    app.modal = Modal::None;
+    show(
+        "Library home",
+        &mut app,
+        &PlayerState::default(),
+        width,
+        height,
+    );
+
     app.queue_open = true;
     app.focus = Focus::Queue;
     show(
-        "Queue — bit perfect",
+        "Queue drawer — bit perfect",
         &mut app,
         &playing_state(&queue, true),
         width,
@@ -49,20 +60,9 @@ fn main() {
 
     app.toasts.error("device refused 96 kHz, resampling");
     show(
-        "Queue — resampled, with an error message",
+        "Queue drawer — resampled, with an error message",
         &mut app,
         &playing_state(&queue, false),
-        width,
-        height,
-    );
-
-    app.queue_open = false;
-    app.focus = Focus::Library;
-    app.modal = Modal::None;
-    show(
-        "Library — no library yet",
-        &mut app,
-        &PlayerState::default(),
         width,
         height,
     );
@@ -77,8 +77,6 @@ fn main() {
     );
 
     app.modal = Modal::None;
-    app.queue_open = true;
-    app.focus = Focus::Queue;
     app.modal = Modal::Help;
     show(
         "Help overlay",
@@ -90,7 +88,7 @@ fn main() {
     app.modal = Modal::None;
 
     show(
-        "Small window (48x14)",
+        "Small window (48×14)",
         &mut app,
         &playing_state(&queue, true),
         48,

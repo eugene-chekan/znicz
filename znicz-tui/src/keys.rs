@@ -25,7 +25,10 @@ pub const GLOBAL: &[Binding] = &[
     b("m", "mute"),
     b("r", "repeat: off, all, one"),
     b("z", "shuffle"),
-    b("Tab / 1 2 3", "switch pane"),
+    b("]", "open / close queue"),
+    b("Tab", "library ↔ queue"),
+    b("< / >", "pan library titles"),
+    b(",", "devices"),
     b("?", "this help"),
     b("q", "quit"),
 ];
@@ -57,15 +60,16 @@ pub const LIBRARY: &[Binding] = &[
 pub const DEVICES: &[Binding] = &[
     b("Enter", "use this output device"),
     b("R", "rescan devices"),
+    b("Esc", "close"),
 ];
 
 /// Short hints for the footer, per pane.
 pub fn hints(pane: &str) -> &'static str {
     match pane {
-        "Queue" => "Enter play · d remove · C clear · o jump · Tab pane · ? help",
-        "Library" => "/ search · Enter open · a add · A add all · Esc back · ? help",
-        "Devices" => "Enter select · R rescan · Tab pane · ? help",
-        _ => "Tab pane · ? help · q quit",
+        "Queue" => "Enter play · d remove · C clear · o jump · ] close · ? help",
+        "Library" => "/ search · a add · ] queue · < > pan · , devices · ? help",
+        "Devices" => "Enter select · R rescan · Esc close · ? help",
+        _ => "] queue · ? help · q quit",
     }
 }
 

@@ -14,25 +14,23 @@ Ratatui does not keep widgets as a tree you mutate. You describe the layout
 ## Layout
 
 ```
- 1 Queue │ 2 Library │ 3 Devices          ← tab bar
-┌ Now Playing ──────────────────────────┐
-│ In My Time of Dying                   │  title
-│ Led Zeppelin — Physical Graffiti      │  artist — album (from tags)
-│ ━━━━━━━━───────────────  3:32 / 11:04 │  seek bar
-│ FLAC 96 kHz 24-bit 2882 kbps stereo → │  signal path
-│ 96 kHz stereo  ● bit perfect          │
-└──────────────────────── track 2/4 ────┘
-┌ Queue ────────────────────────────────┐
-│  1   Led Zeppelin — Kashmir      8:28 │  the focused pane
-│  2 ▶ Led Zeppelin — In My Time  11:04 │
-└───────────────── 4 tracks · 33:43 ────┘
-▶ playing  ██████▁▁ 70%  repeat all  …    ← status
-Enter play · d remove · C clear · ? help  ← hints, or a message
+┌ Library / Dummy ─────────────────────────────────────────┐
+│  1  Mysterons — Portishead                          5:02 │
+│  2  Sour Times — Portishead                         4:11 │
+│  3  Wandering Star — Portishead  ┌ Queue ────────────────┤
+│  4  It Could Be Sweet — Portis.  │  1 ▶ Sour Times  4:11 │
+│  5  Numb — Portishead            │  2   Strangers   3:58 │
+│                    device refused 96 kHz, resampling     │  ← toast in list corner
+└ 12 tracks · < > pan ─────────────┴ 3 tracks · ] close ───┘
+▶ Sour Times  Portishead — Dummy  ━━━━━── 1:02/4:11  70%
+  FLAC 96 kHz 24-bit 2882 kbps stereo → 96 kHz stereo  ● bit perfect
+  Space pause  a add  ] queue  < > pan  , devices  ? help
 ```
 
-Only one list pane is shown at a time, chosen with `Tab` or `1`/`2`/`3`. Giving
-each pane the full width matters in a terminal: track titles are long, and split
-columns would truncate everything.
+The library is the stage and always fills the list region. The queue is an
+overlay drawer on the right (`]` toggles it). Long titles pan horizontally with
+`<` and `>`. Transport is two lines at the bottom; hints stay on their own line
+and are never replaced by a toast.
 
 ### Responsive behaviour
 
@@ -40,16 +38,16 @@ The window is often small, so parts are dropped in order of importance:
 
 | Height | What is shown |
 | --- | --- |
-| 20 rows or more | everything |
-| 12–19 rows | the signal-path line is dropped |
-| under 12 rows | the tab bar goes too |
+| 20 rows or more | everything, including both transport lines |
+| 12–19 rows | the signal-path line (transport line 2) is dropped |
+| under 12 rows | library + one transport line + hints |
 
 Every row is also truncated to the window width with `…`, counting **characters
 rather than bytes** so accented titles are never cut mid-character.
 
 ## The signal path
 
-The line under the seek bar is the audiophile part of the interface. It reads
+The second transport line is the audiophile part of the interface. It reads
 `file format → device stream`, then a badge. Example:
 
 `FLAC 96 kHz 24-bit 2882 kbps stereo → 96 kHz stereo  ● bit perfect`
@@ -73,40 +71,41 @@ details, filled in when the stream opens. See
 
 ## Panes
 
-### Queue
-
-Shows **titles, not file names**. The player's queue is only a list of paths, so
-`meta::MetaCache` resolves tags on a background thread: the UI asks for a path,
-draws whatever is known now, and the worker fills the gap for the next frame.
-Reading tags means opening and seeking each file, so doing it while drawing would
-stutter on a long queue. Rows added from the library skip the worker entirely,
-since the database already has the tags.
-
-`Enter` plays a row, `d` removes one, `C` clears, `o` jumps back to whatever is
-playing.
-
 ### Library
 
-Albums by default; `Enter` opens one, `Esc` goes back, `/` searches, `a` queues
-the selection (a whole album if the cursor is on one) and `A` queues everything
-listed. Queries go straight to SQLite, which is fast enough to run while handling
-the keypress. See [Library](Library.md).
+The home screen. Albums by default; `Enter` opens one, `Esc` goes back, `/`
+searches, `a` queues the selection (a whole album if the cursor is on one) and
+`A` queues everything listed. Queries go straight to SQLite, which is fast enough
+to run while handling the keypress. See [Library](Library.md).
 
 A library whose files carry **no album tags** cannot be grouped, so the pane
 falls back to a flat track list rather than looking empty.
 
+### Queue
+
+An overlay drawer (`]`). Shows **titles, not file names**. The player's queue is
+only a list of paths, so `meta::MetaCache` resolves tags on a background thread:
+the UI asks for a path, draws whatever is known now, and the worker fills the
+gap for the next frame. Reading tags means opening and seeking each file, so
+doing it while drawing would stutter on a long queue. Rows added from the library
+skip the worker entirely, since the database already has the tags.
+
+`Enter` plays a row, `d` removes one, `C` clears, `o` jumps back to whatever is
+playing.
+
 ### Devices
 
-Lists the output devices and switches between them with `Enter`. The footer shows
-what the open stream actually settled on, which is the quickest way to find a
-device that will take your files unconverted.
+A centered modal (`,`). Lists the output devices and switches between them with
+`Enter`. The footer shows what the open stream actually settled on, which is the
+quickest way to find a device that will take your files unconverted.
 
 ## Messages instead of silence
 
 The interface owns the screen, so anything written to the log or to stdout is
 invisible. Previously a failed file looked exactly like nothing happening. Now
-every player error and every action becomes a short-lived message on the bottom
-line (`toast.rs`); errors stay up twice as long, since they need reading.
+every player error and every action becomes a short-lived message in the list
+corner (`toast.rs`); errors stay up twice as long, since they need reading. Hints
+on the bottom line are never replaced.
 
 For this to work, key handlers use `PlayerHandle::send_blocking` rather than
 `send`: the engine's own result comes back, so a missing file or an unusable
@@ -126,7 +125,10 @@ top of the player.
 | File | Role |
 | --- | --- |
 | `app.rs` | state, event loop, key dispatch |
+| `layout.rs` | list region, drawer overlay, modal placement |
 | `views/` | drawing, one module per pane |
+| `views/now_playing.rs` | two-line transport (play state, seek, signal path) |
+| `views/status.rs` | key hints only |
 | `theme.rs` | every colour, in one place |
 | `keys.rs` | the keymap as data |
 | `cursor.rs` | list cursor movement |
