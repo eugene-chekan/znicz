@@ -41,7 +41,7 @@ fn main() {
     app.focus = Focus::Queue;
     show(
         "Queue — bit perfect",
-        &app,
+        &mut app,
         &playing_state(&queue, true),
         width,
         height,
@@ -50,7 +50,7 @@ fn main() {
     app.toasts.error("device refused 96 kHz, resampling");
     show(
         "Queue — resampled, with an error message",
-        &app,
+        &mut app,
         &playing_state(&queue, false),
         width,
         height,
@@ -61,14 +61,20 @@ fn main() {
     app.modal = Modal::None;
     show(
         "Library — no library yet",
-        &app,
+        &mut app,
         &PlayerState::default(),
         width,
         height,
     );
 
     app.modal = Modal::Devices;
-    show("Devices", &app, &playing_state(&queue, true), width, height);
+    show(
+        "Devices",
+        &mut app,
+        &playing_state(&queue, true),
+        width,
+        height,
+    );
 
     app.modal = Modal::None;
     app.queue_open = true;
@@ -76,7 +82,7 @@ fn main() {
     app.modal = Modal::Help;
     show(
         "Help overlay",
-        &app,
+        &mut app,
         &playing_state(&queue, true),
         width,
         height,
@@ -85,7 +91,7 @@ fn main() {
 
     show(
         "Small window (48x14)",
-        &app,
+        &mut app,
         &playing_state(&queue, true),
         48,
         14,

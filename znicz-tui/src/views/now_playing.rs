@@ -39,15 +39,14 @@ pub fn render_transport(frame: &mut Frame, area: Rect, state: &PlayerState, show
     }
 }
 
-/// One-line transport chrome: symbol, title, seek, times, volume, repeat, shuffle.
+/// One-line transport chrome: symbol, title, subtitle, seek, times, volume, toggles.
 fn chrome_line(state: &PlayerState, width: usize) -> Line<'static> {
     if width == 0 {
         return Line::from("");
     }
 
     let status_style = status_style(state.status);
-    let symbol = status_symbol(state.status);
-    let sym = format!("{symbol} ");
+    let sym = format!("{} ", status_symbol(state.status));
     let title = state
         .current_track
         .as_ref()
@@ -56,11 +55,27 @@ fn chrome_line(state: &PlayerState, width: usize) -> Line<'static> {
 
     let total = state.current_track.as_ref().and_then(|t| t.duration);
     let times = format!(
-        "{} / {}",
+        " {} / {}",
         format::duration(state.position),
         format::duration_opt(total)
     );
-    let times_suffix = format!(" {times}");
+
+    let sym_len = sym.chars().count();
+    let times_len = times.chars().count();
+
+    // Times and play symbol are never dropped.
+    if width <= sym_len {
+        return Line::from(Span::styled(
+            format::truncate(&sym, width),
+            status_style,
+        ));
+    }
+    if width <= sym_len + times_len {
+        return Line::from(vec![
+            Span::styled(format::truncate(&sym, sym_len.min(width)), status_style),
+            Span::styled(format::truncate(&times, width.saturating_sub(sym_len)), theme::text()),
+        ]);
+    }
 
     let subtitle = state
         .current_track
@@ -79,52 +94,38 @@ fn chrome_line(state: &PlayerState, width: usize) -> Line<'static> {
         ))
     };
 
-    let mut toggles = String::new();
+    let mut toggle_text = String::new();
     if state.repeat != RepeatMode::Off {
-        toggles.push_str(repeat_label(state.repeat));
+        toggle_text.push_str(repeat_label(state.repeat));
     }
     if state.shuffle {
-        if !toggles.is_empty() {
-            toggles.push_str("  ");
+        if !toggle_text.is_empty() {
+            toggle_text.push_str("  ");
         }
-        toggles.push_str("shuffle");
+        toggle_text.push_str("shuffle");
     }
-    let toggles = if toggles.is_empty() {
+    let toggles = if toggle_text.is_empty() {
         None
     } else {
-        Some(format!(" {toggles}"))
+        Some(format!(" {toggle_text}"))
     };
 
-    let mut include_subtitle = subtitle.is_some();
-    let mut include_seek = true;
     let mut include_volume = volume.is_some();
     let mut include_toggles = toggles.is_some();
+    let mut include_subtitle = subtitle.is_some();
+    let mut include_seek = true;
 
-    let sym_len = sym.chars().count();
-    let times_len = times_suffix.chars().count();
+    let volume_len = || volume.as_ref().map(|s| s.chars().count()).unwrap_or(0);
+    let toggles_len = || toggles.as_ref().map(|s| s.chars().count()).unwrap_or(0);
+    let subtitle_len = || subtitle.as_ref().map(|s| s.chars().count()).unwrap_or(0);
 
     loop {
-        let mut middle_len = 0usize;
-        if include_subtitle {
-            middle_len += subtitle.as_ref().map(|s| s.chars().count()).unwrap_or(0);
-        }
-        if include_seek {
-            middle_len += 1; // space before seek
-            middle_len += seek_bar_width(20); // provisional, recalculated below
-        }
+        let tail = if include_volume { volume_len() } else { 0 }
+            + if include_toggles { toggles_len() } else { 0 };
+        let middle_extra = if include_subtitle { subtitle_len() } else { 0 }
+            + if include_seek { 1 + 4 } else { 0 }; // space + minimal seek bar
 
-        let mut right_len = 0usize;
-        if include_volume {
-            right_len += volume.as_ref().map(|s| s.chars().count()).unwrap_or(0);
-        }
-        if include_toggles {
-            right_len += toggles.as_ref().map(|s| s.chars().count()).unwrap_or(0);
-        }
-
-        let overhead = sym_len + middle_len + right_len + times_len;
-        let title_budget = width.saturating_sub(overhead);
-
-        if title_budget >= 1 {
+        if sym_len + times_len + tail + middle_extra <= width {
             break;
         }
 
@@ -132,50 +133,32 @@ fn chrome_line(state: &PlayerState, width: usize) -> Line<'static> {
             include_toggles = false;
         } else if include_volume {
             include_volume = false;
-        } else if include_subtitle {
-            include_subtitle = false;
         } else if include_seek {
             include_seek = false;
+        } else if include_subtitle {
+            include_subtitle = false;
         } else {
             break;
         }
     }
 
-    // Recompute with actual seek width from whatever title space remains.
-    let right_text = {
-        let mut parts = String::new();
-        if include_volume {
-            parts.push_str(volume.as_deref().unwrap_or(""));
-        }
-        if include_toggles {
-            parts.push_str(toggles.as_deref().unwrap_or(""));
-        }
-        parts
-    };
-    let right_len = right_text.chars().count();
+    let tail_len = if include_volume { volume_len() } else { 0 }
+        + if include_toggles { toggles_len() } else { 0 };
+    let mut middle_budget = width.saturating_sub(sym_len + times_len + tail_len);
 
-    let fixed = sym_len + right_len + times_len;
-    let mut middle_budget = width.saturating_sub(fixed);
-    let truncated_title = {
-        let sub_len = if include_subtitle {
-            subtitle.as_ref().map(|s| s.chars().count()).unwrap_or(0)
-        } else {
-            0
-        };
-        let seek_space = if include_seek {
-            middle_budget.saturating_sub(sub_len + 1).min(20)
-        } else {
-            0
-        };
-        let seek_len = if include_seek && seek_space > 0 {
-            seek_space + 1
-        } else {
-            0
-        };
-        let title_w = middle_budget.saturating_sub(sub_len + seek_len);
-        format::truncate(title, title_w.max(1))
+    let sub_len = if include_subtitle {
+        subtitle.as_ref().map(|s| s.chars().count()).unwrap_or(0)
+    } else {
+        0
     };
-
+    let seek_len = if include_seek && middle_budget > sub_len + 1 {
+        (middle_budget.saturating_sub(sub_len + 1)).min(40)
+    } else {
+        0
+    };
+    let seek_prefix = if seek_len > 0 { 1 } else { 0 };
+    let title_w = middle_budget.saturating_sub(sub_len + seek_prefix + seek_len);
+    let truncated_title = format::truncate(title, title_w);
     let title_len = truncated_title.chars().count();
     middle_budget = middle_budget.saturating_sub(title_len);
 
@@ -186,25 +169,23 @@ fn chrome_line(state: &PlayerState, width: usize) -> Line<'static> {
 
     if include_subtitle {
         if let Some(sub) = &subtitle {
-            let sub_len = sub.chars().count();
-            if sub_len <= middle_budget {
+            let len = sub.chars().count();
+            if len <= middle_budget {
                 spans.push(Span::styled(sub.clone(), theme::subtitle()));
-                middle_budget = middle_budget.saturating_sub(sub_len);
+                middle_budget = middle_budget.saturating_sub(len);
             }
         }
     }
 
-    if include_seek && middle_budget > 1 {
-        let bar_w = middle_budget.saturating_sub(1).min(40);
-        if bar_w > 0 {
-            spans.push(Span::raw(" "));
-            middle_budget = middle_budget.saturating_sub(1);
-            let (done, todo) = seek_bar_parts(state, bar_w);
-            spans.push(Span::styled(done, theme::progress()));
-            spans.push(Span::styled(todo, theme::progress_track()));
-            middle_budget = middle_budget.saturating_sub(bar_w);
-        }
+    if seek_len > 0 && middle_budget >= seek_prefix + seek_len {
+        spans.push(Span::raw(" "));
+        middle_budget = middle_budget.saturating_sub(1);
+        let (done, todo) = seek_bar_parts(state, seek_len);
+        spans.push(Span::styled(done, theme::progress()));
+        spans.push(Span::styled(todo, theme::progress_track()));
     }
+
+    spans.push(Span::styled(times, theme::text()));
 
     if include_volume {
         if let Some(vol) = &volume {
@@ -231,25 +212,22 @@ fn chrome_line(state: &PlayerState, width: usize) -> Line<'static> {
             } else {
                 theme::toggle_off()
             };
-            if tog.contains("shuffle") && state.shuffle {
-                if let Some(repeat) = (state.repeat != RepeatMode::Off)
-                    .then(|| repeat_label(state.repeat))
-                {
-                    spans.push(Span::styled(format!(" {repeat}  "), repeat_style));
-                }
+            if state.shuffle && state.repeat != RepeatMode::Off {
+                spans.push(Span::styled(
+                    format!(" {}", repeat_label(state.repeat)),
+                    repeat_style,
+                ));
+                spans.push(Span::raw("  "));
                 spans.push(Span::styled("shuffle".to_string(), shuffle_style));
+            } else if state.shuffle {
+                spans.push(Span::styled(tog.clone(), shuffle_style));
             } else {
                 spans.push(Span::styled(tog.clone(), repeat_style));
             }
         }
     }
 
-    spans.push(Span::styled(times_suffix, theme::text()));
     Line::from(spans)
-}
-
-fn seek_bar_width(max: usize) -> usize {
-    max.min(20)
 }
 
 fn seek_bar_parts(state: &PlayerState, width: usize) -> (String, String) {
