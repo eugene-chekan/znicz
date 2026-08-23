@@ -335,6 +335,23 @@ impl LibraryPane {
 }
 
 #[cfg(test)]
+impl LibraryPane {
+    pub(crate) fn inject_albums_for_test(&mut self, albums: Vec<AlbumSummary>) {
+        self.albums = albums;
+        self.mode = Mode::Albums;
+        self.notice = None;
+        self.cursor.clamp(self.albums.len());
+    }
+
+    pub(crate) fn inject_tracks_for_test(&mut self, tracks: Vec<Track>) {
+        self.tracks = tracks;
+        self.mode = Mode::Album("test".into());
+        self.notice = None;
+        self.cursor.clamp(self.tracks.len());
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -388,6 +405,48 @@ mod tests {
         let mut pane = LibraryPane::new(None);
         pane.pan(5, 4);
         assert_eq!(pane.h_offset(), 0);
+    }
+
+    #[test]
+    fn pan_moves_offset_when_middle_is_longer_than_slot() {
+        let mut pane = LibraryPane::new(None);
+        pane.inject_albums_for_test(vec![AlbumSummary {
+            album: "x".repeat(50),
+            album_artist: None,
+            year: None,
+            track_count: 1,
+            total_secs: Some(125.0),
+        }]);
+        let slot = 20;
+        assert!(
+            pane.longest_middle() > slot,
+            "fixture should be longer than the slot"
+        );
+        pane.pan(1, slot);
+        assert_eq!(pane.h_offset(), 1);
+        pane.pan(2, slot);
+        assert_eq!(pane.h_offset(), 3);
+    }
+
+    #[test]
+    fn clamp_pan_shrinks_offset_when_slot_grows() {
+        let mut pane = LibraryPane::new(None);
+        pane.inject_albums_for_test(vec![AlbumSummary {
+            album: "x".repeat(50),
+            album_artist: None,
+            year: None,
+            track_count: 1,
+            total_secs: Some(125.0),
+        }]);
+        let narrow = 10;
+        let wide = 30;
+        pane.pan(100, narrow);
+        let max_narrow = pane.longest_middle().saturating_sub(narrow);
+        assert_eq!(pane.h_offset(), max_narrow);
+        pane.clamp_pan(wide);
+        let max_wide = pane.longest_middle().saturating_sub(wide);
+        assert_eq!(pane.h_offset(), max_wide);
+        assert!(max_wide < max_narrow);
     }
 
     #[test]

@@ -38,7 +38,7 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
 
     let list = chunks[0];
     app.list_width = list.width;
-    app.title_slot = crate::layout::strip_inner(list, app.queue_open).saturating_sub(8);
+    app.title_slot = library::title_slot(&app.library, crate::layout::strip_inner(list, app.queue_open));
     app.library.clamp_pan(app.title_slot);
 
     library::render(frame, list, app);
