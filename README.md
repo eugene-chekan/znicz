@@ -76,16 +76,13 @@ The index is a SQLite file, by default `~/.local/share/znicz/library.db`
 
 ## The interface
 
-Three panes, switched with `Tab` or `1`/`2`/`3`:
-
-- **Queue** — what plays next, by track title rather than file name
-- **Library** — albums, album tracks and search results
-- **Devices** — pick the output, and see what the open stream settled on
-
-Above them sits the now-playing header with the seek bar and the signal path,
-for example `FLAC 96 kHz 24-bit 2882 kbps stereo → 96 kHz stereo  ● bit perfect`.
+The library is the home screen. The queue is a side overlay (`]`), and devices
+are a modal (`,`). Transport sits on two lines at the bottom: now playing plus
+the signal path, for example
+`FLAC 96 kHz 24-bit 2882 kbps stereo → 96 kHz stereo  ● bit perfect`.
 When the device will not take the file's own rate the badge reads `▲ resampled`,
-so a silent conversion never goes unnoticed.
+so a silent conversion never goes unnoticed. Long titles pan with
+`Alt-←` / `Alt-→` on the highlighted row.
 
 Press `?` in the player for the full keymap. The essentials:
 
@@ -102,7 +99,10 @@ Press `?` in the player for the full keymap. The essentials:
 | a / A | Add the selection / everything listed to the queue |
 | d / C | Remove from the queue / clear it |
 | / | Search the library |
-| Tab, 1 2 3 | Switch pane |
+| ] | Open / close the queue |
+| Tab | Library ↔ queue (opens the drawer if needed) |
+| Alt-← / Alt-→ | Pan a long title |
+| , | Devices |
 | ? / q | Help / quit |
 
 To see the layout without starting the player:

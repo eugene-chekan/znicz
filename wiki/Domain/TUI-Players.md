@@ -41,7 +41,7 @@ problems specific to this kind of program:
   which is what the help overlay is for.
 
 Conventions worth borrowing from other players: `Space` for pause, `/` to search,
-`j`/`k` to move (from vim and `less`), `Tab` to change pane, `?` for help.
+`j`/`k` to move (from vim and `less`), `]` for the queue drawer, `?` for help.
 
 ## Keys
 

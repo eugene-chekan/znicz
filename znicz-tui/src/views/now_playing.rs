@@ -179,7 +179,6 @@ fn chrome_line(state: &PlayerState, width: usize) -> Line<'static> {
 
     if seek_len > 0 && middle_budget >= seek_prefix + seek_len {
         spans.push(Span::raw(" "));
-        middle_budget = middle_budget.saturating_sub(1);
         let (done, todo) = seek_bar_parts(state, seek_len);
         spans.push(Span::styled(done, theme::progress()));
         spans.push(Span::styled(todo, theme::progress_track()));
