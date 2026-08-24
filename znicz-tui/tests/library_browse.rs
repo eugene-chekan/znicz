@@ -6,12 +6,12 @@
 use std::path::{Path, PathBuf};
 use std::process::Command as Shell;
 
-use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use znicz_core::{AudioConfig, spawn_player};
+use ratatui::Terminal;
+use znicz_core::{spawn_player, AudioConfig};
 use znicz_library::Library;
 use znicz_tui::library_pane::Mode;
-use znicz_tui::{App, views};
+use znicz_tui::{views, App};
 
 fn ffmpeg_available() -> bool {
     Shell::new("ffmpeg")

@@ -7,10 +7,10 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use znicz_core::{AudioConfig, Command, PlayerHandle, spawn_player};
-use znicz_tui::{App, Focus, Modal, views};
+use ratatui::Terminal;
+use znicz_core::{spawn_player, AudioConfig, Command, PlayerHandle};
+use znicz_tui::{views, App, Focus, Modal};
 
 /// Sizes worth checking: a default terminal, a wide one, a cramped one, and a
 /// window small enough that panes have to be dropped.
@@ -32,12 +32,48 @@ fn player() -> PlayerHandle {
 }
 
 fn draw(app: &mut App, width: u16, height: u16) -> String {
-    let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test terminal");
     let state = app.state();
+    draw_with(app, &state, width, height)
+}
+
+fn draw_with(app: &mut App, state: &znicz_core::PlayerState, width: u16, height: u16) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test terminal");
     terminal
-        .draw(|frame| views::render(frame, app, &state))
+        .draw(|frame| views::render(frame, app, state))
         .expect("draw");
     dump(&terminal)
+}
+
+fn playing_state() -> znicz_core::PlayerState {
+    use znicz_core::{OutputInfo, PlaybackStatus, PlayerState, TrackInfo, TrackTags};
+
+    PlayerState {
+        status: PlaybackStatus::Playing,
+        current_track: Some(TrackInfo {
+            path: PathBuf::from("/music/sour-times.flac"),
+            title: "Sour Times".into(),
+            codec: "FLAC".into(),
+            sample_rate: 96_000,
+            channels: 2,
+            bits_per_sample: Some(24),
+            bitrate_kbps: Some(2882),
+            duration: Some(Duration::from_secs(251)),
+            tags: TrackTags {
+                title: Some("Sour Times".into()),
+                artist: Some("Portishead".into()),
+                album: Some("Dummy".into()),
+                ..TrackTags::default()
+            },
+        }),
+        device_name: Some("Topping E30 II".into()),
+        output: Some(OutputInfo {
+            sample_rate: 96_000,
+            channels: 2,
+            sample_format: "f32".into(),
+            bit_perfect: true,
+        }),
+        ..PlayerState::default()
+    }
 }
 
 /// The rendered screen as text, one line per terminal row.
@@ -96,6 +132,17 @@ fn every_view_draws_at_every_size() {
             "devices at {width}x{height} should fill the window"
         );
     }
+
+    for &(width, height) in SIZES {
+        let mut app = App::with_library(player(), None);
+        app.modal = Modal::Inspector;
+        let screen = draw(&mut app, width, height);
+        assert_eq!(
+            screen.lines().count(),
+            height as usize,
+            "inspector at {width}x{height} should fill the window"
+        );
+    }
 }
 
 #[test]
@@ -113,6 +160,26 @@ fn the_help_overlay_draws_at_every_size() {
     assert!(screen.contains("Keys"), "the overlay needs its title");
     assert!(screen.contains("play / pause"), "bindings should be listed");
     assert!(screen.contains("search the library"));
+    assert!(screen.contains("signal inspector"));
+}
+
+#[test]
+fn the_signal_inspector_shows_the_device_sample_format() {
+    let mut app = App::with_library(player(), None);
+    app.modal = Modal::Inspector;
+
+    let idle = draw(&mut app, 90, 24);
+    assert!(idle.contains("Signal"), "{idle}");
+    assert!(idle.contains("No file is playing"), "{idle}");
+
+    let playing = draw_with(&mut app, &playing_state(), 90, 24);
+    assert!(playing.contains("Signal"), "{playing}");
+    assert!(
+        playing.contains("f32"),
+        "sample format belongs here:\n{playing}"
+    );
+    assert!(playing.contains("bit perfect"), "{playing}");
+    assert!(playing.contains("96 kHz"), "{playing}");
 }
 
 #[test]
@@ -161,6 +228,18 @@ fn transport_sits_at_the_bottom_and_drops_the_signal_line_when_short() {
 }
 
 #[test]
+fn a_success_toast_has_its_own_box_and_mark() {
+    let mut app = App::with_library(player(), None);
+    app.toasts.success("queue cleared");
+    let screen = draw(&mut app, 90, 24);
+    assert!(screen.contains("queue cleared"), "{screen}");
+    assert!(
+        screen.contains('●'),
+        "success should carry a level mark:\n{screen}"
+    );
+}
+
+#[test]
 fn hints_stay_when_a_toast_is_showing() {
     let mut app = App::with_library(player(), None);
     app.toasts.error("could not open device");
@@ -169,6 +248,20 @@ fn hints_stay_when_a_toast_is_showing() {
     assert!(
         screen.contains("? help") || screen.contains("search"),
         "hints must remain:\n{screen}"
+    );
+    assert!(
+        screen.contains('×'),
+        "errors should carry a level mark:\n{screen}"
+    );
+    let lines: Vec<&str> = screen.lines().collect();
+    let toast_row = lines
+        .iter()
+        .position(|line| line.contains("could not open device"))
+        .expect("toast text");
+    let last_list_row = lines.len().saturating_sub(4); // transport (2) + hints (1), 0-based
+    assert!(
+        toast_row < last_list_row,
+        "toast must sit above the pane border, not on it:\n{screen}"
     );
 }
 

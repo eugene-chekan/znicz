@@ -77,7 +77,9 @@ The index is a SQLite file, by default `~/.local/share/znicz/library.db`
 ## The interface
 
 The library is the home screen. The queue is a side overlay (`]`), and devices
-are a modal (`,`). Transport sits on two lines at the bottom: now playing plus
+are a modal (`,`). `i` opens a signal inspector with the full file → device
+path, including the device sample format that stays off the transport line.
+Transport sits on two lines at the bottom: now playing plus
 the signal path, for example
 `FLAC 96 kHz 24-bit 2882 kbps stereo → 96 kHz stereo  ● bit perfect`.
 When the device will not take the file's own rate the badge reads `▲ resampled`,
@@ -102,6 +104,7 @@ Press `?` in the player for the full keymap. The essentials:
 | ] | Open / close the queue |
 | Tab | Library ↔ queue (opens the drawer if needed) |
 | Alt-← / Alt-→ | Pan a long title |
+| i | Signal inspector |
 | , | Devices |
 | ? / q | Help / quit |
 

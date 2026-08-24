@@ -46,23 +46,43 @@ pub fn is_sheet(list_width: u16, open: bool) -> bool {
     open && list_width <= DRAWER_WIDTH.saturating_add(MIN_STRIP)
 }
 
-/// Bottom-right boxes for up to three toast lines inside `list`.
+/// Height of one boxed toast, including its own border.
+pub const TOAST_BOX_HEIGHT: u16 = 3;
+/// Gap from the pane border, so the toast does not sit on the line.
+pub const TOAST_INSET: u16 = 1;
+
+/// Bottom-right boxes for up to three toasts, inset from the pane border.
 pub fn toast_areas(list: Rect, count: u16, line_width: u16) -> Vec<Rect> {
     let count = count.min(3);
     if count == 0 || list.width == 0 || list.height == 0 {
         return Vec::new();
     }
-    let width = line_width.min(list.width).max(1);
-    let x = list.x + list.width.saturating_sub(width);
+
+    let boxed = list.height >= 5 && list.width >= 12;
+    let inset = if boxed { TOAST_INSET } else { 0 };
+    let height = if boxed { TOAST_BOX_HEIGHT } else { 1 };
+    let width = line_width
+        .min(list.width.saturating_sub(inset.saturating_mul(2)))
+        .max(1);
+    let x = list.x + list.width.saturating_sub(width).saturating_sub(inset);
+
     (0..count)
-        .map(|i| {
-            let y = list.y + list.height.saturating_sub(1).saturating_sub(i);
-            Rect {
+        .filter_map(|i| {
+            let stacked = height.saturating_mul(i + 1);
+            let y = list
+                .y
+                .saturating_add(list.height)
+                .saturating_sub(inset)
+                .saturating_sub(stacked);
+            if y < list.y {
+                return None;
+            }
+            Some(Rect {
                 x,
                 y,
                 width,
-                height: 1,
-            }
+                height,
+            })
         })
         .collect()
 }
@@ -124,8 +144,26 @@ mod tests {
         let list = Rect::new(0, 0, 80, 10);
         let areas = toast_areas(list, 3, 32);
         assert_eq!(areas.len(), 3);
-        assert_eq!(areas[0], Rect::new(48, 9, 32, 1));
-        assert_eq!(areas[1], Rect::new(48, 8, 32, 1));
-        assert_eq!(areas[2], Rect::new(48, 7, 32, 1));
+        // Inset 1 from the right and from the bottom; each box is 3 rows.
+        assert_eq!(areas[0], Rect::new(47, 6, 32, 3));
+        assert_eq!(areas[1], Rect::new(47, 3, 32, 3));
+        assert_eq!(areas[2], Rect::new(47, 0, 32, 3));
+        assert!(
+            areas[0].bottom() < list.bottom(),
+            "must not sit on the pane's bottom border"
+        );
+        assert!(
+            areas[0].right() < list.right(),
+            "must not sit on the pane's right border"
+        );
+    }
+
+    #[test]
+    fn a_tiny_list_falls_back_to_a_single_line() {
+        let list = Rect::new(0, 0, 20, 3);
+        let areas = toast_areas(list, 1, 32);
+        assert_eq!(areas.len(), 1);
+        assert_eq!(areas[0].height, 1);
+        assert_eq!(areas[0].y, 2);
     }
 }

@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use znicz_core::{AudioConfig, Command, PlayerHandle, RepeatMode, spawn_player};
+use znicz_core::{spawn_player, AudioConfig, Command, PlayerHandle, RepeatMode};
 use znicz_tui::{App, Focus, Modal};
 
 fn player() -> PlayerHandle {
@@ -120,6 +120,47 @@ fn comma_toggles_the_devices_modal() {
 
     press(&mut app, KeyCode::Esc);
     assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn i_toggles_the_signal_inspector() {
+    let mut app = new_app();
+    assert_eq!(app.modal, Modal::None);
+
+    press_char(&mut app, 'i');
+    assert_eq!(app.modal, Modal::Inspector);
+
+    press_char(&mut app, 'i');
+    assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn esc_closes_the_inspector() {
+    let mut app = new_app();
+    press_char(&mut app, 'i');
+    assert_eq!(app.modal, Modal::Inspector);
+
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn inspector_ignores_list_movement() {
+    let mut app = new_app();
+    press_char(&mut app, 'i');
+    press_char(&mut app, 'j');
+    press_char(&mut app, 'k');
+    assert_eq!(app.modal, Modal::Inspector);
+}
+
+#[test]
+fn i_replaces_the_devices_modal() {
+    let mut app = new_app();
+    press_char(&mut app, ',');
+    assert_eq!(app.modal, Modal::Devices);
+
+    press_char(&mut app, 'i');
+    assert_eq!(app.modal, Modal::Inspector);
 }
 
 #[test]

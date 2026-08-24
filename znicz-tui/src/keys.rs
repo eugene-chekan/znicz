@@ -28,6 +28,7 @@ pub const GLOBAL: &[Binding] = &[
     b("]", "open / close queue"),
     b("Tab", "library ↔ queue"),
     b("Alt-← / Alt-→", "pan titles"),
+    b("i", "signal inspector"),
     b(",", "devices"),
     b("?", "this help"),
     b("q", "quit"),
@@ -66,9 +67,14 @@ pub const DEVICES: &[Binding] = &[
 /// Short hints for the footer, per pane.
 pub fn hints(pane: &str) -> &'static str {
     match pane {
-        "Queue" => "Enter play · d remove · C clear · o jump · Alt-← / Alt-→ pan · ] close · ? help",
-        "Library" => "/ search · a add · ] queue · Alt-← / Alt-→ pan · , devices · ? help",
+        "Queue" => {
+            "Enter play · d remove · C clear · o jump · Alt-← / Alt-→ pan · ] close · ? help"
+        }
+        "Library" => {
+            "/ search · a add · ] queue · i inspect · Alt-← / Alt-→ pan · , devices · ? help"
+        }
         "Devices" => "Enter select · R rescan · Esc close · ? help",
+        "Inspector" => "i / Esc close · Space pause · ? help",
         _ => "] queue · ? help · q quit",
     }
 }
@@ -107,7 +113,18 @@ mod tests {
             "global help should document Alt-arrow pan"
         );
         assert!(
-            GLOBAL.iter().all(|b| !b.keys.contains('<') && !b.keys.contains('>')),
+            GLOBAL.iter().any(|b| b.keys == "i"),
+            "global help should document the signal inspector"
+        );
+        assert!(
+            hints("Library").contains("i inspect"),
+            "library hints should mention inspect, got {}",
+            hints("Library")
+        );
+        assert!(
+            GLOBAL
+                .iter()
+                .all(|b| !b.keys.contains('<') && !b.keys.contains('>')),
             "< and > must not appear in the keymap"
         );
     }

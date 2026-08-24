@@ -3,10 +3,10 @@
 //! Worth its own pane in a player that cares about the signal path: the device
 //! decides whether the file's own sample rate can be used at all.
 
-use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
+use ratatui::Frame;
 use znicz_core::PlayerState;
 
 use crate::app::{App, Modal};

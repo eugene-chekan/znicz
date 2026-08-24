@@ -65,15 +65,15 @@ fn chrome_line(state: &PlayerState, width: usize) -> Line<'static> {
 
     // Times and play symbol are never dropped.
     if width <= sym_len {
-        return Line::from(Span::styled(
-            format::truncate(&sym, width),
-            status_style,
-        ));
+        return Line::from(Span::styled(format::truncate(&sym, width), status_style));
     }
     if width <= sym_len + times_len {
         return Line::from(vec![
             Span::styled(format::truncate(&sym, sym_len.min(width)), status_style),
-            Span::styled(format::truncate(&times, width.saturating_sub(sym_len)), theme::text()),
+            Span::styled(
+                format::truncate(&times, width.saturating_sub(sym_len)),
+                theme::text(),
+            ),
         ]);
     }
 

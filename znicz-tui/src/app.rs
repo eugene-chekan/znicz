@@ -37,6 +37,7 @@ pub enum Modal {
     None,
     Help,
     Devices,
+    Inspector,
 }
 
 pub struct App {
@@ -180,6 +181,10 @@ impl App {
             return;
         }
 
+        if self.modal == Modal::Inspector {
+            return;
+        }
+
         match self.focus {
             Focus::Queue => self.on_queue_key(key),
             Focus::Library => self.on_library_key(key),
@@ -187,7 +192,7 @@ impl App {
     }
 
     fn on_esc(&mut self) {
-        if self.modal == Modal::Devices {
+        if matches!(self.modal, Modal::Devices | Modal::Inspector) {
             self.modal = Modal::None;
         } else if self.focus == Focus::Queue && self.queue_open {
             self.close_queue();
@@ -227,6 +232,7 @@ impl App {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('?') => self.modal = Modal::Help,
             KeyCode::Char(',') => self.toggle_devices_modal(),
+            KeyCode::Char('i') => self.toggle_inspector_modal(),
 
             KeyCode::Char(']') => {
                 if self.queue_open {
@@ -320,6 +326,14 @@ impl App {
         };
     }
 
+    fn toggle_inspector_modal(&mut self) {
+        self.modal = if self.modal == Modal::Inspector {
+            Modal::None
+        } else {
+            Modal::Inspector
+        };
+    }
+
     fn on_queue_key(&mut self, key: KeyEvent) {
         let state = self.player.state();
         match key.code {
@@ -354,7 +368,7 @@ impl App {
             KeyCode::Char('/') => self.library.begin_search(),
             KeyCode::Char('R') => {
                 self.library.reload_albums();
-                self.toasts.info("library reloaded");
+                self.toasts.success("library reloaded");
             }
             KeyCode::Enter => self.library_enter(),
             KeyCode::Char('a') => {
@@ -445,6 +459,9 @@ impl App {
 
     fn step(&mut self, delta: isize) {
         let len = self.list_len();
+        if self.modal == Modal::Inspector {
+            return;
+        }
         if self.modal == Modal::Devices {
             self.device_cursor.step(delta, len);
         } else if self.focus == Focus::Queue && self.queue_open {
@@ -457,6 +474,9 @@ impl App {
 
     fn page(&mut self, delta: isize) {
         let len = self.list_len();
+        if self.modal == Modal::Inspector {
+            return;
+        }
         if self.modal == Modal::Devices {
             self.device_cursor.page(delta, len);
         } else if self.focus == Focus::Queue && self.queue_open {
@@ -468,6 +488,9 @@ impl App {
     }
 
     fn go_first(&mut self) {
+        if self.modal == Modal::Inspector {
+            return;
+        }
         if self.modal == Modal::Devices {
             self.device_cursor.first();
         } else if self.focus == Focus::Queue && self.queue_open {
@@ -480,6 +503,9 @@ impl App {
 
     fn go_last(&mut self) {
         let len = self.list_len();
+        if self.modal == Modal::Inspector {
+            return;
+        }
         if self.modal == Modal::Devices {
             self.device_cursor.last(len);
         } else if self.focus == Focus::Queue && self.queue_open {
@@ -500,7 +526,7 @@ impl App {
         match self.player.send_blocking(command) {
             Ok(()) => {
                 if let Some(message) = success {
-                    self.toasts.info(message);
+                    self.toasts.success(message);
                 }
             }
             Err(e) => self.toasts.error(e.to_string()),
@@ -571,7 +597,9 @@ impl App {
     }
 
     fn pan_queue(&mut self, dir: isize) {
-        let max = self.selected_queue_middle().saturating_sub(self.queue_title_slot) as isize;
+        let max = self
+            .selected_queue_middle()
+            .saturating_sub(self.queue_title_slot) as isize;
         let next = self.queue_h_offset as isize + dir;
         self.queue_h_offset = next.clamp(0, max.max(0)) as usize;
     }
@@ -609,7 +637,9 @@ impl App {
     }
 
     pub(crate) fn clamp_queue_pan(&mut self) {
-        let max = self.selected_queue_middle().saturating_sub(self.queue_title_slot);
+        let max = self
+            .selected_queue_middle()
+            .saturating_sub(self.queue_title_slot);
         self.queue_h_offset = self.queue_h_offset.min(max);
     }
 
@@ -731,11 +761,7 @@ mod tests {
 
         app.on_key(KeyEvent::new(KeyCode::Char('>'), KeyModifiers::NONE));
         app.on_key(KeyEvent::new(KeyCode::Char('<'), KeyModifiers::ALT));
-        assert_eq!(
-            app.library.h_offset(),
-            0,
-            "< and > should not pan or bind"
-        );
+        assert_eq!(app.library.h_offset(), 0, "< and > should not pan or bind");
 
         app.on_key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT));
         assert_eq!(app.library.h_offset(), 1, "Alt+→ should pan titles");

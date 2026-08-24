@@ -1,25 +1,25 @@
 //! The queue: what plays next, with real track names.
 
-use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
+use ratatui::Frame;
 use znicz_core::PlayerState;
 
-use crate::app::{App, Focus};
+use crate::app::{App, Focus, Modal};
 use crate::format;
 use crate::theme;
 use crate::views;
 use crate::views::now_playing;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &PlayerState) {
-    let focused = app.focus == Focus::Queue;
+    let focused =
+        app.focus == Focus::Queue && !matches!(app.modal, Modal::Devices | Modal::Inspector);
     let width = views::inner_width(area);
 
     if state.queue.is_empty() {
         let block = views::pane_block("Queue", focused, None);
-        let hint =
-            views::placeholder("Queue is empty. Add tracks from the library with a or A.");
+        let hint = views::placeholder("Queue is empty. Add tracks from the library with a or A.");
         frame.render_widget(Paragraph::new(hint).block(block), area);
         return;
     }

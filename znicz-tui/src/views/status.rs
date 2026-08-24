@@ -1,9 +1,9 @@
 //! The hint line at the bottom of the frame.
 
-use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
+use ratatui::Frame;
 
 use crate::app::{App, Focus, Modal};
 use crate::keys;
@@ -18,6 +18,7 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
 fn hints_for(app: &App) -> &'static str {
     let pane = match app.modal {
         Modal::Devices => "Devices",
+        Modal::Inspector => "Inspector",
         _ => match app.focus {
             Focus::Queue => "Queue",
             Focus::Library => "Library",
