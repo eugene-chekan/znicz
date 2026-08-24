@@ -8,9 +8,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 use znicz_library::{AlbumSummary, Track};
 
-use crate::app::{App, Pane};
+use crate::app::{App, Focus, Modal};
 use crate::format;
-use crate::library_pane::Mode;
+use crate::library_pane::{LibraryPane, Mode};
 use crate::theme;
 use crate::views;
 
@@ -38,8 +38,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         frame.render_widget(Paragraph::new(prompt), prompt_area);
     }
 
-    let focused = app.pane == Pane::Library;
-    let width = views::inner_width(list_area);
+    let focused = app.focus == Focus::Library && app.modal != Modal::Devices;
+    let strip = crate::layout::strip_inner(list_area, app.queue_open);
     let title = match app.library.mode() {
         Mode::Albums => "Library".to_string(),
         Mode::AllTracks => "Library / all tracks".to_string(),
@@ -65,13 +65,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             .library
             .albums()
             .iter()
-            .map(|album| album_row(album, width))
+            .enumerate()
+            .map(|(i, album)| album_row(album, strip, app.library.offset_for(i)))
             .collect(),
         _ => app
             .library
             .tracks()
             .iter()
-            .map(|track| track_row(track, width))
+            .enumerate()
+            .map(|(i, track)| track_row(track, strip, app.library.offset_for(i)))
             .collect(),
     };
 
@@ -94,45 +96,33 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_stateful_widget(list, list_area, &mut state);
 }
 
-fn album_row(album: &AlbumSummary, width: usize) -> ListItem<'static> {
-    let year = album.year.map(|y| format!(" ({y})")).unwrap_or_default();
-    let artist = album.album_artist.as_deref().unwrap_or("Unknown artist");
-
-    let right = match album.total_secs {
-        Some(secs) => format!(
-            "{} · {}",
-            tracks_label(album.track_count),
-            format::duration(Duration::from_secs_f64(secs))
-        ),
-        None => tracks_label(album.track_count),
-    };
-
-    let left = format!("{}{year} — {artist}", album.album);
-    let left = format::truncate(&left, width.saturating_sub(right.chars().count() + 2));
-    let pad = width.saturating_sub(left.chars().count() + right.chars().count());
+fn album_row(album: &AlbumSummary, strip: usize, offset: usize) -> ListItem<'static> {
+    let right = album_right(album);
+    let fixed = album_fixed(album);
+    let middle = format::pan(
+        &LibraryPane::album_middle(album),
+        offset,
+        strip.saturating_sub(fixed),
+    );
+    let pad = strip.saturating_sub(middle.chars().count() + right.chars().count());
 
     ListItem::new(Line::from(vec![
-        Span::styled(left, theme::text()),
+        Span::styled(middle, theme::text()),
         Span::raw(" ".repeat(pad)),
         Span::styled(right, theme::dim()),
     ]))
 }
 
-fn track_row(track: &Track, width: usize) -> ListItem<'static> {
-    let number = track
-        .track_number
-        .map(|n| format!("{n:>2} "))
-        .unwrap_or_else(|| "   ".to_string());
+fn track_row(track: &Track, strip: usize, offset: usize) -> ListItem<'static> {
+    let number = track_number(track);
     let time = format::duration_opt(track.duration_secs.map(Duration::from_secs_f64));
-
-    let label = match track.artist.as_deref() {
-        Some(artist) => format!("{} — {artist}", track.title),
-        None => track.title.clone(),
-    };
-
-    let fixed = number.chars().count() + time.chars().count() + 2;
-    let label = format::truncate(&label, width.saturating_sub(fixed));
-    let pad = width
+    let fixed = track_fixed(track);
+    let label = format::pan(
+        &LibraryPane::track_middle(track),
+        offset,
+        strip.saturating_sub(fixed),
+    );
+    let pad = strip
         .saturating_sub(fixed + label.chars().count())
         .saturating_add(1);
 
@@ -142,6 +132,52 @@ fn track_row(track: &Track, width: usize) -> ListItem<'static> {
         Span::raw(" ".repeat(pad)),
         Span::styled(time, theme::dim()),
     ]))
+}
+
+fn album_right(album: &AlbumSummary) -> String {
+    match album.total_secs {
+        Some(secs) => format!(
+            "{} · {}",
+            tracks_label(album.track_count),
+            format::duration(Duration::from_secs_f64(secs))
+        ),
+        None => tracks_label(album.track_count),
+    }
+}
+
+fn album_fixed(album: &AlbumSummary) -> usize {
+    album_right(album).chars().count() + 2
+}
+
+fn track_number(track: &Track) -> String {
+    track
+        .track_number
+        .map(|n| format!("{n:>2} "))
+        .unwrap_or_else(|| "   ".to_string())
+}
+
+fn track_fixed(track: &Track) -> usize {
+    let time = format::duration_opt(track.duration_secs.map(Duration::from_secs_f64));
+    track_number(track).chars().count() + time.chars().count() + 2
+}
+
+/// Width available for the title column after reserving fixed right-side columns.
+pub(crate) fn title_slot(pane: &LibraryPane, strip: usize) -> usize {
+    let fixed = match pane.mode() {
+        Mode::Albums => pane
+            .albums()
+            .iter()
+            .map(album_fixed)
+            .max()
+            .unwrap_or(0),
+        _ => pane
+            .tracks()
+            .iter()
+            .map(track_fixed)
+            .max()
+            .unwrap_or(0),
+    };
+    strip.saturating_sub(fixed)
 }
 
 fn tracks_label(count: u32) -> String {
@@ -161,5 +197,47 @@ mod tests {
         assert_eq!(tracks_label(1), "1 track");
         assert_eq!(tracks_label(0), "0 tracks");
         assert_eq!(tracks_label(12), "12 tracks");
+    }
+
+    #[test]
+    fn title_slot_matches_strip_minus_max_fixed_for_albums() {
+        let album = AlbumSummary {
+            album: "Long Album Title".to_string(),
+            album_artist: Some("Artist".to_string()),
+            year: Some(2020),
+            track_count: 12,
+            total_secs: Some(3600.0),
+        };
+        let mut pane = LibraryPane::new(None);
+        pane.inject_albums_for_test(vec![album.clone()]);
+        let strip: usize = 60;
+        assert_eq!(title_slot(&pane, strip), strip.saturating_sub(album_fixed(&album)));
+    }
+
+    #[test]
+    fn title_slot_matches_strip_minus_max_fixed_for_tracks() {
+        use std::path::PathBuf;
+
+        let track = Track {
+            id: 1,
+            path: PathBuf::from("/music/track.flac"),
+            title: "A Very Long Track Title Indeed".to_string(),
+            artist: Some("Performer".to_string()),
+            album: Some("Album".to_string()),
+            album_artist: None,
+            genre: None,
+            year: None,
+            track_number: Some(3),
+            disc_number: None,
+            codec: None,
+            sample_rate: None,
+            channels: None,
+            bits_per_sample: None,
+            duration_secs: Some(245.0),
+        };
+        let mut pane = LibraryPane::new(None);
+        pane.inject_tracks_for_test(vec![track.clone()]);
+        let strip: usize = 55;
+        assert_eq!(title_slot(&pane, strip), strip.saturating_sub(track_fixed(&track)));
     }
 }

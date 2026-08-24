@@ -6,20 +6,20 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 use znicz_core::PlayerState;
 
-use crate::app::{App, Pane};
+use crate::app::{App, Focus};
 use crate::format;
 use crate::theme;
 use crate::views;
 use crate::views::now_playing;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &PlayerState) {
-    let focused = app.pane == Pane::Queue;
+    let focused = app.focus == Focus::Queue;
     let width = views::inner_width(area);
 
     if state.queue.is_empty() {
         let block = views::pane_block("Queue", focused, None);
         let hint =
-            views::placeholder("Queue is empty. Press 2 for the library, then a to add tracks.");
+            views::placeholder("Queue is empty. Add tracks from the library with a or A.");
         frame.render_widget(Paragraph::new(hint).block(block), area);
         return;
     }
@@ -50,7 +50,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &PlayerState) {
 
             // number + marker + gap + time
             let fixed = index_width + 2 + 2 + time.chars().count() + 1;
-            let label = format::truncate(&label, width.saturating_sub(fixed));
+            let label = format::pan(
+                &label,
+                app.queue_offset_for(i, state.queue.len()),
+                width.saturating_sub(fixed),
+            );
 
             let marker = if is_playing {
                 now_playing::status_symbol(state.status)
@@ -99,4 +103,22 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &PlayerState) {
     let mut list_state = ListState::default();
     list_state.select(app.queue_cursor.selected(state.queue.len()));
     frame.render_stateful_widget(list, area, &mut list_state);
+}
+
+/// Width left for the title after pinning index, marker, and duration.
+pub(crate) fn title_slot(app: &App, state: &PlayerState, width: usize) -> usize {
+    if state.queue.is_empty() {
+        return width;
+    }
+    let index_width = state.queue.len().to_string().len().max(2);
+    let fixed = state
+        .queue
+        .iter()
+        .map(|path| {
+            let time = format::duration_opt(app.meta.get(path).and_then(|e| e.duration));
+            index_width + 2 + 2 + time.chars().count() + 1
+        })
+        .max()
+        .unwrap_or(0);
+    width.saturating_sub(fixed)
 }

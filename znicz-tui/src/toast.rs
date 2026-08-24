@@ -98,6 +98,12 @@ impl Toasts {
     pub fn recent(&self) -> &[Toast] {
         &self.items
     }
+
+    /// Up to three newest messages for the toast overlay.
+    pub fn visible(&self) -> &[Toast] {
+        let n = self.recent().len().min(3);
+        &self.recent()[..n]
+    }
 }
 
 #[cfg(test)]

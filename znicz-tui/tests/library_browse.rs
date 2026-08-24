@@ -10,7 +10,6 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use znicz_core::{AudioConfig, spawn_player};
 use znicz_library::Library;
-use znicz_tui::app::Pane;
 use znicz_tui::library_pane::Mode;
 use znicz_tui::{App, views};
 
@@ -76,12 +75,10 @@ fn app_with_library(dir: &Path) -> App {
     library.scan(dir).expect("scan");
 
     let (player, _thread) = spawn_player(AudioConfig::default());
-    let mut app = App::with_library(player, Some(library));
-    app.pane = Pane::Library;
-    app
+    App::with_library(player, Some(library))
 }
 
-fn draw(app: &App) -> String {
+fn draw(app: &mut App) -> String {
     let mut terminal = Terminal::new(TestBackend::new(90, 24)).expect("terminal");
     let state = app.state();
     terminal
@@ -111,7 +108,7 @@ fn albums_are_listed_then_opened() {
     let dir = fixture_dir("browse");
     let mut app = app_with_library(&dir);
 
-    let screen = draw(&app);
+    let screen = draw(&mut app);
     assert!(
         screen.contains("Dummy"),
         "albums should be listed:\n{screen}"
@@ -127,7 +124,7 @@ fn albums_are_listed_then_opened() {
     assert!(app.library.enter(), "Enter should open the album");
     assert_eq!(app.library.mode(), &Mode::Album("Dummy".to_string()));
 
-    let screen = draw(&app);
+    let screen = draw(&mut app);
     assert!(screen.contains("Mysterons"), "album tracks:\n{screen}");
     assert!(screen.contains("Sour Times"));
     assert!(
@@ -138,7 +135,7 @@ fn albums_are_listed_then_opened() {
     // And back out again.
     assert!(app.library.back());
     assert_eq!(app.library.mode(), &Mode::Albums);
-    assert!(draw(&app).contains("Kind of Blue"));
+    assert!(draw(&mut app).contains("Kind of Blue"));
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -160,7 +157,7 @@ fn a_search_narrows_the_list_to_matches() {
     let message = app.library.submit_search();
     assert!(message.contains("1 match"), "got: {message}");
 
-    let screen = draw(&app);
+    let screen = draw(&mut app);
     assert!(
         screen.contains("So What"),
         "the match should be shown:\n{screen}"
@@ -186,7 +183,7 @@ fn a_search_with_no_matches_says_so_on_screen() {
     }
     app.library.submit_search();
 
-    let screen = draw(&app);
+    let screen = draw(&mut app);
     assert!(
         screen.contains("nothing matched"),
         "an empty result must be explained:\n{screen}"
@@ -243,10 +240,9 @@ fn a_library_with_no_album_tags_falls_back_to_a_track_list() {
 
     let (player, _thread) = spawn_player(AudioConfig::default());
     let mut app = App::with_library(player, Some(library));
-    app.pane = Pane::Library;
 
     assert_eq!(app.library.mode(), &Mode::AllTracks);
-    let screen = draw(&app);
+    let screen = draw(&mut app);
     assert!(
         screen.contains("mystery"),
         "an untagged file must still be reachable:\n{screen}"

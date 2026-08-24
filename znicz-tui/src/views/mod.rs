@@ -11,76 +11,73 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Tabs};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use znicz_core::PlayerState;
 
-use crate::app::{App, Pane};
+use crate::app::{App, Modal};
+use crate::format;
 use crate::theme;
+use crate::toast::Level;
 
 /// Below this height the signal-path line is dropped to keep the lists usable.
 const COMPACT_HEIGHT: u16 = 20;
-/// Below this, the tab bar goes too.
-const TINY_HEIGHT: u16 = 12;
 
-pub fn render(frame: &mut Frame, app: &App, state: &PlayerState) {
+pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
     let area = frame.area();
     let compact = area.height < COMPACT_HEIGHT;
-    let tiny = area.height < TINY_HEIGHT;
-
-    // Now Playing: borders, title, artist, seek bar, and the signal path.
-    let header_height = if compact { 5 } else { 6 };
-    let tabs_height = if tiny { 0 } else { 1 };
+    let transport = if compact { 1 } else { 2 };
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(tabs_height),
-            Constraint::Length(header_height),
             Constraint::Min(3),
-            Constraint::Length(1),
+            Constraint::Length(transport),
             Constraint::Length(1),
         ])
         .split(area);
 
-    if !tiny {
-        render_tabs(frame, chunks[0], app);
-    }
-    now_playing::render(frame, chunks[1], state, !compact);
-    render_pane(frame, chunks[2], app, state);
-    status::render_bar(frame, chunks[3], state);
-    status::render_footer(frame, chunks[4], app);
+    let list = chunks[0];
+    app.list_width = list.width;
+    app.title_slot = library::title_slot(&app.library, crate::layout::strip_inner(list, app.queue_open));
+    app.library.clamp_pan(app.title_slot);
 
-    if app.show_help {
-        help::render(frame, area);
+    library::render(frame, list, app);
+
+    match crate::layout::drawer(list, app.queue_open) {
+        crate::layout::Drawer::Overlay(rect) | crate::layout::Drawer::Sheet(rect) => {
+            frame.render_widget(Clear, rect);
+            app.queue_title_slot = queue::title_slot(app, state, crate::views::inner_width(rect));
+            app.clamp_queue_pan();
+            queue::render(frame, rect, app, state);
+        }
+        crate::layout::Drawer::Closed => {}
     }
+
+    now_playing::render_transport(frame, chunks[1], state, !compact);
+    status::render_footer(frame, chunks[2], app);
+
+    match app.modal {
+        Modal::Help => help::render(frame, area),
+        Modal::Devices => devices::render_modal(frame, area, app, state),
+        Modal::None => {}
+    }
+
+    render_toasts(frame, list, app);
 }
 
-fn render_tabs(frame: &mut Frame, area: Rect, app: &App) {
-    let titles: Vec<Line> = Pane::ALL
-        .iter()
-        .enumerate()
-        .map(|(i, pane)| {
-            Line::from(vec![
-                Span::styled(format!("{} ", i + 1), theme::dim()),
-                Span::raw(pane.title()),
-            ])
-        })
-        .collect();
-
-    let tabs = Tabs::new(titles)
-        .select(app.pane.index())
-        .style(theme::dim())
-        .highlight_style(theme::title())
-        .divider(Span::styled("│", theme::dim()));
-
-    frame.render_widget(tabs, area);
-}
-
-fn render_pane(frame: &mut Frame, area: Rect, app: &App, state: &PlayerState) {
-    match app.pane {
-        Pane::Queue => queue::render(frame, area, app, state),
-        Pane::Library => library::render(frame, area, app),
-        Pane::Devices => devices::render(frame, area, app, state),
+fn render_toasts(frame: &mut Frame, list: Rect, app: &App) {
+    let shown = app.toasts.visible();
+    let max_width = ((list.width as usize) * 40 / 100).clamp(8, 40) as u16;
+    let areas = crate::layout::toast_areas(list, shown.len() as u16, max_width);
+    for (toast, area) in shown.iter().zip(areas) {
+        frame.render_widget(Clear, area);
+        let style = match toast.level {
+            Level::Info => theme::text(),
+            Level::Warn => theme::warn(),
+            Level::Error => theme::bad(),
+        };
+        let text = format::truncate(&toast.text, area.width as usize);
+        frame.render_widget(Paragraph::new(Span::styled(text, style)), area);
     }
 }
 

@@ -1,17 +1,19 @@
 //! The Znicz terminal interface.
 //!
-//! Layout: a tab bar, the now-playing header (including the signal path), one
-//! of the list panes, and two status lines. Player state is read fresh every
-//! frame from [`znicz_core::PlayerHandle`], so the interface owns no copy of it.
+//! Layout: library home with an overlay queue drawer, a two-line transport at
+//! the bottom (including the signal path on tall terminals), and hint lines.
+//! Player state is read fresh every frame from [`znicz_core::PlayerHandle`], so
+//! the interface owns no copy of it.
 
 pub mod app;
 pub mod cursor;
 pub mod format;
 pub mod keys;
+pub mod layout;
 pub mod library_pane;
 pub mod meta;
 pub mod theme;
 pub mod toast;
 pub mod views;
 
-pub use app::{App, Pane};
+pub use app::{App, Focus, Modal};

@@ -16,9 +16,8 @@ use znicz_core::{
     spawn_player, AudioConfig, Command, OutputInfo, PlaybackStatus, PlayerState, TrackInfo,
     TrackTags,
 };
-use znicz_tui::app::Pane;
 use znicz_tui::meta::Entry;
-use znicz_tui::{views, App};
+use znicz_tui::{views, App, Focus, Modal};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -38,9 +37,22 @@ fn main() {
         app.meta.insert(path.clone(), entry.clone());
     }
 
+    app.queue_open = false;
+    app.focus = Focus::Library;
+    app.modal = Modal::None;
     show(
-        "Queue — bit perfect",
-        &app,
+        "Library home",
+        &mut app,
+        &PlayerState::default(),
+        width,
+        height,
+    );
+
+    app.queue_open = true;
+    app.focus = Focus::Queue;
+    show(
+        "Queue drawer — bit perfect",
+        &mut app,
         &playing_state(&queue, true),
         width,
         height,
@@ -48,46 +60,43 @@ fn main() {
 
     app.toasts.error("device refused 96 kHz, resampling");
     show(
-        "Queue — resampled, with an error message",
-        &app,
+        "Queue drawer — resampled, with an error message",
+        &mut app,
         &playing_state(&queue, false),
         width,
         height,
     );
 
-    app.pane = Pane::Library;
+    app.modal = Modal::Devices;
     show(
-        "Library — no library yet",
-        &app,
-        &PlayerState::default(),
-        width,
-        height,
-    );
-
-    app.pane = Pane::Devices;
-    show("Devices", &app, &playing_state(&queue, true), width, height);
-
-    app.pane = Pane::Queue;
-    app.show_help = true;
-    show(
-        "Help overlay",
-        &app,
+        "Devices",
+        &mut app,
         &playing_state(&queue, true),
         width,
         height,
     );
-    app.show_help = false;
+
+    app.modal = Modal::None;
+    app.modal = Modal::Help;
+    show(
+        "Help overlay",
+        &mut app,
+        &playing_state(&queue, true),
+        width,
+        height,
+    );
+    app.modal = Modal::None;
 
     show(
-        "Small window (48x14)",
-        &app,
+        "Small window (48×14)",
+        &mut app,
         &playing_state(&queue, true),
         48,
         14,
     );
 }
 
-fn show(label: &str, app: &App, state: &PlayerState, width: u16, height: u16) {
+fn show(label: &str, app: &mut App, state: &PlayerState, width: u16, height: u16) {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
     terminal
         .draw(|frame| views::render(frame, app, state))

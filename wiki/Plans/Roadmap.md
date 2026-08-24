@@ -37,7 +37,10 @@ Phase 5 **reuses** this tag reading for embedded cover art; see
 
 Znicz is a terminal player first, so the interface caught up with the engine:
 
-- Three panes (queue, library, devices) switched with `Tab` or `1`/`2`/`3`
+- Library as home; queue as an overlay drawer (`]`); devices as an overlay
+  modal (`,`)
+- Two-line transport; floating toasts that do not steal hints
+- Horizontal pan of long titles with `Alt-←` and `Alt-→`
 - Library browsing and search from inside the player, not just the CLI
 - Queue shows track titles, resolved on a background thread, and can be
   played from, reordered by removal, or cleared

@@ -1,4 +1,4 @@
-//! The header: what is playing, how far in, and how it reaches the speakers.
+//! The transport: what is playing, how far in, and how it reaches the speakers.
 
 use std::time::Duration;
 
@@ -6,80 +6,241 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
-use znicz_core::{PlaybackStatus, PlayerState};
+use znicz_core::{PlaybackStatus, PlayerState, RepeatMode};
 
+use crate::app::repeat_label;
 use crate::format;
 use crate::theme;
-use crate::views;
 
-pub fn render(frame: &mut Frame, area: Rect, state: &PlayerState, show_signal: bool) {
-    let track = state.current_track.as_ref();
-
-    let title = match track {
-        Some(track) => track.title.clone(),
-        None => "Nothing playing".to_string(),
-    };
-    let subtitle = track
-        .and_then(|t| t.artist_album())
-        .unwrap_or_else(|| "—".to_string());
-
-    let width = views::inner_width(area);
-    let mut lines = vec![
-        Line::from(Span::styled(
-            format::truncate(&title, width),
-            theme::title(),
-        )),
-        Line::from(Span::styled(
-            format::truncate(&subtitle, width),
-            theme::subtitle(),
-        )),
-        seek_line(state, width),
-    ];
-
-    if show_signal {
-        lines.push(signal_line(state, width));
+pub fn render_transport(frame: &mut Frame, area: Rect, state: &PlayerState, show_signal: bool) {
+    if area.height == 0 || area.width == 0 {
+        return;
     }
 
-    let position = format::position_of(state.queue_position, state.queue.len());
-    let block = views::pane_block("Now Playing", false, Some(format!("track {position}")));
+    let width = area.width as usize;
 
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+    if area.height >= 2 && show_signal {
+        let chrome_area = Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: 1,
+        };
+        let signal_area = Rect {
+            x: area.x,
+            y: area.y + 1,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(Paragraph::new(chrome_line(state, width)), chrome_area);
+        frame.render_widget(Paragraph::new(signal_line(state, width)), signal_area);
+    } else {
+        frame.render_widget(Paragraph::new(chrome_line(state, width)), area);
+    }
 }
 
-/// The seek bar with elapsed and total time on the right.
-fn seek_line(state: &PlayerState, width: usize) -> Line<'static> {
+/// One-line transport chrome: symbol, title, subtitle, seek, times, volume, toggles.
+fn chrome_line(state: &PlayerState, width: usize) -> Line<'static> {
+    if width == 0 {
+        return Line::from("");
+    }
+
+    let status_style = status_style(state.status);
+    let sym = status_marker(state.status);
+    let title = state
+        .current_track
+        .as_ref()
+        .map(|t| t.title.as_str())
+        .unwrap_or("Nothing playing");
+
     let total = state.current_track.as_ref().and_then(|t| t.duration);
     let times = format!(
-        "{} / {}",
+        " {} / {}",
         format::duration(state.position),
         format::duration_opt(total)
     );
 
-    // Leave room for the times plus a space.
-    let bar_width = width.saturating_sub(times.chars().count() + 2);
+    let sym_len = sym.chars().count();
+    let times_len = times.chars().count();
+
+    // Times and play symbol are never dropped.
+    if width <= sym_len {
+        return Line::from(Span::styled(
+            format::truncate(&sym, width),
+            status_style,
+        ));
+    }
+    if width <= sym_len + times_len {
+        return Line::from(vec![
+            Span::styled(format::truncate(&sym, sym_len.min(width)), status_style),
+            Span::styled(format::truncate(&times, width.saturating_sub(sym_len)), theme::text()),
+        ]);
+    }
+
+    let subtitle = state
+        .current_track
+        .as_ref()
+        .and_then(|t| t.artist_album())
+        .filter(|s| !s.is_empty())
+        .map(|s| format!(" {s}"));
+
+    let volume = if state.muted {
+        Some(" muted".to_string())
+    } else {
+        Some(format!(
+            " {} {:>3.0}%",
+            format::volume_bar(state.volume, 4),
+            state.volume * 100.0
+        ))
+    };
+
+    let mut toggle_text = String::new();
+    if state.repeat != RepeatMode::Off {
+        toggle_text.push_str(repeat_label(state.repeat));
+    }
+    if state.shuffle {
+        if !toggle_text.is_empty() {
+            toggle_text.push_str("  ");
+        }
+        toggle_text.push_str("shuffle");
+    }
+    let toggles = if toggle_text.is_empty() {
+        None
+    } else {
+        Some(format!(" {toggle_text}"))
+    };
+
+    let mut include_volume = volume.is_some();
+    let mut include_toggles = toggles.is_some();
+    let mut include_subtitle = subtitle.is_some();
+    let mut include_seek = true;
+
+    let volume_len = || volume.as_ref().map(|s| s.chars().count()).unwrap_or(0);
+    let toggles_len = || toggles.as_ref().map(|s| s.chars().count()).unwrap_or(0);
+    let subtitle_len = || subtitle.as_ref().map(|s| s.chars().count()).unwrap_or(0);
+
+    loop {
+        let tail = if include_volume { volume_len() } else { 0 }
+            + if include_toggles { toggles_len() } else { 0 };
+        let middle_extra = if include_subtitle { subtitle_len() } else { 0 }
+            + if include_seek { 1 + 4 } else { 0 }; // space + minimal seek bar
+
+        if sym_len + times_len + tail + middle_extra <= width {
+            break;
+        }
+
+        if include_toggles {
+            include_toggles = false;
+        } else if include_volume {
+            include_volume = false;
+        } else if include_seek {
+            include_seek = false;
+        } else if include_subtitle {
+            include_subtitle = false;
+        } else {
+            break;
+        }
+    }
+
+    let tail_len = if include_volume { volume_len() } else { 0 }
+        + if include_toggles { toggles_len() } else { 0 };
+    let mut middle_budget = width.saturating_sub(sym_len + times_len + tail_len);
+
+    let sub_len = if include_subtitle {
+        subtitle.as_ref().map(|s| s.chars().count()).unwrap_or(0)
+    } else {
+        0
+    };
+    let seek_len = if include_seek && middle_budget > sub_len + 1 {
+        (middle_budget.saturating_sub(sub_len + 1)).min(40)
+    } else {
+        0
+    };
+    let seek_prefix = if seek_len > 0 { 1 } else { 0 };
+    let title_w = middle_budget.saturating_sub(sub_len + seek_prefix + seek_len);
+    let truncated_title = format::truncate(title, title_w);
+    let title_len = truncated_title.chars().count();
+    middle_budget = middle_budget.saturating_sub(title_len);
+
+    let mut spans = vec![
+        Span::styled(sym, status_style),
+        Span::styled(truncated_title, theme::title()),
+    ];
+
+    if include_subtitle {
+        if let Some(sub) = &subtitle {
+            let len = sub.chars().count();
+            if len <= middle_budget {
+                spans.push(Span::styled(sub.clone(), theme::subtitle()));
+                middle_budget = middle_budget.saturating_sub(len);
+            }
+        }
+    }
+
+    if seek_len > 0 && middle_budget >= seek_prefix + seek_len {
+        spans.push(Span::raw(" "));
+        middle_budget = middle_budget.saturating_sub(1);
+        let (done, todo) = seek_bar_parts(state, seek_len);
+        spans.push(Span::styled(done, theme::progress()));
+        spans.push(Span::styled(todo, theme::progress_track()));
+    }
+
+    spans.push(Span::styled(times, theme::text()));
+
+    if include_volume {
+        if let Some(vol) = &volume {
+            spans.push(Span::styled(
+                vol.clone(),
+                if state.muted {
+                    theme::warn()
+                } else {
+                    theme::text()
+                },
+            ));
+        }
+    }
+
+    if include_toggles {
+        if let Some(tog) = &toggles {
+            let repeat_style = if state.repeat == RepeatMode::Off {
+                theme::toggle_off()
+            } else {
+                theme::toggle_on()
+            };
+            let shuffle_style = if state.shuffle {
+                theme::toggle_on()
+            } else {
+                theme::toggle_off()
+            };
+            if state.shuffle && state.repeat != RepeatMode::Off {
+                spans.push(Span::styled(
+                    format!(" {}", repeat_label(state.repeat)),
+                    repeat_style,
+                ));
+                spans.push(Span::raw("  "));
+                spans.push(Span::styled("shuffle".to_string(), shuffle_style));
+            } else if state.shuffle {
+                spans.push(Span::styled(tog.clone(), shuffle_style));
+            } else {
+                spans.push(Span::styled(tog.clone(), repeat_style));
+            }
+        }
+    }
+
+    Line::from(spans)
+}
+
+fn seek_bar_parts(state: &PlayerState, width: usize) -> (String, String) {
+    let total = state.current_track.as_ref().and_then(|t| t.duration);
     let ratio = match total {
         Some(total) if !total.is_zero() => state.position.as_secs_f64() / total.as_secs_f64(),
         _ => 0.0,
     };
-
-    let (done, todo) = format::progress_bar(ratio, bar_width);
-    Line::from(vec![
-        Span::styled(done, theme::progress()),
-        Span::styled(todo, theme::progress_track()),
-        Span::raw(" "),
-        Span::styled(times, theme::text()),
-    ])
+    format::progress_bar(ratio, width)
 }
 
 /// File format on the left, the open device stream on the right, and whether
 /// the two match.
-///
-/// Sample format of the device stream (`f32` and similar) is stored on
-/// `OutputInfo` for a later details view, not shown here.
-///
-/// This is the line that matters for an audiophile player: if the device would
-/// not take the file's own rate, Znicz has to resample, and that is a change to
-/// the audio the user should know about rather than guess at.
 fn signal_line(state: &PlayerState, width: usize) -> Line<'static> {
     let Some(track) = state.current_track.as_ref() else {
         return Line::from(Span::styled("—", theme::dim()));
@@ -108,7 +269,6 @@ fn signal_line(state: &PlayerState, width: usize) -> Line<'static> {
         Span::styled(device, theme::text()),
     ];
 
-    // Only claim a signal path while audio is actually flowing.
     if state.status != PlaybackStatus::Stopped {
         let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
         if used + badge.chars().count() + 2 <= width {
@@ -120,13 +280,26 @@ fn signal_line(state: &PlayerState, width: usize) -> Line<'static> {
     Line::from(spans)
 }
 
-/// Symbol for the current transport state, used here and in the status bar.
+fn status_style(status: PlaybackStatus) -> ratatui::style::Style {
+    match status {
+        PlaybackStatus::Playing => theme::good(),
+        PlaybackStatus::Paused => theme::warn(),
+        PlaybackStatus::Stopped => theme::dim(),
+    }
+}
+
+/// Symbol for the current transport state.
 pub fn status_symbol(status: PlaybackStatus) -> &'static str {
     match status {
         PlaybackStatus::Playing => "▶",
         PlaybackStatus::Paused => "❚❚",
         PlaybackStatus::Stopped => "■",
     }
+}
+
+/// Play and pause glyphs are different widths; pad so the title does not jump.
+pub fn status_marker(status: PlaybackStatus) -> String {
+    format!("{:<2}", status_symbol(status))
 }
 
 /// Total time of everything queued, when every entry's length is known.
@@ -146,6 +319,16 @@ mod tests {
         assert_eq!(status_symbol(PlaybackStatus::Playing), "▶");
         assert_eq!(status_symbol(PlaybackStatus::Paused), "❚❚");
         assert_eq!(status_symbol(PlaybackStatus::Stopped), "■");
+    }
+
+    #[test]
+    fn play_and_pause_markers_occupy_the_same_columns() {
+        let play = status_marker(PlaybackStatus::Playing);
+        let pause = status_marker(PlaybackStatus::Paused);
+        let stop = status_marker(PlaybackStatus::Stopped);
+        assert_eq!(play.chars().count(), pause.chars().count());
+        assert_eq!(play.chars().count(), stop.chars().count());
+        assert_ne!(play.trim(), pause.trim());
     }
 
     #[test]
