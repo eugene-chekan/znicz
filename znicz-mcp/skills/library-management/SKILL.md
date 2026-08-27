@@ -48,4 +48,4 @@ Available. The library is a SQLite index of local files, filled by scanning fold
 ## Related
 
 - `audiophile-playback` — check sample rate and bit depth before playing
-- `playlist-curation` — Phase 3, still stubbed
+- `playlist-curation` — M3U files: import, save, play
