@@ -1,14 +1,24 @@
 # Issues
 
-Open bugs and loose ends, newest first. Fixed items move to "Closed" at the bottom.
+Open work lives on **[GitHub Issues](https://github.com/eugene-chekan/znicz/issues)**.
+This page is an index plus write-ups that never had a GitHub ticket.
 
 ## Open
 
-_(none)_
+Parked TUI ideas (file, do not start unless asked):
+
+- [#5 Command palette](https://github.com/eugene-chekan/znicz/issues/5)
+- [#6 Settings screen overlay](https://github.com/eugene-chekan/znicz/issues/6)
+- [#7 Three-column artist / album / tracks library](https://github.com/eugene-chekan/znicz/issues/7)
+- [#8 Mouse support](https://github.com/eugene-chekan/znicz/issues/8)
+- [#9 Library tree view with expandable nodes](https://github.com/eugene-chekan/znicz/issues/9)
+
+Product phases 3–6 (playlists, radio, album art, MusicBrainz) are on the
+[roadmap](Plans/Roadmap.md), not duplicated as issues yet.
 
 ## Closed
 
-### #1 — MCP tools return stale state (read-before-write race)
+### Wiki #1 — MCP tools return stale state (read-before-write race)
 
 - **Filed:** 2026-08-19
 - **Fixed:** 2026-08-22
@@ -34,9 +44,9 @@ Observed through the Hermes MCP client:
 **Fix (option 2 — wait for the ack).**
 
 1. `CommandEnvelope` in `znicz-core/src/player/commands.rs` carries the command plus an optional reply channel.
-2. `PlayerHandle::send_blocking` queues the command and waits for the engine to apply it. `PlayerHandle::send` keeps the old fire-and-forget behaviour for the TUI, which redraws on its own tick.
+2. `PlayerHandle::send_blocking` queues the command and waits for the engine to apply it. `PlayerHandle::send` keeps the old fire-and-forget behaviour for paths that do not need an immediate snapshot.
 3. The engine's run loop now waits on the command channel with a timeout instead of sleeping, so an acknowledged command is picked up immediately rather than after a sleep interval.
-4. Every mutating MCP tool goes through `ZniczMcpServer::apply`, which waits and then returns the resulting state.
+4. Every mutating MCP tool goes through `ZniczMcpServer::apply`, which waits and then returns the resulting state. TUI keys use `send_blocking` as well, so the next frame and the toast show the real result.
 
 **Bonus fix.** Command failures used to be emitted only as `PlayerEvent::Error`, so `play` on a missing file returned a successful-looking stale snapshot. The acknowledgement carries the engine's `Result`, so the MCP caller now gets a real error.
 

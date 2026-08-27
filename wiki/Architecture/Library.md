@@ -13,7 +13,7 @@ other way round.
 ```
 znicz-library ──uses──> znicz-core (tags)
       ▲
-      └── znicz-mcp, znicz (CLI)
+      └── znicz-tui, znicz-mcp, znicz (CLI)
 ```
 
 ## What gets stored
@@ -108,9 +108,11 @@ any file without a scan first.
 
 ## Concurrency
 
-The MCP server holds the library behind a mutex, because a scan writes and
-SQLite connections are not shared across threads. Playback runs on its own
-thread and never touches the database, so a long scan cannot disturb audio.
+The MCP server holds its library behind a mutex, because a scan writes and
+SQLite connections are not shared across threads. The TUI holds its own
+`Library` on the UI thread (`LibraryPane`) and queries it on keypress. Playback
+runs on its own thread and never touches the database, so a long scan cannot
+disturb audio.
 
 ## Extra reading
 

@@ -39,7 +39,8 @@ Znicz is a terminal player first, so the interface caught up with the engine:
 
 - Library as home; queue as an overlay drawer (`]`); devices as an overlay
   modal (`,`)
-- Two-line transport; floating toasts that do not steal hints
+- Two-line transport; boxed toasts (blue info, green success, yellow warn,
+  red error) inset from the pane border so they do not steal hints
 - Signal inspector (`i`) for the full file → device path, including sample format
 - Horizontal pan of long titles with `Alt-←` and `Alt-→`
 - Library browsing and search from inside the player, not just the CLI
@@ -74,3 +75,13 @@ Full plan: **[Phase 5 — Album art in the TUI](Phase-5-Album-Art.md)**
 ## Phase 6
 
 - MusicBrainz lookup for missing tags and higher-resolution cover art from Cover Art Archive
+
+## Later TUI (parked)
+
+Not in phases 3–6. Tracked as GitHub issues; see [Issues](../Issues.md).
+
+- Command palette — [#5](https://github.com/eugene-chekan/znicz/issues/5)
+- Settings overlay — [#6](https://github.com/eugene-chekan/znicz/issues/6)
+- Three-column artist / album / tracks — [#7](https://github.com/eugene-chekan/znicz/issues/7)
+- Mouse — [#8](https://github.com/eugene-chekan/znicz/issues/8)
+- Library tree with expandable nodes — [#9](https://github.com/eugene-chekan/znicz/issues/9)

@@ -13,7 +13,7 @@ Read in this order if you are new:
 ## Project
 
 - [Roadmap](Plans/Roadmap.md) — phases 1–6
-- [Issues](Issues.md) — open bugs and loose ends
+- [Issues](Issues.md) — open GitHub work and closed write-ups
 
 ## What is Znicz?
 
@@ -33,7 +33,7 @@ Goals:
 |--------|------------|
 | `znicz-core` | The brain: decode files, send samples to the sound card, keep queue state |
 | `znicz-library` | The index: scan folders, store tags in SQLite, search |
-| `znicz-tui` | The screen: keys, now playing, progress bar |
+| `znicz-tui` | The screen: library home, queue drawer, transport, overlays |
 | `znicz-mcp` | The AI interface: tools, resources, prompts, skills |
 | `znicz` | The program you run (`znicz`, `znicz mcp`) |
 | `wiki/` | This documentation |
@@ -84,6 +84,10 @@ cargo build --release
 ```
 
 See the root [README.md](../README.md) for keys and config.
+
+This wiki must match the running player. When behaviour, keys, crates, or the
+backlog change, update the pages in the same change. Open work is listed on
+[Issues](Issues.md) and on [GitHub](https://github.com/eugene-chekan/znicz/issues).
 
 ## Extra reading (outside this repo)
 

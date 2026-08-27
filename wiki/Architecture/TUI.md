@@ -26,7 +26,7 @@ Ratatui does not keep widgets as a tree you mutate. You describe the layout
 └ 12 tracks · Alt-← → pan ─────────┴ 3 tracks · ] close ───┘
 ▶ Sour Times  Portishead — Dummy  ━━━━━── 1:02/4:11  70%
   FLAC 96 kHz 24-bit 2882 kbps stereo → 96 kHz stereo  ● bit perfect
-  Space pause  a add  ] queue  Alt-← → pan  , devices  ? help
+  Space pause  a add  ] queue  i inspect  Alt-← → pan  , devices  ? help
 ```
 
 The library is the stage and always fills the list region. The queue is an
@@ -136,7 +136,7 @@ top of the player.
 | File | Role |
 | --- | --- |
 | `app.rs` | state, event loop, key dispatch |
-| `layout.rs` | list region, drawer overlay, modal placement |
+| `layout.rs` | list region, drawer overlay, toast boxes, modal placement |
 | `views/` | drawing, one module per pane |
 | `views/now_playing.rs` | two-line transport (play state, seek, signal path) |
 | `views/inspector.rs` | full signal-path overlay (`i`) |
@@ -145,7 +145,7 @@ top of the player.
 | `keys.rs` | the keymap as data |
 | `cursor.rs` | list cursor movement |
 | `meta.rs` | background tag cache |
-| `toast.rs` | short-lived messages |
+| `toast.rs` | boxed, level-coloured messages |
 | `format.rs` | durations, rates, bars, truncation |
 | `library_pane.rs` | browsing state |
 

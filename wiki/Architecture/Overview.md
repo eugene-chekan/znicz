@@ -44,7 +44,7 @@ Two ways to send a command:
 | `send` | No | startup, where the next redraw picks the change up |
 | `send_blocking` | Yes, and returns the engine's result | MCP tools, TUI keys, scripts |
 
-`send_blocking` exists because reading state right after a fire-and-forget send returns the old snapshot. See [MCP](MCP.md#tools-wait-for-the-player).
+`send_blocking` exists because reading state right after a fire-and-forget send returns the old snapshot. See [MCP](MCP.md#tools-wait-for-the-player). The TUI uses it on key handlers for the same reason.
 
 The TUI uses it for two reasons: the frame drawn right after a keypress shows the
 new volume rather than the old one, and a failure (missing file, unusable device)

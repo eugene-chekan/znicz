@@ -41,8 +41,9 @@ has applied the command and returns the engine's own result:
 - a real failure (missing file, unusable device) becomes an MCP error instead of
   a silent stale snapshot
 
-The TUI still uses the non-blocking `send`, because it redraws on its own tick
-and must never stall on a slow file.
+The TUI uses `send_blocking` too: the frame after a keypress must show the new
+volume, and a failure must become a toast instead of vanishing into the log.
+Startup paths that do not need an immediate redraw can still use `send`.
 
 ## Skills (SEP-2640 style)
 

@@ -4,7 +4,7 @@ This repo is a **workspace**. One `Cargo.toml` at the root lists members:
 
 ```toml
 [workspace]
-members = ["znicz-core", "znicz-tui", "znicz-mcp", "znicz"]
+members = ["znicz-core", "znicz-library", "znicz-tui", "znicz-mcp", "znicz"]
 ```
 
 Shared crate versions live in `[workspace.dependencies]`. Each member says `serde.workspace = true` instead of repeating version numbers.

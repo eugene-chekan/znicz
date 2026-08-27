@@ -1,0 +1,18 @@
+---
+description: Keep the project wiki in sync with code, keys, and GitHub issues
+alwaysApply: true
+---
+
+# Wiki stays in sync
+
+The `wiki/` folder is the project documentation. It must match the code.
+
+When you change behaviour, keys, layout, crates, config, MCP tools, or file a GitHub issue:
+
+1. Update the matching wiki page in the **same change** (not a later pass).
+2. Check [wiki/Home.md](wiki/Home.md), [wiki/Architecture/TUI.md](wiki/Architecture/TUI.md), [wiki/Plans/Roadmap.md](wiki/Plans/Roadmap.md), and [wiki/Issues.md](wiki/Issues.md) if the work touches the player or the backlog.
+3. If a key changed, the README table and `znicz-tui/src/keys.rs` must agree; the wiki should point at those, not duplicate a stale list.
+4. Open GitHub issues belong in `wiki/Issues.md` as links. Closed wiki-only write-ups stay under Closed.
+5. Do not leave “later details view”, “tab bar”, or “TUI uses non-blocking send” language if the code no longer does that.
+
+Simple English. No invented features in the wiki.

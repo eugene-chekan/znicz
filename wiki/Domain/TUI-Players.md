@@ -32,7 +32,7 @@ problems specific to this kind of program:
 - **Nowhere to print.** The app owns the screen, so a `println!` or a log line
   either corrupts the display or is never seen. Anything the user needs to know
   has to be drawn as part of the interface. Znicz turns player errors into
-  messages on the bottom line.
+  boxed toasts in the list corner, not onto the hint line.
 - **Unknown window size.** A terminal can be 200×60 or 40×10, and it changes
   while running. Layouts need an order in which parts are dropped.
 - **Characters, not pixels.** Text has to be truncated to fit, and by character
@@ -41,7 +41,8 @@ problems specific to this kind of program:
   which is what the help overlay is for.
 
 Conventions worth borrowing from other players: `Space` for pause, `/` to search,
-`j`/`k` to move (from vim and `less`), `]` for the queue drawer, `?` for help.
+`j`/`k` to move (from vim and `less`), `]` for the queue drawer, `i` for the
+signal path, `?` for help. Mouse is [not wired yet](https://github.com/eugene-chekan/znicz/issues/8).
 
 ## Keys
 
