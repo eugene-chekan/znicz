@@ -115,7 +115,9 @@ A centered modal (`P`, shift-p — not `p`, which is previous track). Lists
 plays** the highlighted file; `a` **adds** it without starting or stopping
 playback; `w` names a new file and writes the current queue (`save: █`). Esc
 closes the overlay, or cancels the name prompt. `s` still stops while the list
-is showing; while naming a file, letters including `s` are the name.
+is showing; while naming a file, every letter (including `s`, which is stop
+everywhere else) is part of the name. The footer switches to save/cancel so the
+global keymap is not what you type into.
 
 ## Messages instead of silence
 

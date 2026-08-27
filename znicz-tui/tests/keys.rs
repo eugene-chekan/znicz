@@ -27,6 +27,18 @@ fn press_char(app: &mut App, c: char) {
     press(app, KeyCode::Char(c));
 }
 
+/// Type a name the way a terminal does: Shift for capitals, plain keys otherwise.
+fn press_typed(app: &mut App, text: &str) {
+    for c in text.chars() {
+        let modifiers = if c.is_uppercase() {
+            KeyModifiers::SHIFT
+        } else {
+            KeyModifiers::NONE
+        };
+        app.on_key(KeyEvent::new(KeyCode::Char(c), modifiers));
+    }
+}
+
 fn press_ctrl(app: &mut App, c: char) {
     app.on_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL));
 }
@@ -572,4 +584,18 @@ fn save_prompt_treats_s_as_a_letter() {
     press_char(&mut app, 's');
     assert_eq!(app.playlist_input.as_deref(), Some("songs"));
     assert_eq!(app.modal, Modal::Playlists);
+}
+
+#[test]
+fn save_prompt_accepts_to_listen() {
+    let mut app = new_app();
+    queue(&mut app, 1);
+    press_char(&mut app, 'P');
+    press_char(&mut app, 'w');
+    press_typed(&mut app, "To Listen");
+    assert_eq!(
+        app.playlist_input.as_deref(),
+        Some("To Listen"),
+        "s/n/i/L/Space are global elsewhere; they must type in the name"
+    );
 }

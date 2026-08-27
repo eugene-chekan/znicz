@@ -16,6 +16,9 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn hints_for(app: &App) -> &'static str {
+    if app.playlist_input.is_some() {
+        return "type a name · Enter save · Esc cancel";
+    }
     let pane = match app.modal {
         Modal::Devices => "Devices",
         Modal::Inspector => "Inspector",

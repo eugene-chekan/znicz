@@ -174,6 +174,8 @@ impl App {
             return;
         }
 
+        // Search and the playlist save prompt are plain text. They must run
+        // before global keys, or `s` (stop) turns "To Listen" into "To Liten".
         if self.library.is_typing() {
             self.on_search_key(key);
             return;
@@ -259,6 +261,9 @@ impl App {
 
     /// Returns true when the key was a global one and needs no focus handling.
     fn on_global_key(&mut self, key: KeyEvent) -> bool {
+        if self.library.is_typing() || self.playlist_input.is_some() {
+            return false;
+        }
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('?') => self.modal = Modal::Help,
@@ -400,6 +405,7 @@ impl App {
                 }
             }
             KeyCode::Char(c) => {
+                // Every character, including global letters like s / n / i.
                 if let Some(input) = &mut self.playlist_input {
                     input.push(c);
                 }
