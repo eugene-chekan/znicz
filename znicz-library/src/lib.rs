@@ -20,6 +20,16 @@ pub fn default_database_path() -> Option<std::path::PathBuf> {
     dirs_data_dir().map(|dir| dir.join("znicz").join("library.db"))
 }
 
+/// Where saved `.m3u` files live: beside `library.db`, unless `ZNICZ_PLAYLISTS_DIR` is set.
+pub fn default_playlists_dir() -> Option<std::path::PathBuf> {
+    if let Some(dir) = std::env::var_os("ZNICZ_PLAYLISTS_DIR") {
+        if !dir.is_empty() {
+            return Some(std::path::PathBuf::from(dir));
+        }
+    }
+    dirs_data_dir().map(|dir| dir.join("znicz").join("playlists"))
+}
+
 /// Data directory without pulling in an extra dependency here.
 fn dirs_data_dir() -> Option<std::path::PathBuf> {
     if let Some(dir) = std::env::var_os("XDG_DATA_HOME") {
@@ -34,4 +44,26 @@ fn dirs_data_dir() -> Option<std::path::PathBuf> {
     }
     // Windows
     std::env::var_os("APPDATA").map(std::path::PathBuf::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn playlists_dir_sits_beside_the_library_database() {
+        let db = default_database_path().expect("data dir");
+        let expected = db.parent().unwrap().join("playlists");
+        match std::env::var_os("ZNICZ_PLAYLISTS_DIR") {
+            Some(dir) if !dir.is_empty() => {
+                assert_eq!(
+                    default_playlists_dir().unwrap(),
+                    std::path::PathBuf::from(dir)
+                );
+            }
+            _ => {
+                assert_eq!(default_playlists_dir().expect("data dir"), expected);
+            }
+        }
+    }
 }
