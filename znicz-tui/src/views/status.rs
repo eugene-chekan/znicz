@@ -19,6 +19,7 @@ fn hints_for(app: &App) -> &'static str {
     let pane = match app.modal {
         Modal::Devices => "Devices",
         Modal::Inspector => "Inspector",
+        Modal::Playlists => "Playlists",
         _ => match app.focus {
             Focus::Queue => "Queue",
             Focus::Library => "Library",

@@ -143,6 +143,17 @@ fn every_view_draws_at_every_size() {
             "inspector at {width}x{height} should fill the window"
         );
     }
+
+    for &(width, height) in SIZES {
+        let mut app = App::with_library(player(), None);
+        app.modal = Modal::Playlists;
+        let screen = draw(&mut app, width, height);
+        assert_eq!(
+            screen.lines().count(),
+            height as usize,
+            "playlists at {width}x{height} should fill the window"
+        );
+    }
 }
 
 #[test]
@@ -161,6 +172,8 @@ fn the_help_overlay_draws_at_every_size() {
     assert!(screen.contains("play / pause"), "bindings should be listed");
     assert!(screen.contains("search the library"));
     assert!(screen.contains("signal inspector"));
+    assert!(screen.contains("playlists"), "{screen}");
+    assert!(screen.contains("previous track"), "{screen}");
 }
 
 #[test]
@@ -369,6 +382,12 @@ fn the_focused_view_is_the_one_shown() {
     app.modal = Modal::None;
     let screen = draw(&mut app, 90, 24);
     assert!(screen.contains("Library"));
+
+    app.modal = Modal::Playlists;
+    app.playlists = vec!["evening".into(), "weekend-jazz".into()];
+    let screen = draw(&mut app, 90, 24);
+    assert!(screen.contains("Playlists"), "{screen}");
+    assert!(screen.contains("evening"), "{screen}");
 }
 
 #[test]

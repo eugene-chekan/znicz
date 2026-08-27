@@ -31,6 +31,7 @@ pub fn render(frame: &mut Frame, area: Rect) {
     section(&mut right, "Queue", keys::QUEUE);
     section(&mut right, "Library", keys::LIBRARY);
     section(&mut right, "Devices", keys::DEVICES);
+    section(&mut right, "Playlists", keys::PLAYLISTS);
 
     // Below this width the columns would each be too narrow to read, so fall
     // back to a single scrolling-free list of the essentials.

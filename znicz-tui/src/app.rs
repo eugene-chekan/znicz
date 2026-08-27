@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use znicz_core::{
-    AudioDeviceInfo, AudioOutput, Command, PlaybackStatus, PlayerEvent, PlayerHandle, PlayerState,
-    RepeatMode,
+    apply_to_player, list_saved, load_path, sanitize_stem, saved_path, write_path, AudioDeviceInfo,
+    AudioOutput, Command, PlaybackStatus, PlayerEvent, PlayerHandle, PlayerState, RepeatMode,
 };
 use znicz_library::{Library, Track};
 
@@ -38,6 +38,13 @@ pub enum Modal {
     Help,
     Devices,
     Inspector,
+    Playlists,
+}
+
+impl Modal {
+    pub(crate) fn blocks_list_focus(self) -> bool {
+        matches!(self, Self::Devices | Self::Inspector | Self::Playlists)
+    }
 }
 
 pub struct App {
@@ -53,6 +60,10 @@ pub struct App {
     pub library: LibraryPane,
     pub devices: Vec<AudioDeviceInfo>,
     pub device_cursor: Cursor,
+    pub playlists_dir: PathBuf,
+    pub playlists: Vec<String>,
+    pub playlist_cursor: Cursor,
+    pub playlist_input: Option<String>,
     pub meta: MetaCache,
     pub toasts: Toasts,
     pub should_quit: bool,
@@ -78,6 +89,11 @@ impl App {
             library: LibraryPane::new(library),
             devices,
             device_cursor: Cursor::new(),
+            playlists_dir: znicz_library::default_playlists_dir()
+                .unwrap_or_else(|| std::env::temp_dir().join("znicz-playlists")),
+            playlists: Vec::new(),
+            playlist_cursor: Cursor::new(),
+            playlist_input: None,
             meta: MetaCache::new(),
             toasts: Toasts::new(),
             should_quit: false,
@@ -162,6 +178,11 @@ impl App {
             return;
         }
 
+        if self.playlist_input.is_some() {
+            self.on_playlist_input_key(key);
+            return;
+        }
+
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             self.on_control_key(key.code);
             return;
@@ -181,6 +202,11 @@ impl App {
             return;
         }
 
+        if self.modal == Modal::Playlists {
+            self.on_playlists_key(key);
+            return;
+        }
+
         if self.modal == Modal::Inspector {
             return;
         }
@@ -192,8 +218,12 @@ impl App {
     }
 
     fn on_esc(&mut self) {
-        if matches!(self.modal, Modal::Devices | Modal::Inspector) {
+        if matches!(
+            self.modal,
+            Modal::Devices | Modal::Inspector | Modal::Playlists
+        ) {
             self.modal = Modal::None;
+            self.playlist_input = None;
         } else if self.focus == Focus::Queue && self.queue_open {
             self.close_queue();
         } else {
@@ -233,6 +263,7 @@ impl App {
             KeyCode::Char('?') => self.modal = Modal::Help,
             KeyCode::Char(',') => self.toggle_devices_modal(),
             KeyCode::Char('i') => self.toggle_inspector_modal(),
+            KeyCode::Char('P') => self.toggle_playlists_modal(),
 
             KeyCode::Char(']') => {
                 if self.queue_open {
@@ -332,6 +363,119 @@ impl App {
         } else {
             Modal::Inspector
         };
+    }
+
+    fn toggle_playlists_modal(&mut self) {
+        if self.modal == Modal::Playlists {
+            self.modal = Modal::None;
+            self.playlist_input = None;
+        } else {
+            self.reload_playlists();
+            self.modal = Modal::Playlists;
+        }
+    }
+
+    fn reload_playlists(&mut self) {
+        self.playlists = list_saved(&self.playlists_dir);
+        self.playlist_cursor.clamp(self.playlists.len());
+    }
+
+    fn on_playlists_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Enter => self.play_selected_playlist(false),
+            KeyCode::Char('a') => self.play_selected_playlist(true),
+            KeyCode::Char('w') => self.begin_playlist_save(),
+            _ => {}
+        }
+    }
+
+    fn on_playlist_input_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => self.playlist_input = None,
+            KeyCode::Enter => self.confirm_playlist_save(),
+            KeyCode::Backspace => {
+                if let Some(input) = &mut self.playlist_input {
+                    input.pop();
+                }
+            }
+            KeyCode::Char('s') => self.apply(Command::Stop, None),
+            KeyCode::Char(c) => {
+                if let Some(input) = &mut self.playlist_input {
+                    input.push(c);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn selected_playlist_name(&self) -> Option<String> {
+        self.playlist_cursor
+            .selected(self.playlists.len())
+            .map(|i| self.playlists[i].clone())
+    }
+
+    fn play_selected_playlist(&mut self, append: bool) {
+        let Some(name) = self.selected_playlist_name() else {
+            return;
+        };
+        let Some(path) = saved_path(&self.playlists_dir, &name) else {
+            self.toasts.error(format!("no playlist named {name}"));
+            return;
+        };
+        match load_path(&path) {
+            Ok(result) => match apply_to_player(&self.player, &result, append) {
+                Ok(()) => {
+                    if result.skipped > 0 {
+                        self.toasts.warn(format!(
+                            "{} tracks, {} skipped",
+                            result.paths.len(),
+                            result.skipped
+                        ));
+                    } else if append {
+                        self.toasts
+                            .success(format!("added {} tracks from {name}", result.paths.len()));
+                    } else {
+                        self.toasts.success(format!("playing {name}"));
+                    }
+                }
+                Err(e) => self.toasts.error(e.to_string()),
+            },
+            Err(e) => self.toasts.error(e.to_string()),
+        }
+    }
+
+    fn begin_playlist_save(&mut self) {
+        if self.player.state().queue.is_empty() {
+            self.toasts.warn("queue is empty");
+            return;
+        }
+        self.playlist_input = Some(String::new());
+    }
+
+    fn confirm_playlist_save(&mut self) {
+        let Some(raw) = self.playlist_input.take() else {
+            return;
+        };
+        let name = match sanitize_stem(&raw) {
+            Ok(name) => name,
+            Err(e) => {
+                self.toasts.error(e.to_string());
+                return;
+            }
+        };
+        let path = self.playlists_dir.join(&name);
+        let queue = self.player.state().queue;
+        match write_path(&path, &queue) {
+            Ok(()) => {
+                let stem = name
+                    .strip_suffix(".m3u8")
+                    .or_else(|| name.strip_suffix(".m3u"))
+                    .unwrap_or(&name);
+                self.toasts.success(format!("saved {stem}"));
+                self.reload_playlists();
+            }
+            Err(e) => self.toasts.error(e.to_string()),
+        }
     }
 
     fn on_queue_key(&mut self, key: KeyEvent) {
@@ -448,7 +592,9 @@ impl App {
     // --- list movement, applied to whichever list has focus ---
 
     fn list_len(&self) -> usize {
-        if self.modal == Modal::Devices {
+        if self.modal == Modal::Playlists {
+            self.playlists.len()
+        } else if self.modal == Modal::Devices {
             self.devices.len()
         } else if self.focus == Focus::Queue && self.queue_open {
             self.player.state().queue.len()
@@ -462,7 +608,9 @@ impl App {
         if self.modal == Modal::Inspector {
             return;
         }
-        if self.modal == Modal::Devices {
+        if self.modal == Modal::Playlists {
+            self.playlist_cursor.step(delta, len);
+        } else if self.modal == Modal::Devices {
             self.device_cursor.step(delta, len);
         } else if self.focus == Focus::Queue && self.queue_open {
             self.queue_cursor.step(delta, len);
@@ -477,7 +625,9 @@ impl App {
         if self.modal == Modal::Inspector {
             return;
         }
-        if self.modal == Modal::Devices {
+        if self.modal == Modal::Playlists {
+            self.playlist_cursor.page(delta, len);
+        } else if self.modal == Modal::Devices {
             self.device_cursor.page(delta, len);
         } else if self.focus == Focus::Queue && self.queue_open {
             self.queue_cursor.page(delta, len);
@@ -491,7 +641,9 @@ impl App {
         if self.modal == Modal::Inspector {
             return;
         }
-        if self.modal == Modal::Devices {
+        if self.modal == Modal::Playlists {
+            self.playlist_cursor.first();
+        } else if self.modal == Modal::Devices {
             self.device_cursor.first();
         } else if self.focus == Focus::Queue && self.queue_open {
             self.queue_cursor.first();
@@ -506,7 +658,9 @@ impl App {
         if self.modal == Modal::Inspector {
             return;
         }
-        if self.modal == Modal::Devices {
+        if self.modal == Modal::Playlists {
+            self.playlist_cursor.last(len);
+        } else if self.modal == Modal::Devices {
             self.device_cursor.last(len);
         } else if self.focus == Focus::Queue && self.queue_open {
             self.queue_cursor.last(len);

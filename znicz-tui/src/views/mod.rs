@@ -5,6 +5,7 @@ mod help;
 mod inspector;
 mod library;
 mod now_playing;
+mod playlists;
 mod queue;
 mod status;
 
@@ -64,6 +65,7 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
         Modal::Help => help::render(frame, area),
         Modal::Devices => devices::render_modal(frame, area, app, state),
         Modal::Inspector => inspector::render(frame, area, state),
+        Modal::Playlists => playlists::render_modal(frame, area, app),
         Modal::None => {}
     }
 
@@ -102,7 +104,7 @@ fn toast_mark(level: Level) -> (&'static str, Style) {
         Level::Info => ("●", theme::info()),
         Level::Success => ("●", theme::good()),
         Level::Warn => ("▲", theme::warn()),
-        Level::Error => ("x", theme::bad()),
+        Level::Error => ("×", theme::bad()),
     }
 }
 

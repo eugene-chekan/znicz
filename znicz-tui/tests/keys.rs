@@ -459,3 +459,101 @@ fn unbound_keys_are_ignored() {
     assert_eq!(app.modal, Modal::None);
     assert_eq!(app.focus, Focus::Library);
 }
+
+fn playlist_fixture() -> (App, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!(
+        "znicz-tui-playlists-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("playlists dir");
+    let a = dir.join("a.flac");
+    let b = dir.join("b.flac");
+    std::fs::write(&a, b"x").unwrap();
+    std::fs::write(&b, b"x").unwrap();
+    std::fs::write(dir.join("evening.m3u"), format!("{}\n", a.display())).unwrap();
+    std::fs::write(dir.join("weekend.m3u"), format!("{}\n", b.display())).unwrap();
+
+    let mut app = new_app();
+    app.playlists_dir = dir.clone();
+    (app, dir)
+}
+
+#[test]
+fn capital_p_toggles_the_playlists_modal() {
+    let mut app = new_app();
+    assert_eq!(app.modal, Modal::None);
+
+    press_char(&mut app, 'P');
+    assert_eq!(app.modal, Modal::Playlists);
+
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn s_still_stops_while_playlists_are_open() {
+    let mut app = new_app();
+    queue(&mut app, 1);
+    press_char(&mut app, 'P');
+    press_char(&mut app, 's');
+    assert_eq!(app.modal, Modal::Playlists);
+    assert!(!app.should_quit);
+}
+
+#[test]
+fn enter_replaces_the_queue_from_the_highlighted_playlist() {
+    let (mut app, dir) = playlist_fixture();
+    let other = dir.join("other.flac");
+    std::fs::write(&other, b"x").unwrap();
+    app.player
+        .send_blocking(Command::QueueAdd(vec![other.clone()]))
+        .expect("seed queue");
+
+    press_char(&mut app, 'P');
+    press(&mut app, KeyCode::Enter);
+
+    let queue = app.state().queue;
+    assert_eq!(queue.len(), 1, "clear-and-play should replace the queue");
+    assert_ne!(queue[0], other);
+    assert_eq!(
+        queue[0].file_name().and_then(|n| n.to_str()),
+        Some("a.flac")
+    );
+}
+
+#[test]
+fn a_appends_the_playlist_without_clearing() {
+    let (mut app, dir) = playlist_fixture();
+    let other = dir.join("other.flac");
+    std::fs::write(&other, b"x").unwrap();
+    app.player
+        .send_blocking(Command::QueueAdd(vec![other.clone()]))
+        .expect("seed queue");
+
+    press_char(&mut app, 'P');
+    press_char(&mut app, 'a');
+
+    let queue = app.state().queue;
+    assert_eq!(queue.len(), 2, "add should keep the existing row");
+    assert_eq!(queue[0], other);
+}
+
+#[test]
+fn w_on_an_empty_queue_does_not_open_the_save_prompt() {
+    let mut app = new_app();
+    press_char(&mut app, 'P');
+    press_char(&mut app, 'w');
+    assert!(app.playlist_input.is_none());
+    assert_eq!(app.toasts.current().unwrap().text, "queue is empty");
+}
+
+#[test]
+fn lowercase_p_is_still_previous_track() {
+    let mut app = new_app();
+    press_char(&mut app, 'p');
+    assert_eq!(app.modal, Modal::None, "p must not open playlists");
+}

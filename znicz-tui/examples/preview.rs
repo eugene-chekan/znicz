@@ -86,6 +86,16 @@ fn main() {
         height,
     );
 
+    app.modal = Modal::Playlists;
+    app.playlists = vec!["evening".into(), "weekend-jazz".into()];
+    show(
+        "Playlists",
+        &mut app,
+        &playing_state(&queue, true),
+        width,
+        height,
+    );
+
     app.modal = Modal::None;
     app.modal = Modal::Help;
     show(
