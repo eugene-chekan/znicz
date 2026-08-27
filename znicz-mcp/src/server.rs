@@ -54,7 +54,7 @@ impl ZniczMcpServer {
             skills,
             library,
             playlists_dir: znicz_library::default_playlists_dir()
-                .unwrap_or_else(|| PathBuf::from(".")),
+                .unwrap_or_else(|| std::env::temp_dir().join("znicz-playlists")),
             tool_router: Self::tool_router(),
         }
     }

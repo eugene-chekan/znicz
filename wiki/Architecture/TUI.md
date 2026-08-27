@@ -114,7 +114,8 @@ A centered modal (`P`, shift-p — not `p`, which is previous track). Lists
 `.m3u` / `.m3u8` files in the playlists folder. Enter **clears the queue and
 plays** the highlighted file; `a` **adds** it without starting or stopping
 playback; `w` names a new file and writes the current queue (`save: █`). Esc
-closes the overlay, or cancels the name prompt. `s` still stops.
+closes the overlay, or cancels the name prompt. `s` still stops while the list
+is showing; while naming a file, letters including `s` are the name.
 
 ## Messages instead of silence
 

@@ -82,11 +82,30 @@ pub fn sanitize_stem(name: &str) -> Result<String> {
     if name.contains('/') || name.contains('\\') || name.contains("..") {
         return Err(ZniczError::Player("illegal playlist name".into()));
     }
-    if name.ends_with(".m3u") || name.ends_with(".m3u8") {
-        Ok(name.to_string())
+    let file = if name.ends_with(".m3u") || name.ends_with(".m3u8") {
+        name.to_string()
     } else {
-        Ok(format!("{name}.m3u"))
+        format!("{name}.m3u")
+    };
+    let stem = file
+        .strip_suffix(".m3u8")
+        .or_else(|| file.strip_suffix(".m3u"))
+        .unwrap_or(&file);
+    if stem.is_empty() || stem == "." {
+        return Err(ZniczError::Player("illegal playlist name".into()));
     }
+    Ok(file)
+}
+
+fn playlist_stem(name: &str) -> Option<&str> {
+    let lower = name.to_ascii_lowercase();
+    if let Some(stem) = lower.strip_suffix(".m3u8") {
+        return (!stem.is_empty()).then_some(&name[..stem.len()]);
+    }
+    if let Some(stem) = lower.strip_suffix(".m3u") {
+        return (!stem.is_empty()).then_some(&name[..stem.len()]);
+    }
+    None
 }
 
 /// Stems in `dir`, sorted, without the `.m3u` / `.m3u8` suffix.
@@ -97,12 +116,11 @@ pub fn list_saved(dir: &Path) -> Vec<String> {
     let mut names: Vec<String> = entries
         .flatten()
         .filter_map(|entry| {
+            if !entry.file_type().ok()?.is_file() {
+                return None;
+            }
             let name = entry.file_name();
-            let name = name.to_string_lossy();
-            let stem = name
-                .strip_suffix(".m3u8")
-                .or_else(|| name.strip_suffix(".m3u"))?;
-            Some(stem.to_string())
+            playlist_stem(&name.to_string_lossy()).map(str::to_string)
         })
         .collect();
     names.sort();
@@ -143,6 +161,19 @@ pub fn apply_to_player(player: &PlayerHandle, result: &LoadResult, append: bool)
         player.send_blocking(Command::QueuePlayIndex(0))?;
     }
     Ok(())
+}
+
+/// Warn text when some rows were URLs or missing files.
+pub fn skipped_notice(result: &LoadResult) -> Option<String> {
+    if result.skipped == 0 {
+        None
+    } else {
+        Some(format!(
+            "{} tracks, {} skipped",
+            result.paths.len(),
+            result.skipped
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -231,6 +262,8 @@ mod tests {
         assert_eq!(sanitize_stem("evening.m3u").unwrap(), "evening.m3u");
         assert_eq!(sanitize_stem("  weekend  ").unwrap(), "weekend.m3u");
         assert!(sanitize_stem("").is_err());
+        assert!(sanitize_stem(".").is_err());
+        assert!(sanitize_stem(".m3u").is_err());
         assert!(sanitize_stem("a/b").is_err());
         assert!(sanitize_stem("..").is_err());
         assert!(sanitize_stem("a\\b").is_err());
@@ -241,8 +274,32 @@ mod tests {
         let dir = tmp();
         fs::write(dir.join("b.m3u"), "").unwrap();
         fs::write(dir.join("a.m3u8"), "").unwrap();
+        fs::write(dir.join("Evening.M3U"), "").unwrap();
+        fs::create_dir(dir.join("folder.m3u")).unwrap();
         fs::write(dir.join("ignore.txt"), "").unwrap();
-        assert_eq!(list_saved(&dir), vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(
+            list_saved(&dir),
+            vec!["Evening".to_string(), "a".to_string(), "b".to_string()]
+        );
+    }
+
+    #[test]
+    fn skipped_notice_is_none_when_every_row_loaded() {
+        assert_eq!(
+            skipped_notice(&LoadResult {
+                paths: vec![PathBuf::from("a.flac")],
+                skipped: 0
+            }),
+            None
+        );
+        assert_eq!(
+            skipped_notice(&LoadResult {
+                paths: vec![PathBuf::from("a.flac")],
+                skipped: 2
+            })
+            .as_deref(),
+            Some("1 tracks, 2 skipped")
+        );
     }
 
     #[test]

@@ -114,7 +114,7 @@ Both use `send_blocking` in the TUI and MCP, in that order.
 | Esc | Close the overlay | Cancel the prompt, stay on the list |
 | `P` | Close the overlay | Ignored as a letter in the name (prompt is plain text; `P` inserts `P`) |
 | j / k / g / G / arrows | Move in the playlist list | — |
-| `s` | Still **stop** (global, before modal keys) | Still stop |
+| `s` | Still **stop** (global, before modal keys) | Type the letter `s` |
 
 `Char('P')` is unbound today (`p` / `N` are previous track). Opening the
 overlay while Help is showing first closes Help, same as `,` and `i`.

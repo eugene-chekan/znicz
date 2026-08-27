@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
 use znicz_core::{
-    apply_to_player, list_saved, load_path, saved_path, spawn_player, AudioConfig, AudioOutput,
-    Command,
+    apply_to_player, list_saved, load_path, saved_path, skipped_notice, spawn_player, AudioConfig,
+    AudioOutput, Command,
 };
 use znicz_library::Library;
 use znicz_mcp::run_stdio;
@@ -261,7 +261,7 @@ fn run_tui(
         }
     }
 
-    run_tui_with_player(player, library_path)
+    run_tui_with_player(player, library_path, None)
 }
 
 fn playlists_dir() -> color_eyre::Result<PathBuf> {
@@ -287,12 +287,13 @@ fn load_playlist_and_run(
     let result = load_path(&path)?;
     let (player, _thread) = spawn_player(audio_config);
     apply_to_player(&player, &result, append)?;
-    run_tui_with_player(player, library_path)
+    run_tui_with_player(player, library_path, skipped_notice(&result))
 }
 
 fn run_tui_with_player(
     player: znicz_core::PlayerHandle,
     library_path: Option<PathBuf>,
+    skip_notice: Option<String>,
 ) -> color_eyre::Result<()> {
     // No library is not an error: the browser pane explains how to build one.
     let library = match open_library(library_path) {
@@ -308,6 +309,9 @@ fn run_tui_with_player(
     // long as the TUI owns the terminal; nothing is lost, it just moves.
     let log = stderr::redirect_to_log();
     let mut app = App::with_library(player, library);
+    if let Some(message) = skip_notice {
+        app.toasts.warn(message);
+    }
     let result = app.run();
     drop(log);
 

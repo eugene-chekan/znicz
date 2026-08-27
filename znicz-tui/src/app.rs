@@ -5,8 +5,9 @@ use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use znicz_core::{
-    apply_to_player, list_saved, load_path, sanitize_stem, saved_path, write_path, AudioDeviceInfo,
-    AudioOutput, Command, PlaybackStatus, PlayerEvent, PlayerHandle, PlayerState, RepeatMode,
+    apply_to_player, list_saved, load_path, sanitize_stem, saved_path, skipped_notice, write_path,
+    AudioDeviceInfo, AudioOutput, Command, PlaybackStatus, PlayerEvent, PlayerHandle, PlayerState,
+    RepeatMode,
 };
 use znicz_library::{Library, Track};
 
@@ -398,7 +399,6 @@ impl App {
                     input.pop();
                 }
             }
-            KeyCode::Char('s') => self.apply(Command::Stop, None),
             KeyCode::Char(c) => {
                 if let Some(input) = &mut self.playlist_input {
                     input.push(c);
@@ -425,15 +425,16 @@ impl App {
         match load_path(&path) {
             Ok(result) => match apply_to_player(&self.player, &result, append) {
                 Ok(()) => {
-                    if result.skipped > 0 {
-                        self.toasts.warn(format!(
-                            "{} tracks, {} skipped",
-                            result.paths.len(),
-                            result.skipped
-                        ));
+                    if let Some(message) = skipped_notice(&result) {
+                        self.toasts.warn(message);
                     } else if append {
-                        self.toasts
-                            .success(format!("added {} tracks from {name}", result.paths.len()));
+                        self.toasts.success(format!(
+                            "added {} from {name}",
+                            match result.paths.len() {
+                                1 => "1 track".to_string(),
+                                n => format!("{n} tracks"),
+                            }
+                        ));
                     } else {
                         self.toasts.success(format!("playing {name}"));
                     }

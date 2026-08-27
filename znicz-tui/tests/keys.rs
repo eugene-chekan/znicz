@@ -557,3 +557,19 @@ fn lowercase_p_is_still_previous_track() {
     press_char(&mut app, 'p');
     assert_eq!(app.modal, Modal::None, "p must not open playlists");
 }
+
+#[test]
+fn save_prompt_treats_s_as_a_letter() {
+    let mut app = new_app();
+    queue(&mut app, 1);
+    press_char(&mut app, 'P');
+    press_char(&mut app, 'w');
+    assert!(app.playlist_input.is_some());
+    press_char(&mut app, 's');
+    press_char(&mut app, 'o');
+    press_char(&mut app, 'n');
+    press_char(&mut app, 'g');
+    press_char(&mut app, 's');
+    assert_eq!(app.playlist_input.as_deref(), Some("songs"));
+    assert_eq!(app.modal, Modal::Playlists);
+}

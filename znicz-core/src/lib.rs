@@ -17,6 +17,6 @@ pub use player::state::{
     AudioDeviceInfo, OutputInfo, PlaybackStatus, PlayerState, RepeatMode, TrackInfo,
 };
 pub use playlist::{
-    apply_to_player, list_saved, load_path, parse, sanitize_stem, saved_path, write_path,
-    write_text, LoadResult,
+    apply_to_player, list_saved, load_path, parse, sanitize_stem, saved_path, skipped_notice,
+    write_path, write_text, LoadResult,
 };
