@@ -1,9 +1,9 @@
 //! The help overlay, built from the keymap tables so it cannot go stale.
 
-use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::Frame;
 
 use crate::keys::{self, Binding};
 use crate::theme;

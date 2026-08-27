@@ -74,6 +74,12 @@ pub fn warn() -> Style {
     Style::default().fg(WARN)
 }
 
+pub fn info() -> Style {
+    Style::default()
+        .fg(Color::Blue)
+        .add_modifier(Modifier::BOLD)
+}
+
 pub fn bad() -> Style {
     Style::default().fg(BAD).add_modifier(Modifier::BOLD)
 }

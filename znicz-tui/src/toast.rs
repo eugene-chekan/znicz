@@ -14,6 +14,7 @@ const ERROR_LIFETIME: Duration = Duration::from_secs(8);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
     Info,
+    Success,
     Warn,
     Error,
 }
@@ -61,6 +62,10 @@ impl Toasts {
 
     pub fn info(&mut self, text: impl Into<String>) {
         self.push(text.into(), Level::Info, Instant::now());
+    }
+
+    pub fn success(&mut self, text: impl Into<String>) {
+        self.push(text.into(), Level::Success, Instant::now());
     }
 
     pub fn warn(&mut self, text: impl Into<String>) {
@@ -152,5 +157,14 @@ mod tests {
         }
         assert_eq!(toasts.recent().len(), MAX_KEPT);
         assert_eq!(toasts.current().unwrap().text, "message 49");
+    }
+
+    #[test]
+    fn success_is_its_own_level() {
+        let mut toasts = Toasts::new();
+        toasts.success("queue cleared");
+        let toast = toasts.current().unwrap();
+        assert_eq!(toast.level, Level::Success);
+        assert_eq!(toast.text, "queue cleared");
     }
 }

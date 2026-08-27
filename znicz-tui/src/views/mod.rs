@@ -2,16 +2,17 @@
 
 mod devices;
 mod help;
+mod inspector;
 mod library;
 mod now_playing;
 mod queue;
 mod status;
 
-use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::Frame;
 use znicz_core::PlayerState;
 
 use crate::app::{App, Modal};
@@ -38,7 +39,10 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
 
     let list = chunks[0];
     app.list_width = list.width;
-    app.title_slot = library::title_slot(&app.library, crate::layout::strip_inner(list, app.queue_open));
+    app.title_slot = library::title_slot(
+        &app.library,
+        crate::layout::strip_inner(list, app.queue_open),
+    );
     app.library.clamp_pan(app.title_slot);
 
     library::render(frame, list, app);
@@ -59,6 +63,7 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
     match app.modal {
         Modal::Help => help::render(frame, area),
         Modal::Devices => devices::render_modal(frame, area, app, state),
+        Modal::Inspector => inspector::render(frame, area, state),
         Modal::None => {}
     }
 
@@ -67,17 +72,37 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
 
 fn render_toasts(frame: &mut Frame, list: Rect, app: &App) {
     let shown = app.toasts.visible();
-    let max_width = ((list.width as usize) * 40 / 100).clamp(8, 40) as u16;
+    let max_width = ((list.width as usize) * 40 / 100).clamp(12, 42) as u16;
     let areas = crate::layout::toast_areas(list, shown.len() as u16, max_width);
     for (toast, area) in shown.iter().zip(areas) {
         frame.render_widget(Clear, area);
-        let style = match toast.level {
-            Level::Info => theme::text(),
-            Level::Warn => theme::warn(),
-            Level::Error => theme::bad(),
+        let (marker, style) = toast_mark(toast.level);
+        let inner_w = if area.height >= 3 {
+            (area.width as usize).saturating_sub(2)
+        } else {
+            area.width as usize
         };
-        let text = format::truncate(&toast.text, area.width as usize);
-        frame.render_widget(Paragraph::new(Span::styled(text, style)), area);
+        let text_w = inner_w.saturating_sub(marker.chars().count() + 1);
+        let text = format::truncate(&toast.text, text_w);
+        let line = Line::from(vec![
+            Span::styled(format!("{marker} "), style),
+            Span::styled(text, theme::strong()),
+        ]);
+        if area.height >= 3 {
+            let block = Block::default().borders(Borders::ALL).border_style(style);
+            frame.render_widget(Paragraph::new(line).block(block), area);
+        } else {
+            frame.render_widget(Paragraph::new(line), area);
+        }
+    }
+}
+
+fn toast_mark(level: Level) -> (&'static str, Style) {
+    match level {
+        Level::Info => ("●", theme::info()),
+        Level::Success => ("●", theme::good()),
+        Level::Warn => ("▲", theme::warn()),
+        Level::Error => ("x", theme::bad()),
     }
 }
 

@@ -50,6 +50,7 @@ fn main() {
 
     app.queue_open = true;
     app.focus = Focus::Queue;
+    app.toasts.success("added 4 tracks");
     show(
         "Queue drawer — bit perfect",
         &mut app,
@@ -70,6 +71,15 @@ fn main() {
     app.modal = Modal::Devices;
     show(
         "Devices",
+        &mut app,
+        &playing_state(&queue, true),
+        width,
+        height,
+    );
+
+    app.modal = Modal::Inspector;
+    show(
+        "Signal inspector",
         &mut app,
         &playing_state(&queue, true),
         width,

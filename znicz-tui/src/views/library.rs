@@ -2,10 +2,10 @@
 
 use std::time::Duration;
 
-use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
+use ratatui::Frame;
 use znicz_library::{AlbumSummary, Track};
 
 use crate::app::{App, Focus, Modal};
@@ -38,7 +38,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         frame.render_widget(Paragraph::new(prompt), prompt_area);
     }
 
-    let focused = app.focus == Focus::Library && app.modal != Modal::Devices;
+    let focused =
+        app.focus == Focus::Library && !matches!(app.modal, Modal::Devices | Modal::Inspector);
     let strip = crate::layout::strip_inner(list_area, app.queue_open);
     let title = match app.library.mode() {
         Mode::Albums => "Library".to_string(),
@@ -164,18 +165,8 @@ fn track_fixed(track: &Track) -> usize {
 /// Width available for the title column after reserving fixed right-side columns.
 pub(crate) fn title_slot(pane: &LibraryPane, strip: usize) -> usize {
     let fixed = match pane.mode() {
-        Mode::Albums => pane
-            .albums()
-            .iter()
-            .map(album_fixed)
-            .max()
-            .unwrap_or(0),
-        _ => pane
-            .tracks()
-            .iter()
-            .map(track_fixed)
-            .max()
-            .unwrap_or(0),
+        Mode::Albums => pane.albums().iter().map(album_fixed).max().unwrap_or(0),
+        _ => pane.tracks().iter().map(track_fixed).max().unwrap_or(0),
     };
     strip.saturating_sub(fixed)
 }
@@ -211,7 +202,10 @@ mod tests {
         let mut pane = LibraryPane::new(None);
         pane.inject_albums_for_test(vec![album.clone()]);
         let strip: usize = 60;
-        assert_eq!(title_slot(&pane, strip), strip.saturating_sub(album_fixed(&album)));
+        assert_eq!(
+            title_slot(&pane, strip),
+            strip.saturating_sub(album_fixed(&album))
+        );
     }
 
     #[test]
@@ -238,6 +232,9 @@ mod tests {
         let mut pane = LibraryPane::new(None);
         pane.inject_tracks_for_test(vec![track.clone()]);
         let strip: usize = 55;
-        assert_eq!(title_slot(&pane, strip), strip.saturating_sub(track_fixed(&track)));
+        assert_eq!(
+            title_slot(&pane, strip),
+            strip.saturating_sub(track_fixed(&track))
+        );
     }
 }

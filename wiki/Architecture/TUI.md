@@ -20,7 +20,9 @@ Ratatui does not keep widgets as a tree you mutate. You describe the layout
 │  3  Wandering Star — Portishead  ┌ Queue ────────────────┤
 │  4  It Could Be Sweet — Portis.  │  1 ▶ Sour Times  4:11 │
 │  5  Numb — Portishead            │  2   Strangers   3:58 │
-│                    device refused 96 kHz, resampling     │  ← toast in list corner
+│                                  ┌───────────────────────┤
+│                                  │ × device refused 96 kHz
+│                                  └───────────────────────┘
 └ 12 tracks · Alt-← → pan ─────────┴ 3 tracks · ] close ───┘
 ▶ Sour Times  Portishead — Dummy  ━━━━━── 1:02/4:11  70%
   FLAC 96 kHz 24-bit 2882 kbps stereo → 96 kHz stereo  ● bit perfect
@@ -55,8 +57,7 @@ The second transport line is the audiophile part of the interface. It reads
 Left of the arrow is the file (codec name, sample rate, bit depth when the
 codec has one, bitrate when known, channels). Right of the arrow is the stream
 the device actually opened (rate and channels). The device sample format (`f32`
-and similar) is kept in `PlayerState::output` for a later details view, not on
-this line.
+and similar) is kept off this line; press `i` for the [signal inspector](#signal-inspector).
 
 - `● bit perfect` — the device accepted the file's own sample rate and channel
   count, so nothing was converted
@@ -99,13 +100,23 @@ A centered modal (`,`). Lists the output devices and switches between them with
 `Enter`. The footer shows what the open stream actually settled on, which is the
 quickest way to find a device that will take your files unconverted.
 
+### Signal inspector
+
+A centered modal (`i`). The transport line is a summary; this overlay is the
+full path: file format, title, device name, the open stream **including sample
+format** (`f32` and similar), and whether playback is bit perfect or resampled.
+Nothing is invented when a field is missing — an unknown sample format shows as
+`--`. Esc or `i` closes it. Transport keys still work underneath.
+
 ## Messages instead of silence
 
 The interface owns the screen, so anything written to the log or to stdout is
 invisible. Previously a failed file looked exactly like nothing happening. Now
-every player error and every action becomes a short-lived message in the list
-corner (`toast.rs`); errors stay up twice as long, since they need reading. Hints
-on the bottom line are never replaced.
+every player error and every action becomes a short-lived **boxed** message in
+the list corner (`toast.rs`), inset so it does not sit on the pane border. A
+coloured mark and matching outline show the level at a glance: blue info, green
+success, yellow warn, red error. Errors stay up twice as long, since they need
+reading. Hints on the bottom line are never replaced.
 
 For this to work, key handlers use `PlayerHandle::send_blocking` rather than
 `send`: the engine's own result comes back, so a missing file or an unusable
@@ -128,6 +139,7 @@ top of the player.
 | `layout.rs` | list region, drawer overlay, modal placement |
 | `views/` | drawing, one module per pane |
 | `views/now_playing.rs` | two-line transport (play state, seek, signal path) |
+| `views/inspector.rs` | full signal-path overlay (`i`) |
 | `views/status.rs` | key hints only |
 | `theme.rs` | every colour, in one place |
 | `keys.rs` | the keymap as data |

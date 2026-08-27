@@ -40,6 +40,7 @@ Znicz is a terminal player first, so the interface caught up with the engine:
 - Library as home; queue as an overlay drawer (`]`); devices as an overlay
   modal (`,`)
 - Two-line transport; floating toasts that do not steal hints
+- Signal inspector (`i`) for the full file → device path, including sample format
 - Horizontal pan of long titles with `Alt-←` and `Alt-→`
 - Library browsing and search from inside the player, not just the CLI
 - Queue shows track titles, resolved on a background thread, and can be

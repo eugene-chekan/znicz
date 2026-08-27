@@ -433,10 +433,7 @@ mod tests {
     #[test]
     fn pan_offset_applies_only_to_the_selected_row() {
         let mut pane = LibraryPane::new(None);
-        pane.inject_albums_for_test(vec![
-            long_album("a"),
-            long_album("b"),
-        ]);
+        pane.inject_albums_for_test(vec![long_album("a"), long_album("b")]);
         pane.pan(3, 10);
         assert_eq!(pane.offset_for(0), 3, "the highlighted row should pan");
         assert_eq!(pane.offset_for(1), 0, "other rows stay at the start");
