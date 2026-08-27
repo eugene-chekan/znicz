@@ -108,6 +108,14 @@ format** (`f32` and similar), and whether playback is bit perfect or resampled.
 Nothing is invented when a field is missing — an unknown sample format shows as
 `--`. Esc or `i` closes it. Transport keys still work underneath.
 
+### Playlists
+
+A centered modal (`P`, shift-p — not `p`, which is previous track). Lists
+`.m3u` / `.m3u8` files in the playlists folder. Enter **clears the queue and
+plays** the highlighted file; `a` **adds** it without starting or stopping
+playback; `w` names a new file and writes the current queue (`save: █`). Esc
+closes the overlay, or cancels the name prompt. `s` still stops.
+
 ## Messages instead of silence
 
 The interface owns the screen, so anything written to the log or to stdout is
@@ -140,6 +148,7 @@ top of the player.
 | `views/` | drawing, one module per pane |
 | `views/now_playing.rs` | two-line transport (play state, seek, signal path) |
 | `views/inspector.rs` | full signal-path overlay (`i`) |
+| `views/playlists.rs` | saved M3U overlay (`P`) |
 | `views/status.rs` | key hints only |
 | `theme.rs` | every colour, in one place |
 | `keys.rs` | the keymap as data |

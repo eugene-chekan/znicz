@@ -69,6 +69,12 @@ znicz search portishead
 
 # List albums
 znicz albums
+
+# Playlists (M3U files in ~/.local/share/znicz/playlists/)
+znicz playlist list
+znicz playlist play evening
+znicz playlist import ~/sets/club.m3u
+znicz playlist import ~/sets/club.m3u --append
 ```
 
 The index is a SQLite file, by default `~/.local/share/znicz/library.db`
@@ -76,9 +82,10 @@ The index is a SQLite file, by default `~/.local/share/znicz/library.db`
 
 ## The interface
 
-The library is the home screen. The queue is a side overlay (`]`), and devices
-are a modal (`,`). `i` opens a signal inspector with the full file → device
-path, including the device sample format that stays off the transport line.
+The library is the home screen. The queue is a side overlay (`]`), devices
+are a modal (`,`), and `P` opens saved playlists. `i` opens a signal inspector
+with the full file → device path, including the device sample format that stays
+off the transport line.
 Transport sits on two lines at the bottom: now playing plus
 the signal path, for example
 `FLAC 96 kHz 24-bit 2882 kbps stereo → 96 kHz stereo  ● bit perfect`.
@@ -92,7 +99,9 @@ Press `?` in the player for the full keymap. The essentials:
 |-----|--------|
 | Space | Play / pause |
 | s | Stop |
-| n / N | Next / previous track |
+| n | Next track |
+| N / p | Previous track |
+| P | Playlists |
 | → ← or l h | Seek ±5s (`L` / `H` for ±30s) |
 | + / - | Volume, `m` to mute |
 | r / z | Repeat (off, all, one) / shuffle |
