@@ -2,7 +2,10 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
-use znicz_core::{AudioConfig, AudioOutput, Command, spawn_player};
+use znicz_core::{
+    apply_to_player, list_saved, load_path, saved_path, spawn_player, AudioConfig, AudioOutput,
+    Command,
+};
 use znicz_library::Library;
 use znicz_mcp::run_stdio;
 use znicz_tui::App;
@@ -55,6 +58,35 @@ enum Commands {
 
     /// List albums in the music library
     Albums,
+
+    /// Load, list, or play M3U playlists
+    Playlist {
+        #[command(subcommand)]
+        command: PlaylistCmd,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum PlaylistCmd {
+    /// Print saved playlist names
+    List,
+    /// Load a playlist file and open the player
+    Import {
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Add to the queue instead of replacing it
+        #[arg(long)]
+        append: bool,
+    },
+    /// Save the queue (use the player: P then w, or MCP save_playlist)
+    Save { name: String },
+    /// Load a saved playlist and open the player
+    Play {
+        name: String,
+        /// Add to the queue instead of replacing it
+        #[arg(long)]
+        append: bool,
+    },
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -134,6 +166,23 @@ fn main() -> color_eyre::Result<()> {
         Some(Commands::Albums) => {
             list_albums(library_path)?;
         }
+        Some(Commands::Playlist { command }) => match command {
+            PlaylistCmd::List => list_playlists()?,
+            PlaylistCmd::Save { name: _ } => {
+                color_eyre::eyre::bail!(
+                    "save the queue from the player (P then w, or MCP save_playlist)"
+                );
+            }
+            PlaylistCmd::Import { file, append } => {
+                load_playlist_and_run(file, append, audio_config, library_path)?;
+            }
+            PlaylistCmd::Play { name, append } => {
+                let dir = playlists_dir()?;
+                let path = saved_path(&dir, &name)
+                    .ok_or_else(|| color_eyre::eyre::eyre!("no playlist named {name}"))?;
+                load_playlist_and_run(path, append, audio_config, library_path)?;
+            }
+        },
         None => {
             run_tui(audio_config, &cli.files, library_path)?;
         }
@@ -212,6 +261,39 @@ fn run_tui(
         }
     }
 
+    run_tui_with_player(player, library_path)
+}
+
+fn playlists_dir() -> color_eyre::Result<PathBuf> {
+    znicz_library::default_playlists_dir().ok_or_else(|| {
+        color_eyre::eyre::eyre!("cannot work out where to keep playlists; set ZNICZ_PLAYLISTS_DIR")
+    })
+}
+
+fn list_playlists() -> color_eyre::Result<()> {
+    let dir = playlists_dir()?;
+    for name in list_saved(&dir) {
+        println!("{name}");
+    }
+    Ok(())
+}
+
+fn load_playlist_and_run(
+    path: PathBuf,
+    append: bool,
+    audio_config: AudioConfig,
+    library_path: Option<PathBuf>,
+) -> color_eyre::Result<()> {
+    let result = load_path(&path)?;
+    let (player, _thread) = spawn_player(audio_config);
+    apply_to_player(&player, &result, append)?;
+    run_tui_with_player(player, library_path)
+}
+
+fn run_tui_with_player(
+    player: znicz_core::PlayerHandle,
+    library_path: Option<PathBuf>,
+) -> color_eyre::Result<()> {
     // No library is not an error: the browser pane explains how to build one.
     let library = match open_library(library_path) {
         Ok(library) => Some(library),
