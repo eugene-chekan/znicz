@@ -49,9 +49,6 @@ otherwise the end of every track would be cut off.
 2. Match **sample rate** and **channels** to the file when the device allows it.
 3. Never throw away decoded samples to make them fit. Keep them for the next round.
 4. Prefill the ring a little before you need it, but do not hold a lock while decoding.
-5. Listing devices and opening or closing the stream talks to the OS sound API
-   from the player or UI thread. Those calls share one lock so two threads do
-   not hit WASAPI at once. The audio callback does not take that lock.
 
 ## Extra reading
 

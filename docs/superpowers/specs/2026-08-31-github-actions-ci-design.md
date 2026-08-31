@@ -30,10 +30,12 @@ One file: `.github/workflows/ci.yml`.
 | Job | Runner | Commands |
 | --- | --- | --- |
 | `lint` | `ubuntu-latest` | `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings` |
-| `test` | `ubuntu-latest` and `windows-latest` | `cargo test --workspace` |
+| `test` | `ubuntu-latest` and `windows-latest` | `cargo test --workspace` (Windows: `--test-threads=1`) |
 
 Linux jobs install `pkg-config` and `libasound2-dev` so cpal can compile.
-Playback tests already skip when there is no output device.
+Windows tests use one thread: WASAPI is not safe from cargo's parallel test
+pool (`App` lists devices as it starts). Playback tests already skip when
+there is no output device.
 
 `permissions: contents: read`. A new commit on the same branch cancels the
 older run. Cargo is cached with `Swatinem/rust-cache`.
