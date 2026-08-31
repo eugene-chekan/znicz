@@ -339,6 +339,13 @@ struct StationNameParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+struct StationPlayParams {
+    name: String,
+    #[serde(default)]
+    append: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 struct StationRenameParams {
     name: String,
     new_name: String,
@@ -659,10 +666,10 @@ impl ZniczMcpServer {
         Self::json_result(&serde_json::json!({ "stations": stations }))
     }
 
-    #[tool(description = "Play a saved radio station by name (clears the queue)")]
+    #[tool(description = "Play a saved radio station by name. append true adds without starting; default clears the queue and plays")]
     fn play_station(
         &self,
-        Parameters(params): Parameters<StationNameParams>,
+        Parameters(params): Parameters<StationPlayParams>,
     ) -> Result<rmcp::model::CallToolResult, McpError> {
         let stations = znicz_core::load_stations(&self.stations_path).map_err(Self::map_io)?;
         let station = znicz_core::find_station(&stations, &params.name)
@@ -670,7 +677,11 @@ impl ZniczMcpServer {
             .ok_or_else(|| {
                 McpError::invalid_params(format!("no station named {:?}", params.name), None)
             })?;
-        map_player_err(znicz_core::play_station(&self.player, &station, false))?;
+        map_player_err(znicz_core::play_station(
+            &self.player,
+            &station,
+            params.append,
+        ))?;
         self.ok_state()
     }
 
@@ -958,7 +969,7 @@ fn map_player_err(result: znicz_core::Result<()>) -> Result<(), McpError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use znicz_core::{spawn_player, AudioConfig};
+    use znicz_core::{spawn_player, AudioConfig, PlaybackStatus};
 
     /// Serialises `ZNICZ_STATIONS_PATH` writes against other tests that read env
     /// while constructing a server (`default_playlists_dir` / `default_stations_path`).
@@ -1446,14 +1457,72 @@ mod tests {
             }))
             .unwrap();
         let err = server
-            .play_station(Parameters(StationNameParams {
+            .play_station(Parameters(StationPlayParams {
                 name: "Dead".into(),
+                append: false,
             }))
             .unwrap_err();
         assert!(!err.to_string().contains("not implemented"));
         let queue = server.player.state().queue;
         assert_eq!(queue.len(), 1);
         assert!(queue[0].is_stream());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn play_station_append_keeps_the_existing_queue() {
+        let (server, path) = station_server();
+        server
+            .queue_add(Parameters(QueueAddParams {
+                paths: vec!["/music/a.flac".into()],
+            }))
+            .unwrap();
+        server
+            .add_radio_station(Parameters(StationAddParams {
+                name: "Example".into(),
+                url: "http://127.0.0.1:1/stream".into(),
+            }))
+            .unwrap();
+        server
+            .play_station(Parameters(StationPlayParams {
+                name: "Example".into(),
+                append: true,
+            }))
+            .expect("append");
+        let queue = server.player.state().queue;
+        assert_eq!(queue.len(), 2);
+        assert_eq!(queue[0], znicz_core::QueueItem::file("/music/a.flac"));
+        assert!(queue[1].is_stream());
+        assert_eq!(server.player.state().status, PlaybackStatus::Stopped);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn save_playlist_errors_when_the_queue_has_a_station() {
+        let (server, path) = station_server();
+        server
+            .queue_add(Parameters(QueueAddParams {
+                paths: vec!["/music/a.flac".into()],
+            }))
+            .unwrap();
+        server
+            .add_radio_station(Parameters(StationAddParams {
+                name: "Live".into(),
+                url: "http://127.0.0.1:1/s".into(),
+            }))
+            .unwrap();
+        server
+            .play_station(Parameters(StationPlayParams {
+                name: "Live".into(),
+                append: true,
+            }))
+            .expect("append station");
+        let err = server
+            .save_playlist(Parameters(SavePlaylistParams {
+                name: "evening".into(),
+            }))
+            .unwrap_err();
+        assert!(err.to_string().contains("radio station"), "{err}");
         let _ = std::fs::remove_file(path);
     }
 

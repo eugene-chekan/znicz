@@ -108,7 +108,12 @@ enum StationCmd {
     /// Add a station
     Add { name: String, url: String },
     /// Play a saved station and open the player
-    Play { name: String },
+    Play {
+        name: String,
+        /// Add to the queue instead of replacing it and starting playback
+        #[arg(long)]
+        append: bool,
+    },
     /// Remove a station
     Remove { name: String },
     /// Rename a station
@@ -232,8 +237,8 @@ fn main() -> color_eyre::Result<()> {
             StationCmd::Add { name, url } => {
                 mutate_stations(|s| znicz_core::add_station(s, &name, &url))?
             }
-            StationCmd::Play { name } => {
-                play_station_and_run(&name, audio_config, library_path)?;
+            StationCmd::Play { name, append } => {
+                play_station_and_run(&name, append, audio_config, library_path)?;
             }
             StationCmd::Remove { name } => {
                 mutate_stations(|s| znicz_core::remove_station(s, &name))?
@@ -364,6 +369,7 @@ fn mutate_stations(
 
 fn play_station_and_run(
     name: &str,
+    append: bool,
     audio_config: AudioConfig,
     library_path: Option<PathBuf>,
 ) -> color_eyre::Result<()> {
@@ -373,7 +379,7 @@ fn play_station_and_run(
         .ok_or_else(|| color_eyre::eyre::eyre!("no station named {name}"))?
         .clone();
     let (player, _thread) = spawn_player(audio_config);
-    znicz_core::play_station(&player, &station, false)?;
+    znicz_core::play_station(&player, &station, append)?;
     run_tui_with_player(player, library_path, None)
 }
 
