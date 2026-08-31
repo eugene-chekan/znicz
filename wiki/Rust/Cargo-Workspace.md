@@ -28,7 +28,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes to `main` and on
 pull requests. A **lint** job on Ubuntu checks rustfmt and Clippy (`-D warnings`).
 A **test** job runs `cargo test --workspace` on Ubuntu and Windows. Windows
 uses `--test-threads=1` because WASAPI is not safe from cargo's parallel test
-threads (`App` lists devices as it starts). Linux installs `pkg-config` and
+threads (`App` lists devices as it starts, except on CI). Linux installs `pkg-config` and
 `libasound2-dev` so cpal can compile. Hardware playback tests skip on CI (Windows
 runners still expose WASAPI) and when there is no sound device.
 

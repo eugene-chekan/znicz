@@ -18,6 +18,15 @@ use crate::meta::{Entry, MetaCache};
 use crate::toast::Toasts;
 use crate::views;
 
+/// GitHub Windows runners expose WASAPI, but enumerating devices from tests
+/// crashes the process. Production (no `CI`) still lists devices at start.
+fn load_output_devices() -> Vec<AudioDeviceInfo> {
+    if std::env::var_os("CI").is_some() {
+        return Vec::new();
+    }
+    AudioOutput::list_devices().unwrap_or_default()
+}
+
 /// Longest wait between redraws while nothing happens. Fast enough for a
 /// smooth seek bar, slow enough to stay near zero CPU.
 const TICK_RATE: Duration = Duration::from_millis(200);
@@ -76,7 +85,6 @@ impl App {
     }
 
     pub fn with_library(player: PlayerHandle, library: Option<Library>) -> Self {
-        let devices = AudioOutput::list_devices().unwrap_or_default();
         Self {
             player,
             focus: Focus::Library,
@@ -88,7 +96,7 @@ impl App {
             queue_title_slot: 0,
             queue_cursor: Cursor::new(),
             library: LibraryPane::new(library),
-            devices,
+            devices: load_output_devices(),
             device_cursor: Cursor::new(),
             playlists_dir: znicz_library::default_playlists_dir()
                 .unwrap_or_else(|| std::env::temp_dir().join("znicz-playlists")),
@@ -548,7 +556,7 @@ impl App {
                 }
             }
             KeyCode::Char('R') => {
-                self.devices = AudioOutput::list_devices().unwrap_or_default();
+                self.devices = load_output_devices();
                 self.device_cursor.clamp(self.devices.len());
                 self.toasts
                     .info(format!("{} devices found", self.devices.len()));
