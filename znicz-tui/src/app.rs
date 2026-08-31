@@ -609,7 +609,7 @@ impl App {
             self.toasts.info("no stations");
             return;
         };
-        match znicz_core::play_station(&self.player, &station) {
+        match znicz_core::play_station(&self.player, &station, false) {
             Ok(()) => self.toasts.success(format!("playing {}", station.name)),
             Err(e) => self.toasts.error(e.to_string()),
         }

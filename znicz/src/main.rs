@@ -373,7 +373,7 @@ fn play_station_and_run(
         .ok_or_else(|| color_eyre::eyre::eyre!("no station named {name}"))?
         .clone();
     let (player, _thread) = spawn_player(audio_config);
-    znicz_core::play_station(&player, &station)?;
+    znicz_core::play_station(&player, &station, false)?;
     run_tui_with_player(player, library_path, None)
 }
 

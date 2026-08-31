@@ -670,7 +670,7 @@ impl ZniczMcpServer {
             .ok_or_else(|| {
                 McpError::invalid_params(format!("no station named {:?}", params.name), None)
             })?;
-        map_player_err(znicz_core::play_station(&self.player, &station))?;
+        map_player_err(znicz_core::play_station(&self.player, &station, false))?;
         self.ok_state()
     }
 

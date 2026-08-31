@@ -3,7 +3,7 @@
 //! These use paths that need not exist: adding, removing and reordering are
 //! bookkeeping, so they can be checked without a sound card.
 
-use znicz_core::{spawn_player, AudioConfig, Command, PlaybackStatus, RepeatMode};
+use znicz_core::{spawn_player, AudioConfig, Command, PlaybackStatus, QueueItem, RepeatMode};
 
 fn paths(count: usize) -> Vec<znicz_core::QueueItem> {
     (0..count)
@@ -136,4 +136,46 @@ fn a_stopped_player_reports_no_output_stream() {
         player.state().output.is_none(),
         "there is no signal path before playback starts"
     );
+}
+
+#[test]
+fn appending_a_station_does_not_clear_or_start() {
+    let (player, _thread) = spawn_player(AudioConfig::default());
+    player
+        .send_blocking(Command::QueueAdd(vec![QueueItem::file(
+            "/music/a.flac",
+        )]))
+        .expect("seed");
+    znicz_core::play_station(
+        &player,
+        &znicz_core::Station {
+            name: "Live".into(),
+            url: "http://127.0.0.1:1/s".into(),
+        },
+        true,
+    )
+    .expect("append");
+    let state = player.state();
+    assert_eq!(state.queue.len(), 2);
+    assert_eq!(state.queue[0], QueueItem::file("/music/a.flac"));
+    assert_eq!(
+        state.queue[1],
+        QueueItem::stream("Live", "http://127.0.0.1:1/s")
+    );
+    assert_eq!(state.status, PlaybackStatus::Stopped);
+    assert_eq!(state.queue_position, 0);
+}
+
+#[test]
+fn next_from_a_stream_row_moves_to_the_following_file() {
+    let (player, _thread) = spawn_player(AudioConfig::default());
+    player
+        .send_blocking(Command::QueueAdd(vec![
+            QueueItem::stream("Live", "http://127.0.0.1:1/s"),
+            QueueItem::file("/music/a.flac"),
+        ]))
+        .expect("seed");
+    let _ = player.send_blocking(Command::NextTrack);
+    assert_eq!(player.state().queue_position, 1);
+    assert_eq!(player.state().queue.len(), 2);
 }

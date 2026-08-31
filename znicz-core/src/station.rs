@@ -146,13 +146,17 @@ pub fn update(stations: &mut [Station], name: &str, new_name: &str, url: &str) -
     Ok(())
 }
 
-pub fn play_station(player: &PlayerHandle, station: &Station) -> Result<()> {
-    player.send_blocking(Command::QueueClear)?;
+pub fn play_station(player: &PlayerHandle, station: &Station, append: bool) -> Result<()> {
+    if !append {
+        player.send_blocking(Command::QueueClear)?;
+    }
     player.send_blocking(Command::QueueAdd(vec![QueueItem::stream(
         station.name.clone(),
         station.url.clone(),
     )]))?;
-    player.send_blocking(Command::QueuePlayIndex(0))?;
+    if !append {
+        player.send_blocking(Command::QueuePlayIndex(0))?;
+    }
     Ok(())
 }
 
