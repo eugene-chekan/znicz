@@ -143,6 +143,17 @@ fn every_view_draws_at_every_size() {
             "inspector at {width}x{height} should fill the window"
         );
     }
+
+    for &(width, height) in SIZES {
+        let mut app = App::with_library(player(), None);
+        app.modal = Modal::Playlists;
+        let screen = draw(&mut app, width, height);
+        assert_eq!(
+            screen.lines().count(),
+            height as usize,
+            "playlists at {width}x{height} should fill the window"
+        );
+    }
 }
 
 #[test]
@@ -161,6 +172,8 @@ fn the_help_overlay_draws_at_every_size() {
     assert!(screen.contains("play / pause"), "bindings should be listed");
     assert!(screen.contains("search the library"));
     assert!(screen.contains("signal inspector"));
+    assert!(screen.contains("playlists"), "{screen}");
+    assert!(screen.contains("previous track"), "{screen}");
 }
 
 #[test]
@@ -240,6 +253,22 @@ fn a_success_toast_has_its_own_box_and_mark() {
 }
 
 #[test]
+fn a_playlist_error_toast_shows_the_whole_message() {
+    let mut app = App::with_library(player(), None);
+    app.toasts
+        .error("player error: playlist had no playable files");
+    let screen = draw(&mut app, 90, 24);
+    assert!(
+        screen.contains("playlist had no playable files"),
+        "the full reason must be visible, not cut off:\n{screen}"
+    );
+    assert!(
+        !screen.contains("playabl…"),
+        "must not ellipsize this message:\n{screen}"
+    );
+}
+
+#[test]
 fn hints_stay_when_a_toast_is_showing() {
     let mut app = App::with_library(player(), None);
     app.toasts.error("could not open device");
@@ -250,7 +279,7 @@ fn hints_stay_when_a_toast_is_showing() {
         "hints must remain:\n{screen}"
     );
     assert!(
-        screen.contains('×'),
+        screen.contains('x'),
         "errors should carry a level mark:\n{screen}"
     );
     let lines: Vec<&str> = screen.lines().collect();
@@ -369,6 +398,12 @@ fn the_focused_view_is_the_one_shown() {
     app.modal = Modal::None;
     let screen = draw(&mut app, 90, 24);
     assert!(screen.contains("Library"));
+
+    app.modal = Modal::Playlists;
+    app.playlists = vec!["evening".into(), "weekend-jazz".into()];
+    let screen = draw(&mut app, 90, 24);
+    assert!(screen.contains("Playlists"), "{screen}");
+    assert!(screen.contains("evening"), "{screen}");
 }
 
 #[test]

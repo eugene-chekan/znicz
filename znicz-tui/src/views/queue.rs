@@ -6,15 +6,14 @@ use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 use znicz_core::PlayerState;
 
-use crate::app::{App, Focus, Modal};
+use crate::app::{App, Focus};
 use crate::format;
 use crate::theme;
 use crate::views;
 use crate::views::now_playing;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &PlayerState) {
-    let focused =
-        app.focus == Focus::Queue && !matches!(app.modal, Modal::Devices | Modal::Inspector);
+    let focused = app.focus == Focus::Queue && !app.modal.blocks_list_focus();
     let width = views::inner_width(area);
 
     if state.queue.is_empty() {

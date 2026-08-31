@@ -17,7 +17,9 @@ const fn b(keys: &'static str, action: &'static str) -> Binding {
 pub const GLOBAL: &[Binding] = &[
     b("Space", "play / pause"),
     b("s", "stop"),
-    b("n / N", "next / previous track"),
+    b("n", "next track"),
+    b("N / p", "previous track"),
+    b("P", "playlists"),
     b("→ / l", "seek forward 5s"),
     b("← / h", "seek back 5s"),
     b("L / H", "seek 30s"),
@@ -64,6 +66,13 @@ pub const DEVICES: &[Binding] = &[
     b("Esc", "close"),
 ];
 
+pub const PLAYLISTS: &[Binding] = &[
+    b("Enter", "clear the queue and play"),
+    b("a", "add to the queue"),
+    b("w", "save the queue"),
+    b("Esc", "close"),
+];
+
 /// Short hints for the footer, per pane.
 pub fn hints(pane: &str) -> &'static str {
     match pane {
@@ -71,10 +80,11 @@ pub fn hints(pane: &str) -> &'static str {
             "Enter play · d remove · C clear · o jump · Alt-← / Alt-→ pan · ] close · ? help"
         }
         "Library" => {
-            "/ search · a add · ] queue · i inspect · Alt-← / Alt-→ pan · , devices · ? help"
+            "/ search · a add · ] queue · i inspect · P · Alt-← / Alt-→ pan · , devices · ? help"
         }
         "Devices" => "Enter select · R rescan · Esc close · ? help",
         "Inspector" => "i / Esc close · Space pause · ? help",
+        "Playlists" => "Enter play · a add · w save · Esc close · ? help",
         _ => "] queue · ? help · q quit",
     }
 }
@@ -85,7 +95,7 @@ mod tests {
 
     #[test]
     fn every_binding_documents_both_a_key_and_an_action() {
-        let tables = [GLOBAL, NAVIGATION, QUEUE, LIBRARY, DEVICES];
+        let tables = [GLOBAL, NAVIGATION, QUEUE, LIBRARY, DEVICES, PLAYLISTS];
         for table in tables {
             for binding in table {
                 assert!(!binding.keys.is_empty());
@@ -117,8 +127,23 @@ mod tests {
             "global help should document the signal inspector"
         );
         assert!(
+            GLOBAL.iter().any(|b| b.keys == "P"),
+            "global help should document playlists as P, not p"
+        );
+        assert!(
+            GLOBAL
+                .iter()
+                .any(|b| b.keys.contains("p") && b.action.contains("previous")),
+            "global help should document p as previous"
+        );
+        assert!(
             hints("Library").contains("i inspect"),
             "library hints should mention inspect, got {}",
+            hints("Library")
+        );
+        assert!(
+            hints("Library").contains('P'),
+            "library hints should mention P, got {}",
             hints("Library")
         );
         assert!(

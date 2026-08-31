@@ -1,16 +1,52 @@
 ---
 name: playlist-curation
-description: Import, export, and manage M3U, PLS, and XSPF playlists in znicz (Phase 3).
+description: Import, save, and play M3U playlists in znicz. Use when loading a setlist, restoring yesterday’s queue, or writing the current queue to a file.
 ---
 
 # Playlist Curation
 
-## Status
+Playlists are **M3U / M3U8 files of local paths**. There is no playlist table in
+SQLite. PLS, XSPF, and stream URLs are out of scope.
 
-Phase 3 — `import_playlist`, `save_playlist`, and `play_playlist` tools are stubbed.
+Saved files live beside the library database:
+`~/.local/share/znicz/playlists/` on Linux, `%APPDATA%\znicz\playlists\` on
+Windows. Import-by-path can point anywhere.
 
-## Planned workflow
+## Tools
 
-1. Import playlist files with `import_playlist`
-2. Review queue via `queue_get` or `znicz://queue`
-3. Save sessions with `save_playlist`
+| Tool | Parameters | What it does |
+|------|------------|----------------|
+| `list_playlists` | none | Names of saved `.m3u` / `.m3u8` files |
+| `import_playlist` | `path`, `append` (default false) | Load that file |
+| `play_playlist` | `name`, `append` (default false) | Load a saved name |
+| `save_playlist` | `name` | Write the current queue; error if empty |
+
+`append: false` **clears the queue and starts the first track**.
+`append: true` **adds the paths and does not start or stop playback**.
+
+Each play/import result includes `loaded`, `skipped`, and `state`. Comments and
+blank lines are ignored. Lines with `://` and missing files are skipped and
+counted. If nothing playable remains, the tool errors and the queue is unchanged.
+
+## Typical workflow
+
+1. `list_playlists` to see saved names.
+2. `play_playlist { "name": "evening" }` to replace the queue and start.
+3. Or `play_playlist { "name": "evening", "append": true }` to keep what is
+   already playing and add the list.
+4. `import_playlist { "path": "/home/user/sets/club.m3u" }` for a file outside
+   the saved folder.
+5. After building a queue (`queue_add` / `queue_get`), `save_playlist { "name": "evening" }`
+   writes `evening.m3u` (overwrite is allowed).
+
+## Notes
+
+- Relative paths in a file resolve against that file’s directory.
+- The TUI does the same two play actions: `P` then Enter (clear and play) or `a`
+  (add). `w` saves.
+- Do not invent stream playback from `http://` lines; they are skipped.
+
+## Related
+
+- `library-management` — find tracks to put on a playlist
+- `audiophile-playback` — check the device after the first track starts

@@ -1,0 +1,17 @@
+---
+description: Bump the workspace package version at the end of each development cycle
+alwaysApply: true
+---
+
+# Version bump each cycle
+
+The app version is `[workspace.package] version` in the root `Cargo.toml`. All crates inherit it.
+
+When a development cycle ships (a feature PR, a roadmap phase, or a user-visible behaviour change), bump that version **in the same change** as the work. Do not leave it for later.
+
+While the version is `0.y.z`:
+
+- Compatible additions and fixes: bump `z` (`0.1.1` → `0.1.2`)
+- A new product phase or a breaking change: bump `y` (`0.1.1` → `0.2.0`)
+
+Do not invent extra version files. If the wiki mentions the version, update it in the same change.

@@ -12,7 +12,10 @@ use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use znicz_core::{AudioOutput, Command, PlaybackStatus, PlayerHandle, PlayerState};
+use znicz_core::{
+    apply_to_player, list_saved, load_path, sanitize_stem, saved_path, write_path, AudioOutput,
+    Command, LoadResult, PlaybackStatus, PlayerHandle, PlayerState,
+};
 use znicz_library::{Library, Track};
 
 use crate::skills::SkillRegistry;
@@ -26,6 +29,7 @@ pub struct ZniczMcpServer {
     player: PlayerHandle,
     skills: SkillRegistry,
     library: SharedLibrary,
+    playlists_dir: PathBuf,
     tool_router: ToolRouter<Self>,
 }
 
@@ -35,11 +39,7 @@ impl ZniczMcpServer {
         Self::build(player, skills_dirs, None)
     }
 
-    pub fn with_library(
-        player: PlayerHandle,
-        skills_dirs: Vec<PathBuf>,
-        library: Library,
-    ) -> Self {
+    pub fn with_library(player: PlayerHandle, skills_dirs: Vec<PathBuf>, library: Library) -> Self {
         Self::build(player, skills_dirs, Some(Arc::new(Mutex::new(library))))
     }
 
@@ -53,6 +53,8 @@ impl ZniczMcpServer {
             player,
             skills,
             library,
+            playlists_dir: znicz_library::default_playlists_dir()
+                .unwrap_or_else(|| std::env::temp_dir().join("znicz-playlists")),
             tool_router: Self::tool_router(),
         }
     }
@@ -90,9 +92,9 @@ impl ZniczMcpServer {
     }
 
     fn ok_state(&self) -> Result<rmcp::model::CallToolResult, McpError> {
-        Ok(rmcp::model::CallToolResult::success(vec![
-            Content::text(self.state_json()?),
-        ]))
+        Ok(rmcp::model::CallToolResult::success(vec![Content::text(
+            self.state_json()?,
+        )]))
     }
 
     /// Apply a command, then report the state it produced.
@@ -103,6 +105,23 @@ impl ZniczMcpServer {
     fn apply(&self, command: Command) -> Result<rmcp::model::CallToolResult, McpError> {
         map_player_err(self.player.send_blocking(command))?;
         self.ok_state()
+    }
+
+    fn apply_playlist(
+        &self,
+        result: LoadResult,
+        append: bool,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        map_player_err(apply_to_player(&self.player, &result, append))?;
+        Self::json_result(&serde_json::json!({
+            "loaded": result.paths.len(),
+            "skipped": result.skipped,
+            "state": self.player.state(),
+        }))
+    }
+
+    fn map_io(err: znicz_core::ZniczError) -> McpError {
+        McpError::internal_error(err.to_string(), None)
     }
 
     fn not_implemented(feature: &str) -> McpError {
@@ -263,10 +282,33 @@ struct LibraryStats {
     albums: u64,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ImportPlaylistParams {
+    path: String,
+    /// Add to the queue instead of replacing it and starting playback.
+    #[serde(default)]
+    append: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct PlayPlaylistParams {
+    name: String,
+    #[serde(default)]
+    append: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct SavePlaylistParams {
+    name: String,
+}
+
 #[tool_router]
 impl ZniczMcpServer {
     #[tool(description = "Play a local audio file")]
-    fn play(&self, Parameters(params): Parameters<PlayParams>) -> Result<rmcp::model::CallToolResult, McpError> {
+    fn play(
+        &self,
+        Parameters(params): Parameters<PlayParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
         self.apply(Command::Play(params.path.into()))
     }
 
@@ -286,7 +328,10 @@ impl ZniczMcpServer {
     }
 
     #[tool(description = "Seek to position in seconds")]
-    fn seek(&self, Parameters(params): Parameters<SeekParams>) -> Result<rmcp::model::CallToolResult, McpError> {
+    fn seek(
+        &self,
+        Parameters(params): Parameters<SeekParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
         let pos = std::time::Duration::from_secs_f64(params.seconds.max(0.0));
         self.apply(Command::Seek(pos))
     }
@@ -335,7 +380,8 @@ impl ZniczMcpServer {
 
     #[tool(description = "List available audio output devices")]
     fn list_devices(&self) -> Result<rmcp::model::CallToolResult, McpError> {
-        let devices = AudioOutput::list_devices().map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let devices = AudioOutput::list_devices()
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         let mapped: Vec<DeviceInfo> = devices
             .into_iter()
             .map(|d| DeviceInfo {
@@ -346,7 +392,9 @@ impl ZniczMcpServer {
             .collect();
         let json = serde_json::to_string_pretty(&DevicesResult { devices: mapped })
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        Ok(rmcp::model::CallToolResult::success(vec![Content::text(json)]))
+        Ok(rmcp::model::CallToolResult::success(vec![Content::text(
+            json,
+        )]))
     }
 
     #[tool(description = "Select audio output device by id")]
@@ -360,7 +408,9 @@ impl ZniczMcpServer {
     #[tool(description = "List bundled Agent Skills (SEP-2640 index)")]
     fn skills_list(&self) -> Result<rmcp::model::CallToolResult, McpError> {
         let json = self.skills.index_json();
-        Ok(rmcp::model::CallToolResult::success(vec![Content::text(json)]))
+        Ok(rmcp::model::CallToolResult::success(vec![Content::text(
+            json,
+        )]))
     }
 
     #[tool(description = "Scan a folder into the music library")]
@@ -379,8 +429,7 @@ impl ZniczMcpServer {
         Parameters(params): Parameters<SearchParams>,
     ) -> Result<rmcp::model::CallToolResult, McpError> {
         let limit = params.limit.unwrap_or(50).clamp(1, 500);
-        let tracks =
-            self.with_library_locked(|library| library.search(&params.query, limit))?;
+        let tracks = self.with_library_locked(|library| library.search(&params.query, limit))?;
 
         Self::json_result(&SearchResult {
             query: params.query,
@@ -412,7 +461,10 @@ impl ZniczMcpServer {
 
         if !path.is_file() {
             return Err(McpError::invalid_params(
-                format!("{} is not in the library and not a readable file", params.path),
+                format!(
+                    "{} is not in the library and not a readable file",
+                    params.path
+                ),
                 None,
             ));
         }
@@ -467,19 +519,46 @@ impl ZniczMcpServer {
         Self::json_result(&serde_json::json!({ "removed": removed }))
     }
 
-    #[tool(description = "Import playlist file (Phase 3)")]
-    fn import_playlist(&self) -> Result<rmcp::model::CallToolResult, McpError> {
-        Err(Self::not_implemented("import_playlist"))
+    #[tool(description = "List saved M3U playlists")]
+    fn list_playlists(&self) -> Result<rmcp::model::CallToolResult, McpError> {
+        Self::json_result(&serde_json::json!({
+            "playlists": list_saved(&self.playlists_dir),
+        }))
     }
 
-    #[tool(description = "Save current queue as playlist (Phase 3)")]
-    fn save_playlist(&self) -> Result<rmcp::model::CallToolResult, McpError> {
-        Err(Self::not_implemented("save_playlist"))
+    #[tool(description = "Import an M3U playlist file into the queue")]
+    fn import_playlist(
+        &self,
+        Parameters(params): Parameters<ImportPlaylistParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let result = load_path(Path::new(&params.path)).map_err(Self::map_io)?;
+        self.apply_playlist(result, params.append)
     }
 
-    #[tool(description = "Play a saved playlist (Phase 3)")]
-    fn play_playlist(&self) -> Result<rmcp::model::CallToolResult, McpError> {
-        Err(Self::not_implemented("play_playlist"))
+    #[tool(description = "Save the current queue as an M3U playlist")]
+    fn save_playlist(
+        &self,
+        Parameters(params): Parameters<SavePlaylistParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let queue = self.player.state().queue;
+        if queue.is_empty() {
+            return Err(McpError::invalid_params("queue is empty", None));
+        }
+        let name = sanitize_stem(&params.name).map_err(Self::map_io)?;
+        write_path(&self.playlists_dir.join(&name), &queue).map_err(Self::map_io)?;
+        Self::json_result(&serde_json::json!({ "saved": name }))
+    }
+
+    #[tool(description = "Play a saved M3U playlist by name")]
+    fn play_playlist(
+        &self,
+        Parameters(params): Parameters<PlayPlaylistParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let path = saved_path(&self.playlists_dir, &params.name).ok_or_else(|| {
+            McpError::invalid_params(format!("no playlist named {:?}", params.name), None)
+        })?;
+        let result = load_path(&path).map_err(Self::map_io)?;
+        self.apply_playlist(result, params.append)
     }
 
     #[tool(description = "Add radio station (Phase 4)")]
@@ -540,11 +619,7 @@ impl ServerHandler for ZniczMcpServer {
         ];
 
         for file in self.skills.all_resources() {
-            resources.push(make_resource(
-                &file.uri,
-                &file.uri,
-                "Skill resource file",
-            ));
+            resources.push(make_resource(&file.uri, &file.uri, "Skill resource file"));
         }
 
         async move {
@@ -741,7 +816,7 @@ fn map_player_err(result: znicz_core::Result<()>) -> Result<(), McpError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use znicz_core::{AudioConfig, spawn_player};
+    use znicz_core::{spawn_player, AudioConfig};
 
     fn server() -> ZniczMcpServer {
         let (player, _thread) = spawn_player(AudioConfig::default());
@@ -965,6 +1040,149 @@ mod tests {
         let album_payload: serde_json::Value =
             serde_json::from_str(&result_text(&album)).expect("album json");
         assert_eq!(album_payload["count"], 1);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn playlist_server() -> (ZniczMcpServer, PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "znicz-mcp-playlists-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("playlists dir");
+        let mut server = server();
+        server.playlists_dir = dir.clone();
+        (server, dir)
+    }
+
+    fn touch_track(dir: &Path, name: &str) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, b"x").unwrap();
+        path
+    }
+
+    fn ffmpeg_flac(dir: &Path, name: &str) -> Option<PathBuf> {
+        let path = dir.join(name);
+        let made = std::process::Command::new("ffmpeg")
+            .args(["-y", "-loglevel", "error"])
+            .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=1"])
+            .args(["-ac", "2", "-ar", "44100"])
+            .args(["-c:a", "flac"])
+            .arg(&path)
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        made.then_some(path)
+    }
+
+    #[test]
+    fn save_playlist_errors_when_the_queue_is_empty() {
+        let (server, dir) = playlist_server();
+        let result = server.save_playlist(Parameters(SavePlaylistParams {
+            name: "evening".into(),
+        }));
+        assert!(result.is_err(), "expected an error, got {result:?}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn list_and_play_playlist_append_keeps_the_existing_queue() {
+        let (server, dir) = playlist_server();
+        let existing = touch_track(&dir, "old.flac");
+        let added = touch_track(&dir, "new.flac");
+        std::fs::write(dir.join("evening.m3u"), format!("{}\n", added.display())).unwrap();
+
+        server
+            .queue_add(Parameters(QueueAddParams {
+                paths: vec![existing.to_string_lossy().into_owned()],
+            }))
+            .expect("seed queue");
+
+        let listed = server.list_playlists().expect("list_playlists");
+        let names: serde_json::Value =
+            serde_json::from_str(&result_text(&listed)).expect("list json");
+        assert_eq!(names["playlists"][0], "evening");
+
+        let result = server
+            .play_playlist(Parameters(PlayPlaylistParams {
+                name: "evening".into(),
+                append: true,
+            }))
+            .expect("play append");
+        let payload: serde_json::Value =
+            serde_json::from_str(&result_text(&result)).expect("play json");
+        assert_eq!(payload["loaded"], 1);
+        assert_eq!(payload["skipped"], 0);
+        assert_eq!(payload["state"]["queue"].as_array().unwrap().len(), 2);
+        assert_eq!(payload["state"]["status"], "Stopped");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn play_playlist_starts_playback_when_ffmpeg_can_make_a_file() {
+        let (server, dir) = playlist_server();
+        let Some(track) = ffmpeg_flac(&dir, "real.flac") else {
+            eprintln!("ffmpeg not available, skipping playback assert");
+            std::fs::remove_dir_all(&dir).ok();
+            return;
+        };
+        std::fs::write(dir.join("evening.m3u"), format!("{}\n", track.display())).unwrap();
+
+        let result = server
+            .play_playlist(Parameters(PlayPlaylistParams {
+                name: "evening".into(),
+                append: false,
+            }))
+            .expect("play");
+        let payload: serde_json::Value =
+            serde_json::from_str(&result_text(&result)).expect("play json");
+        assert_eq!(payload["loaded"], 1);
+        assert_eq!(payload["state"]["status"], "Playing");
+        assert_eq!(payload["state"]["queue"].as_array().unwrap().len(), 1);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn import_playlist_errors_when_nothing_is_playable() {
+        let (server, dir) = playlist_server();
+        let path = dir.join("empty.m3u");
+        std::fs::write(&path, "# only a comment\nhttp://x\n").unwrap();
+
+        let result = server.import_playlist(Parameters(ImportPlaylistParams {
+            path: path.to_string_lossy().into_owned(),
+            append: false,
+        }));
+        assert!(result.is_err(), "expected an error, got {result:?}");
+        assert!(server.player.state().queue.is_empty());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_playlist_writes_the_queue() {
+        let (server, dir) = playlist_server();
+        let track = touch_track(&dir, "keep.flac");
+        server
+            .queue_add(Parameters(QueueAddParams {
+                paths: vec![track.to_string_lossy().into_owned()],
+            }))
+            .expect("queue");
+
+        let result = server
+            .save_playlist(Parameters(SavePlaylistParams {
+                name: "evening".into(),
+            }))
+            .expect("save");
+        let payload: serde_json::Value =
+            serde_json::from_str(&result_text(&result)).expect("save json");
+        assert_eq!(payload["saved"], "evening.m3u");
+        assert!(dir.join("evening.m3u").is_file());
 
         std::fs::remove_dir_all(&dir).ok();
     }

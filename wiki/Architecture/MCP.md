@@ -25,8 +25,10 @@ Tools call the same `Command`s as the TUI. No second player.
 
 Library tools (`scan_library`, `search_library`, `get_track`, `browse_album`,
 `list_albums`, `library_stats`, `library_prune`) talk to
-[`znicz-library`](Library.md). Playlist and radio tools still return “not
-implemented” until Phases 3 and 4.
+[`znicz-library`](Library.md). Playlist tools (`list_playlists`,
+`import_playlist`, `save_playlist`, `play_playlist`) load and write M3U files;
+see [Formats and metadata](../Domain/Formats-and-Metadata.md#playlists-phase-3).
+Radio tools still return “not implemented” until Phase 4.
 
 ## Tools wait for the player
 

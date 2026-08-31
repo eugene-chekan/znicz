@@ -26,15 +26,33 @@ playing music matters more than metadata.
 
 ## Playlists (Phase 3)
 
-A playlist is a list of paths or URLs.
+A playlist is an **M3U / M3U8 file of local paths**. PLS and XSPF are still later.
+HTTP / Icecast lines are skipped (Phase 4).
 
-| Format | Idea |
-|--------|------|
-| M3U / M3U8 | Simple text list |
-| PLS | Older radio/playlist format |
-| XSPF | XML playlist |
+| Line | Meaning |
+|------|---------|
+| Empty, or starts with `#` | Ignored (`#EXTM3U`, `#EXTINF:…`) |
+| Contains `://` | URL. Skipped and counted |
+| Anything else | A path. Relative paths resolve against the playlist file’s directory |
 
-Znicz MCP already has **stub** tools (`import_playlist`, …) that return “not implemented” until Phase 3.
+A UTF-8 BOM is stripped. Missing files are skipped and counted. If nothing
+playable remains, the queue is left alone.
+
+**Writing** is UTF-8, no BOM, one absolute path per line. Saved files live beside
+the library database:
+
+- Linux: `~/.local/share/znicz/playlists/`
+- Windows: `%APPDATA%\znicz\playlists\`
+
+Override with `ZNICZ_PLAYLISTS_DIR`. The folder is created on first save.
+
+Play has two actions, from the TUI (`P`), CLI (`znicz playlist …`), and MCP:
+
+1. **Clear and play** — replace the queue and start the first track
+2. **Add to queue** — append, do not start or stop playback
+
+Parsing lives in `znicz-core::playlist`. The engine has no extra commands:
+callers send `QueueClear` / `QueueAdd` / `QueuePlayIndex(0)`.
 
 ## Radio (Phase 4)
 
