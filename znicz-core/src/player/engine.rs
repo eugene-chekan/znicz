@@ -504,6 +504,7 @@ impl PlayerEngine {
                 None => return Ok(()),
             }
         };
+        self.state.write().unwrap().queue_position = index;
         self.play_item(item)?;
         let mut state = self.state.write().unwrap();
         if index < state.queue.len() {
