@@ -40,7 +40,7 @@ impl Default for AudioConfig {
 }
 
 /// How long `send_blocking` waits for the engine before giving up.
-pub const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+pub const COMMAND_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Clone)]
 pub struct PlayerHandle {
@@ -296,7 +296,7 @@ impl PlayerEngine {
     }
 
     fn play_path(&mut self, path: PathBuf) -> Result<()> {
-        let (decoder, track_info) = AudioDecoder::open(&path)?;
+        let (decoder, track_info) = AudioDecoder::open_path(&path)?;
         let sample_rate = decoder.sample_rate();
         let channels = decoder.channels();
 

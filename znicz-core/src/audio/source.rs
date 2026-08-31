@@ -1,4 +1,3 @@
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use symphonia::core::audio::SampleBuffer;
@@ -14,52 +13,81 @@ use crate::error::{Result, ZniczError};
 use crate::metadata::{read_metadata, title_from_path};
 use crate::player::state::TrackInfo;
 
-/// Build track info from the decoder's view of the file plus its tags.
-fn track_info(path: &Path, codec_params: &CodecParameters) -> TrackInfo {
-    let meta = read_metadata(path);
-    let title = meta
-        .tags
-        .title
-        .clone()
-        .unwrap_or_else(|| title_from_path(path));
+fn track_info_from_params(codec_params: &CodecParameters, source: &dyn AudioSource) -> TrackInfo {
+    if let Some(path) = source.path() {
+        let meta = read_metadata(path);
+        let title = meta
+            .tags
+            .title
+            .clone()
+            .unwrap_or_else(|| title_from_path(path));
 
-    let duration = codec_params
-        .n_frames
-        .and_then(|frames| {
-            codec_params
-                .sample_rate
-                .map(|rate| std::time::Duration::from_secs_f64(frames as f64 / rate as f64))
-        })
-        .or(meta.properties.duration);
+        let duration = codec_params
+            .n_frames
+            .and_then(|frames| {
+                codec_params
+                    .sample_rate
+                    .map(|rate| std::time::Duration::from_secs_f64(frames as f64 / rate as f64))
+            })
+            .or(meta.properties.duration);
 
-    let sample_rate = codec_params.sample_rate.unwrap_or(0);
-    let channels = codec_params.channels.map(|c| c.count() as u16).unwrap_or(0);
-    let bits_per_sample = codec_params
-        .bits_per_sample
-        .or(meta.properties.bits_per_sample);
-    let pcm = is_pcm(codec_params.codec);
+        let sample_rate = codec_params.sample_rate.unwrap_or(0);
+        let channels = codec_params.channels.map(|c| c.count() as u16).unwrap_or(0);
+        let bits_per_sample = codec_params
+            .bits_per_sample
+            .or(meta.properties.bits_per_sample);
+        let pcm = is_pcm(codec_params.codec);
 
-    let bitrate_kbps = meta.properties.audio_bitrate.or_else(|| {
-        // Uncompressed PCM has a known rate: samples × channels × bits.
-        if pcm {
+        let bitrate_kbps = meta.properties.audio_bitrate.or_else(|| {
+            if pcm {
+                uncompressed_bitrate_kbps(sample_rate, channels, bits_per_sample)
+            } else {
+                None
+            }
+        });
+
+        TrackInfo {
+            path: Some(path.to_path_buf()),
+            url: None,
+            title,
+            codec: codec_label(codec_params.codec, path),
+            sample_rate,
+            channels,
+            bits_per_sample,
+            bitrate_kbps,
+            duration,
+            tags: meta.tags,
+        }
+    } else {
+        let sample_rate = codec_params.sample_rate.unwrap_or(0);
+        let channels = codec_params.channels.map(|c| c.count() as u16).unwrap_or(0);
+        let bits_per_sample = codec_params.bits_per_sample;
+        let pcm = is_pcm(codec_params.codec);
+
+        let bitrate_kbps = if pcm {
             uncompressed_bitrate_kbps(sample_rate, channels, bits_per_sample)
         } else {
             None
-        }
-    });
+        };
 
-    TrackInfo {
-        path: Some(path.to_path_buf()),
-        url: None,
-        title,
-        codec: codec_label(codec_params.codec, path),
-        sample_rate,
-        channels,
-        bits_per_sample,
-        bitrate_kbps,
-        duration,
-        tags: meta.tags,
+        TrackInfo {
+            path: None,
+            url: source.url().map(str::to_string),
+            title: source.title_hint().to_string(),
+            codec: codec_label(codec_params.codec, Path::new("")),
+            sample_rate,
+            channels,
+            bits_per_sample,
+            bitrate_kbps,
+            duration: None,
+            tags: Default::default(),
+        }
     }
+}
+
+/// Build track info from the decoder's view of the file plus its tags.
+fn track_info(path: &Path, codec_params: &CodecParameters) -> TrackInfo {
+    track_info_from_params(codec_params, &LocalFileSource::new(path.to_path_buf()))
 }
 
 /// A name a person would recognise, never a hex codec id such as `0x1003`.
@@ -179,9 +207,11 @@ fn format_options() -> FormatOptions {
 }
 
 pub trait AudioSource: Send {
-    fn path(&self) -> &Path;
+    fn path(&self) -> Option<&Path>;
+    fn url(&self) -> Option<&str>;
+    fn title_hint(&self) -> &str;
     fn read_info(&self) -> Result<TrackInfo>;
-    fn open_reader(&self) -> Result<Box<dyn Read + Send>>;
+    fn open_reader(&self) -> Result<Box<dyn symphonia::core::io::MediaSource>>;
 }
 
 #[derive(Debug, Clone)]
@@ -196,15 +226,26 @@ impl LocalFileSource {
 }
 
 impl AudioSource for LocalFileSource {
-    fn path(&self) -> &Path {
-        &self.path
+    fn path(&self) -> Option<&Path> {
+        Some(&self.path)
+    }
+
+    fn url(&self) -> Option<&str> {
+        None
+    }
+
+    fn title_hint(&self) -> &str {
+        self.path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Unknown")
     }
 
     fn read_info(&self) -> Result<TrackInfo> {
         probe_track(&self.path)
     }
 
-    fn open_reader(&self) -> Result<Box<dyn Read + Send>> {
+    fn open_reader(&self) -> Result<Box<dyn symphonia::core::io::MediaSource>> {
         let file = std::fs::File::open(&self.path)?;
         Ok(Box::new(file))
     }
@@ -243,13 +284,19 @@ pub struct AudioDecoder {
 }
 
 impl AudioDecoder {
-    pub fn open(path: &Path) -> Result<(Self, TrackInfo)> {
-        let file = std::fs::File::open(path)?;
-        let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    pub fn open(source: &dyn AudioSource) -> Result<(Self, TrackInfo)> {
+        let reader = source.open_reader()?;
+        let mss = MediaSourceStream::new(reader, Default::default());
 
         let mut hint = Hint::new();
-        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            hint.with_extension(ext);
+        if let Some(path) = source.path() {
+            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                hint.with_extension(ext);
+            }
+        } else if let Some(url) = source.url() {
+            if let Some(ext) = url.rsplit('.').next().filter(|s| s.len() <= 4) {
+                hint.with_extension(ext);
+            }
         }
 
         let probed = symphonia::default::get_probe()
@@ -273,7 +320,7 @@ impl AudioDecoder {
             .make(&codec_params, &DecoderOptions::default())
             .map_err(|e| ZniczError::Decode(e.to_string()))?;
 
-        let track_info = track_info(path, &codec_params);
+        let track_info = track_info_from_params(&codec_params, source);
 
         Ok((
             Self {
@@ -285,6 +332,10 @@ impl AudioDecoder {
             },
             track_info,
         ))
+    }
+
+    pub fn open_path(path: &Path) -> Result<(Self, TrackInfo)> {
+        Self::open(&LocalFileSource::new(path.to_path_buf()))
     }
 
     pub fn sample_rate(&self) -> u32 {
