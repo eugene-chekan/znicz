@@ -16,13 +16,14 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn hints_for(app: &App) -> &'static str {
-    if app.playlist_input.is_some() {
-        return "type a name · Enter save · Esc cancel";
+    if app.playlist_input.is_some() || app.radio_prompt.is_some() {
+        return "type a name · Enter · Esc cancel";
     }
     let pane = match app.modal {
         Modal::Devices => "Devices",
         Modal::Inspector => "Inspector",
         Modal::Playlists => "Playlists",
+        Modal::Radio => "Radio",
         _ => match app.focus {
             Focus::Queue => "Queue",
             Focus::Library => "Library",

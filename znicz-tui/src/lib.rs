@@ -16,4 +16,4 @@ pub mod theme;
 pub mod toast;
 pub mod views;
 
-pub use app::{App, Focus, Modal};
+pub use app::{App, Focus, Modal, RadioPrompt};

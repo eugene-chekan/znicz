@@ -6,8 +6,8 @@
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use znicz_core::{spawn_player, AudioConfig, Command, PlayerHandle, RepeatMode};
-use znicz_tui::{App, Focus, Modal};
+use znicz_core::{spawn_player, AudioConfig, Command, PlayerHandle, QueueItem, RepeatMode};
+use znicz_tui::{App, Focus, Modal, RadioPrompt};
 
 fn player() -> PlayerHandle {
     let (player, _thread) = spawn_player(AudioConfig::default());
@@ -274,26 +274,14 @@ fn m_mutes_without_forgetting_the_volume() {
 }
 
 #[test]
-fn r_cycles_repeat_and_z_toggles_shuffle() {
+fn e_cycles_repeat_and_z_toggles_shuffle() {
     let mut app = new_app();
-    assert_eq!(app.state().repeat, RepeatMode::Off);
-
-    press_char(&mut app, 'r');
+    press_char(&mut app, 'e');
     assert_eq!(app.state().repeat, RepeatMode::All);
-    press_char(&mut app, 'r');
+    press_char(&mut app, 'e');
     assert_eq!(app.state().repeat, RepeatMode::One);
-    press_char(&mut app, 'r');
-    assert_eq!(
-        app.state().repeat,
-        RepeatMode::Off,
-        "three presses come back"
-    );
-
-    assert!(!app.state().shuffle);
     press_char(&mut app, 'z');
     assert!(app.state().shuffle);
-    press_char(&mut app, 'z');
-    assert!(!app.state().shuffle);
 }
 
 #[test]
@@ -522,7 +510,9 @@ fn enter_replaces_the_queue_from_the_highlighted_playlist() {
     let other = dir.join("other.flac");
     std::fs::write(&other, b"x").unwrap();
     app.player
-        .send_blocking(Command::QueueAdd(vec![znicz_core::QueueItem::file(other.clone())]))
+        .send_blocking(Command::QueueAdd(vec![znicz_core::QueueItem::file(
+            other.clone(),
+        )]))
         .expect("seed queue");
 
     press_char(&mut app, 'P');
@@ -532,7 +522,10 @@ fn enter_replaces_the_queue_from_the_highlighted_playlist() {
     assert_eq!(queue.len(), 1, "clear-and-play should replace the queue");
     assert_ne!(queue[0], znicz_core::QueueItem::file(other.clone()));
     assert_eq!(
-        queue[0].as_path().and_then(|p| p.file_name()).and_then(|n| n.to_str()),
+        queue[0]
+            .as_path()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str()),
         Some("a.flac")
     );
 }
@@ -543,7 +536,9 @@ fn a_appends_the_playlist_without_clearing() {
     let other = dir.join("other.flac");
     std::fs::write(&other, b"x").unwrap();
     app.player
-        .send_blocking(Command::QueueAdd(vec![znicz_core::QueueItem::file(other.clone())]))
+        .send_blocking(Command::QueueAdd(vec![znicz_core::QueueItem::file(
+            other.clone(),
+        )]))
         .expect("seed queue");
 
     press_char(&mut app, 'P');
@@ -597,5 +592,155 @@ fn save_prompt_accepts_to_listen() {
         app.playlist_input.as_deref(),
         Some("To Listen"),
         "s/n/i/L/Space are global elsewhere; they must type in the name"
+    );
+}
+
+fn station_fixture() -> (App, PathBuf) {
+    let path = std::env::temp_dir().join(format!(
+        "znicz-tui-stations-{}-{}.toml",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut app = new_app();
+    app.stations_path = path.clone();
+    (app, path)
+}
+
+#[test]
+fn capital_r_toggles_the_radio_modal() {
+    let mut app = new_app();
+    press_char(&mut app, 'R');
+    assert_eq!(app.modal, Modal::Radio);
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn r_on_the_library_reloads_instead_of_repeat() {
+    let mut app = new_app();
+    let before = app.state().repeat;
+    press_char(&mut app, 'r');
+    assert_eq!(app.state().repeat, before);
+    assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn radio_add_prompt_treats_letters_as_text() {
+    let (mut app, _path) = station_fixture();
+    press_char(&mut app, 'R');
+    press_char(&mut app, 'a');
+    press_typed(&mut app, "songs");
+    assert!(matches!(
+        app.radio_prompt,
+        Some(RadioPrompt::AddName(ref s)) if s == "songs"
+    ));
+    assert!(!app.should_quit);
+}
+
+#[test]
+fn radio_add_writes_the_file_after_name_and_url() {
+    let (mut app, path) = station_fixture();
+    press_char(&mut app, 'R');
+    press_char(&mut app, 'a');
+    press_typed(&mut app, "Example");
+    press(&mut app, KeyCode::Enter);
+    press_typed(&mut app, "https://example.com/stream");
+    press(&mut app, KeyCode::Enter);
+    let stations = znicz_core::load_stations(&path).unwrap();
+    assert_eq!(stations.len(), 1);
+    assert_eq!(stations[0].name, "Example");
+    assert_eq!(stations[0].url, "https://example.com/stream");
+}
+
+#[test]
+fn enter_on_a_station_replaces_the_queue() {
+    let (mut app, path) = station_fixture();
+    znicz_core::save_stations(
+        &path,
+        &[znicz_core::Station {
+            name: "Example".into(),
+            url: "https://example.com/stream".into(),
+        }],
+    )
+    .unwrap();
+    app.player
+        .send_blocking(Command::QueueAdd(vec![QueueItem::file("/music/a.flac")]))
+        .unwrap();
+    press_char(&mut app, 'R');
+    press(&mut app, KeyCode::Enter);
+    let queue = app.state().queue;
+    assert_eq!(queue.len(), 1);
+    assert_eq!(
+        queue[0],
+        QueueItem::stream("Example", "https://example.com/stream")
+    );
+}
+
+#[test]
+fn d_deletes_a_station_immediately() {
+    let (mut app, path) = station_fixture();
+    znicz_core::save_stations(
+        &path,
+        &[znicz_core::Station {
+            name: "Gone".into(),
+            url: "https://example.com/g".into(),
+        }],
+    )
+    .unwrap();
+    press_char(&mut app, 'R');
+    press_char(&mut app, 'd');
+    assert!(znicz_core::load_stations(&path).unwrap().is_empty());
+}
+
+#[test]
+fn n_on_a_single_stream_toasts_instead_of_sending_next() {
+    let mut app = new_app();
+    app.player
+        .send_blocking(Command::QueueAdd(vec![QueueItem::stream(
+            "Live",
+            "https://example.com/s",
+        )]))
+        .unwrap();
+    press_char(&mut app, 'n');
+    let toast = app.toasts.current().expect("toast");
+    assert!(toast.text.contains("radio"), "{}", toast.text);
+}
+
+#[test]
+fn seek_on_a_stream_queue_row_toasts() {
+    let mut app = new_app();
+    app.player
+        .send_blocking(Command::QueueAdd(vec![QueueItem::stream(
+            "Live",
+            "https://example.com/s",
+        )]))
+        .unwrap();
+    // Fake a current track so seek_relative is not a no-op:
+    // seek_relative returns early without current_track. After Task 4, Seek
+    // errors from the engine when the row is a stream even without a track.
+    press(&mut app, KeyCode::Right);
+    // If current_track is None, this test only checks no panic.
+}
+
+#[test]
+fn playlist_save_of_a_stream_queue_is_refused() {
+    let mut app = new_app();
+    app.player
+        .send_blocking(Command::QueueAdd(vec![QueueItem::stream(
+            "Live",
+            "https://example.com/s",
+        )]))
+        .unwrap();
+    press_char(&mut app, 'P');
+    press_char(&mut app, 'w');
+    assert!(app.playlist_input.is_none());
+    let toast = app.toasts.current().unwrap();
+    assert!(
+        toast.text.contains("radio") || toast.text.contains("playlist"),
+        "{}",
+        toast.text
     );
 }

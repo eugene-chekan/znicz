@@ -15,7 +15,7 @@ pub fn duration(d: Duration) -> String {
 
 /// A duration that may be unknown, as it is for radio streams.
 pub fn duration_opt(d: Option<Duration>) -> String {
-    d.map(duration).unwrap_or_else(|| "--:--".to_string())
+    d.map(duration).unwrap_or_else(|| "—".to_string())
 }
 
 /// Sample rate in kHz, dropping a pointless trailing `.0`.
@@ -101,7 +101,7 @@ mod tests {
         assert_eq!(duration(Duration::from_secs(9)), "0:09");
         assert_eq!(duration(Duration::from_secs(75)), "1:15");
         assert_eq!(duration(Duration::from_secs(3661)), "1:01:01");
-        assert_eq!(duration_opt(None), "--:--");
+        assert_eq!(duration_opt(None), "—");
     }
 
     #[test]

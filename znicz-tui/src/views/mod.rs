@@ -7,6 +7,7 @@ mod library;
 mod now_playing;
 mod playlists;
 mod queue;
+mod radio;
 mod status;
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -66,6 +67,7 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
         Modal::Devices => devices::render_modal(frame, area, app, state),
         Modal::Inspector => inspector::render(frame, area, state),
         Modal::Playlists => playlists::render_modal(frame, area, app),
+        Modal::Radio => radio::render_modal(frame, area, app),
         Modal::None => {}
     }
 

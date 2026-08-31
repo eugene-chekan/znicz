@@ -155,6 +155,21 @@ fn every_view_draws_at_every_size() {
             "playlists at {width}x{height} should fill the window"
         );
     }
+
+    for &(width, height) in SIZES {
+        let mut app = App::with_library(player(), None);
+        app.modal = Modal::Radio;
+        app.stations = vec![znicz_core::Station {
+            name: "Example FM".into(),
+            url: "https://example.com/stream".into(),
+        }];
+        let screen = draw(&mut app, width, height);
+        assert_eq!(
+            screen.lines().count(),
+            height as usize,
+            "radio at {width}x{height} should fill the window"
+        );
+    }
 }
 
 #[test]
@@ -175,6 +190,8 @@ fn the_help_overlay_draws_at_every_size() {
     assert!(screen.contains("signal inspector"));
     assert!(screen.contains("playlists"), "{screen}");
     assert!(screen.contains("previous track"), "{screen}");
+    assert!(screen.contains("Radio"), "{screen}");
+    assert!(screen.contains("add a station"), "{screen}");
 }
 
 #[test]
@@ -405,6 +422,15 @@ fn the_focused_view_is_the_one_shown() {
     let screen = draw(&mut app, 90, 24);
     assert!(screen.contains("Playlists"), "{screen}");
     assert!(screen.contains("evening"), "{screen}");
+
+    app.modal = Modal::Radio;
+    app.stations = vec![znicz_core::Station {
+        name: "Example FM".into(),
+        url: "https://example.com/stream".into(),
+    }];
+    let screen = draw(&mut app, 90, 24);
+    assert!(screen.contains("Radio"), "{screen}");
+    assert!(screen.contains("Example FM"), "{screen}");
 }
 
 #[test]
