@@ -1,9 +1,9 @@
-use std::path::PathBuf;
 use std::time::Duration;
 
 use crossbeam_channel::Sender;
 
 use crate::error::Result;
+use crate::player::state::QueueItem;
 
 /// A command plus an optional channel to report back on.
 ///
@@ -31,7 +31,7 @@ impl CommandEnvelope {
 
 #[derive(Debug, Clone)]
 pub enum Command {
-    Play(PathBuf),
+    Play(QueueItem),
     Pause,
     Resume,
     Stop,
@@ -40,7 +40,7 @@ pub enum Command {
     SetMuted(bool),
     NextTrack,
     PreviousTrack,
-    QueueAdd(Vec<PathBuf>),
+    QueueAdd(Vec<QueueItem>),
     QueueClear,
     /// Start the queue entry at this index.
     QueuePlayIndex(usize),

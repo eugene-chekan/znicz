@@ -170,7 +170,8 @@ mod tests {
         PlayerState {
             status: PlaybackStatus::Playing,
             current_track: Some(TrackInfo {
-                path: PathBuf::from("/music/sour-times.flac"),
+                path: Some(PathBuf::from("/music/sour-times.flac")),
+                url: None,
                 title: "Sour Times".into(),
                 codec: "FLAC".into(),
                 sample_rate: 96_000,

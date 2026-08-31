@@ -221,7 +221,10 @@ impl PlayerEngine {
 
     fn handle_command(&mut self, command: Command) -> Result<()> {
         match command {
-            Command::Play(path) => self.play_path(path)?,
+            Command::Play(item) => match item {
+                crate::player::state::QueueItem::File { path } => self.play_path(path)?,
+                crate::player::state::QueueItem::Stream { .. } => return Err(ZniczError::NotImplemented("radio stream".into())),
+            },
             Command::Pause => {
                 self.output.set_paused(true);
                 self.update_status(PlaybackStatus::Paused);
@@ -255,9 +258,9 @@ impl PlayerEngine {
             }
             Command::NextTrack => self.next_track()?,
             Command::PreviousTrack => self.previous_track()?,
-            Command::QueueAdd(paths) => {
+            Command::QueueAdd(items) => {
                 let mut state = self.state.write().unwrap();
-                state.queue.extend(paths);
+                state.queue.extend(items);
                 self.event_tx.send(PlayerEvent::QueueChanged).ok();
                 self.emit_state_changed();
             }
@@ -350,16 +353,17 @@ impl PlayerEngine {
 
         let mut state = self.state.write().unwrap();
         state.output = Some(output_info);
+        let item = crate::player::state::QueueItem::File { path: path.clone() };
         if state.queue.is_empty() {
-            state.queue = vec![path.clone()];
+            state.queue = vec![item.clone()];
             state.queue_position = 0;
-        } else if !state.queue.contains(&path) {
-            state.queue.push(path.clone());
+        } else if !state.queue.contains(&item) {
+            state.queue.push(item.clone());
         } else {
             state.queue_position = state
                 .queue
                 .iter()
-                .position(|p| p == &path)
+                .position(|p| p == &item)
                 .unwrap_or(state.queue_position);
         }
         state.current_track = Some(track_info.clone());
@@ -474,15 +478,18 @@ impl PlayerEngine {
     }
 
     fn play_queue_index(&mut self, index: usize) -> Result<()> {
-        let path = {
+        let item = {
             let state = self.state.read().unwrap();
             match state.queue.get(index) {
-                Some(path) => path.clone(),
+                Some(item) => item.clone(),
                 None => return Ok(()),
             }
         };
         self.state.write().unwrap().queue_position = index;
-        self.play_path(path)
+        match item {
+            crate::player::state::QueueItem::File { path } => self.play_path(path),
+            crate::player::state::QueueItem::Stream { .. } => Err(ZniczError::NotImplemented("radio stream".into())),
+        }
     }
 
     fn remove_from_queue(&mut self, index: usize) -> Result<()> {
@@ -532,10 +539,13 @@ impl PlayerEngine {
         } else {
             0
         };
-        let path = state.queue[prev_pos].clone();
+        let item = state.queue[prev_pos].clone();
         drop(state);
         self.state.write().unwrap().queue_position = prev_pos;
-        self.play_path(path)?;
+        match item {
+            crate::player::state::QueueItem::File { path } => self.play_path(path)?,
+            crate::player::state::QueueItem::Stream { .. } => return Err(ZniczError::NotImplemented("radio stream".into())),
+        }
         Ok(())
     }
 

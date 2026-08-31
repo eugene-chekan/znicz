@@ -30,7 +30,7 @@ fn play_local_wav_starts_playback() {
 
     let (player, _thread) = spawn_player(AudioConfig::default());
     player
-        .send(Command::Play(wav.clone()))
+        .send(Command::Play(znicz_core::QueueItem::file(wav.clone())))
         .expect("play command");
 
     for _ in 0..50 {
@@ -70,7 +70,7 @@ fn track_plays_for_its_real_duration() {
     let (player, _thread) = spawn_player(AudioConfig::default());
     let started = Instant::now();
     player
-        .send(Command::Play(wav.clone()))
+        .send(Command::Play(znicz_core::QueueItem::file(wav.clone())))
         .expect("play command");
 
     let mut ended_after = None;

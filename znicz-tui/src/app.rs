@@ -1,6 +1,6 @@
 //! The application: what is on screen, and what the keys do.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -156,15 +156,17 @@ impl App {
                 }
                 PlayerEvent::TrackStarted(track) => {
                     // Seed the cache so the queue row is right immediately.
-                    self.meta.insert(
-                        track.path.clone(),
-                        Entry {
-                            title: track.title.clone(),
-                            artist: track.artist().map(str::to_string),
-                            album: track.album().map(str::to_string),
-                            duration: track.duration,
-                        },
-                    );
+                    if let Some(path) = track.path.clone() {
+                        self.meta.insert(
+                            path,
+                            Entry {
+                                title: track.title.clone(),
+                                artist: track.artist().map(str::to_string),
+                                album: track.album().map(str::to_string),
+                                duration: track.duration,
+                            },
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -480,7 +482,14 @@ impl App {
         };
         let path = self.playlists_dir.join(&name);
         let queue = self.player.state().queue;
-        match write_path(&path, &queue) {
+        let paths = match znicz_core::m3u_paths(&queue) {
+            Ok(paths) => paths,
+            Err(e) => {
+                self.toasts.error(e.to_string());
+                return;
+            }
+        };
+        match write_path(&path, &paths) {
             Ok(()) => {
                 let stem = name
                     .strip_suffix(".m3u8")
@@ -575,7 +584,7 @@ impl App {
                 let path = track.path.clone();
                 let entry = entry_from_track(track);
                 self.meta.insert(path.clone(), entry);
-                self.apply(Command::Play(path), None);
+                self.apply(Command::Play(znicz_core::QueueItem::file(path)), None);
             }
             None => {}
         }
@@ -588,7 +597,7 @@ impl App {
         }
 
         let count = tracks.len();
-        let paths: Vec<PathBuf> = tracks.iter().map(|t| t.path.clone()).collect();
+        let items: Vec<znicz_core::QueueItem> = tracks.iter().map(|t| znicz_core::QueueItem::file(t.path.clone())).collect();
         // Tags come from the database, so the queue reads properly at once.
         for track in &tracks {
             self.meta
@@ -596,7 +605,7 @@ impl App {
         }
 
         self.apply(
-            Command::QueueAdd(paths),
+            Command::QueueAdd(items),
             Some(match count {
                 1 => "added 1 track".to_string(),
                 n => format!("added {n} tracks"),
@@ -781,15 +790,20 @@ impl App {
         }
     }
 
-    fn queue_label_len(&self, path: &Path) -> usize {
-        match self.meta.get(path) {
-            Some(entry) => entry.label().chars().count(),
-            None => path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("?")
-                .chars()
-                .count(),
+    fn queue_label_len(&self, item: &znicz_core::QueueItem) -> usize {
+        match item {
+            znicz_core::QueueItem::Stream { name, .. } => name.chars().count(),
+            znicz_core::QueueItem::File { path } => {
+                match self.meta.get(path) {
+                    Some(entry) => entry.label().chars().count(),
+                    None => path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("?")
+                        .chars()
+                        .count(),
+                }
+            }
         }
     }
 
@@ -801,7 +815,7 @@ impl App {
         state
             .queue
             .get(index)
-            .map(|path| self.queue_label_len(path))
+            .map(|item| self.queue_label_len(item))
             .unwrap_or(0)
     }
 

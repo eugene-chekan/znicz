@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -12,9 +12,40 @@ pub enum PlaybackStatus {
     Paused,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum QueueItem {
+    File { path: PathBuf },
+    Stream { name: String, url: String },
+}
+
+impl QueueItem {
+    pub fn file(path: impl Into<PathBuf>) -> Self {
+        Self::File { path: path.into() }
+    }
+    pub fn stream(name: impl Into<String>, url: impl Into<String>) -> Self {
+        Self::Stream {
+            name: name.into(),
+            url: url.into(),
+        }
+    }
+    pub fn as_path(&self) -> Option<&Path> {
+        match self {
+            Self::File { path } => Some(path),
+            Self::Stream { .. } => None,
+        }
+    }
+    pub fn is_stream(&self) -> bool {
+        matches!(self, Self::Stream { .. })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackInfo {
-    pub path: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
     /// Title tag when present, otherwise the file name.
     pub title: String,
     pub codec: String,
@@ -137,7 +168,7 @@ pub struct PlayerState {
     /// Details of the open output stream, once playback has started.
     #[serde(default)]
     pub output: Option<OutputInfo>,
-    pub queue: Vec<PathBuf>,
+    pub queue: Vec<QueueItem>,
     pub queue_position: usize,
     #[serde(default)]
     pub repeat: RepeatMode,
@@ -181,7 +212,8 @@ mod tests {
 
     fn track(sample_rate: u32, channels: u16, bits: Option<u32>) -> TrackInfo {
         TrackInfo {
-            path: PathBuf::from("/music/a.flac"),
+            path: Some(PathBuf::from("/music/a.flac")),
+            url: None,
             title: "A".into(),
             codec: "FLAC".into(),
             sample_rate,
@@ -262,6 +294,39 @@ mod tests {
         state.muted = true;
         assert_eq!(state.effective_volume(), 0.0);
         assert_eq!(state.volume, 0.7, "volume setting must be remembered");
+    }
+
+    #[test]
+    fn queue_item_json_is_tagged_not_a_bare_path() {
+        let file = QueueItem::file("/music/a.flac");
+        let stream = QueueItem::stream("Example", "https://example.com/s");
+        let file_json = serde_json::to_value(&file).unwrap();
+        let stream_json = serde_json::to_value(&stream).unwrap();
+        assert_eq!(file_json["kind"], "file");
+        assert!(file_json["path"].as_str().unwrap().ends_with("a.flac"));
+        assert_eq!(stream_json["kind"], "stream");
+        assert_eq!(stream_json["name"], "Example");
+        assert_eq!(stream_json["url"], "https://example.com/s");
+    }
+
+    #[test]
+    fn track_info_stream_has_a_url_not_a_path() {
+        let track = TrackInfo {
+            path: None,
+            url: Some("https://example.com/s".into()),
+            title: "Example".into(),
+            codec: "MP3".into(),
+            sample_rate: 44_100,
+            channels: 2,
+            bits_per_sample: None,
+            bitrate_kbps: None,
+            duration: None,
+            tags: TrackTags::default(),
+        };
+        let json = serde_json::to_value(&track).unwrap();
+        assert!(json.get("path").is_none());
+        assert_eq!(json["url"], "https://example.com/s");
+        assert_eq!(json["title"], "Example");
     }
 }
 

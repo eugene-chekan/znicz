@@ -148,6 +148,19 @@ pub fn saved_path(dir: &Path, name: &str) -> Option<PathBuf> {
     None
 }
 
+pub fn m3u_paths(queue: &[crate::player::state::QueueItem]) -> Result<Vec<PathBuf>> {
+    let paths: Vec<PathBuf> = queue
+        .iter()
+        .filter_map(|item| item.as_path().map(Path::to_path_buf))
+        .collect();
+    if paths.is_empty() {
+        return Err(ZniczError::Player(
+            "cannot save a radio queue as a playlist".into(),
+        ));
+    }
+    Ok(paths)
+}
+
 /// Clear and play (`append == false`) or only append.
 pub fn apply_to_player(player: &PlayerHandle, result: &LoadResult, append: bool) -> Result<()> {
     if result.paths.is_empty() {
@@ -156,7 +169,14 @@ pub fn apply_to_player(player: &PlayerHandle, result: &LoadResult, append: bool)
     if !append {
         player.send_blocking(Command::QueueClear)?;
     }
-    player.send_blocking(Command::QueueAdd(result.paths.clone()))?;
+    player.send_blocking(Command::QueueAdd(
+        result
+            .paths
+            .iter()
+            .cloned()
+            .map(crate::player::state::QueueItem::file)
+            .collect(),
+    ))?;
     if !append {
         player.send_blocking(Command::QueuePlayIndex(0))?;
     }
@@ -314,7 +334,7 @@ mod tests {
         let a = touch(&dir, "a.flac");
         let (player, _thread) = crate::spawn_player(crate::AudioConfig::default());
         player
-            .send_blocking(Command::QueueAdd(vec![a.clone()]))
+            .send_blocking(Command::QueueAdd(vec![crate::player::state::QueueItem::file(a.clone())]))
             .unwrap();
         let err = apply_to_player(
             &player,
@@ -325,6 +345,6 @@ mod tests {
             false,
         );
         assert!(err.is_err());
-        assert_eq!(player.state().queue, vec![a]);
+        assert_eq!(player.state().queue, vec![crate::player::state::QueueItem::file(a)]);
     }
 }

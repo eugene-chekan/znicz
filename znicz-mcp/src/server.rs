@@ -309,7 +309,7 @@ impl ZniczMcpServer {
         &self,
         Parameters(params): Parameters<PlayParams>,
     ) -> Result<rmcp::model::CallToolResult, McpError> {
-        self.apply(Command::Play(params.path.into()))
+        self.apply(Command::Play(znicz_core::QueueItem::file(params.path)))
     }
 
     #[tool(description = "Pause playback")]
@@ -359,8 +359,8 @@ impl ZniczMcpServer {
         &self,
         Parameters(params): Parameters<QueueAddParams>,
     ) -> Result<rmcp::model::CallToolResult, McpError> {
-        let paths = params.paths.into_iter().map(PathBuf::from).collect();
-        self.apply(Command::QueueAdd(paths))
+        let items = params.paths.into_iter().map(znicz_core::QueueItem::file).collect();
+        self.apply(Command::QueueAdd(items))
     }
 
     #[tool(description = "Clear the playback queue")]
@@ -545,7 +545,8 @@ impl ZniczMcpServer {
             return Err(McpError::invalid_params("queue is empty", None));
         }
         let name = sanitize_stem(&params.name).map_err(Self::map_io)?;
-        write_path(&self.playlists_dir.join(&name), &queue).map_err(Self::map_io)?;
+        let paths = znicz_core::m3u_paths(&queue).map_err(Self::map_io)?;
+        write_path(&self.playlists_dir.join(&name), &paths).map_err(Self::map_io)?;
         Self::json_result(&serde_json::json!({ "saved": name }))
     }
 

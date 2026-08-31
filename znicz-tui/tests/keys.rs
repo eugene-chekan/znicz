@@ -44,11 +44,11 @@ fn press_ctrl(app: &mut App, c: char) {
 }
 
 fn queue(app: &mut App, count: usize) {
-    let paths: Vec<PathBuf> = (0..count)
-        .map(|i| PathBuf::from(format!("/music/track-{i}.flac")))
+    let items: Vec<znicz_core::QueueItem> = (0..count)
+        .map(|i| znicz_core::QueueItem::file(format!("/music/track-{i}.flac")))
         .collect();
     app.player
-        .send_blocking(Command::QueueAdd(paths))
+        .send_blocking(Command::QueueAdd(items))
         .expect("queue add");
 }
 
@@ -309,7 +309,7 @@ fn d_removes_the_selected_queue_entry() {
     assert_eq!(queue.len(), 2);
     assert_eq!(
         queue[1],
-        PathBuf::from("/music/track-2.flac"),
+        znicz_core::QueueItem::file("/music/track-2.flac"),
         "the second entry should be the one that went"
     );
 }
@@ -522,7 +522,7 @@ fn enter_replaces_the_queue_from_the_highlighted_playlist() {
     let other = dir.join("other.flac");
     std::fs::write(&other, b"x").unwrap();
     app.player
-        .send_blocking(Command::QueueAdd(vec![other.clone()]))
+        .send_blocking(Command::QueueAdd(vec![znicz_core::QueueItem::file(other.clone())]))
         .expect("seed queue");
 
     press_char(&mut app, 'P');
@@ -530,9 +530,9 @@ fn enter_replaces_the_queue_from_the_highlighted_playlist() {
 
     let queue = app.state().queue;
     assert_eq!(queue.len(), 1, "clear-and-play should replace the queue");
-    assert_ne!(queue[0], other);
+    assert_ne!(queue[0], znicz_core::QueueItem::file(other.clone()));
     assert_eq!(
-        queue[0].file_name().and_then(|n| n.to_str()),
+        queue[0].as_path().and_then(|p| p.file_name()).and_then(|n| n.to_str()),
         Some("a.flac")
     );
 }
@@ -543,7 +543,7 @@ fn a_appends_the_playlist_without_clearing() {
     let other = dir.join("other.flac");
     std::fs::write(&other, b"x").unwrap();
     app.player
-        .send_blocking(Command::QueueAdd(vec![other.clone()]))
+        .send_blocking(Command::QueueAdd(vec![znicz_core::QueueItem::file(other.clone())]))
         .expect("seed queue");
 
     press_char(&mut app, 'P');
@@ -551,7 +551,7 @@ fn a_appends_the_playlist_without_clearing() {
 
     let queue = app.state().queue;
     assert_eq!(queue.len(), 2, "add should keep the existing row");
-    assert_eq!(queue[0], other);
+    assert_eq!(queue[0], znicz_core::QueueItem::file(other.clone()));
 }
 
 #[test]

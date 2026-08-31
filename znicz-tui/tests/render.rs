@@ -50,7 +50,8 @@ fn playing_state() -> znicz_core::PlayerState {
     PlayerState {
         status: PlaybackStatus::Playing,
         current_track: Some(TrackInfo {
-            path: PathBuf::from("/music/sour-times.flac"),
+            path: Some(PathBuf::from("/music/sour-times.flac")),
+            url: None,
             title: "Sour Times".into(),
             codec: "FLAC".into(),
             sample_rate: 96_000,
@@ -108,8 +109,8 @@ fn every_view_draws_at_every_size() {
         let mut app = App::with_library(player(), None);
         app.player
             .send_blocking(Command::QueueAdd(vec![
-                PathBuf::from("/music/one.flac"),
-                PathBuf::from("/music/two.flac"),
+                znicz_core::QueueItem::file("/music/one.flac"),
+                znicz_core::QueueItem::file("/music/two.flac"),
             ]))
             .expect("queue add");
         app.queue_open = true;
@@ -329,7 +330,7 @@ fn queue_rows_show_tags_once_they_are_known() {
         },
     );
     app.player
-        .send_blocking(Command::QueueAdd(vec![path]))
+        .send_blocking(Command::QueueAdd(vec![znicz_core::QueueItem::file(path)]))
         .expect("queue add");
     app.queue_open = true;
     app.focus = Focus::Queue;
@@ -346,7 +347,7 @@ fn queue_rows_show_tags_once_they_are_known() {
 fn a_queue_row_without_tags_falls_back_to_the_file_name() {
     let mut app = App::with_library(player(), None);
     app.player
-        .send_blocking(Command::QueueAdd(vec![PathBuf::from(
+        .send_blocking(Command::QueueAdd(vec![znicz_core::QueueItem::file(
             "/music/04 - mystery.flac",
         )]))
         .expect("queue add");
@@ -420,7 +421,7 @@ fn a_very_long_title_is_cut_rather_than_wrapped() {
         },
     );
     app.player
-        .send_blocking(Command::QueueAdd(vec![path]))
+        .send_blocking(Command::QueueAdd(vec![znicz_core::QueueItem::file(path)]))
         .expect("queue add");
     app.queue_open = true;
     app.focus = Focus::Queue;

@@ -49,7 +49,8 @@ fn track_info(path: &Path, codec_params: &CodecParameters) -> TrackInfo {
     });
 
     TrackInfo {
-        path: path.to_path_buf(),
+        path: Some(path.to_path_buf()),
+        url: None,
         title,
         codec: codec_label(codec_params.codec, path),
         sample_rate,

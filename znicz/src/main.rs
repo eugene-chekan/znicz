@@ -252,12 +252,12 @@ fn run_tui(
     let (player, _thread) = spawn_player(audio_config);
 
     if !files.is_empty() {
-        let paths: Vec<PathBuf> = files.to_vec();
-        if paths.len() == 1 {
-            player.send(Command::Play(paths[0].clone()))?;
+        let items: Vec<znicz_core::QueueItem> = files.iter().map(|p| znicz_core::QueueItem::file(p.clone())).collect();
+        if items.len() == 1 {
+            player.send(Command::Play(items[0].clone()))?;
         } else {
-            player.send(Command::QueueAdd(paths))?;
-            player.send(Command::Play(files[0].clone()))?;
+            player.send(Command::QueueAdd(items.clone()))?;
+            player.send(Command::Play(items[0].clone()))?;
         }
     }
 

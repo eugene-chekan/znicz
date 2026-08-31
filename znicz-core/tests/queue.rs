@@ -7,9 +7,9 @@ use std::path::PathBuf;
 
 use znicz_core::{spawn_player, AudioConfig, Command, PlaybackStatus, RepeatMode};
 
-fn paths(count: usize) -> Vec<PathBuf> {
+fn paths(count: usize) -> Vec<znicz_core::QueueItem> {
     (0..count)
-        .map(|i| PathBuf::from(format!("/music/track-{i}.flac")))
+        .map(|i| znicz_core::QueueItem::file(format!("/music/track-{i}.flac")))
         .collect()
 }
 
@@ -26,10 +26,10 @@ fn removing_an_entry_closes_the_gap() {
 
     let queue = player.state().queue;
     assert_eq!(queue.len(), 2);
-    assert_eq!(queue[0], PathBuf::from("/music/track-0.flac"));
+    assert_eq!(queue[0], znicz_core::QueueItem::file("/music/track-0.flac"));
     assert_eq!(
         queue[1],
-        PathBuf::from("/music/track-2.flac"),
+        znicz_core::QueueItem::file("/music/track-2.flac"),
         "the entry after the removed one should move up"
     );
 }
