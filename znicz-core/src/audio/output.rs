@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::Duration;
 
@@ -94,7 +94,16 @@ impl AudioOutput {
         self.flush.store(false, Ordering::Release);
     }
 
+    /// WASAPI (and some other hosts) are not safe if two threads talk to them
+    /// at once. Tests start many players in parallel. The audio callback does
+    /// not take this lock.
+    fn host_lock() -> MutexGuard<'static, ()> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     pub fn list_devices() -> Result<Vec<AudioDeviceInfo>> {
+        let _guard = Self::host_lock();
         let host = cpal::default_host();
         let default_name = host.default_output_device().and_then(|d| d.name().ok());
 
@@ -122,7 +131,8 @@ impl AudioOutput {
         channels: u16,
         device_id: Option<&str>,
     ) -> Result<()> {
-        self.stop_stream();
+        let _guard = Self::host_lock();
+        self.stop_stream_unlocked();
 
         let host = cpal::default_host();
         let device = if let Some(id) = device_id {
@@ -191,6 +201,11 @@ impl AudioOutput {
     }
 
     pub fn stop_stream(&mut self) {
+        let _guard = Self::host_lock();
+        self.stop_stream_unlocked();
+    }
+
+    fn stop_stream_unlocked(&mut self) {
         self.request_flush();
         if let Some(stream) = self.stream.take() {
             let _ = stream.pause();
@@ -431,5 +446,16 @@ mod tests {
         let (config, format) = select_stream_config(&ranges, 44_100, 2).unwrap();
         assert_eq!(config.sample_rate.0, 44_100);
         assert_eq!(format, SampleFormat::I16);
+    }
+
+    #[test]
+    fn listing_devices_from_many_threads_does_not_crash() {
+        std::thread::scope(|s| {
+            for _ in 0..8 {
+                s.spawn(|| {
+                    let _ = AudioOutput::list_devices();
+                });
+            }
+        });
     }
 }
