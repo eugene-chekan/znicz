@@ -666,7 +666,9 @@ impl ZniczMcpServer {
         Self::json_result(&serde_json::json!({ "stations": stations }))
     }
 
-    #[tool(description = "Play a saved radio station by name. append true adds without starting; default clears the queue and plays")]
+    #[tool(
+        description = "Play a saved radio station by name. append true adds without starting; default clears the queue and plays"
+    )]
     fn play_station(
         &self,
         Parameters(params): Parameters<StationPlayParams>,

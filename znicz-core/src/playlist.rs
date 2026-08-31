@@ -482,10 +482,7 @@ mod tests {
             QueueItem::stream("Live", "http://127.0.0.1:1/s"),
         ])
         .unwrap_err();
-        assert!(
-            err.to_string().contains("radio station"),
-            "{err}"
-        );
+        assert!(err.to_string().contains("radio station"), "{err}");
     }
 
     #[test]

@@ -846,11 +846,7 @@ fn playlist_save_of_a_stream_queue_is_refused() {
     press_char(&mut app, 'n');
     assert!(app.playlist_prompt.is_none());
     let toast = app.toasts.current().unwrap();
-    assert!(
-        toast.text.contains("radio station"),
-        "{}",
-        toast.text
-    );
+    assert!(toast.text.contains("radio station"), "{}", toast.text);
 }
 
 #[test]
@@ -964,12 +960,7 @@ fn n_on_a_stream_with_another_row_moves_on() {
     assert_eq!(app.state().queue_position, 1);
     assert!(
         app.toasts.current().is_none()
-            || !app
-                .toasts
-                .current()
-                .unwrap()
-                .text
-                .contains("no next track"),
+            || !app.toasts.current().unwrap().text.contains("no next track"),
         "{:?}",
         app.toasts.current()
     );
@@ -988,11 +979,7 @@ fn playlist_save_of_a_mixed_queue_is_refused() {
     press_char(&mut app, 'n');
     assert!(app.playlist_prompt.is_none());
     let toast = app.toasts.current().unwrap();
-    assert!(
-        toast.text.contains("radio station"),
-        "{}",
-        toast.text
-    );
+    assert!(toast.text.contains("radio station"), "{}", toast.text);
 }
 
 #[test]

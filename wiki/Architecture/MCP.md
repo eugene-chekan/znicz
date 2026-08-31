@@ -30,7 +30,7 @@ Library tools (`scan_library`, `search_library`, `get_track`, `browse_album`,
 `copy_playlist`, `remove_playlist`) load, write, rename, copy, and delete M3U
 files; see [Formats and metadata](../Domain/Formats-and-Metadata.md#playlists-phase-3).
 Radio tools talk to `stations.toml`: `list_stations`, `add_radio_station`,
-`play_station` (clears the queue and starts the stream), `rename_radio_station`,
+`play_station` (clears the queue and starts the stream by default; `append: true` adds without starting), `rename_radio_station`,
 `set_station_url`, `copy_radio_station`, `remove_radio_station`. Resource
 `znicz://stations` is the same list. Serialised player state marks each queue
 row with `kind`: `file` or `stream`.

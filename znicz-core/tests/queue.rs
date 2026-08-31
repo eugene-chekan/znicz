@@ -142,9 +142,7 @@ fn a_stopped_player_reports_no_output_stream() {
 fn appending_a_station_does_not_clear_or_start() {
     let (player, _thread) = spawn_player(AudioConfig::default());
     player
-        .send_blocking(Command::QueueAdd(vec![QueueItem::file(
-            "/music/a.flac",
-        )]))
+        .send_blocking(Command::QueueAdd(vec![QueueItem::file("/music/a.flac")]))
         .expect("seed");
     znicz_core::play_station(
         &player,

@@ -14,7 +14,7 @@ Parked TUI ideas (file, do not start unless asked):
 - [#9 Library tree view with expandable nodes](https://github.com/eugene-chekan/znicz/issues/9)
 
 Product phases 5–6 (album art, MusicBrainz) and **later radio** (ICY,
-HLS, M3U stream lines, mixed queue) are on the
+HLS, M3U stream lines) are on the
 [roadmap](Plans/Roadmap.md), not duplicated as issues yet. Phase 4 (radio
 streams) is done.
 
