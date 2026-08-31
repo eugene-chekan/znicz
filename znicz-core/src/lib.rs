@@ -22,7 +22,7 @@ pub use playlist::{
     skipped_notice, write_path, write_text, LoadResult,
 };
 pub use station::{
-    add as add_station, find as find_station, load as load_stations, play_station, remove as remove_station,
-    rename as rename_station, save as save_stations, set_url as set_station_url, validate_name,
-    validate_url, Station,
+    add as add_station, find as find_station, load as load_stations, play_station,
+    remove as remove_station, rename as rename_station, save as save_stations,
+    set_url as set_station_url, validate_name, validate_url, Station,
 };

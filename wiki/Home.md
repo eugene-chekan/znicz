@@ -17,7 +17,7 @@ Read in this order if you are new:
 
 ## What is Znicz?
 
-Znicz is a **music player that lives in the terminal**. You start it from the command line. It shows a text screen (a TUI) and plays files on your speakers or DAC.
+Znicz is a **music player that lives in the terminal**. You start it from the command line. It shows a text screen (a TUI) and plays local files and HTTP radio streams on your speakers or DAC.
 
 It also has an **MCP server**. MCP lets an AI assistant (Cursor, Claude, and others) control the player with tools like “play this file” or “what is playing now”.
 
@@ -35,7 +35,7 @@ Goals:
 | `znicz-library` | The index: scan folders, store tags in SQLite, search |
 | `znicz-tui` | The screen: library home, queue drawer, transport, overlays |
 | `znicz-mcp` | The AI interface: tools, resources, prompts, skills |
-| `znicz` | The program you run (`znicz`, `znicz mcp`) |
+| `znicz` | The program you run (`znicz`, `znicz mcp`, `znicz station`) |
 | `wiki/` | This documentation |
 
 ## Wiki index
@@ -80,6 +80,7 @@ sudo apt install pkg-config libasound2-dev
 cargo build --release
 ./target/release/znicz --list-devices
 ./target/release/znicz your-track.flac
+./target/release/znicz station list
 ./target/release/znicz mcp
 ```
 

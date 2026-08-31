@@ -334,7 +334,9 @@ mod tests {
         let a = touch(&dir, "a.flac");
         let (player, _thread) = crate::spawn_player(crate::AudioConfig::default());
         player
-            .send_blocking(Command::QueueAdd(vec![crate::player::state::QueueItem::file(a.clone())]))
+            .send_blocking(Command::QueueAdd(vec![
+                crate::player::state::QueueItem::file(a.clone()),
+            ]))
             .unwrap();
         let err = apply_to_player(
             &player,
@@ -345,6 +347,9 @@ mod tests {
             false,
         );
         assert!(err.is_err());
-        assert_eq!(player.state().queue, vec![crate::player::state::QueueItem::file(a)]);
+        assert_eq!(
+            player.state().queue,
+            vec![crate::player::state::QueueItem::file(a)]
+        );
     }
 }

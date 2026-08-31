@@ -64,10 +64,7 @@ impl AudioSource for HttpStreamSource {
             .call()
             .map_err(|e| ZniczError::Player(format!("http: {e}")))?;
         if !response.status().is_success() {
-            return Err(ZniczError::Player(format!(
-                "http {}",
-                response.status()
-            )));
+            return Err(ZniczError::Player(format!("http {}", response.status())));
         }
         let reader = response.into_body().into_reader();
         Ok(Box::new(UnseekableRead(Mutex::new(Box::new(reader)))))

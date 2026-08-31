@@ -27,8 +27,8 @@ pub fn load(path: &Path) -> Result<Vec<Station>> {
         return Ok(Vec::new());
     }
     let text = fs::read_to_string(path)?;
-    let file: StationsFile = toml::from_str(&text)
-        .map_err(|e| ZniczError::Player(format!("stations.toml: {e}")))?;
+    let file: StationsFile =
+        toml::from_str(&text).map_err(|e| ZniczError::Player(format!("stations.toml: {e}")))?;
     Ok(file.station)
 }
 
@@ -90,9 +90,12 @@ pub fn remove(stations: &mut Vec<Station>, name: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn rename(stations: &mut Vec<Station>, name: &str, new_name: &str) -> Result<()> {
+pub fn rename(stations: &mut [Station], name: &str, new_name: &str) -> Result<()> {
     let new_name = validate_name(new_name)?;
-    if stations.iter().any(|s| s.name == new_name && s.name != name) {
+    if stations
+        .iter()
+        .any(|s| s.name == new_name && s.name != name)
+    {
         return Err(ZniczError::Player(format!(
             "station {new_name:?} already exists"
         )));
@@ -105,7 +108,7 @@ pub fn rename(stations: &mut Vec<Station>, name: &str, new_name: &str) -> Result
     Ok(())
 }
 
-pub fn set_url(stations: &mut Vec<Station>, name: &str, url: &str) -> Result<()> {
+pub fn set_url(stations: &mut [Station], name: &str, url: &str) -> Result<()> {
     let url = validate_url(url)?;
     let station = stations
         .iter_mut()

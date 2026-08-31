@@ -17,7 +17,7 @@ We use the Rust SDK [`rmcp`](https://crates.io/crates/rmcp).
 | Surface | Job |
 |---------|-----|
 | **Tools** | Actions: `play`, `pause`, `seek`, `list_devices`, … |
-| **Resources** | Read-only snapshots: `znicz://now-playing`, `skill://…` |
+| **Resources** | Read-only snapshots: `znicz://now-playing`, `znicz://stations`, `skill://…` |
 | **Prompts** | Ready-made instructions for the model |
 | **Skills** | Longer how-to files (`SKILL.md`) the model loads when needed |
 
@@ -28,7 +28,11 @@ Library tools (`scan_library`, `search_library`, `get_track`, `browse_album`,
 [`znicz-library`](Library.md). Playlist tools (`list_playlists`,
 `import_playlist`, `save_playlist`, `play_playlist`) load and write M3U files;
 see [Formats and metadata](../Domain/Formats-and-Metadata.md#playlists-phase-3).
-Radio tools still return “not implemented” until Phase 4.
+Radio tools talk to `stations.toml`: `list_stations`, `add_radio_station`,
+`play_station` (clears the queue and starts the stream), `rename_radio_station`,
+`set_station_url`, `remove_radio_station`. Resource `znicz://stations` is the
+same list. Serialised player state marks each queue row with `kind`: `file` or
+`stream`.
 
 ## Tools wait for the player
 

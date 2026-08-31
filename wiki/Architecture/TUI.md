@@ -84,12 +84,14 @@ falls back to a flat track list rather than looking empty.
 
 ### Queue
 
-An overlay drawer (`]`). Shows **titles, not file names**. The player's queue is
-only a list of paths, so `meta::MetaCache` resolves tags on a background thread:
-the UI asks for a path, draws whatever is known now, and the worker fills the
-gap for the next frame. Reading tags means opening and seeking each file, so
-doing it while drawing would stutter on a long queue. Rows added from the library
-skip the worker entirely, since the database already has the tags.
+An overlay drawer (`]`). Shows **titles, not file names**. A queue row is a
+`QueueItem`: a local file or a radio station. For files, `meta::MetaCache`
+resolves tags on a background thread: the UI asks for a path, draws whatever is
+known now, and the worker fills the gap for the next frame. Reading tags means
+opening and seeking each file, so doing it while drawing would stutter on a
+long queue. Rows added from the library skip the worker entirely, since the
+database already has the tags. A station row shows the **station name**; it has
+no duration (`—`).
 
 `Enter` plays a row, `d` removes one, `C` clears, `o` jumps back to whatever is
 playing.
@@ -118,6 +120,22 @@ closes the overlay, or cancels the name prompt. `s` still stops while the list
 is showing; while naming a file, every letter (including `s`, which is stop
 everywhere else) is part of the name. The footer switches to save/cancel so the
 global keymap is not what you type into.
+
+### Radio
+
+A centered modal (`R`). Lists stations from `stations.toml`. Enter **clears the
+queue and plays** the highlighted station; `a` adds one (name, then URL); `w`
+renames; `c` changes the URL; `d` deletes. `r` reloads the file. Esc closes the
+overlay, or cancels a prompt. While typing, letters (including keys that mean
+something else globally) are part of the text.
+
+Transport shows the station name. Duration is unknown, so the total time is
+`—` and the seek bar stays empty. Seek is refused. Playing a station puts that
+stream on the queue, so the queue can show a station name.
+
+`r` on the library, playlists, devices, or radio reloads **the list in front**.
+Repeat is `e`, shuffle is `z`. The full keymap lives in `znicz-tui/src/keys.rs`
+and in the `?` overlay.
 
 ## Messages instead of silence
 
@@ -154,6 +172,7 @@ top of the player.
 | `views/now_playing.rs` | two-line transport (play state, seek, signal path) |
 | `views/inspector.rs` | full signal-path overlay (`i`) |
 | `views/playlists.rs` | saved M3U overlay (`P`) |
+| `views/radio.rs` | saved stations overlay (`R`) |
 | `views/status.rs` | key hints only |
 | `theme.rs` | every colour, in one place |
 | `keys.rs` | the keymap as data |

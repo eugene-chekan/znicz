@@ -102,6 +102,13 @@ It prints a speed factor. Anything other than about 1.000× is a bug.
 
 See [Audio threading](../Architecture/Audio-Threading.md).
 
+## Radio (HTTP)
+
+A radio station uses the same line with a different first step: a blocking
+HTTP GET on the **player thread** instead of opening a file. The body is a
+continuous `Read`. Probe, decode, and the ring stay the same. The audio
+callback still only pops samples.
+
 ## Next
 
 - [Architecture overview](../Architecture/Overview.md)

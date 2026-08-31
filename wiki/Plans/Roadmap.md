@@ -8,7 +8,7 @@ High-level phases for Znicz. Each phase builds on the previous ones.
 | **2** | Library and metadata | **Done** | [Formats and metadata](../Domain/Formats-and-Metadata.md), [Library](../Architecture/Library.md) |
 | **2.5** | TUI and UX | **Done** | [TUI architecture](../Architecture/TUI.md) |
 | **3** | Playlists | **Done** | [Spec](../../docs/superpowers/specs/2026-08-27-playlist-files-design.md), [Formats and metadata](../Domain/Formats-and-Metadata.md#playlists-phase-3) |
-| **4** | Radio streams | Planned | [Spec](../../docs/superpowers/specs/2026-08-31-radio-streams-design.md), [Formats and metadata](../Domain/Formats-and-Metadata.md#radio-phase-4) |
+| **4** | Radio streams | **Done** | [Spec](../../docs/superpowers/specs/2026-08-31-radio-streams-design.md), [Formats and metadata](../Domain/Formats-and-Metadata.md#radio-phase-4) |
 | **5** | Album art in the TUI | Planned | [Phase 5 plan](Phase-5-Album-Art.md) |
 | **6** | MusicBrainz enrichment | Planned | MCP stub `enrich_metadata` in `znicz-mcp` |
 
@@ -63,7 +63,7 @@ M3U files for the queue. Spec:
 - Clear and play, or add to queue (`P` overlay, CLI, MCP)
 - PLS / XSPF still later
 
-## Phase 4
+## Phase 4 (done)
 
 HTTP/Icecast byte streams and a station list. Spec:
 **[Radio streams](../../docs/superpowers/specs/2026-08-31-radio-streams-design.md)**
@@ -74,7 +74,7 @@ HTTP/Icecast byte streams and a station list. Spec:
 
 ### Later radio (after Phase 4)
 
-Not in the Phase 4 spec. Do not start until Phase 4 plays a real stream.
+Not in this version. Still later:
 
 - **ICY now playing** — parse Icecast `StreamTitle` and show the current song on the transport (not only the station name)
 - **HLS** — `.m3u8` segment playlists (a second source type)

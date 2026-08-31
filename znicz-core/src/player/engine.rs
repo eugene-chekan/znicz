@@ -294,7 +294,9 @@ impl PlayerEngine {
 
     fn play_item(&mut self, item: crate::player::state::QueueItem) -> Result<()> {
         let source: Box<dyn AudioSource> = match &item {
-            crate::player::state::QueueItem::File { path } => Box::new(LocalFileSource::new(path.clone())),
+            crate::player::state::QueueItem::File { path } => {
+                Box::new(LocalFileSource::new(path.clone()))
+            }
             crate::player::state::QueueItem::Stream { name, url } => {
                 Box::new(HttpStreamSource::new(name.clone(), url.clone()))
             }
@@ -356,7 +358,7 @@ impl PlayerEngine {
 
         let mut state = self.state.write().unwrap();
         state.output = Some(output_info);
-        
+
         if state.queue.is_empty() {
             state.queue = vec![item.clone()];
             state.queue_position = 0;
@@ -366,7 +368,7 @@ impl PlayerEngine {
             state.queue.push(item.clone());
             state.queue_position = state.queue.len() - 1;
         }
-        
+
         state.current_track = Some(track_info.clone());
         state.status = PlaybackStatus::Playing;
         state.position = Duration::ZERO;

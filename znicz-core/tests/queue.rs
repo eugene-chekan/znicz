@@ -3,8 +3,6 @@
 //! These use paths that need not exist: adding, removing and reordering are
 //! bookkeeping, so they can be checked without a sound card.
 
-use std::path::PathBuf;
-
 use znicz_core::{spawn_player, AudioConfig, Command, PlaybackStatus, RepeatMode};
 
 fn paths(count: usize) -> Vec<znicz_core::QueueItem> {
