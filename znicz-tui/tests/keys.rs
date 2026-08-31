@@ -847,7 +847,7 @@ fn playlist_save_of_a_stream_queue_is_refused() {
     assert!(app.playlist_prompt.is_none());
     let toast = app.toasts.current().unwrap();
     assert!(
-        toast.text.contains("radio") || toast.text.contains("playlist"),
+        toast.text.contains("radio station"),
         "{}",
         toast.text
     );
@@ -923,17 +923,76 @@ fn c_copies_the_highlighted_playlist() {
 }
 
 #[test]
-fn a_on_radio_toasts_that_queue_add_is_later() {
-    let (mut app, _path) = station_fixture();
+fn a_on_radio_appends_the_station_without_starting() {
+    let (mut app, path) = station_fixture();
+    znicz_core::save_stations(
+        &path,
+        &[znicz_core::Station {
+            name: "Example".into(),
+            url: "http://127.0.0.1:1/stream".into(),
+        }],
+    )
+    .unwrap();
+    let other = znicz_core::QueueItem::file("/music/a.flac");
+    app.player
+        .send_blocking(Command::QueueAdd(vec![other.clone()]))
+        .unwrap();
     press_char(&mut app, 'R');
     press_char(&mut app, 'a');
+    let queue = app.state().queue;
+    assert_eq!(queue.len(), 2);
+    assert_eq!(queue[0], other);
+    assert_eq!(
+        queue[1],
+        QueueItem::stream("Example", "http://127.0.0.1:1/stream")
+    );
+    assert_eq!(app.state().status, znicz_core::PlaybackStatus::Stopped);
     let toast = app.toasts.current().expect("toast");
+    assert!(toast.text.contains("Example"), "{}", toast.text);
+}
+
+#[test]
+fn n_on_a_stream_with_another_row_moves_on() {
+    let mut app = new_app();
+    app.player
+        .send_blocking(Command::QueueAdd(vec![
+            QueueItem::stream("Live", "http://127.0.0.1:1/s"),
+            QueueItem::file("/music/a.flac"),
+        ]))
+        .unwrap();
+    press_char(&mut app, 'n');
+    assert_eq!(app.state().queue_position, 1);
     assert!(
-        toast.text.contains("later") || toast.text.contains("queue"),
+        app.toasts.current().is_none()
+            || !app
+                .toasts
+                .current()
+                .unwrap()
+                .text
+                .contains("no next track"),
+        "{:?}",
+        app.toasts.current()
+    );
+}
+
+#[test]
+fn playlist_save_of_a_mixed_queue_is_refused() {
+    let mut app = new_app();
+    app.player
+        .send_blocking(Command::QueueAdd(vec![
+            QueueItem::file("/music/a.flac"),
+            QueueItem::stream("Live", "http://127.0.0.1:1/s"),
+        ]))
+        .unwrap();
+    press_char(&mut app, 'P');
+    press_char(&mut app, 'n');
+    assert!(app.playlist_prompt.is_none());
+    let toast = app.toasts.current().unwrap();
+    assert!(
+        toast.text.contains("radio station"),
         "{}",
         toast.text
     );
-    assert!(app.radio_prompt.is_none());
 }
 
 #[test]
