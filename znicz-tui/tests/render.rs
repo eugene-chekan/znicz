@@ -253,6 +253,22 @@ fn a_success_toast_has_its_own_box_and_mark() {
 }
 
 #[test]
+fn a_playlist_error_toast_shows_the_whole_message() {
+    let mut app = App::with_library(player(), None);
+    app.toasts
+        .error("player error: playlist had no playable files");
+    let screen = draw(&mut app, 90, 24);
+    assert!(
+        screen.contains("playlist had no playable files"),
+        "the full reason must be visible, not cut off:\n{screen}"
+    );
+    assert!(
+        !screen.contains("playabl…"),
+        "must not ellipsize this message:\n{screen}"
+    );
+}
+
+#[test]
 fn hints_stay_when_a_toast_is_showing() {
     let mut app = App::with_library(player(), None);
     app.toasts.error("could not open device");
@@ -263,7 +279,7 @@ fn hints_stay_when_a_toast_is_showing() {
         "hints must remain:\n{screen}"
     );
     assert!(
-        screen.contains('×'),
+        screen.contains('x'),
         "errors should carry a level mark:\n{screen}"
     );
     let lines: Vec<&str> = screen.lines().collect();

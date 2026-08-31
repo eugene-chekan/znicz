@@ -124,10 +124,12 @@ global keymap is not what you type into.
 The interface owns the screen, so anything written to the log or to stdout is
 invisible. Previously a failed file looked exactly like nothing happening. Now
 every player error and every action becomes a short-lived **boxed** message in
-the list corner (`toast.rs`), inset so it does not sit on the pane border. A
-coloured mark and matching outline show the level at a glance: blue info, green
-success, yellow warn, red error. Errors stay up twice as long, since they need
-reading. Hints on the bottom line are never replaced.
+the list corner (`toast.rs`), inset so it does not sit on the pane border. The
+box grows to the message, up to the list width, so a reason like
+`playlist had no playable files` is not cut off. A coloured mark and
+matching outline show the level at a glance: blue info, green success, yellow
+warn, red error. Errors stay up twice as long, since they need reading. Hints
+on the bottom line are never replaced.
 
 For this to work, key handlers use `PlayerHandle::send_blocking` rather than
 `send`: the engine's own result comes back, so a missing file or an unusable

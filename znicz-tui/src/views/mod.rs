@@ -74,23 +74,31 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
 
 fn render_toasts(frame: &mut Frame, list: Rect, app: &App) {
     let shown = app.toasts.visible();
-    let max_width = ((list.width as usize) * 40 / 100).clamp(12, 42) as u16;
-    let areas = crate::layout::toast_areas(list, shown.len() as u16, max_width);
+    if shown.is_empty() {
+        return;
+    }
+    let boxed = crate::layout::toast_boxed(list);
+    let line_width = shown
+        .iter()
+        .map(|toast| crate::layout::toast_width_for(&toast.text, boxed))
+        .max()
+        .unwrap_or(1);
+    let areas = crate::layout::toast_areas(list, shown.len() as u16, line_width);
     for (toast, area) in shown.iter().zip(areas) {
         frame.render_widget(Clear, area);
         let (marker, style) = toast_mark(toast.level);
-        let inner_w = if area.height >= 3 {
-            (area.width as usize).saturating_sub(2)
+        let inner_w = if boxed {
+            inner_width(area)
         } else {
             area.width as usize
         };
-        let text_w = inner_w.saturating_sub(marker.chars().count() + 1);
+        let text_w = inner_w.saturating_sub(crate::layout::TOAST_MARK_AND_SPACE as usize);
         let text = format::truncate(&toast.text, text_w);
         let line = Line::from(vec![
             Span::styled(format!("{marker} "), style),
             Span::styled(text, theme::strong()),
         ]);
-        if area.height >= 3 {
+        if boxed {
             let block = Block::default().borders(Borders::ALL).border_style(style);
             frame.render_widget(Paragraph::new(line).block(block), area);
         } else {
@@ -104,7 +112,7 @@ fn toast_mark(level: Level) -> (&'static str, Style) {
         Level::Info => ("●", theme::info()),
         Level::Success => ("●", theme::good()),
         Level::Warn => ("▲", theme::warn()),
-        Level::Error => ("×", theme::bad()),
+        Level::Error => ("x", theme::bad()),
     }
 }
 

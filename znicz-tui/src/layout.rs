@@ -50,6 +50,29 @@ pub fn is_sheet(list_width: u16, open: bool) -> bool {
 pub const TOAST_BOX_HEIGHT: u16 = 3;
 /// Gap from the pane border, so the toast does not sit on the line.
 pub const TOAST_INSET: u16 = 1;
+/// Mark plus the space after it (`× message`).
+pub const TOAST_MARK_AND_SPACE: u16 = 2;
+/// Left and right border of a boxed toast.
+pub const TOAST_BORDERS: u16 = 2;
+/// Narrowest list that still gets a boxed toast.
+const TOAST_BOX_MIN_WIDTH: u16 = 12;
+
+/// A 3-row bordered box when the list can hold it; otherwise a 1-row line.
+pub fn toast_boxed(list: Rect) -> bool {
+    list.height >= TOAST_BOX_HEIGHT + TOAST_INSET * 2 && list.width >= TOAST_BOX_MIN_WIDTH
+}
+
+/// Columns needed to draw a toast without cutting `text`.
+///
+/// `boxed` is the 3-row bordered box used when the list is large enough.
+pub fn toast_width_for(text: &str, boxed: bool) -> u16 {
+    let borders = if boxed { TOAST_BORDERS as usize } else { 0 };
+    text.chars()
+        .count()
+        .saturating_add(TOAST_MARK_AND_SPACE as usize)
+        .saturating_add(borders)
+        .max(1) as u16
+}
 
 /// Bottom-right boxes for up to three toasts, inset from the pane border.
 pub fn toast_areas(list: Rect, count: u16, line_width: u16) -> Vec<Rect> {
@@ -58,7 +81,7 @@ pub fn toast_areas(list: Rect, count: u16, line_width: u16) -> Vec<Rect> {
         return Vec::new();
     }
 
-    let boxed = list.height >= 5 && list.width >= 12;
+    let boxed = toast_boxed(list);
     let inset = if boxed { TOAST_INSET } else { 0 };
     let height = if boxed { TOAST_BOX_HEIGHT } else { 1 };
     let width = line_width
@@ -165,5 +188,15 @@ mod tests {
         assert_eq!(areas.len(), 1);
         assert_eq!(areas[0].height, 1);
         assert_eq!(areas[0].y, 2);
+    }
+
+    #[test]
+    fn toast_width_covers_the_playlist_empty_error() {
+        let text = "player error: playlist had no playable files";
+        let width = toast_width_for(text, true);
+        assert!(
+            width > 42,
+            "must be wider than the old 40% cap so the reason fits, got {width}"
+        );
     }
 }
