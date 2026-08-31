@@ -3,17 +3,25 @@ use std::time::{Duration, Instant};
 
 use znicz_core::{spawn_player, AudioConfig, AudioOutput, Command, PlayerEvent};
 
-/// Skip audio tests on machines without an output device (headless CI).
-fn has_output_device() -> bool {
-    AudioOutput::list_devices()
-        .map(|devices| !devices.is_empty())
-        .unwrap_or(false)
+/// Skip hardware playback on CI (GitHub Windows runners still expose WASAPI)
+/// and on machines with no output device.
+fn skip_hardware_playback() -> bool {
+    if std::env::var_os("CI").is_some() {
+        eprintln!("CI: skipping hardware playback");
+        return true;
+    }
+    let no_device = AudioOutput::list_devices()
+        .map(|devices| devices.is_empty())
+        .unwrap_or(true);
+    if no_device {
+        eprintln!("no audio output device, skipping");
+    }
+    no_device
 }
 
 #[test]
 fn play_local_wav_starts_playback() {
-    if !has_output_device() {
-        eprintln!("no audio output device, skipping");
+    if skip_hardware_playback() {
         return;
     }
 
@@ -51,8 +59,7 @@ fn play_local_wav_starts_playback() {
 /// time to play a file.
 #[test]
 fn track_plays_for_its_real_duration() {
-    if !has_output_device() {
-        eprintln!("no audio output device, skipping");
+    if skip_hardware_playback() {
         return;
     }
 

@@ -38,7 +38,8 @@ HTTP / Icecast lines are skipped (Phase 4).
 A UTF-8 BOM is stripped. Missing files are skipped and counted. If nothing
 playable remains, the queue is left alone.
 
-**Writing** is UTF-8, no BOM, one absolute path per line. Saved files live beside
+**Writing** is UTF-8, no BOM, one absolute path per line (the real path on
+disk, which on Windows can look different from the path you typed). Saved files live beside
 the library database:
 
 - Linux: `~/.local/share/znicz/playlists/`

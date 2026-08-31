@@ -8,7 +8,7 @@
 
 use std::time::{Duration, Instant};
 
-use znicz_core::{AudioConfig, Command, PlaybackStatus, PlayerEvent, spawn_player};
+use znicz_core::{spawn_player, AudioConfig, Command, PlaybackStatus, PlayerEvent};
 
 fn main() {
     tracing_subscriber::fmt::init();
@@ -34,9 +34,7 @@ fn main() {
                     track_duration = info.duration;
                     println!(
                         "track: {} Hz, {} ch, duration {:?}",
-                        info.sample_rate,
-                        info.channels,
-                        info.duration
+                        info.sample_rate, info.channels, info.duration
                     );
                 }
                 PlayerEvent::TrackEnded => {

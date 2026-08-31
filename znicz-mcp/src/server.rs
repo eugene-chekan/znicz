@@ -692,28 +692,26 @@ impl ServerHandler for ZniczMcpServer {
         }
     }
 
-    fn list_prompts(
+    async fn list_prompts(
         &self,
         _request: Option<rmcp::model::PaginatedRequestParam>,
         _context: rmcp::service::RequestContext<rmcp::RoleServer>,
-    ) -> impl std::future::Future<Output = Result<ListPromptsResult, McpError>> + Send + '_ {
-        async move {
-            Ok(ListPromptsResult {
-                prompts: vec![
-                    prompt_meta(
-                        "audiophile-setup",
-                        "Configure bit-perfect playback and device selection",
-                    ),
-                    prompt_meta(
-                        "playback-session",
-                        "Start a listening session with queue guidance",
-                    ),
-                    prompt_meta("explain-format", "Interpret current track codec and format"),
-                    prompt_meta("build-queue", "Build a multi-track queue"),
-                ],
-                ..Default::default()
-            })
-        }
+    ) -> Result<ListPromptsResult, McpError> {
+        Ok(ListPromptsResult {
+            prompts: vec![
+                prompt_meta(
+                    "audiophile-setup",
+                    "Configure bit-perfect playback and device selection",
+                ),
+                prompt_meta(
+                    "playback-session",
+                    "Start a listening session with queue guidance",
+                ),
+                prompt_meta("explain-format", "Interpret current track codec and format"),
+                prompt_meta("build-queue", "Build a multi-track queue"),
+            ],
+            ..Default::default()
+        })
     }
 
     fn get_prompt(
