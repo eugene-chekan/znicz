@@ -2681,6 +2681,7 @@ dependencies = [
  "serde_json",
  "symphonia",
  "thiserror 2.0.20",
+ "toml",
  "tracing",
  "tracing-subscriber",
 ]

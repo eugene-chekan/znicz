@@ -3,6 +3,7 @@ pub mod error;
 pub mod metadata;
 pub mod player;
 pub mod playlist;
+pub mod station;
 
 pub use audio::output::AudioOutput;
 pub use audio::source::probe_track;
@@ -19,4 +20,9 @@ pub use player::state::{
 pub use playlist::{
     apply_to_player, list_saved, load_path, parse, sanitize_stem, saved_path, skipped_notice,
     write_path, write_text, LoadResult,
+};
+pub use station::{
+    add as add_station, find as find_station, load as load_stations, remove as remove_station,
+    rename as rename_station, save as save_stations, set_url as set_station_url, validate_name,
+    validate_url, Station,
 };
