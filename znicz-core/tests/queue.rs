@@ -232,14 +232,10 @@ fn removing_the_playing_row_starts_the_row_that_slid_in() {
             QueueItem::file(&b),
         ]))
         .unwrap();
-    player
-        .send_blocking(Command::QueuePlayIndex(0))
-        .unwrap();
+    player.send_blocking(Command::QueuePlayIndex(0)).unwrap();
     assert_eq!(player.state().status, PlaybackStatus::Playing);
 
-    player
-        .send_blocking(Command::QueueRemove(0))
-        .unwrap();
+    player.send_blocking(Command::QueueRemove(0)).unwrap();
 
     let state = player.state();
     assert_eq!(state.queue.len(), 1);
@@ -274,13 +270,9 @@ fn removing_the_last_playing_row_stops() {
             QueueItem::file(&b),
         ]))
         .unwrap();
-    player
-        .send_blocking(Command::QueuePlayIndex(1))
-        .unwrap();
+    player.send_blocking(Command::QueuePlayIndex(1)).unwrap();
 
-    player
-        .send_blocking(Command::QueueRemove(1))
-        .unwrap();
+    player.send_blocking(Command::QueueRemove(1)).unwrap();
 
     let state = player.state();
     assert_eq!(state.queue.len(), 1);
@@ -307,12 +299,8 @@ fn removing_the_only_playing_row_leaves_an_empty_stopped_queue() {
     player
         .send_blocking(Command::QueueAdd(vec![QueueItem::file(&wav)]))
         .unwrap();
-    player
-        .send_blocking(Command::QueuePlayIndex(0))
-        .unwrap();
-    player
-        .send_blocking(Command::QueueRemove(0))
-        .unwrap();
+    player.send_blocking(Command::QueuePlayIndex(0)).unwrap();
+    player.send_blocking(Command::QueueRemove(0)).unwrap();
 
     let state = player.state();
     assert!(state.queue.is_empty());
@@ -342,15 +330,11 @@ fn removing_the_playing_row_while_paused_starts_the_replacement() {
             QueueItem::file(&b),
         ]))
         .unwrap();
-    player
-        .send_blocking(Command::QueuePlayIndex(0))
-        .unwrap();
+    player.send_blocking(Command::QueuePlayIndex(0)).unwrap();
     player.send_blocking(Command::Pause).unwrap();
     assert_eq!(player.state().status, PlaybackStatus::Paused);
 
-    player
-        .send_blocking(Command::QueueRemove(0))
-        .unwrap();
+    player.send_blocking(Command::QueueRemove(0)).unwrap();
 
     let state = player.state();
     assert_eq!(state.status, PlaybackStatus::Playing);
@@ -378,9 +362,7 @@ fn a_dead_replacement_errors_and_stays_stopped() {
             QueueItem::file("/music/missing-replacement.flac"),
         ]))
         .unwrap();
-    player
-        .send_blocking(Command::QueuePlayIndex(0))
-        .unwrap();
+    player.send_blocking(Command::QueuePlayIndex(0)).unwrap();
 
     let err = player.send_blocking(Command::QueueRemove(0));
     assert!(err.is_err(), "a missing replacement must be reported");

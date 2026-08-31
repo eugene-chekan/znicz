@@ -96,7 +96,8 @@ database already has the tags. A station row shows the **station name**; it has
 no duration (`—`).
 
 `Enter` plays a row, `d` removes one, `C` clears, `o` jumps back to whatever is
-playing.
+playing. `d` on the playing row starts the next remaining one, or stops if
+that was the last row.
 
 ### Devices
 
