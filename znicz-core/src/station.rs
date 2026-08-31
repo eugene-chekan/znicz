@@ -6,6 +6,9 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Result, ZniczError};
+use crate::player::commands::Command;
+use crate::player::engine::PlayerHandle;
+use crate::player::state::QueueItem;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Station {
@@ -109,6 +112,16 @@ pub fn set_url(stations: &mut Vec<Station>, name: &str, url: &str) -> Result<()>
         .find(|s| s.name == name)
         .ok_or_else(|| ZniczError::Player(format!("no station named {name}")))?;
     station.url = url;
+    Ok(())
+}
+
+pub fn play_station(player: &PlayerHandle, station: &Station) -> Result<()> {
+    player.send_blocking(Command::QueueClear)?;
+    player.send_blocking(Command::QueueAdd(vec![QueueItem::stream(
+        station.name.clone(),
+        station.url.clone(),
+    )]))?;
+    player.send_blocking(Command::QueuePlayIndex(0))?;
     Ok(())
 }
 

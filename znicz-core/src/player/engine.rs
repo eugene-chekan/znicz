@@ -7,8 +7,9 @@ use crossbeam_channel::{bounded, unbounded, Receiver, RecvTimeoutError, Sender};
 
 use crate::audio::convert::{adapt_channels, RateConverter};
 use crate::audio::feeder::{DecodeStep, Feeder, PumpOutcome};
+use crate::audio::http::HttpStreamSource;
 use crate::audio::output::AudioOutput;
-use crate::audio::source::AudioDecoder;
+use crate::audio::source::{AudioDecoder, AudioSource, LocalFileSource};
 use crate::error::{Result, ZniczError};
 use crate::player::commands::{Command, CommandEnvelope, PlayerEvent};
 use crate::player::state::{OutputInfo, PlaybackStatus, PlayerState, RepeatMode};
@@ -221,10 +222,7 @@ impl PlayerEngine {
 
     fn handle_command(&mut self, command: Command) -> Result<()> {
         match command {
-            Command::Play(item) => match item {
-                crate::player::state::QueueItem::File { path } => self.play_path(path)?,
-                crate::player::state::QueueItem::Stream { .. } => return Err(ZniczError::NotImplemented("radio stream".into())),
-            },
+            Command::Play(item) => self.play_item(item)?,
             Command::Pause => {
                 self.output.set_paused(true);
                 self.update_status(PlaybackStatus::Paused);
@@ -295,8 +293,14 @@ impl PlayerEngine {
         Ok(())
     }
 
-    fn play_path(&mut self, path: PathBuf) -> Result<()> {
-        let (decoder, track_info) = AudioDecoder::open_path(&path)?;
+    fn play_item(&mut self, item: crate::player::state::QueueItem) -> Result<()> {
+        let source: Box<dyn AudioSource> = match &item {
+            crate::player::state::QueueItem::File { path } => Box::new(LocalFileSource::new(path.clone())),
+            crate::player::state::QueueItem::Stream { name, url } => {
+                Box::new(HttpStreamSource::new(name.clone(), url.clone()))
+            }
+        };
+        let (decoder, track_info) = AudioDecoder::open(source.as_ref())?;
         let sample_rate = decoder.sample_rate();
         let channels = decoder.channels();
 
@@ -353,19 +357,17 @@ impl PlayerEngine {
 
         let mut state = self.state.write().unwrap();
         state.output = Some(output_info);
-        let item = crate::player::state::QueueItem::File { path: path.clone() };
+        
         if state.queue.is_empty() {
             state.queue = vec![item.clone()];
             state.queue_position = 0;
-        } else if !state.queue.contains(&item) {
-            state.queue.push(item.clone());
+        } else if let Some(pos) = state.queue.iter().position(|row| row == &item) {
+            state.queue_position = pos;
         } else {
-            state.queue_position = state
-                .queue
-                .iter()
-                .position(|p| p == &item)
-                .unwrap_or(state.queue_position);
+            state.queue.push(item.clone());
+            state.queue_position = state.queue.len() - 1;
         }
+        
         state.current_track = Some(track_info.clone());
         state.status = PlaybackStatus::Playing;
         state.position = Duration::ZERO;
@@ -396,6 +398,10 @@ impl PlayerEngine {
     }
 
     fn seek(&mut self, position: Duration) -> Result<()> {
+        if self.queue_row_is_stream() {
+            return Err(ZniczError::Player("radio cannot seek".into()));
+        }
+
         if let Some(decoder) = &mut self.decoder {
             decoder.seek(position)?;
             self.output.request_flush();
@@ -416,6 +422,15 @@ impl PlayerEngine {
             self.emit_state_changed();
         }
         Ok(())
+    }
+
+    fn queue_row_is_stream(&self) -> bool {
+        let state = self.state.read().unwrap();
+        state
+            .queue
+            .get(state.queue_position)
+            .map(|item| item.is_stream())
+            .unwrap_or(false)
     }
 
     fn next_track(&mut self) -> Result<()> {
@@ -486,10 +501,7 @@ impl PlayerEngine {
             }
         };
         self.state.write().unwrap().queue_position = index;
-        match item {
-            crate::player::state::QueueItem::File { path } => self.play_path(path),
-            crate::player::state::QueueItem::Stream { .. } => Err(ZniczError::NotImplemented("radio stream".into())),
-        }
+        self.play_item(item)
     }
 
     fn remove_from_queue(&mut self, index: usize) -> Result<()> {
@@ -542,14 +554,14 @@ impl PlayerEngine {
         let item = state.queue[prev_pos].clone();
         drop(state);
         self.state.write().unwrap().queue_position = prev_pos;
-        match item {
-            crate::player::state::QueueItem::File { path } => self.play_path(path)?,
-            crate::player::state::QueueItem::Stream { .. } => return Err(ZniczError::NotImplemented("radio stream".into())),
-        }
-        Ok(())
+        self.play_item(item)
     }
 
     fn pump_decode(&mut self) {
+        if self.state.read().unwrap().status == PlaybackStatus::Paused {
+            return;
+        }
+
         let Some(mut decoder) = self.decoder.take() else {
             return;
         };
