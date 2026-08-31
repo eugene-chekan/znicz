@@ -34,8 +34,8 @@ One file: `.github/workflows/ci.yml`.
 
 Linux jobs install `pkg-config` and `libasound2-dev` so cpal can compile.
 Windows tests use one thread: WASAPI is not safe from cargo's parallel test
-pool (`App` lists devices as it starts). Playback tests already skip when
-there is no output device.
+pool (`App` lists devices as it starts). Hardware playback tests skip when
+`CI` is set. Playback tests already skip when there is no output device.
 
 `permissions: contents: read`. A new commit on the same branch cancels the
 older run. Cargo is cached with `Swatinem/rust-cache`.

@@ -29,8 +29,8 @@ pull requests. A **lint** job on Ubuntu checks rustfmt and Clippy (`-D warnings`
 A **test** job runs `cargo test --workspace` on Ubuntu and Windows. Windows
 uses `--test-threads=1` because WASAPI is not safe from cargo's parallel test
 threads (`App` lists devices as it starts). Linux installs `pkg-config` and
-`libasound2-dev` so cpal can compile. Playback tests skip when the runner has
-no sound device.
+`libasound2-dev` so cpal can compile. Hardware playback tests skip on CI (Windows
+runners still expose WASAPI) and when there is no sound device.
 
 The compiler comes from `rust-toolchain.toml` (`stable`, minimum 1.85, plus
 clippy and rustfmt).
