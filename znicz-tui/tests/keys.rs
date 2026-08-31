@@ -662,7 +662,7 @@ fn enter_on_a_station_replaces_the_queue() {
         &path,
         &[znicz_core::Station {
             name: "Example".into(),
-            url: "https://example.com/stream".into(),
+            url: "http://127.0.0.1:1/stream".into(),
         }],
     )
     .unwrap();
@@ -675,7 +675,7 @@ fn enter_on_a_station_replaces_the_queue() {
     assert_eq!(queue.len(), 1);
     assert_eq!(
         queue[0],
-        QueueItem::stream("Example", "https://example.com/stream")
+        QueueItem::stream("Example", "http://127.0.0.1:1/stream")
     );
 }
 
