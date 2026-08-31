@@ -1,0 +1,13 @@
+---
+description: Finish a development cycle by pushing and opening a pull request
+alwaysApply: true
+---
+
+# Finish with a pull request
+
+When a development cycle is done (tests passing, ready to integrate), **push the branch and create a pull request**. Do not ask whether to merge locally, keep the branch, or discard.
+
+- Push with `git push -u origin HEAD` if the branch has no upstream.
+- Open the PR with `gh pr create` against `main`.
+- Do not merge locally, force-push, or delete the branch unless the user says so.
+- Leave the working tree in place so PR review can continue.
