@@ -26,7 +26,6 @@ impl HttpStreamSource {
 fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_connect(Some(Duration::from_secs(8)))
-        .timeout_global(Some(Duration::from_secs(30)))
         .build()
         .into()
 }
@@ -119,7 +118,9 @@ mod tests {
         thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             let mut buf = [0u8; 2048];
-            let _ = stream.read(&mut buf);
+            let n = stream.read(&mut buf).unwrap();
+            let req = String::from_utf8_lossy(&buf[..n]);
+            assert!(!req.to_lowercase().contains("icy-metadata"));
             let _ = stream.write_all(header.as_bytes());
             let _ = stream.write_all(body);
         });
