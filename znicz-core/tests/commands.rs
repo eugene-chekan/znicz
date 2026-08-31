@@ -29,7 +29,7 @@ fn blocking_send_reports_failure_to_the_caller() {
     let (player, _thread) = spawn_player(AudioConfig::default());
 
     let missing = std::env::temp_dir().join("znicz-does-not-exist.flac");
-    let result = player.send_blocking(Command::Play(missing));
+    let result = player.send_blocking(Command::Play(znicz_core::QueueItem::file(missing)));
 
     assert!(
         result.is_err(),
@@ -42,8 +42,8 @@ fn queue_commands_are_visible_immediately() {
     let (player, _thread) = spawn_player(AudioConfig::default());
 
     let paths = vec![
-        std::path::PathBuf::from("/music/a.flac"),
-        std::path::PathBuf::from("/music/b.flac"),
+        znicz_core::QueueItem::file("/music/a.flac"),
+        znicz_core::QueueItem::file("/music/b.flac"),
     ];
     player
         .send_blocking(Command::QueueAdd(paths))

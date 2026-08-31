@@ -10,7 +10,8 @@ use std::time::Duration;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 use znicz_core::{spawn_player, AudioConfig, Command, PlayerHandle};
-use znicz_tui::{views, App, Focus, Modal};
+use znicz_tui::line_edit::LineEdit;
+use znicz_tui::{views, App, Focus, Modal, PlaylistPrompt, RadioPrompt, StationField};
 
 /// Sizes worth checking: a default terminal, a wide one, a cramped one, and a
 /// window small enough that panes have to be dropped.
@@ -50,7 +51,8 @@ fn playing_state() -> znicz_core::PlayerState {
     PlayerState {
         status: PlaybackStatus::Playing,
         current_track: Some(TrackInfo {
-            path: PathBuf::from("/music/sour-times.flac"),
+            path: Some(PathBuf::from("/music/sour-times.flac")),
+            url: None,
             title: "Sour Times".into(),
             codec: "FLAC".into(),
             sample_rate: 96_000,
@@ -108,8 +110,8 @@ fn every_view_draws_at_every_size() {
         let mut app = App::with_library(player(), None);
         app.player
             .send_blocking(Command::QueueAdd(vec![
-                PathBuf::from("/music/one.flac"),
-                PathBuf::from("/music/two.flac"),
+                znicz_core::QueueItem::file("/music/one.flac"),
+                znicz_core::QueueItem::file("/music/two.flac"),
             ]))
             .expect("queue add");
         app.queue_open = true;
@@ -154,6 +156,21 @@ fn every_view_draws_at_every_size() {
             "playlists at {width}x{height} should fill the window"
         );
     }
+
+    for &(width, height) in SIZES {
+        let mut app = App::with_library(player(), None);
+        app.modal = Modal::Radio;
+        app.stations = vec![znicz_core::Station {
+            name: "Example FM".into(),
+            url: "https://example.com/stream".into(),
+        }];
+        let screen = draw(&mut app, width, height);
+        assert_eq!(
+            screen.lines().count(),
+            height as usize,
+            "radio at {width}x{height} should fill the window"
+        );
+    }
 }
 
 #[test]
@@ -174,6 +191,9 @@ fn the_help_overlay_draws_at_every_size() {
     assert!(screen.contains("signal inspector"));
     assert!(screen.contains("playlists"), "{screen}");
     assert!(screen.contains("previous track"), "{screen}");
+    assert!(screen.contains("Radio"), "{screen}");
+    assert!(screen.contains("new station"), "{screen}");
+    assert!(screen.contains("edit name"), "{screen}");
 }
 
 #[test]
@@ -329,7 +349,7 @@ fn queue_rows_show_tags_once_they_are_known() {
         },
     );
     app.player
-        .send_blocking(Command::QueueAdd(vec![path]))
+        .send_blocking(Command::QueueAdd(vec![znicz_core::QueueItem::file(path)]))
         .expect("queue add");
     app.queue_open = true;
     app.focus = Focus::Queue;
@@ -346,7 +366,7 @@ fn queue_rows_show_tags_once_they_are_known() {
 fn a_queue_row_without_tags_falls_back_to_the_file_name() {
     let mut app = App::with_library(player(), None);
     app.player
-        .send_blocking(Command::QueueAdd(vec![PathBuf::from(
+        .send_blocking(Command::QueueAdd(vec![znicz_core::QueueItem::file(
             "/music/04 - mystery.flac",
         )]))
         .expect("queue add");
@@ -388,6 +408,25 @@ fn the_search_prompt_shows_what_is_being_typed() {
 }
 
 #[test]
+fn the_search_prompt_draws_the_caret_in_the_middle() {
+    let mut app = App::with_library(player(), None);
+    app.library.begin_search();
+    for c in "zeppelin".chars() {
+        app.library.push_char(c);
+    }
+    if let Some(edit) = app.library.prompt_mut() {
+        edit.home();
+        edit.right();
+    }
+
+    let screen = draw(&mut app, 90, 24);
+    assert!(
+        screen.contains("z█eppelin"),
+        "the search caret should sit at the cursor:\n{screen}"
+    );
+}
+
+#[test]
 fn the_focused_view_is_the_one_shown() {
     let mut app = App::with_library(player(), None);
 
@@ -404,6 +443,53 @@ fn the_focused_view_is_the_one_shown() {
     let screen = draw(&mut app, 90, 24);
     assert!(screen.contains("Playlists"), "{screen}");
     assert!(screen.contains("evening"), "{screen}");
+
+    app.modal = Modal::Radio;
+    app.stations = vec![znicz_core::Station {
+        name: "Example FM".into(),
+        url: "https://example.com/stream".into(),
+    }];
+    let screen = draw(&mut app, 90, 24);
+    assert!(screen.contains("Radio"), "{screen}");
+    assert!(screen.contains("Example FM"), "{screen}");
+}
+
+#[test]
+fn the_radio_add_prompt_draws_the_caret_in_the_middle() {
+    let mut app = App::with_library(player(), None);
+    app.modal = Modal::Radio;
+    let mut edit = LineEdit::from_text("Example");
+    edit.home();
+    edit.right();
+    edit.right();
+    app.radio_prompt = Some(RadioPrompt::Form {
+        name: edit,
+        url: LineEdit::new(),
+        field: StationField::Name,
+        original: None,
+    });
+
+    let screen = draw(&mut app, 90, 24);
+    assert!(
+        screen.contains("Ex█ample"),
+        "the caret should sit at the cursor, not only at the end:\n{screen}"
+    );
+}
+
+#[test]
+fn the_playlist_save_prompt_draws_the_caret_in_the_middle() {
+    let mut app = App::with_library(player(), None);
+    app.modal = Modal::Playlists;
+    let mut edit = LineEdit::from_text("songs");
+    edit.home();
+    edit.right();
+    app.playlist_prompt = Some(PlaylistPrompt::Save(edit));
+
+    let screen = draw(&mut app, 90, 24);
+    assert!(
+        screen.contains("s█ongs"),
+        "the save caret should sit at the cursor, not only at the end:\n{screen}"
+    );
 }
 
 #[test]
@@ -420,7 +506,7 @@ fn a_very_long_title_is_cut_rather_than_wrapped() {
         },
     );
     app.player
-        .send_blocking(Command::QueueAdd(vec![path]))
+        .send_blocking(Command::QueueAdd(vec![znicz_core::QueueItem::file(path)]))
         .expect("queue add");
     app.queue_open = true;
     app.focus = Focus::Queue;

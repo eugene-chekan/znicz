@@ -11,6 +11,7 @@ Cross-platform audiophile TUI music player with a native MCP server for AI agent
   whether playback is bit perfect
 - Music library: folder scan, tag indexing, search and album browse
 - Repeat, shuffle, mute, and errors reported on screen rather than only in the log
+- Radio stations: HTTP/Icecast byte streams from the TUI, CLI, and MCP
 - MCP server: tools, resources, prompts, and bundled Agent Skills
 
 ## Build
@@ -76,8 +77,17 @@ znicz albums
 # Playlists (M3U files in ~/.local/share/znicz/playlists/)
 znicz playlist list
 znicz playlist play evening
+znicz playlist rename evening night
+znicz playlist copy night night-backup
+znicz playlist remove night-backup
 znicz playlist import ~/sets/club.m3u
 znicz playlist import ~/sets/club.m3u --append
+
+# Radio stations (stations.toml beside the library, or ZNICZ_STATIONS_PATH)
+znicz station list
+znicz station add "Example" https://example.com/stream
+znicz station play Example
+znicz station copy Example Example2
 ```
 
 The index is a SQLite file, by default `~/.local/share/znicz/library.db`
@@ -86,7 +96,11 @@ The index is a SQLite file, by default `~/.local/share/znicz/library.db`
 ## The interface
 
 The library is the home screen. The queue is a side overlay (`]`), devices
-are a modal (`,`), and `P` opens saved playlists. `i` opens a signal inspector
+are a modal (`,`), `P` opens saved playlists, and `R` opens radio stations.
+Those two overlays share a keymap: `n` new, `e` edit, `c` copy, `d` delete.
+While they are open, `n` and `e` are not next/repeat; close with Esc to get
+the global keys back.
+`i` opens a signal inspector
 with the full file → device path, including the device sample format that stays
 off the transport line.
 Transport sits on two lines at the bottom: now playing plus
@@ -105,9 +119,11 @@ Press `?` in the player for the full keymap. The essentials:
 | n | Next track |
 | N / p | Previous track |
 | P | Playlists |
+| R | Radio |
 | → ← or l h | Seek ±5s (`L` / `H` for ±30s) |
 | + / - | Volume, `m` to mute |
-| r / z | Repeat (off, all, one) / shuffle |
+| e / z | Repeat (off, all, one) / shuffle |
+| r | Reload the list in front |
 | j k, g G, Ctrl-d Ctrl-u | Move in the list |
 | Enter | Play the selection, or open an album |
 | a / A | Add the selection / everything listed to the queue |

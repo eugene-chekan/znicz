@@ -9,7 +9,7 @@ use crate::keys::{self, Binding};
 use crate::theme;
 
 pub fn render(frame: &mut Frame, area: Rect) {
-    let popup = centered(86, 88, area);
+    let popup = centered(86, 100, area);
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -32,6 +32,7 @@ pub fn render(frame: &mut Frame, area: Rect) {
     section(&mut right, "Library", keys::LIBRARY);
     section(&mut right, "Devices", keys::DEVICES);
     section(&mut right, "Playlists", keys::PLAYLISTS);
+    section(&mut right, "Radio", keys::RADIO);
 
     // Below this width the columns would each be too narrow to read, so fall
     // back to a single scrolling-free list of the essentials.
@@ -58,7 +59,6 @@ fn section(lines: &mut Vec<Line<'static>>, title: &str, bindings: &'static [Bind
             Span::styled(binding.action, theme::text()),
         ]));
     }
-    lines.push(Line::from(""));
 }
 
 /// A box centred in `area`, sized as a percentage of it.

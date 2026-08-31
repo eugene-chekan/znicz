@@ -7,6 +7,7 @@ mod library;
 mod now_playing;
 mod playlists;
 mod queue;
+mod radio;
 mod status;
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -18,6 +19,7 @@ use znicz_core::PlayerState;
 
 use crate::app::{App, Modal};
 use crate::format;
+use crate::line_edit::LineEdit;
 use crate::theme;
 use crate::toast::Level;
 
@@ -66,6 +68,7 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
         Modal::Devices => devices::render_modal(frame, area, app, state),
         Modal::Inspector => inspector::render(frame, area, state),
         Modal::Playlists => playlists::render_modal(frame, area, app),
+        Modal::Radio => radio::render_modal(frame, area, app),
         Modal::None => {}
     }
 
@@ -142,6 +145,25 @@ pub(crate) fn pane_block(title: &str, focused: bool, right: Option<String>) -> B
         );
     }
     block
+}
+
+/// A one-line prompt: prefix, typed text, and a block caret at the cursor.
+pub(crate) fn prompt_line(prefix: &str, edit: &LineEdit) -> Line<'static> {
+    let (before, after) = edit.split_at_cursor();
+    Line::from(vec![
+        Span::styled(prefix.to_string(), theme::key()),
+        Span::styled(before.to_string(), theme::strong()),
+        Span::styled("█", theme::progress()),
+        Span::styled(after.to_string(), theme::strong()),
+    ])
+}
+
+/// The same prompt row without a caret, for the unfocused field of a two-line form.
+pub(crate) fn prompt_line_idle(prefix: &str, text: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(prefix.to_string(), theme::dim()),
+        Span::styled(text.to_string(), theme::strong()),
+    ])
 }
 
 /// A row that fills a pane which has nothing to show.

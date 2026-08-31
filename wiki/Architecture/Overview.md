@@ -25,7 +25,7 @@ for its library pane.
 
 | From | To | What |
 |------|----|------|
-| TUI / MCP | Core | `Command` enum (play, pause, seek, …) |
+| TUI / MCP | Core | `Command` enum (`Play(QueueItem)`, pause, seek, …) |
 | Core | TUI / MCP | `PlayerState` + `PlayerEvent` |
 | Decoder thread | Audio callback | `f32` samples in a lock-free ring |
 | TUI / MCP / CLI | Library | search and album queries |
@@ -34,6 +34,9 @@ for its library pane.
 track with its tags, position, volume and mute, queue and position within it,
 repeat and shuffle, the chosen device, and `output` — the stream the device
 actually opened, which is what tells the TUI whether playback is bit perfect.
+A queue row is a `QueueItem`: a local file or a named HTTP stream
+(`kind` is `file` or `stream` when the state is serialised). `Play` takes that
+same `QueueItem`.
 
 Commands travel on a [crossbeam channel](https://docs.rs/crossbeam-channel/) inside a `CommandEnvelope`, which can carry a reply channel. State lives in an `Arc<RwLock<PlayerState>>` so many readers can clone a snapshot.
 

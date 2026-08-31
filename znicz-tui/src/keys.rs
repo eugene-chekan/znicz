@@ -20,12 +20,14 @@ pub const GLOBAL: &[Binding] = &[
     b("n", "next track"),
     b("N / p", "previous track"),
     b("P", "playlists"),
+    b("R", "radio"),
     b("→ / l", "seek forward 5s"),
     b("← / h", "seek back 5s"),
     b("L / H", "seek 30s"),
     b("+ / -", "volume up / down"),
     b("m", "mute"),
-    b("r", "repeat: off, all, one"),
+    b("e", "repeat: off, all, one"),
+    b("r", "reload list"),
     b("z", "shuffle"),
     b("]", "open / close queue"),
     b("Tab", "library ↔ queue"),
@@ -57,19 +59,32 @@ pub const LIBRARY: &[Binding] = &[
     b("a", "add selection to the queue"),
     b("A", "add everything listed"),
     b("Esc", "back to the album list"),
-    b("R", "reload after a scan"),
 ];
 
 pub const DEVICES: &[Binding] = &[
     b("Enter", "use this output device"),
-    b("R", "rescan devices"),
+    b("r", "rescan devices"),
     b("Esc", "close"),
 ];
 
 pub const PLAYLISTS: &[Binding] = &[
     b("Enter", "clear the queue and play"),
     b("a", "add to the queue"),
-    b("w", "save the queue"),
+    b("n", "new (save the queue)"),
+    b("e", "edit name"),
+    b("c", "copy"),
+    b("d", "delete"),
+    b("Esc", "close"),
+];
+
+pub const RADIO: &[Binding] = &[
+    b("Enter", "clear the queue and play"),
+    b("a", "add to the queue (later)"),
+    b("n", "new station"),
+    b("e", "edit name and URL"),
+    b("c", "copy"),
+    b("d", "delete"),
+    b("r", "reload stations.toml"),
     b("Esc", "close"),
 ];
 
@@ -80,11 +95,16 @@ pub fn hints(pane: &str) -> &'static str {
             "Enter play · d remove · C clear · o jump · Alt-← / Alt-→ pan · ] close · ? help"
         }
         "Library" => {
-            "/ search · a add · ] queue · i inspect · P · Alt-← / Alt-→ pan · , devices · ? help"
+            "/ search · a add · ] queue · i inspect · P · R · Alt-← / Alt-→ pan · , devices · ? help"
         }
-        "Devices" => "Enter select · R rescan · Esc close · ? help",
+        "Devices" => "Enter select · r rescan · Esc close · ? help",
         "Inspector" => "i / Esc close · Space pause · ? help",
-        "Playlists" => "Enter play · a add · w save · Esc close · ? help",
+        "Playlists" => {
+            "Enter play · a add · n new · e edit · c copy · d delete · Esc close · ? help"
+        }
+        "Radio" => {
+            "Enter play · a add · n new · e edit · c copy · d delete · Esc close · ? help"
+        }
         _ => "] queue · ? help · q quit",
     }
 }
@@ -95,7 +115,9 @@ mod tests {
 
     #[test]
     fn every_binding_documents_both_a_key_and_an_action() {
-        let tables = [GLOBAL, NAVIGATION, QUEUE, LIBRARY, DEVICES, PLAYLISTS];
+        let tables = [
+            GLOBAL, NAVIGATION, QUEUE, LIBRARY, DEVICES, PLAYLISTS, RADIO,
+        ];
         for table in tables {
             for binding in table {
                 assert!(!binding.keys.is_empty());
@@ -151,6 +173,59 @@ mod tests {
                 .iter()
                 .all(|b| !b.keys.contains('<') && !b.keys.contains('>')),
             "< and > must not appear in the keymap"
+        );
+        assert!(
+            GLOBAL
+                .iter()
+                .any(|b| b.keys == "R" && b.action.contains("radio")),
+            "global help should document R as radio"
+        );
+        assert!(
+            GLOBAL
+                .iter()
+                .any(|b| b.keys == "e" && b.action.contains("repeat")),
+            "global help should document e as repeat"
+        );
+        assert!(
+            GLOBAL
+                .iter()
+                .any(|b| b.keys == "r" && b.action.contains("reload")),
+            "global help should document r as reload"
+        );
+        assert!(
+            LIBRARY.iter().all(|b| b.keys != "R"),
+            "library must not document R as reload"
+        );
+        assert!(
+            DEVICES
+                .iter()
+                .any(|b| b.keys == "r" && b.action.contains("rescan")),
+            "devices should document r as rescan"
+        );
+        assert!(
+            hints("Library").contains('R'),
+            "library hints should mention R radio, got {}",
+            hints("Library")
+        );
+        assert!(
+            hints("Devices").contains("r rescan"),
+            "devices hints should mention r rescan, got {}",
+            hints("Devices")
+        );
+        assert!(
+            hints("Radio").contains("add"),
+            "radio hints should mention add, got {}",
+            hints("Radio")
+        );
+        assert!(
+            hints("Playlists").contains("e edit"),
+            "playlist hints should mention edit, got {}",
+            hints("Playlists")
+        );
+        assert!(
+            hints("Radio").contains("n new"),
+            "radio hints should mention new, got {}",
+            hints("Radio")
         );
     }
 }

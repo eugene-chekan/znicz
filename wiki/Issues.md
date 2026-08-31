@@ -13,9 +13,10 @@ Parked TUI ideas (file, do not start unless asked):
 - [#8 Mouse support](https://github.com/eugene-chekan/znicz/issues/8)
 - [#9 Library tree view with expandable nodes](https://github.com/eugene-chekan/znicz/issues/9)
 
-Product phases 4–6 (radio, album art, MusicBrainz) are on the
-[roadmap](Plans/Roadmap.md), not duplicated as issues yet. Phase 3 (playlists)
-is done.
+Product phases 5–6 (album art, MusicBrainz) and **later radio** (ICY,
+HLS, M3U stream lines, mixed queue) are on the
+[roadmap](Plans/Roadmap.md), not duplicated as issues yet. Phase 4 (radio
+streams) is done.
 
 ## Closed
 

@@ -8,7 +8,7 @@ High-level phases for Znicz. Each phase builds on the previous ones.
 | **2** | Library and metadata | **Done** | [Formats and metadata](../Domain/Formats-and-Metadata.md), [Library](../Architecture/Library.md) |
 | **2.5** | TUI and UX | **Done** | [TUI architecture](../Architecture/TUI.md) |
 | **3** | Playlists | **Done** | [Spec](../../docs/superpowers/specs/2026-08-27-playlist-files-design.md), [Formats and metadata](../Domain/Formats-and-Metadata.md#playlists-phase-3) |
-| **4** | Radio streams | Planned | [Formats and metadata](../Domain/Formats-and-Metadata.md#radio-phase-4) |
+| **4** | Radio streams | **Done** | [Spec](../../docs/superpowers/specs/2026-08-31-radio-streams-design.md), [Formats and metadata](../Domain/Formats-and-Metadata.md#radio-phase-4) |
 | **5** | Album art in the TUI | Planned | [Phase 5 plan](Phase-5-Album-Art.md) |
 | **6** | MusicBrainz enrichment | Planned | MCP stub `enrich_metadata` in `znicz-mcp` |
 
@@ -59,14 +59,31 @@ Details: [TUI architecture](../Architecture/TUI.md).
 M3U files for the queue. Spec:
 **[Playlist files](../../docs/superpowers/specs/2026-08-27-playlist-files-design.md)**
 
-- Save / play from `~/.local/share/znicz/playlists/`
+- Save / play / rename / copy / delete from `~/.local/share/znicz/playlists/`
 - Clear and play, or add to queue (`P` overlay, CLI, MCP)
+- Overlay keys match Radio: `n` new, `e` edit, `c` copy, `d` delete
 - PLS / XSPF still later
 
-## Phase 4
+## Phase 4 (done)
 
-- HTTP/Icecast radio sources
-- Station list in config or DB
+HTTP/Icecast byte streams and a station list. Spec:
+**[Radio streams](../../docs/superpowers/specs/2026-08-31-radio-streams-design.md)**
+
+- Play an HTTP(S) stream (Symphonia on a blocking `Read`)
+- Stations in `stations.toml` (TUI `R`, CLI `znicz station`, MCP tools)
+- Playing a station clears the queue and starts that stream
+- Overlay keys match Playlists (`n` / `e` / `c` / `d`); `a` add-to-queue is later
+
+### Later radio (after Phase 4)
+
+Not in this version. Still later:
+
+- **ICY now playing** — parse Icecast `StreamTitle` and show the current song on the transport (not only the station name)
+- **HLS** — `.m3u8` segment playlists (a second source type)
+- **M3U stream lines** — `http://` / `https://` rows in a playlist play as streams instead of being skipped
+- **Mixed queue** — stations and local files in one queue (next/previous rules)
+
+PLS / XSPF stay under playlists (“still later”). Settings stay [#6](https://github.com/eugene-chekan/znicz/issues/6).
 
 ## Phase 5
 

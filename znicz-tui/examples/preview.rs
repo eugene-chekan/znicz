@@ -30,7 +30,10 @@ fn main() {
     let queue = demo_queue();
     app.player
         .send_blocking(Command::QueueAdd(
-            queue.iter().map(|(p, _)| p.clone()).collect(),
+            queue
+                .iter()
+                .map(|(p, _)| znicz_core::QueueItem::file(p.clone()))
+                .collect(),
         ))
         .expect("queue add");
     for (path, entry) in &queue {
@@ -90,6 +93,19 @@ fn main() {
     app.playlists = vec!["evening".into(), "weekend-jazz".into()];
     show(
         "Playlists",
+        &mut app,
+        &playing_state(&queue, true),
+        width,
+        height,
+    );
+
+    app.modal = Modal::Radio;
+    app.stations = vec![znicz_core::Station {
+        name: "Example FM".into(),
+        url: "https://example.com/stream".into(),
+    }];
+    show(
+        "Radio",
         &mut app,
         &playing_state(&queue, true),
         width,
@@ -171,7 +187,8 @@ fn playing_state(queue: &[(PathBuf, Entry)], bit_perfect: bool) -> PlayerState {
     PlayerState {
         status: PlaybackStatus::Playing,
         current_track: Some(TrackInfo {
-            path: path.clone(),
+            path: Some(path.clone()),
+            url: None,
             title: entry.title.clone(),
             codec: "FLAC".to_string(),
             sample_rate: 96_000,
@@ -197,7 +214,10 @@ fn playing_state(queue: &[(PathBuf, Entry)], bit_perfect: bool) -> PlayerState {
             sample_format: "f32".to_string(),
             bit_perfect,
         }),
-        queue: queue.iter().map(|(p, _)| p.clone()).collect(),
+        queue: queue
+            .iter()
+            .map(|(p, _)| znicz_core::QueueItem::file(p.clone()))
+            .collect(),
         queue_position: 1,
         repeat: znicz_core::RepeatMode::All,
         shuffle: true,

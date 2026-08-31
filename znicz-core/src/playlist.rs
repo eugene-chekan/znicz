@@ -128,6 +128,84 @@ pub fn list_saved(dir: &Path) -> Vec<String> {
     names
 }
 
+/// Rename a saved playlist. `old` and `new` are stems, or stems with `.m3u` /
+/// `.m3u8`. When `new` has no suffix, the source extension is kept.
+///
+/// Returns the new stem as [`list_saved`] would show it.
+pub fn rename_saved(dir: &Path, old: &str, new: &str) -> Result<String> {
+    let src = saved_path(dir, old)
+        .ok_or_else(|| ZniczError::Player(format!("no playlist named {old}")))?;
+    let dest_file = dest_file_for_rename(&src, new)?;
+    let dest = dir.join(&dest_file);
+    if dest != src && dest.exists() && !same_path(&src, &dest) {
+        let stem = playlist_stem(&dest_file).unwrap_or(dest_file.as_str());
+        return Err(ZniczError::Player(format!(
+            "playlist {stem:?} already exists"
+        )));
+    }
+    if dest != src && !same_path(&src, &dest) {
+        fs::rename(&src, &dest)?;
+    }
+    Ok(playlist_stem(&dest_file)
+        .unwrap_or(dest_file.as_str())
+        .to_string())
+}
+
+/// Copy a saved playlist to a new name. Same suffix rules as [`rename_saved`].
+pub fn copy_saved(dir: &Path, old: &str, new: &str) -> Result<String> {
+    let src = saved_path(dir, old)
+        .ok_or_else(|| ZniczError::Player(format!("no playlist named {old}")))?;
+    let dest_file = dest_file_for_rename(&src, new)?;
+    let dest = dir.join(&dest_file);
+    if dest == src || same_path(&src, &dest) {
+        return Err(ZniczError::Player(format!(
+            "playlist {:?} already exists",
+            playlist_stem(&dest_file).unwrap_or(dest_file.as_str())
+        )));
+    }
+    if dest.exists() {
+        let stem = playlist_stem(&dest_file).unwrap_or(dest_file.as_str());
+        return Err(ZniczError::Player(format!(
+            "playlist {stem:?} already exists"
+        )));
+    }
+    fs::copy(&src, &dest)?;
+    Ok(playlist_stem(&dest_file)
+        .unwrap_or(dest_file.as_str())
+        .to_string())
+}
+
+/// Delete a saved playlist file.
+pub fn remove_saved(dir: &Path, name: &str) -> Result<()> {
+    let src = saved_path(dir, name)
+        .ok_or_else(|| ZniczError::Player(format!("no playlist named {name}")))?;
+    fs::remove_file(src)?;
+    Ok(())
+}
+
+fn dest_file_for_rename(src: &Path, new: &str) -> Result<String> {
+    let new = new.trim();
+    let lower = new.to_ascii_lowercase();
+    if lower.ends_with(".m3u8") || lower.ends_with(".m3u") {
+        return sanitize_stem(new);
+    }
+    let file = sanitize_stem(new)?;
+    match src.extension().and_then(|ext| ext.to_str()) {
+        Some(ext) if ext.eq_ignore_ascii_case("m3u8") => {
+            let stem = file.strip_suffix(".m3u").unwrap_or(&file);
+            Ok(format!("{stem}.m3u8"))
+        }
+        _ => Ok(file),
+    }
+}
+
+fn same_path(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
 /// `evening` → `dir/evening.m3u` or `.m3u8` if that is what exists.
 pub fn saved_path(dir: &Path, name: &str) -> Option<PathBuf> {
     let file = sanitize_stem(name).ok()?;
@@ -148,6 +226,19 @@ pub fn saved_path(dir: &Path, name: &str) -> Option<PathBuf> {
     None
 }
 
+pub fn m3u_paths(queue: &[crate::player::state::QueueItem]) -> Result<Vec<PathBuf>> {
+    let paths: Vec<PathBuf> = queue
+        .iter()
+        .filter_map(|item| item.as_path().map(Path::to_path_buf))
+        .collect();
+    if paths.is_empty() {
+        return Err(ZniczError::Player(
+            "cannot save a radio queue as a playlist".into(),
+        ));
+    }
+    Ok(paths)
+}
+
 /// Clear and play (`append == false`) or only append.
 pub fn apply_to_player(player: &PlayerHandle, result: &LoadResult, append: bool) -> Result<()> {
     if result.paths.is_empty() {
@@ -156,7 +247,14 @@ pub fn apply_to_player(player: &PlayerHandle, result: &LoadResult, append: bool)
     if !append {
         player.send_blocking(Command::QueueClear)?;
     }
-    player.send_blocking(Command::QueueAdd(result.paths.clone()))?;
+    player.send_blocking(Command::QueueAdd(
+        result
+            .paths
+            .iter()
+            .cloned()
+            .map(crate::player::state::QueueItem::file)
+            .collect(),
+    ))?;
     if !append {
         player.send_blocking(Command::QueuePlayIndex(0))?;
     }
@@ -276,6 +374,64 @@ mod tests {
     }
 
     #[test]
+    fn rename_saved_moves_the_file_and_keeps_m3u8() {
+        let dir = tmp();
+        fs::write(dir.join("evening.m3u8"), "x\n").unwrap();
+        let stem = rename_saved(&dir, "evening", "night").unwrap();
+        assert_eq!(stem, "night");
+        assert!(!dir.join("evening.m3u8").is_file());
+        assert!(dir.join("night.m3u8").is_file());
+        assert_eq!(list_saved(&dir), vec!["night".to_string()]);
+    }
+
+    #[test]
+    fn copy_saved_duplicates_the_file() {
+        let dir = tmp();
+        fs::write(dir.join("evening.m3u"), "track\n").unwrap();
+        let stem = copy_saved(&dir, "evening", "night").unwrap();
+        assert_eq!(stem, "night");
+        assert_eq!(
+            fs::read_to_string(dir.join("evening.m3u")).unwrap(),
+            fs::read_to_string(dir.join("night.m3u")).unwrap()
+        );
+    }
+
+    #[test]
+    fn copy_saved_refuses_the_same_name() {
+        let dir = tmp();
+        fs::write(dir.join("evening.m3u"), "").unwrap();
+        let err = copy_saved(&dir, "evening", "evening").unwrap_err();
+        assert!(err.to_string().contains("already exists"));
+    }
+
+    #[test]
+    fn remove_saved_deletes_the_file() {
+        let dir = tmp();
+        fs::write(dir.join("evening.m3u"), "").unwrap();
+        remove_saved(&dir, "evening").unwrap();
+        assert!(list_saved(&dir).is_empty());
+        let err = remove_saved(&dir, "evening").unwrap_err();
+        assert!(err.to_string().contains("no playlist named evening"));
+    }
+
+    #[test]
+    fn rename_saved_refuses_a_name_that_already_exists() {
+        let dir = tmp();
+        fs::write(dir.join("a.m3u"), "").unwrap();
+        fs::write(dir.join("b.m3u"), "").unwrap();
+        let err = rename_saved(&dir, "a", "b").unwrap_err();
+        assert!(err.to_string().contains("already exists"));
+        assert!(dir.join("a.m3u").is_file());
+    }
+
+    #[test]
+    fn rename_saved_errors_when_the_old_name_is_missing() {
+        let dir = tmp();
+        let err = rename_saved(&dir, "gone", "night").unwrap_err();
+        assert!(err.to_string().contains("no playlist named gone"));
+    }
+
+    #[test]
     fn list_saved_is_sorted_stems_only() {
         let dir = tmp();
         fs::write(dir.join("b.m3u"), "").unwrap();
@@ -314,7 +470,9 @@ mod tests {
         let a = touch(&dir, "a.flac");
         let (player, _thread) = crate::spawn_player(crate::AudioConfig::default());
         player
-            .send_blocking(Command::QueueAdd(vec![a.clone()]))
+            .send_blocking(Command::QueueAdd(vec![
+                crate::player::state::QueueItem::file(a.clone()),
+            ]))
             .unwrap();
         let err = apply_to_player(
             &player,
@@ -325,6 +483,9 @@ mod tests {
             false,
         );
         assert!(err.is_err());
-        assert_eq!(player.state().queue, vec![a]);
+        assert_eq!(
+            player.state().queue,
+            vec![crate::player::state::QueueItem::file(a)]
+        );
     }
 }

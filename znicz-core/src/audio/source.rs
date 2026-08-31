@@ -1,4 +1,3 @@
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use symphonia::core::audio::SampleBuffer;
@@ -14,51 +13,81 @@ use crate::error::{Result, ZniczError};
 use crate::metadata::{read_metadata, title_from_path};
 use crate::player::state::TrackInfo;
 
-/// Build track info from the decoder's view of the file plus its tags.
-fn track_info(path: &Path, codec_params: &CodecParameters) -> TrackInfo {
-    let meta = read_metadata(path);
-    let title = meta
-        .tags
-        .title
-        .clone()
-        .unwrap_or_else(|| title_from_path(path));
+fn track_info_from_params(codec_params: &CodecParameters, source: &dyn AudioSource) -> TrackInfo {
+    if let Some(path) = source.path() {
+        let meta = read_metadata(path);
+        let title = meta
+            .tags
+            .title
+            .clone()
+            .unwrap_or_else(|| title_from_path(path));
 
-    let duration = codec_params
-        .n_frames
-        .and_then(|frames| {
-            codec_params
-                .sample_rate
-                .map(|rate| std::time::Duration::from_secs_f64(frames as f64 / rate as f64))
-        })
-        .or(meta.properties.duration);
+        let duration = codec_params
+            .n_frames
+            .and_then(|frames| {
+                codec_params
+                    .sample_rate
+                    .map(|rate| std::time::Duration::from_secs_f64(frames as f64 / rate as f64))
+            })
+            .or(meta.properties.duration);
 
-    let sample_rate = codec_params.sample_rate.unwrap_or(0);
-    let channels = codec_params.channels.map(|c| c.count() as u16).unwrap_or(0);
-    let bits_per_sample = codec_params
-        .bits_per_sample
-        .or(meta.properties.bits_per_sample);
-    let pcm = is_pcm(codec_params.codec);
+        let sample_rate = codec_params.sample_rate.unwrap_or(0);
+        let channels = codec_params.channels.map(|c| c.count() as u16).unwrap_or(0);
+        let bits_per_sample = codec_params
+            .bits_per_sample
+            .or(meta.properties.bits_per_sample);
+        let pcm = is_pcm(codec_params.codec);
 
-    let bitrate_kbps = meta.properties.audio_bitrate.or_else(|| {
-        // Uncompressed PCM has a known rate: samples × channels × bits.
-        if pcm {
+        let bitrate_kbps = meta.properties.audio_bitrate.or_else(|| {
+            if pcm {
+                uncompressed_bitrate_kbps(sample_rate, channels, bits_per_sample)
+            } else {
+                None
+            }
+        });
+
+        TrackInfo {
+            path: Some(path.to_path_buf()),
+            url: None,
+            title,
+            codec: codec_label(codec_params.codec, path),
+            sample_rate,
+            channels,
+            bits_per_sample,
+            bitrate_kbps,
+            duration,
+            tags: meta.tags,
+        }
+    } else {
+        let sample_rate = codec_params.sample_rate.unwrap_or(0);
+        let channels = codec_params.channels.map(|c| c.count() as u16).unwrap_or(0);
+        let bits_per_sample = codec_params.bits_per_sample;
+        let pcm = is_pcm(codec_params.codec);
+
+        let bitrate_kbps = if pcm {
             uncompressed_bitrate_kbps(sample_rate, channels, bits_per_sample)
         } else {
             None
-        }
-    });
+        };
 
-    TrackInfo {
-        path: path.to_path_buf(),
-        title,
-        codec: codec_label(codec_params.codec, path),
-        sample_rate,
-        channels,
-        bits_per_sample,
-        bitrate_kbps,
-        duration,
-        tags: meta.tags,
+        TrackInfo {
+            path: None,
+            url: source.url().map(str::to_string),
+            title: source.title_hint().to_string(),
+            codec: codec_label(codec_params.codec, Path::new("")),
+            sample_rate,
+            channels,
+            bits_per_sample,
+            bitrate_kbps,
+            duration: None,
+            tags: Default::default(),
+        }
     }
+}
+
+/// Build track info from the decoder's view of the file plus its tags.
+fn track_info(path: &Path, codec_params: &CodecParameters) -> TrackInfo {
+    track_info_from_params(codec_params, &LocalFileSource::new(path.to_path_buf()))
 }
 
 /// A name a person would recognise, never a hex codec id such as `0x1003`.
@@ -178,9 +207,11 @@ fn format_options() -> FormatOptions {
 }
 
 pub trait AudioSource: Send {
-    fn path(&self) -> &Path;
+    fn path(&self) -> Option<&Path>;
+    fn url(&self) -> Option<&str>;
+    fn title_hint(&self) -> &str;
     fn read_info(&self) -> Result<TrackInfo>;
-    fn open_reader(&self) -> Result<Box<dyn Read + Send>>;
+    fn open_reader(&self) -> Result<Box<dyn symphonia::core::io::MediaSource>>;
 }
 
 #[derive(Debug, Clone)]
@@ -195,15 +226,26 @@ impl LocalFileSource {
 }
 
 impl AudioSource for LocalFileSource {
-    fn path(&self) -> &Path {
-        &self.path
+    fn path(&self) -> Option<&Path> {
+        Some(&self.path)
+    }
+
+    fn url(&self) -> Option<&str> {
+        None
+    }
+
+    fn title_hint(&self) -> &str {
+        self.path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Unknown")
     }
 
     fn read_info(&self) -> Result<TrackInfo> {
         probe_track(&self.path)
     }
 
-    fn open_reader(&self) -> Result<Box<dyn Read + Send>> {
+    fn open_reader(&self) -> Result<Box<dyn symphonia::core::io::MediaSource>> {
         let file = std::fs::File::open(&self.path)?;
         Ok(Box::new(file))
     }
@@ -239,16 +281,24 @@ pub struct AudioDecoder {
     track_id: u32,
     sample_rate: u32,
     channels: u16,
+    /// True when opened from a URL source. Stream body I/O is not EOF.
+    is_stream: bool,
 }
 
 impl AudioDecoder {
-    pub fn open(path: &Path) -> Result<(Self, TrackInfo)> {
-        let file = std::fs::File::open(path)?;
-        let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    pub fn open(source: &dyn AudioSource) -> Result<(Self, TrackInfo)> {
+        let reader = source.open_reader()?;
+        let mss = MediaSourceStream::new(reader, Default::default());
 
         let mut hint = Hint::new();
-        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            hint.with_extension(ext);
+        if let Some(path) = source.path() {
+            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                hint.with_extension(ext);
+            }
+        } else if let Some(url) = source.url() {
+            if let Some(ext) = url.rsplit('.').next().filter(|s| s.len() <= 4) {
+                hint.with_extension(ext);
+            }
         }
 
         let probed = symphonia::default::get_probe()
@@ -272,7 +322,8 @@ impl AudioDecoder {
             .make(&codec_params, &DecoderOptions::default())
             .map_err(|e| ZniczError::Decode(e.to_string()))?;
 
-        let track_info = track_info(path, &codec_params);
+        let track_info = track_info_from_params(&codec_params, source);
+        let is_stream = source.url().is_some();
 
         Ok((
             Self {
@@ -281,9 +332,14 @@ impl AudioDecoder {
                 track_id,
                 sample_rate,
                 channels,
+                is_stream,
             },
             track_info,
         ))
+    }
+
+    pub fn open_path(path: &Path) -> Result<(Self, TrackInfo)> {
+        Self::open(&LocalFileSource::new(path.to_path_buf()))
     }
 
     pub fn sample_rate(&self) -> u32 {
@@ -316,7 +372,10 @@ impl AudioDecoder {
                 Err(SymphoniaError::ResetRequired) => {
                     return Err(ZniczError::Decode("stream reset required".into()));
                 }
-                Err(SymphoniaError::IoError(_)) => {
+                Err(SymphoniaError::IoError(e)) => {
+                    if self.is_stream {
+                        return Err(ZniczError::Decode(format!("stream io error: {e}")));
+                    }
                     return Ok(None);
                 }
                 Err(e) => {
@@ -339,7 +398,13 @@ impl AudioDecoder {
                     sample_buf.copy_interleaved_ref(decoded);
                     return Ok(Some(sample_buf.samples().to_vec()));
                 }
-                Err(SymphoniaError::IoError(_)) | Err(SymphoniaError::DecodeError(_)) => continue,
+                Err(SymphoniaError::IoError(e)) => {
+                    if self.is_stream {
+                        return Err(ZniczError::Decode(format!("stream decode io error: {e}")));
+                    }
+                    continue;
+                }
+                Err(SymphoniaError::DecodeError(_)) => continue,
                 Err(e) => return Err(ZniczError::Decode(e.to_string())),
             }
         }
@@ -378,5 +443,119 @@ mod tests {
     #[test]
     fn uncompressed_cd_audio_is_1411_kbps() {
         assert_eq!(uncompressed_bitrate_kbps(44_100, 2, Some(16)), Some(1411));
+    }
+
+    fn silent_wav_bytes(frames: u32) -> Vec<u8> {
+        let channels = 1u16;
+        let sample_rate = 44_100u32;
+        let bytes_per_frame = 2u32;
+        let data_size = frames * bytes_per_frame;
+        let file_size = 36 + data_size;
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"RIFF");
+        buf.extend_from_slice(&file_size.to_le_bytes());
+        buf.extend_from_slice(b"WAVE");
+        buf.extend_from_slice(b"fmt ");
+        buf.extend_from_slice(&16u32.to_le_bytes());
+        buf.extend_from_slice(&1u16.to_le_bytes());
+        buf.extend_from_slice(&channels.to_le_bytes());
+        buf.extend_from_slice(&sample_rate.to_le_bytes());
+        buf.extend_from_slice(&(sample_rate * bytes_per_frame).to_le_bytes());
+        buf.extend_from_slice(&(bytes_per_frame as u16).to_le_bytes());
+        buf.extend_from_slice(&16u16.to_le_bytes());
+        buf.extend_from_slice(b"data");
+        buf.extend_from_slice(&data_size.to_le_bytes());
+        buf.extend(vec![0u8; data_size as usize]);
+        buf
+    }
+
+    /// Enough header for probe, then a reset so `decode_next` sees `IoError`.
+    struct DroppingWav {
+        data: std::io::Cursor<Vec<u8>>,
+        read_bytes: usize,
+        drop_after: usize,
+    }
+
+    impl DroppingWav {
+        fn new() -> Self {
+            Self {
+                data: std::io::Cursor::new(silent_wav_bytes(44_100)),
+                read_bytes: 0,
+                drop_after: 4_096,
+            }
+        }
+    }
+
+    impl std::io::Read for DroppingWav {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.read_bytes >= self.drop_after {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    "dropped connection",
+                ));
+            }
+            let n = self.data.read(buf)?;
+            self.read_bytes += n;
+            Ok(n)
+        }
+    }
+
+    impl std::io::Seek for DroppingWav {
+        fn seek(&mut self, _pos: std::io::SeekFrom) -> std::io::Result<u64> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "no seek",
+            ))
+        }
+    }
+
+    impl symphonia::core::io::MediaSource for DroppingWav {
+        fn is_seekable(&self) -> bool {
+            false
+        }
+        fn byte_len(&self) -> Option<u64> {
+            None
+        }
+    }
+
+    struct MockStreamSource;
+
+    impl AudioSource for MockStreamSource {
+        fn path(&self) -> Option<&Path> {
+            None
+        }
+        fn url(&self) -> Option<&str> {
+            Some("http://127.0.0.1:1/stream")
+        }
+        fn title_hint(&self) -> &str {
+            "Mock"
+        }
+        fn read_info(&self) -> Result<TrackInfo> {
+            unimplemented!()
+        }
+        fn open_reader(&self) -> Result<Box<dyn symphonia::core::io::MediaSource>> {
+            Ok(Box::new(DroppingWav::new()))
+        }
+    }
+
+    #[test]
+    fn stream_io_error_returns_decode_error_not_eof() {
+        let (mut decoder, _) = AudioDecoder::open(&MockStreamSource).expect("probe stream wav");
+        let mut err = None;
+        for _ in 0..32 {
+            match decoder.decode_next() {
+                Err(e) => {
+                    err = Some(e);
+                    break;
+                }
+                Ok(None) => panic!("stream ended silently on io error"),
+                Ok(Some(_)) => {}
+            }
+        }
+        let err = err.expect("expected an error from dropping connection");
+        assert!(
+            err.to_string().contains("dropped connection"),
+            "got error: {err}"
+        );
     }
 }

@@ -35,7 +35,7 @@ sample is ever lost. See [the playback pipeline](../Domain/Playback-Pipeline.md#
 
 ## Seek
 
-Seek cannot “rewind” the ring from the producer side. The player sets a **flush** flag. The callback throws away queued samples, then decode continues from the new position. The leftover held by the feeder is dropped too, because it belongs to the old position.
+Seek cannot “rewind” the ring from the producer side. The player sets a **flush** flag. The callback throws away queued samples, then decode continues from the new position. The leftover held by the feeder is dropped too, because it belongs to the old position. Radio streams cannot seek: the engine returns `radio cannot seek` instead of moving the HTTP cursor.
 
 ## End of track
 

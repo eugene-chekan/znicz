@@ -13,9 +13,9 @@ Each turn it:
 
 See `znicz-core/src/player/commands.rs`. Examples:
 
-- `Play(path)` — open file, open output stream, start decode
-- `Pause` / `Resume` — atomic flag; callback writes silence while paused
-- `Seek(duration)` — seek the decoder, flush the ring
+- `Play(QueueItem)` — stop whatever is playing, then open a local file or an HTTP stream, open output, start decode. A failed open leaves the player Stopped.
+- `Pause` / `Resume` — atomic flag; callback writes silence while paused. Pause also skips `pump_decode`, so a radio stream stops pulling bytes.
+- `Seek(duration)` — seek the decoder, flush the ring. On a radio row this returns `radio cannot seek`.
 - `SetVolume`, `NextTrack`, `QueueAdd`, …
 
 ## Output device
@@ -40,6 +40,15 @@ Linux uses ALSA (often via PipeWire). Windows uses WASAPI.
 - `decode` packets to interleaved `f32`
 - gapless option enabled
 
+A local file may treat a read error as end of track (`Ok(None)`). A radio stream is opened with `source.url()` set; the same Symphonia `IoError` is a decode failure. The engine then takes the Failed pump path, emits `PlayerEvent::Error`, and **stops** (status Stopped, output dropped). It does not restore the decoder.
+
+## HTTP radio
+
+`HttpStreamSource` (`audio/http.rs`) does a blocking GET on the player thread
+and wraps the response body as a Symphonia `MediaSource` that cannot seek.
+Decode keeps reading that body on the same thread. Pause stops the pump, so
+bytes are not pulled while paused.
+
 ## Files to read
 
 | File | Role |
@@ -47,5 +56,7 @@ Linux uses ALSA (often via PipeWire). Windows uses WASAPI.
 | `player/engine.rs` | Loop, commands, queue |
 | `audio/output.rs` | cpal stream, config pick |
 | `audio/buffer.rs` | ring size and pair |
-| `audio/source.rs` | Symphonia |
-| `player/state.rs` | snapshots for UI and MCP |
+| `audio/source.rs` | Symphonia, `AudioSource` |
+| `audio/http.rs` | HTTP GET, unseekable body |
+| `station.rs` | `stations.toml`, `play_station` |
+| `player/state.rs` | snapshots for UI and MCP (`QueueItem`) |

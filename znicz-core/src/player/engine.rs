@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -7,8 +6,9 @@ use crossbeam_channel::{bounded, unbounded, Receiver, RecvTimeoutError, Sender};
 
 use crate::audio::convert::{adapt_channels, RateConverter};
 use crate::audio::feeder::{DecodeStep, Feeder, PumpOutcome};
+use crate::audio::http::HttpStreamSource;
 use crate::audio::output::AudioOutput;
-use crate::audio::source::AudioDecoder;
+use crate::audio::source::{AudioDecoder, AudioSource, LocalFileSource};
 use crate::error::{Result, ZniczError};
 use crate::player::commands::{Command, CommandEnvelope, PlayerEvent};
 use crate::player::state::{OutputInfo, PlaybackStatus, PlayerState, RepeatMode};
@@ -40,7 +40,7 @@ impl Default for AudioConfig {
 }
 
 /// How long `send_blocking` waits for the engine before giving up.
-pub const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+pub const COMMAND_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Clone)]
 pub struct PlayerHandle {
@@ -221,7 +221,7 @@ impl PlayerEngine {
 
     fn handle_command(&mut self, command: Command) -> Result<()> {
         match command {
-            Command::Play(path) => self.play_path(path)?,
+            Command::Play(item) => self.play_item(item)?,
             Command::Pause => {
                 self.output.set_paused(true);
                 self.update_status(PlaybackStatus::Paused);
@@ -255,9 +255,9 @@ impl PlayerEngine {
             }
             Command::NextTrack => self.next_track()?,
             Command::PreviousTrack => self.previous_track()?,
-            Command::QueueAdd(paths) => {
+            Command::QueueAdd(items) => {
                 let mut state = self.state.write().unwrap();
-                state.queue.extend(paths);
+                state.queue.extend(items);
                 self.event_tx.send(PlayerEvent::QueueChanged).ok();
                 self.emit_state_changed();
             }
@@ -292,8 +292,19 @@ impl PlayerEngine {
         Ok(())
     }
 
-    fn play_path(&mut self, path: PathBuf) -> Result<()> {
-        let (decoder, track_info) = AudioDecoder::open(&path)?;
+    fn play_item(&mut self, item: crate::player::state::QueueItem) -> Result<()> {
+        // Stop first so a failed open cannot leave the previous file playing.
+        self.stop()?;
+
+        let source: Box<dyn AudioSource> = match &item {
+            crate::player::state::QueueItem::File { path } => {
+                Box::new(LocalFileSource::new(path.clone()))
+            }
+            crate::player::state::QueueItem::Stream { name, url } => {
+                Box::new(HttpStreamSource::new(name.clone(), url.clone()))
+            }
+        };
+        let (decoder, track_info) = AudioDecoder::open(source.as_ref())?;
         let sample_rate = decoder.sample_rate();
         let channels = decoder.channels();
 
@@ -350,18 +361,17 @@ impl PlayerEngine {
 
         let mut state = self.state.write().unwrap();
         state.output = Some(output_info);
+
         if state.queue.is_empty() {
-            state.queue = vec![path.clone()];
+            state.queue = vec![item.clone()];
             state.queue_position = 0;
-        } else if !state.queue.contains(&path) {
-            state.queue.push(path.clone());
+        } else if let Some(pos) = state.queue.iter().position(|row| row == &item) {
+            state.queue_position = pos;
         } else {
-            state.queue_position = state
-                .queue
-                .iter()
-                .position(|p| p == &path)
-                .unwrap_or(state.queue_position);
+            state.queue.push(item.clone());
+            state.queue_position = state.queue.len() - 1;
         }
+
         state.current_track = Some(track_info.clone());
         state.status = PlaybackStatus::Playing;
         state.position = Duration::ZERO;
@@ -392,6 +402,10 @@ impl PlayerEngine {
     }
 
     fn seek(&mut self, position: Duration) -> Result<()> {
+        if self.queue_row_is_stream() {
+            return Err(ZniczError::Player("radio cannot seek".into()));
+        }
+
         if let Some(decoder) = &mut self.decoder {
             decoder.seek(position)?;
             self.output.request_flush();
@@ -412,6 +426,15 @@ impl PlayerEngine {
             self.emit_state_changed();
         }
         Ok(())
+    }
+
+    fn queue_row_is_stream(&self) -> bool {
+        let state = self.state.read().unwrap();
+        state
+            .queue
+            .get(state.queue_position)
+            .map(|item| item.is_stream())
+            .unwrap_or(false)
     }
 
     fn next_track(&mut self) -> Result<()> {
@@ -474,15 +497,15 @@ impl PlayerEngine {
     }
 
     fn play_queue_index(&mut self, index: usize) -> Result<()> {
-        let path = {
+        let item = {
             let state = self.state.read().unwrap();
             match state.queue.get(index) {
-                Some(path) => path.clone(),
+                Some(item) => item.clone(),
                 None => return Ok(()),
             }
         };
         self.state.write().unwrap().queue_position = index;
-        self.play_path(path)
+        self.play_item(item)
     }
 
     fn remove_from_queue(&mut self, index: usize) -> Result<()> {
@@ -532,14 +555,17 @@ impl PlayerEngine {
         } else {
             0
         };
-        let path = state.queue[prev_pos].clone();
+        let item = state.queue[prev_pos].clone();
         drop(state);
         self.state.write().unwrap().queue_position = prev_pos;
-        self.play_path(path)?;
-        Ok(())
+        self.play_item(item)
     }
 
     fn pump_decode(&mut self) {
+        if self.state.read().unwrap().status == PlaybackStatus::Paused {
+            return;
+        }
+
         let Some(mut decoder) = self.decoder.take() else {
             return;
         };
@@ -580,7 +606,7 @@ impl PlayerEngine {
             }
             PumpOutcome::Failed(message) => {
                 self.emit_error(message);
-                self.feeder.reset();
+                let _ = self.stop();
             }
         }
     }

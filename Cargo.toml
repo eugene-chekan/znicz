@@ -3,13 +3,14 @@ resolver = "2"
 members = ["znicz-core", "znicz-library", "znicz-tui", "znicz-mcp", "znicz"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["Eugene"]
 rust-version = "1.85"
 
 [workspace.dependencies]
+ureq = "3"
 symphonia = { version = "0.5", features = ["all"] }
 cpal = "0.15"
 rtrb = "0.3"

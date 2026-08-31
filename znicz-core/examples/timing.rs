@@ -21,7 +21,7 @@ fn main() {
     let (player, _thread) = spawn_player(AudioConfig::default());
     let started = Instant::now();
     player
-        .send(Command::Play(path.into()))
+        .send(Command::Play(znicz_core::QueueItem::file(path)))
         .expect("send play command");
 
     let mut track_duration = None;

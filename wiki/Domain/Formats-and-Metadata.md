@@ -27,7 +27,7 @@ playing music matters more than metadata.
 ## Playlists (Phase 3)
 
 A playlist is an **M3U / M3U8 file of local paths**. PLS and XSPF are still later.
-HTTP / Icecast lines are skipped (Phase 4).
+HTTP / Icecast lines are still skipped in this version (later radio).
 
 | Line | Meaning |
 |------|---------|
@@ -52,12 +52,51 @@ Play has two actions, from the TUI (`P`), CLI (`znicz playlist …`), and MCP:
 1. **Clear and play** — replace the queue and start the first track
 2. **Add to queue** — append, do not start or stop playback
 
+Rename, copy, and delete are the same three verbs from the TUI (`P`: `e` / `c` /
+`d`), the CLI (`znicz playlist rename` / `copy` / `remove`), and MCP
+(`rename_playlist`, `copy_playlist`, `remove_playlist`). Rename moves the file
+in the playlists folder. Copy leaves the original and writes a second file. A
+name that already exists is refused. If you omit `.m3u` / `.m3u8` on the new
+name, the old suffix is kept. Delete is immediate.
+
 Parsing lives in `znicz-core::playlist`. The engine has no extra commands:
 callers send `QueueClear` / `QueueAdd` / `QueuePlayIndex(0)`.
 
 ## Radio (Phase 4)
 
-Radio is often an **HTTP stream** (Icecast): the player downloads audio forever instead of a file. HLS (`.m3u8`) is a playlist of short segments. Same decoder, different “source”.
+Radio here is an **HTTP or HTTPS Icecast-style byte stream**: the player
+downloads audio and feeds it to Symphonia, the same decoder used for files.
+HLS (`.m3u8` segments) is not in this version.
+
+Stations live in `stations.toml` beside the library database:
+
+- Linux: `~/.local/share/znicz/stations.toml`
+- Windows: `%APPDATA%\znicz\stations.toml`
+
+Override with `ZNICZ_STATIONS_PATH`. Names must be unique. A URL must start
+with `http://` or `https://`. Playing a station **clears the queue** and starts
+that stream.
+
+Open the list in the player with `R`. Same list from the CLI and MCP:
+
+```bash
+znicz station list
+znicz station add "Example" https://example.com/stream
+znicz station play Example
+```
+
+CLI also has `remove`, `rename`, `url`, and `copy`. MCP tools: `list_stations`, `add_radio_station`, `play_station`,
+`rename_radio_station`, `set_station_url`, `copy_radio_station`, `remove_radio_station`, plus
+resource `znicz://stations`.
+
+The TUI overlay (`R`) uses the same saved-list keys as playlists: `n` new, `e`
+edit (name and URL on one form), `c` copy, `d` delete. `a` will add the
+highlighted station to the queue later; for now it only toasts.
+
+M3U playlists still **skip** `http://` / `https://` lines. **Later:** ICY song
+titles on the transport, HLS, those M3U URL lines as playable streams, and a
+mixed queue of files and stations. See the
+[roadmap](../Plans/Roadmap.md#later-radio-after-phase-4).
 
 ## Library
 

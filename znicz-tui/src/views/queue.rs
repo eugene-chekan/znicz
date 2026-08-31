@@ -23,29 +23,33 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &PlayerState) {
         return;
     }
 
-    // Ask the cache for every visible row; misses fill in on the next frame.
-    let entries: Vec<Option<crate::meta::Entry>> =
-        state.queue.iter().map(|path| app.meta.get(path)).collect();
-
     let index_width = state.queue.len().to_string().len().max(2);
     let items: Vec<ListItem> = state
         .queue
         .iter()
-        .zip(entries.iter())
         .enumerate()
-        .map(|(i, (path, entry))| {
+        .map(|(i, item)| {
             let is_playing = i == state.queue_position;
 
-            let label = match entry {
-                Some(entry) => entry.label(),
-                // Fall back to the file name until the tags arrive.
-                None => path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("?")
-                    .to_string(),
+            let (label, time) = match item {
+                znicz_core::QueueItem::Stream { name, .. } => {
+                    (name.clone(), format::duration_opt(None))
+                }
+                znicz_core::QueueItem::File { path } => {
+                    let entry = app.meta.get(path);
+                    let label = match &entry {
+                        Some(entry) => entry.label(),
+                        // Fall back to the file name until the tags arrive.
+                        None => path
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("?")
+                            .to_string(),
+                    };
+                    let time = format::duration_opt(entry.and_then(|e| e.duration));
+                    (label, time)
+                }
             };
-            let time = format::duration_opt(entry.as_ref().and_then(|e| e.duration));
 
             // number + marker + gap + time
             let fixed = index_width + 2 + 2 + time.chars().count() + 1;
@@ -83,9 +87,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &PlayerState) {
         })
         .collect();
 
-    let durations: Vec<Option<std::time::Duration>> = entries
+    let durations: Vec<Option<std::time::Duration>> = state
+        .queue
         .iter()
-        .map(|e| e.as_ref().and_then(|e| e.duration))
+        .map(|item| match item {
+            znicz_core::QueueItem::File { path } => app.meta.get(path).and_then(|e| e.duration),
+            znicz_core::QueueItem::Stream { .. } => None,
+        })
         .collect();
     let summary = match now_playing::total_duration(&durations) {
         Some(total) => format!("{} tracks · {}", state.queue.len(), format::duration(total)),
@@ -113,8 +121,13 @@ pub(crate) fn title_slot(app: &App, state: &PlayerState, width: usize) -> usize 
     let fixed = state
         .queue
         .iter()
-        .map(|path| {
-            let time = format::duration_opt(app.meta.get(path).and_then(|e| e.duration));
+        .map(|item| {
+            let time = match item {
+                znicz_core::QueueItem::Stream { .. } => format::duration_opt(None),
+                znicz_core::QueueItem::File { path } => {
+                    format::duration_opt(app.meta.get(path).and_then(|e| e.duration))
+                }
+            };
             index_width + 2 + 2 + time.chars().count() + 1
         })
         .max()

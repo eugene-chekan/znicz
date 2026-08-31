@@ -75,21 +75,25 @@ details, filled in when the stream opens. See
 ### Library
 
 The home screen. Albums by default; `Enter` opens one, `Esc` goes back, `/`
-searches, `a` queues the selection (a whole album if the cursor is on one) and
-`A` queues everything listed. Queries go straight to SQLite, which is fast enough
-to run while handling the keypress. See [Library](Library.md).
+opens a search prompt, `a` queues the selection (a whole album if the cursor is
+on one) and `A` queues everything listed. While the prompt is open, Left and
+Right move the caret the same way they do when naming a playlist or a station.
+Queries go straight to SQLite, which is fast enough to run while handling the
+keypress. See [Library](Library.md).
 
 A library whose files carry **no album tags** cannot be grouped, so the pane
 falls back to a flat track list rather than looking empty.
 
 ### Queue
 
-An overlay drawer (`]`). Shows **titles, not file names**. The player's queue is
-only a list of paths, so `meta::MetaCache` resolves tags on a background thread:
-the UI asks for a path, draws whatever is known now, and the worker fills the
-gap for the next frame. Reading tags means opening and seeking each file, so
-doing it while drawing would stutter on a long queue. Rows added from the library
-skip the worker entirely, since the database already has the tags.
+An overlay drawer (`]`). Shows **titles, not file names**. A queue row is a
+`QueueItem`: a local file or a radio station. For files, `meta::MetaCache`
+resolves tags on a background thread: the UI asks for a path, draws whatever is
+known now, and the worker fills the gap for the next frame. Reading tags means
+opening and seeking each file, so doing it while drawing would stutter on a
+long queue. Rows added from the library skip the worker entirely, since the
+database already has the tags. A station row shows the **station name**; it has
+no duration (`—`).
 
 `Enter` plays a row, `d` removes one, `C` clears, `o` jumps back to whatever is
 playing.
@@ -111,13 +115,60 @@ Nothing is invented when a field is missing — an unknown sample format shows a
 ### Playlists
 
 A centered modal (`P`, shift-p — not `p`, which is previous track). Lists
-`.m3u` / `.m3u8` files in the playlists folder. Enter **clears the queue and
-plays** the highlighted file; `a` **adds** it without starting or stopping
-playback; `w` names a new file and writes the current queue (`save: █`). Esc
-closes the overlay, or cancels the name prompt. `s` still stops while the list
-is showing; while naming a file, every letter (including `s`, which is stop
-everywhere else) is part of the name. The footer switches to save/cancel so the
-global keymap is not what you type into.
+`.m3u` / `.m3u8` files in the playlists folder. The overlay uses the same
+saved-list keys as Radio. While it is open (and you are not typing a prompt),
+those keys win over the global map: `n` is new, not next track; `e` is edit,
+not repeat. Space, `s`, seek, and volume stay global. After Esc, `n` and `e`
+are next and repeat again.
+
+| Key | Action |
+| --- | --- |
+| Enter | Clear the queue and play |
+| `a` | Add the highlighted file to the queue |
+| `n` | New: name a file and write the current queue (`save: █`) |
+| `e` | Edit: rename the highlighted file (`rename: █`, pre-filled) |
+| `c` | Copy the file to a new name (`copy: █`, pre-filled) |
+| `d` | Delete the highlighted file (immediate, no confirm) |
+| Esc | Close the overlay, or cancel a prompt |
+
+`s` still stops while the list is showing; while naming a file, every letter
+(including `s`, which is stop everywhere else) is part of the name. Left and
+Right move the caret; Home and End jump to the ends. The footer switches to
+type/cancel so the global keymap is not what you type into.
+
+### Radio
+
+A centered modal (`R`). Lists stations from `stations.toml`. Same saved-list
+keys as Playlists: overlay keys win until Esc. If the URL cannot be opened,
+playback stops so the previous file does not keep playing.
+
+| Key | Action |
+| --- | --- |
+| Enter | Clear the queue and play |
+| `a` | Add to the queue — later (toast for now; mixed queue is not in this version) |
+| `n` | New station: empty two-field form (name and URL) |
+| `e` | Edit: the same form, filled from the highlighted station |
+| `c` | Copy name+URL, then prompt for a new name |
+| `d` | Delete (immediate, no confirm) |
+| `r` | Reload `stations.toml` |
+| Esc | Close the overlay, or cancel a prompt |
+
+Tab (or Down) moves between name and URL; BackTab (or Up) goes back. Enter
+saves both fields. Copy is name-only; the same name as the original is an
+error. While typing, letters (including keys that mean something else globally)
+are part of the text. Every prompt uses the same one-line editor
+(`line_edit.rs`): Left and Right move the caret, Home and End jump to the
+ends, Backspace and Delete edit at the caret. A typo at the start of a name
+does not mean retyping the whole line. The unfocused field of the form shows
+the text without a caret.
+
+Transport shows the station name. Duration is unknown, so the total time is
+`—` and the seek bar stays empty. Seek is refused. Playing a station puts that
+stream on the queue, so the queue can show a station name.
+
+`r` on the library, playlists, devices, or radio reloads **the list in front**.
+Repeat is `e`, shuffle is `z`. The full keymap lives in `znicz-tui/src/keys.rs`
+and in the `?` overlay.
 
 ## Messages instead of silence
 
@@ -154,10 +205,12 @@ top of the player.
 | `views/now_playing.rs` | two-line transport (play state, seek, signal path) |
 | `views/inspector.rs` | full signal-path overlay (`i`) |
 | `views/playlists.rs` | saved M3U overlay (`P`) |
+| `views/radio.rs` | saved stations overlay (`R`) |
 | `views/status.rs` | key hints only |
 | `theme.rs` | every colour, in one place |
 | `keys.rs` | the keymap as data |
 | `cursor.rs` | list cursor movement |
+| `line_edit.rs` | one-line prompt caret (search, playlist save, radio) |
 | `meta.rs` | background tag cache |
 | `toast.rs` | boxed, level-coloured messages |
 | `format.rs` | durations, rates, bars, truncation |

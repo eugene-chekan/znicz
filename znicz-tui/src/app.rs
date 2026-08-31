@@ -1,6 +1,6 @@
 //! The application: what is on screen, and what the keys do.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -14,6 +14,7 @@ use znicz_library::{Library, Track};
 use crate::cursor::Cursor;
 use crate::layout;
 use crate::library_pane::{Item, LibraryPane};
+use crate::line_edit::LineEdit;
 use crate::meta::{Entry, MetaCache};
 use crate::toast::Toasts;
 use crate::views;
@@ -49,11 +50,96 @@ pub enum Modal {
     Devices,
     Inspector,
     Playlists,
+    Radio,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StationField {
+    Name,
+    Url,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RadioPrompt {
+    /// New station (`original` is None) or edit of that name.
+    Form {
+        name: LineEdit,
+        url: LineEdit,
+        field: StationField,
+        original: Option<String>,
+    },
+    Copy(LineEdit),
+}
+
+impl RadioPrompt {
+    fn new_station() -> Self {
+        Self::Form {
+            name: LineEdit::new(),
+            url: LineEdit::new(),
+            field: StationField::Name,
+            original: None,
+        }
+    }
+
+    fn edit_station(station: &znicz_core::Station) -> Self {
+        Self::Form {
+            name: LineEdit::from_text(station.name.clone()),
+            url: LineEdit::from_text(station.url.clone()),
+            field: StationField::Name,
+            original: Some(station.name.clone()),
+        }
+    }
+
+    fn buffer_mut(&mut self) -> &mut LineEdit {
+        match self {
+            Self::Form {
+                name, url, field, ..
+            } => match field {
+                StationField::Name => name,
+                StationField::Url => url,
+            },
+            Self::Copy(s) => s,
+        }
+    }
+
+    fn focus_url(&mut self, url: bool) {
+        if let Self::Form { field, .. } = self {
+            *field = if url {
+                StationField::Url
+            } else {
+                StationField::Name
+            };
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlaylistPrompt {
+    Save(LineEdit),
+    Rename(LineEdit),
+    Copy(LineEdit),
+}
+
+impl PlaylistPrompt {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Save(s) | Self::Rename(s) | Self::Copy(s) => s.as_str(),
+        }
+    }
+
+    fn buffer_mut(&mut self) -> &mut LineEdit {
+        match self {
+            Self::Save(s) | Self::Rename(s) | Self::Copy(s) => s,
+        }
+    }
 }
 
 impl Modal {
     pub(crate) fn blocks_list_focus(self) -> bool {
-        matches!(self, Self::Devices | Self::Inspector | Self::Playlists)
+        matches!(
+            self,
+            Self::Devices | Self::Inspector | Self::Playlists | Self::Radio
+        )
     }
 }
 
@@ -73,7 +159,11 @@ pub struct App {
     pub playlists_dir: PathBuf,
     pub playlists: Vec<String>,
     pub playlist_cursor: Cursor,
-    pub playlist_input: Option<String>,
+    pub playlist_prompt: Option<PlaylistPrompt>,
+    pub stations_path: PathBuf,
+    pub stations: Vec<znicz_core::Station>,
+    pub station_cursor: Cursor,
+    pub radio_prompt: Option<RadioPrompt>,
     pub meta: MetaCache,
     pub toasts: Toasts,
     pub should_quit: bool,
@@ -102,7 +192,12 @@ impl App {
                 .unwrap_or_else(|| std::env::temp_dir().join("znicz-playlists")),
             playlists: Vec::new(),
             playlist_cursor: Cursor::new(),
-            playlist_input: None,
+            playlist_prompt: None,
+            stations_path: znicz_library::default_stations_path()
+                .unwrap_or_else(|| std::env::temp_dir().join("znicz-stations.toml")),
+            stations: Vec::new(),
+            station_cursor: Cursor::new(),
+            radio_prompt: None,
             meta: MetaCache::new(),
             toasts: Toasts::new(),
             should_quit: false,
@@ -156,15 +251,17 @@ impl App {
                 }
                 PlayerEvent::TrackStarted(track) => {
                     // Seed the cache so the queue row is right immediately.
-                    self.meta.insert(
-                        track.path.clone(),
-                        Entry {
-                            title: track.title.clone(),
-                            artist: track.artist().map(str::to_string),
-                            album: track.album().map(str::to_string),
-                            duration: track.duration,
-                        },
-                    );
+                    if let Some(path) = track.path.clone() {
+                        self.meta.insert(
+                            path,
+                            Entry {
+                                title: track.title.clone(),
+                                artist: track.artist().map(str::to_string),
+                                album: track.album().map(str::to_string),
+                                duration: track.duration,
+                            },
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -182,15 +279,20 @@ impl App {
             return;
         }
 
-        // Search and the playlist save prompt are plain text. They must run
+        // Search, playlist save, and radio prompts are plain text. They must run
         // before global keys, or `s` (stop) turns "To Listen" into "To Liten".
         if self.library.is_typing() {
             self.on_search_key(key);
             return;
         }
 
-        if self.playlist_input.is_some() {
+        if self.playlist_prompt.is_some() {
             self.on_playlist_input_key(key);
+            return;
+        }
+
+        if self.radio_prompt.is_some() {
+            self.on_radio_input_key(key);
             return;
         }
 
@@ -204,17 +306,21 @@ impl App {
             return;
         }
 
+        // Named-list overlays steal a/n/e/c/d (and Enter) from the global map
+        // so new/edit are not next/repeat while P or R is open.
+        if self.modal == Modal::Playlists && self.on_playlists_key(key) {
+            return;
+        }
+        if self.modal == Modal::Radio && self.on_radio_key(key) {
+            return;
+        }
+
         if self.on_global_key(key) {
             return;
         }
 
         if self.modal == Modal::Devices {
             self.on_devices_key(key);
-            return;
-        }
-
-        if self.modal == Modal::Playlists {
-            self.on_playlists_key(key);
             return;
         }
 
@@ -231,10 +337,11 @@ impl App {
     fn on_esc(&mut self) {
         if matches!(
             self.modal,
-            Modal::Devices | Modal::Inspector | Modal::Playlists
+            Modal::Devices | Modal::Inspector | Modal::Playlists | Modal::Radio
         ) {
             self.modal = Modal::None;
-            self.playlist_input = None;
+            self.playlist_prompt = None;
+            self.radio_prompt = None;
         } else if self.focus == Focus::Queue && self.queue_open {
             self.close_queue();
         } else {
@@ -252,9 +359,11 @@ impl App {
                 let message = self.library.submit_search();
                 self.toasts.info(message);
             }
-            KeyCode::Backspace => self.library.pop_char(),
-            KeyCode::Char(c) => self.library.push_char(c),
-            _ => {}
+            _ => {
+                if let Some(input) = self.library.prompt_mut() {
+                    input.on_key(key);
+                }
+            }
         }
     }
 
@@ -269,7 +378,8 @@ impl App {
 
     /// Returns true when the key was a global one and needs no focus handling.
     fn on_global_key(&mut self, key: KeyEvent) -> bool {
-        if self.library.is_typing() || self.playlist_input.is_some() {
+        if self.library.is_typing() || self.playlist_prompt.is_some() || self.radio_prompt.is_some()
+        {
             return false;
         }
         match key.code {
@@ -278,6 +388,7 @@ impl App {
             KeyCode::Char(',') => self.toggle_devices_modal(),
             KeyCode::Char('i') => self.toggle_inspector_modal(),
             KeyCode::Char('P') => self.toggle_playlists_modal(),
+            KeyCode::Char('R') => self.toggle_radio_modal(),
 
             KeyCode::Char(']') => {
                 if self.queue_open {
@@ -309,8 +420,8 @@ impl App {
 
             KeyCode::Char(' ') => self.toggle_pause(),
             KeyCode::Char('s') => self.apply(Command::Stop, None),
-            KeyCode::Char('n') => self.apply(Command::NextTrack, None),
-            KeyCode::Char('N') | KeyCode::Char('p') => self.apply(Command::PreviousTrack, None),
+            KeyCode::Char('n') => self.skip_track(false),
+            KeyCode::Char('N') | KeyCode::Char('p') => self.skip_track(true),
 
             KeyCode::Right if key.modifiers.contains(KeyModifiers::ALT) => {
                 self.pan_titles(1);
@@ -326,7 +437,8 @@ impl App {
             KeyCode::Char('+') | KeyCode::Char('=') => self.adjust_volume(VOLUME_STEP),
             KeyCode::Char('-') | KeyCode::Char('_') => self.adjust_volume(-VOLUME_STEP),
             KeyCode::Char('m') => self.toggle_mute(),
-            KeyCode::Char('r') => self.cycle_repeat(),
+            KeyCode::Char('e') => self.cycle_repeat(),
+            KeyCode::Char('r') => self.reload_front(),
             KeyCode::Char('z') => self.toggle_shuffle(),
 
             KeyCode::Down | KeyCode::Char('j') => self.step(1),
@@ -382,10 +494,21 @@ impl App {
     fn toggle_playlists_modal(&mut self) {
         if self.modal == Modal::Playlists {
             self.modal = Modal::None;
-            self.playlist_input = None;
+            self.playlist_prompt = None;
         } else {
             self.reload_playlists();
             self.modal = Modal::Playlists;
+        }
+    }
+
+    fn toggle_radio_modal(&mut self) {
+        if self.modal == Modal::Radio {
+            self.modal = Modal::None;
+            self.radio_prompt = None;
+        } else {
+            self.playlist_prompt = None;
+            self.reload_stations();
+            self.modal = Modal::Radio;
         }
     }
 
@@ -394,31 +517,188 @@ impl App {
         self.playlist_cursor.clamp(self.playlists.len());
     }
 
-    fn on_playlists_key(&mut self, key: KeyEvent) {
+    fn reload_stations(&mut self) {
+        match znicz_core::load_stations(&self.stations_path) {
+            Ok(stations) => {
+                self.stations = stations;
+                self.station_cursor.clamp(self.stations.len());
+            }
+            Err(e) => self.toasts.error(e.to_string()),
+        }
+    }
+
+    fn reload_front(&mut self) {
+        match self.modal {
+            Modal::Radio => self.reload_stations(),
+            Modal::Playlists => self.reload_playlists(),
+            Modal::Devices => {
+                self.devices = load_output_devices();
+                self.device_cursor.clamp(self.devices.len());
+                self.toasts
+                    .info(format!("{} devices found", self.devices.len()));
+            }
+            _ => {
+                self.library.reload_albums();
+                self.toasts.success("library reloaded");
+            }
+        }
+    }
+
+    fn on_playlists_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
             KeyCode::Enter => self.play_selected_playlist(false),
             KeyCode::Char('a') => self.play_selected_playlist(true),
-            KeyCode::Char('w') => self.begin_playlist_save(),
-            _ => {}
+            KeyCode::Char('n') => self.begin_playlist_save(),
+            KeyCode::Char('e') => self.begin_playlist_rename(),
+            KeyCode::Char('c') => self.begin_playlist_copy(),
+            KeyCode::Char('d') => self.delete_selected_playlist(),
+            _ => return false,
+        }
+        true
+    }
+
+    fn on_radio_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Enter => self.play_selected_station(),
+            KeyCode::Char('a') => self.toasts.info("adding a station to the queue is later"),
+            KeyCode::Char('n') => {
+                self.radio_prompt = Some(RadioPrompt::new_station());
+            }
+            KeyCode::Char('e') => self.begin_station_edit(),
+            KeyCode::Char('c') => self.begin_station_copy(),
+            KeyCode::Char('d') => self.delete_selected_station(),
+            _ => return false,
+        }
+        true
+    }
+
+    fn on_radio_input_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => self.radio_prompt = None,
+            KeyCode::Enter => self.confirm_radio_prompt(),
+            KeyCode::Tab | KeyCode::Down => {
+                if let Some(prompt) = self.radio_prompt.as_mut() {
+                    prompt.focus_url(true);
+                }
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                if let Some(prompt) = self.radio_prompt.as_mut() {
+                    prompt.focus_url(false);
+                }
+            }
+            _ => {
+                if let Some(prompt) = self.radio_prompt.as_mut() {
+                    prompt.buffer_mut().on_key(key);
+                }
+            }
+        }
+    }
+
+    fn selected_station(&self) -> Option<&znicz_core::Station> {
+        self.station_cursor
+            .selected(self.stations.len())
+            .map(|i| &self.stations[i])
+    }
+
+    fn selected_station_name(&self) -> Option<String> {
+        self.selected_station().map(|s| s.name.clone())
+    }
+
+    fn play_selected_station(&mut self) {
+        let Some(station) = self.selected_station().cloned() else {
+            self.toasts.info("no stations");
+            return;
+        };
+        match znicz_core::play_station(&self.player, &station) {
+            Ok(()) => self.toasts.success(format!("playing {}", station.name)),
+            Err(e) => self.toasts.error(e.to_string()),
+        }
+    }
+
+    fn begin_station_edit(&mut self) {
+        let Some(station) = self.selected_station().cloned() else {
+            self.toasts.info("no stations");
+            return;
+        };
+        self.radio_prompt = Some(RadioPrompt::edit_station(&station));
+    }
+
+    fn begin_station_copy(&mut self) {
+        let Some(name) = self.selected_station_name() else {
+            self.toasts.info("no stations");
+            return;
+        };
+        self.radio_prompt = Some(RadioPrompt::Copy(LineEdit::from_text(name)));
+    }
+
+    fn delete_selected_station(&mut self) {
+        let Some(name) = self.selected_station_name() else {
+            self.toasts.info("no stations");
+            return;
+        };
+        if let Err(e) = znicz_core::remove_station(&mut self.stations, &name) {
+            self.toasts.error(e.to_string());
+            return;
+        }
+        self.persist_stations();
+    }
+
+    fn persist_stations(&mut self) {
+        match znicz_core::save_stations(&self.stations_path, &self.stations) {
+            Ok(()) => self.station_cursor.clamp(self.stations.len()),
+            Err(e) => self.toasts.error(e.to_string()),
+        }
+    }
+
+    fn confirm_radio_prompt(&mut self) {
+        match self.radio_prompt.take() {
+            Some(RadioPrompt::Form {
+                name,
+                url,
+                field,
+                original,
+            }) => {
+                let result = match original.as_deref() {
+                    None => znicz_core::add_station(&mut self.stations, &name, &url),
+                    Some(old) => znicz_core::update_station(&mut self.stations, old, &name, &url),
+                };
+                if let Err(e) = result {
+                    self.toasts.error(e.to_string());
+                    self.radio_prompt = Some(RadioPrompt::Form {
+                        name,
+                        url,
+                        field,
+                        original,
+                    });
+                    return;
+                }
+                self.persist_stations();
+            }
+            Some(RadioPrompt::Copy(new_name)) => {
+                let Some(old_name) = self.selected_station_name() else {
+                    self.toasts.info("no stations");
+                    return;
+                };
+                if let Err(e) = znicz_core::copy_station(&mut self.stations, &old_name, &new_name) {
+                    self.toasts.error(e.to_string());
+                    self.radio_prompt = Some(RadioPrompt::Copy(new_name));
+                    return;
+                }
+                self.persist_stations();
+            }
+            None => {}
         }
     }
 
     fn on_playlist_input_key(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Esc => self.playlist_input = None,
-            KeyCode::Enter => self.confirm_playlist_save(),
-            KeyCode::Backspace => {
-                if let Some(input) = &mut self.playlist_input {
-                    input.pop();
+            KeyCode::Esc => self.playlist_prompt = None,
+            KeyCode::Enter => self.confirm_playlist_prompt(),
+            _ => {
+                if let Some(input) = self.playlist_prompt.as_mut() {
+                    input.buffer_mut().on_key(key);
                 }
             }
-            KeyCode::Char(c) => {
-                // Every character, including global letters like s / n / i.
-                if let Some(input) = &mut self.playlist_input {
-                    input.push(c);
-                }
-            }
-            _ => {}
         }
     }
 
@@ -460,27 +740,75 @@ impl App {
     }
 
     fn begin_playlist_save(&mut self) {
-        if self.player.state().queue.is_empty() {
+        let queue = self.player.state().queue;
+        if queue.is_empty() {
             self.toasts.warn("queue is empty");
             return;
         }
-        self.playlist_input = Some(String::new());
+        if let Err(e) = znicz_core::m3u_paths(&queue) {
+            self.toasts.error(e.to_string());
+            return;
+        }
+        self.playlist_prompt = Some(PlaylistPrompt::Save(LineEdit::new()));
     }
 
-    fn confirm_playlist_save(&mut self) {
-        let Some(raw) = self.playlist_input.take() else {
+    fn begin_playlist_rename(&mut self) {
+        let Some(name) = self.selected_playlist_name() else {
+            self.toasts.info("no playlists");
             return;
         };
+        self.playlist_prompt = Some(PlaylistPrompt::Rename(LineEdit::from_text(name)));
+    }
+
+    fn begin_playlist_copy(&mut self) {
+        let Some(name) = self.selected_playlist_name() else {
+            self.toasts.info("no playlists");
+            return;
+        };
+        self.playlist_prompt = Some(PlaylistPrompt::Copy(LineEdit::from_text(name)));
+    }
+
+    fn delete_selected_playlist(&mut self) {
+        let Some(name) = self.selected_playlist_name() else {
+            self.toasts.info("no playlists");
+            return;
+        };
+        if let Err(e) = znicz_core::remove_saved(&self.playlists_dir, &name) {
+            self.toasts.error(e.to_string());
+            return;
+        }
+        self.toasts.success(format!("deleted {name}"));
+        self.reload_playlists();
+    }
+
+    fn confirm_playlist_prompt(&mut self) {
+        match self.playlist_prompt.take() {
+            Some(PlaylistPrompt::Save(raw)) => self.confirm_playlist_save(raw),
+            Some(PlaylistPrompt::Rename(raw)) => self.confirm_playlist_rename(raw),
+            Some(PlaylistPrompt::Copy(raw)) => self.confirm_playlist_copy(raw),
+            None => {}
+        }
+    }
+
+    fn confirm_playlist_save(&mut self, raw: LineEdit) {
         let name = match sanitize_stem(&raw) {
             Ok(name) => name,
             Err(e) => {
                 self.toasts.error(e.to_string());
+                self.playlist_prompt = Some(PlaylistPrompt::Save(raw));
                 return;
             }
         };
         let path = self.playlists_dir.join(&name);
         let queue = self.player.state().queue;
-        match write_path(&path, &queue) {
+        let paths = match znicz_core::m3u_paths(&queue) {
+            Ok(paths) => paths,
+            Err(e) => {
+                self.toasts.error(e.to_string());
+                return;
+            }
+        };
+        match write_path(&path, &paths) {
             Ok(()) => {
                 let stem = name
                     .strip_suffix(".m3u8")
@@ -490,6 +818,46 @@ impl App {
                 self.reload_playlists();
             }
             Err(e) => self.toasts.error(e.to_string()),
+        }
+    }
+
+    fn confirm_playlist_rename(&mut self, raw: LineEdit) {
+        let Some(old_name) = self.selected_playlist_name() else {
+            self.toasts.info("no playlists");
+            return;
+        };
+        match znicz_core::rename_saved(&self.playlists_dir, &old_name, &raw) {
+            Ok(new_name) => {
+                self.toasts.success(format!("renamed {new_name}"));
+                self.reload_playlists();
+                if let Some(index) = self.playlists.iter().position(|n| n == &new_name) {
+                    self.playlist_cursor.set(index, self.playlists.len());
+                }
+            }
+            Err(e) => {
+                self.toasts.error(e.to_string());
+                self.playlist_prompt = Some(PlaylistPrompt::Rename(raw));
+            }
+        }
+    }
+
+    fn confirm_playlist_copy(&mut self, raw: LineEdit) {
+        let Some(old_name) = self.selected_playlist_name() else {
+            self.toasts.info("no playlists");
+            return;
+        };
+        match znicz_core::copy_saved(&self.playlists_dir, &old_name, &raw) {
+            Ok(new_name) => {
+                self.toasts.success(format!("copied {new_name}"));
+                self.reload_playlists();
+                if let Some(index) = self.playlists.iter().position(|n| n == &new_name) {
+                    self.playlist_cursor.set(index, self.playlists.len());
+                }
+            }
+            Err(e) => {
+                self.toasts.error(e.to_string());
+                self.playlist_prompt = Some(PlaylistPrompt::Copy(raw));
+            }
         }
     }
 
@@ -525,10 +893,6 @@ impl App {
     fn on_library_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Char('/') => self.library.begin_search(),
-            KeyCode::Char('R') => {
-                self.library.reload_albums();
-                self.toasts.success("library reloaded");
-            }
             KeyCode::Enter => self.library_enter(),
             KeyCode::Char('a') => {
                 let tracks = self.library.selected_tracks();
@@ -543,25 +907,16 @@ impl App {
     }
 
     fn on_devices_key(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Enter => {
-                let selected = self
-                    .device_cursor
-                    .selected(self.devices.len())
-                    .and_then(|i| self.devices.get(i))
-                    .map(|d| (d.id.clone(), d.name.clone()));
+        if key.code == KeyCode::Enter {
+            let selected = self
+                .device_cursor
+                .selected(self.devices.len())
+                .and_then(|i| self.devices.get(i))
+                .map(|d| (d.id.clone(), d.name.clone()));
 
-                if let Some((id, name)) = selected {
-                    self.apply(Command::SetDevice(id), Some(format!("output: {name}")));
-                }
+            if let Some((id, name)) = selected {
+                self.apply(Command::SetDevice(id), Some(format!("output: {name}")));
             }
-            KeyCode::Char('R') => {
-                self.devices = load_output_devices();
-                self.device_cursor.clamp(self.devices.len());
-                self.toasts
-                    .info(format!("{} devices found", self.devices.len()));
-            }
-            _ => {}
         }
     }
 
@@ -575,7 +930,7 @@ impl App {
                 let path = track.path.clone();
                 let entry = entry_from_track(track);
                 self.meta.insert(path.clone(), entry);
-                self.apply(Command::Play(path), None);
+                self.apply(Command::Play(znicz_core::QueueItem::file(path)), None);
             }
             None => {}
         }
@@ -588,7 +943,10 @@ impl App {
         }
 
         let count = tracks.len();
-        let paths: Vec<PathBuf> = tracks.iter().map(|t| t.path.clone()).collect();
+        let items: Vec<znicz_core::QueueItem> = tracks
+            .iter()
+            .map(|t| znicz_core::QueueItem::file(t.path.clone()))
+            .collect();
         // Tags come from the database, so the queue reads properly at once.
         for track in &tracks {
             self.meta
@@ -596,7 +954,7 @@ impl App {
         }
 
         self.apply(
-            Command::QueueAdd(paths),
+            Command::QueueAdd(items),
             Some(match count {
                 1 => "added 1 track".to_string(),
                 n => format!("added {n} tracks"),
@@ -607,7 +965,9 @@ impl App {
     // --- list movement, applied to whichever list has focus ---
 
     fn list_len(&self) -> usize {
-        if self.modal == Modal::Playlists {
+        if self.modal == Modal::Radio {
+            self.stations.len()
+        } else if self.modal == Modal::Playlists {
             self.playlists.len()
         } else if self.modal == Modal::Devices {
             self.devices.len()
@@ -623,7 +983,9 @@ impl App {
         if self.modal == Modal::Inspector {
             return;
         }
-        if self.modal == Modal::Playlists {
+        if self.modal == Modal::Radio {
+            self.station_cursor.step(delta, len);
+        } else if self.modal == Modal::Playlists {
             self.playlist_cursor.step(delta, len);
         } else if self.modal == Modal::Devices {
             self.device_cursor.step(delta, len);
@@ -640,7 +1002,9 @@ impl App {
         if self.modal == Modal::Inspector {
             return;
         }
-        if self.modal == Modal::Playlists {
+        if self.modal == Modal::Radio {
+            self.station_cursor.page(delta, len);
+        } else if self.modal == Modal::Playlists {
             self.playlist_cursor.page(delta, len);
         } else if self.modal == Modal::Devices {
             self.device_cursor.page(delta, len);
@@ -656,7 +1020,9 @@ impl App {
         if self.modal == Modal::Inspector {
             return;
         }
-        if self.modal == Modal::Playlists {
+        if self.modal == Modal::Radio {
+            self.station_cursor.first();
+        } else if self.modal == Modal::Playlists {
             self.playlist_cursor.first();
         } else if self.modal == Modal::Devices {
             self.device_cursor.first();
@@ -673,7 +1039,9 @@ impl App {
         if self.modal == Modal::Inspector {
             return;
         }
-        if self.modal == Modal::Playlists {
+        if self.modal == Modal::Radio {
+            self.station_cursor.last(len);
+        } else if self.modal == Modal::Playlists {
             self.playlist_cursor.last(len);
         } else if self.modal == Modal::Devices {
             self.device_cursor.last(len);
@@ -781,15 +1149,18 @@ impl App {
         }
     }
 
-    fn queue_label_len(&self, path: &Path) -> usize {
-        match self.meta.get(path) {
-            Some(entry) => entry.label().chars().count(),
-            None => path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("?")
-                .chars()
-                .count(),
+    fn queue_label_len(&self, item: &znicz_core::QueueItem) -> usize {
+        match item {
+            znicz_core::QueueItem::Stream { name, .. } => name.chars().count(),
+            znicz_core::QueueItem::File { path } => match self.meta.get(path) {
+                Some(entry) => entry.label().chars().count(),
+                None => path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("?")
+                    .chars()
+                    .count(),
+            },
         }
     }
 
@@ -801,7 +1172,7 @@ impl App {
         state
             .queue
             .get(index)
-            .map(|path| self.queue_label_len(path))
+            .map(|item| self.queue_label_len(item))
             .unwrap_or(0)
     }
 
@@ -812,9 +1183,37 @@ impl App {
         self.queue_h_offset = self.queue_h_offset.min(max);
     }
 
+    fn skip_track(&mut self, previous: bool) {
+        let queue = self.player.state().queue;
+        if queue.len() == 1 && queue[0].is_stream() {
+            self.toasts.info(if previous {
+                "radio has no previous track"
+            } else {
+                "radio has no next track"
+            });
+            return;
+        }
+        self.apply(
+            if previous {
+                Command::PreviousTrack
+            } else {
+                Command::NextTrack
+            },
+            None,
+        );
+    }
+
+    fn queue_row_is_stream(&self) -> bool {
+        let state = self.player.state();
+        state
+            .queue
+            .get(state.queue_position)
+            .is_some_and(|item| item.is_stream())
+    }
+
     fn seek_relative(&mut self, seconds: i64) {
         let state = self.player.state();
-        if state.current_track.is_none() {
+        if state.current_track.is_none() && !self.queue_row_is_stream() {
             return;
         }
         let target = state.position.as_secs() as i64 + seconds;

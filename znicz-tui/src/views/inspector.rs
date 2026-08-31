@@ -45,7 +45,14 @@ pub(crate) fn lines(state: &PlayerState) -> Vec<Line<'static>> {
     };
 
     let mut out = Vec::new();
-    heading(&mut out, "File");
+    if track.url.is_some() {
+        heading(&mut out, "Stream");
+        if let Some(url) = track.url.as_deref() {
+            indented(&mut out, url.to_string(), theme::text());
+        }
+    } else {
+        heading(&mut out, "File");
+    }
     indented(&mut out, track.format_description(), theme::text());
     if let Some(title) = track.tags.title.as_deref().filter(|s| !s.is_empty()) {
         indented(&mut out, title.to_string(), theme::title());
@@ -170,7 +177,8 @@ mod tests {
         PlayerState {
             status: PlaybackStatus::Playing,
             current_track: Some(TrackInfo {
-                path: PathBuf::from("/music/sour-times.flac"),
+                path: Some(PathBuf::from("/music/sour-times.flac")),
+                url: None,
                 title: "Sour Times".into(),
                 codec: "FLAC".into(),
                 sample_rate: 96_000,
@@ -241,5 +249,29 @@ mod tests {
         assert!(popup.width <= 10 && popup.height <= 3);
         assert_eq!(popup.x, 0);
         assert_eq!(popup.y, 0);
+    }
+
+    #[test]
+    fn a_stream_track_uses_the_stream_heading_and_shows_the_url() {
+        let state = PlayerState {
+            status: PlaybackStatus::Playing,
+            current_track: Some(TrackInfo {
+                path: None,
+                url: Some("https://example.com/stream".into()),
+                title: "Live".into(),
+                codec: "Audio".into(),
+                sample_rate: 44_100,
+                channels: 2,
+                bits_per_sample: None,
+                bitrate_kbps: None,
+                duration: None,
+                tags: TrackTags::default(),
+            }),
+            ..PlayerState::default()
+        };
+        let text = dump(&state);
+        assert!(text.contains("Stream"), "{text}");
+        assert!(text.contains("https://example.com/stream"), "{text}");
+        assert!(!text.contains("File\n"), "{text}");
     }
 }

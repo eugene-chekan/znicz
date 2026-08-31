@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
 use znicz_core::{
-    apply_to_player, list_saved, load_path, saved_path, skipped_notice, spawn_player, AudioConfig,
-    AudioOutput, Command,
+    apply_to_player, copy_saved, list_saved, load_path, remove_saved, rename_saved, saved_path,
+    skipped_notice, spawn_player, AudioConfig, AudioOutput, Command,
 };
 use znicz_library::Library;
 use znicz_mcp::run_stdio;
@@ -64,6 +64,12 @@ enum Commands {
         #[command(subcommand)]
         command: PlaylistCmd,
     },
+
+    /// Saved Icecast stations
+    Station {
+        #[command(subcommand)]
+        command: StationCmd,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -78,8 +84,14 @@ enum PlaylistCmd {
         #[arg(long)]
         append: bool,
     },
-    /// Save the queue (use the player: P then w, or MCP save_playlist)
+    /// Save the queue (use the player: P then n, or MCP save_playlist)
     Save { name: String },
+    /// Rename a saved playlist
+    Rename { name: String, new_name: String },
+    /// Copy a saved playlist to a new name
+    Copy { name: String, new_name: String },
+    /// Delete a saved playlist
+    Remove { name: String },
     /// Load a saved playlist and open the player
     Play {
         name: String,
@@ -87,6 +99,24 @@ enum PlaylistCmd {
         #[arg(long)]
         append: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum StationCmd {
+    /// Print saved station names and URLs
+    List,
+    /// Add a station
+    Add { name: String, url: String },
+    /// Play a saved station and open the player
+    Play { name: String },
+    /// Remove a station
+    Remove { name: String },
+    /// Rename a station
+    Rename { name: String, new_name: String },
+    /// Change a station's stream URL
+    Url { name: String, url: String },
+    /// Copy a station to a new name (same URL)
+    Copy { name: String, new_name: String },
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -170,7 +200,7 @@ fn main() -> color_eyre::Result<()> {
             PlaylistCmd::List => list_playlists()?,
             PlaylistCmd::Save { name: _ } => {
                 color_eyre::eyre::bail!(
-                    "save the queue from the player (P then w, or MCP save_playlist)"
+                    "save the queue from the player (P then n, or MCP save_playlist)"
                 );
             }
             PlaylistCmd::Import { file, append } => {
@@ -181,6 +211,41 @@ fn main() -> color_eyre::Result<()> {
                 let path = saved_path(&dir, &name)
                     .ok_or_else(|| color_eyre::eyre::eyre!("no playlist named {name}"))?;
                 load_playlist_and_run(path, append, audio_config, library_path)?;
+            }
+            PlaylistCmd::Rename { name, new_name } => {
+                let dir = playlists_dir()?;
+                let stem = rename_saved(&dir, &name, &new_name)?;
+                println!("{stem}");
+            }
+            PlaylistCmd::Copy { name, new_name } => {
+                let dir = playlists_dir()?;
+                let stem = copy_saved(&dir, &name, &new_name)?;
+                println!("{stem}");
+            }
+            PlaylistCmd::Remove { name } => {
+                let dir = playlists_dir()?;
+                remove_saved(&dir, &name)?;
+            }
+        },
+        Some(Commands::Station { command }) => match command {
+            StationCmd::List => list_stations()?,
+            StationCmd::Add { name, url } => {
+                mutate_stations(|s| znicz_core::add_station(s, &name, &url))?
+            }
+            StationCmd::Play { name } => {
+                play_station_and_run(&name, audio_config, library_path)?;
+            }
+            StationCmd::Remove { name } => {
+                mutate_stations(|s| znicz_core::remove_station(s, &name))?
+            }
+            StationCmd::Rename { name, new_name } => {
+                mutate_stations(|s| znicz_core::rename_station(s, &name, &new_name))?
+            }
+            StationCmd::Url { name, url } => {
+                mutate_stations(|s| znicz_core::set_station_url(s, &name, &url))?
+            }
+            StationCmd::Copy { name, new_name } => {
+                mutate_stations(|s| znicz_core::copy_station(s, &name, &new_name))?
             }
         },
         None => {
@@ -252,12 +317,15 @@ fn run_tui(
     let (player, _thread) = spawn_player(audio_config);
 
     if !files.is_empty() {
-        let paths: Vec<PathBuf> = files.to_vec();
-        if paths.len() == 1 {
-            player.send(Command::Play(paths[0].clone()))?;
+        let items: Vec<znicz_core::QueueItem> = files
+            .iter()
+            .map(|p| znicz_core::QueueItem::file(p.clone()))
+            .collect();
+        if items.len() == 1 {
+            player.send(Command::Play(items[0].clone()))?;
         } else {
-            player.send(Command::QueueAdd(paths))?;
-            player.send(Command::Play(files[0].clone()))?;
+            player.send(Command::QueueAdd(items.clone()))?;
+            player.send(Command::Play(items[0].clone()))?;
         }
     }
 
@@ -268,6 +336,45 @@ fn playlists_dir() -> color_eyre::Result<PathBuf> {
     znicz_library::default_playlists_dir().ok_or_else(|| {
         color_eyre::eyre::eyre!("cannot work out where to keep playlists; set ZNICZ_PLAYLISTS_DIR")
     })
+}
+
+fn stations_path() -> color_eyre::Result<PathBuf> {
+    znicz_library::default_stations_path().ok_or_else(|| {
+        color_eyre::eyre::eyre!("cannot work out where to keep stations; set ZNICZ_STATIONS_PATH")
+    })
+}
+
+fn list_stations() -> color_eyre::Result<()> {
+    let path = stations_path()?;
+    for station in znicz_core::load_stations(&path)? {
+        println!("{} — {}", station.name, station.url);
+    }
+    Ok(())
+}
+
+fn mutate_stations(
+    op: impl FnOnce(&mut Vec<znicz_core::Station>) -> znicz_core::Result<()>,
+) -> color_eyre::Result<()> {
+    let path = stations_path()?;
+    let mut stations = znicz_core::load_stations(&path)?;
+    op(&mut stations)?;
+    znicz_core::save_stations(&path, &stations)?;
+    Ok(())
+}
+
+fn play_station_and_run(
+    name: &str,
+    audio_config: AudioConfig,
+    library_path: Option<PathBuf>,
+) -> color_eyre::Result<()> {
+    let path = stations_path()?;
+    let stations = znicz_core::load_stations(&path)?;
+    let station = znicz_core::find_station(&stations, name)
+        .ok_or_else(|| color_eyre::eyre::eyre!("no station named {name}"))?
+        .clone();
+    let (player, _thread) = spawn_player(audio_config);
+    znicz_core::play_station(&player, &station)?;
+    run_tui_with_player(player, library_path, None)
 }
 
 fn list_playlists() -> color_eyre::Result<()> {
