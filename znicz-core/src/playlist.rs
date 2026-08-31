@@ -252,7 +252,13 @@ mod tests {
         let text = write_text(&[a.clone(), b.clone()]);
         assert!(!text.contains('\u{feff}'));
         let result = parse(&text, &dir);
-        assert_eq!(result.paths, vec![a, b]);
+        // `write_text` writes `canonicalize()` output. On Windows that adds a
+        // `\\?\` prefix and may expand 8.3 names (`RUNNER~1`), so the strings
+        // are not the temp paths we started with. The files are the same.
+        assert_eq!(
+            result.paths,
+            vec![a.canonicalize().unwrap(), b.canonicalize().unwrap()]
+        );
         assert_eq!(result.skipped, 0);
     }
 
