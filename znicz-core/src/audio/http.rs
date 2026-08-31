@@ -106,41 +106,45 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::sync::mpsc;
     use std::thread;
 
-    fn serve_once(body: &'static [u8], content_type: &str) -> String {
+    fn serve_once(body: &'static [u8], content_type: &str) -> (String, mpsc::Receiver<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let header = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             body.len()
         );
+        let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             let mut buf = [0u8; 2048];
             let n = stream.read(&mut buf).unwrap();
-            let req = String::from_utf8_lossy(&buf[..n]);
-            assert!(!req.to_lowercase().contains("icy-metadata"));
+            let req = String::from_utf8_lossy(&buf[..n]).into_owned();
+            let _ = tx.send(req);
             let _ = stream.write_all(header.as_bytes());
             let _ = stream.write_all(body);
         });
-        format!("http://{addr}/stream")
+        (format!("http://{addr}/stream"), rx)
     }
 
     #[test]
     fn open_reader_returns_the_http_body() {
-        let url = serve_once(b"hello-stream", "application/octet-stream");
+        let (url, rx) = serve_once(b"hello-stream", "application/octet-stream");
         let source = HttpStreamSource::new("Test", url);
         let mut reader = source.open_reader().unwrap();
         let mut buf = Vec::new();
         reader.read_to_end(&mut buf).unwrap();
         assert_eq!(buf, b"hello-stream");
         assert!(!reader.is_seekable());
+        let req = rx.recv().unwrap();
+        assert!(!req.to_lowercase().contains("icy-metadata"));
     }
 
     #[test]
     fn a_non_audio_body_fails_to_decode() {
-        let url = serve_once(b"<html>not audio</html>", "text/html");
+        let (url, rx) = serve_once(b"<html>not audio</html>", "text/html");
         let source = HttpStreamSource::new("Bad", url);
         let err = match crate::audio::source::AudioDecoder::open(&source) {
             Err(e) => e,
@@ -150,5 +154,7 @@ mod tests {
             err.to_string().contains("decode") || err.to_string().contains("probe"),
             "{err}"
         );
+        let req = rx.recv().unwrap();
+        assert!(!req.to_lowercase().contains("icy-metadata"));
     }
 }
