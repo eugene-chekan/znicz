@@ -281,6 +281,8 @@ pub struct AudioDecoder {
     track_id: u32,
     sample_rate: u32,
     channels: u16,
+    /// True when opened from a URL source. Stream body I/O is not EOF.
+    is_stream: bool,
 }
 
 impl AudioDecoder {
@@ -321,6 +323,7 @@ impl AudioDecoder {
             .map_err(|e| ZniczError::Decode(e.to_string()))?;
 
         let track_info = track_info_from_params(&codec_params, source);
+        let is_stream = source.url().is_some();
 
         Ok((
             Self {
@@ -329,6 +332,7 @@ impl AudioDecoder {
                 track_id,
                 sample_rate,
                 channels,
+                is_stream,
             },
             track_info,
         ))
@@ -368,7 +372,10 @@ impl AudioDecoder {
                 Err(SymphoniaError::ResetRequired) => {
                     return Err(ZniczError::Decode("stream reset required".into()));
                 }
-                Err(SymphoniaError::IoError(_)) => {
+                Err(SymphoniaError::IoError(e)) => {
+                    if self.is_stream {
+                        return Err(ZniczError::Decode(format!("stream io error: {e}")));
+                    }
                     return Ok(None);
                 }
                 Err(e) => {
@@ -391,7 +398,13 @@ impl AudioDecoder {
                     sample_buf.copy_interleaved_ref(decoded);
                     return Ok(Some(sample_buf.samples().to_vec()));
                 }
-                Err(SymphoniaError::IoError(_)) | Err(SymphoniaError::DecodeError(_)) => continue,
+                Err(SymphoniaError::IoError(e)) => {
+                    if self.is_stream {
+                        return Err(ZniczError::Decode(format!("stream decode io error: {e}")));
+                    }
+                    continue;
+                }
+                Err(SymphoniaError::DecodeError(_)) => continue,
                 Err(e) => return Err(ZniczError::Decode(e.to_string())),
             }
         }
@@ -430,5 +443,119 @@ mod tests {
     #[test]
     fn uncompressed_cd_audio_is_1411_kbps() {
         assert_eq!(uncompressed_bitrate_kbps(44_100, 2, Some(16)), Some(1411));
+    }
+
+    fn silent_wav_bytes(frames: u32) -> Vec<u8> {
+        let channels = 1u16;
+        let sample_rate = 44_100u32;
+        let bytes_per_frame = 2u32;
+        let data_size = frames * bytes_per_frame;
+        let file_size = 36 + data_size;
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"RIFF");
+        buf.extend_from_slice(&file_size.to_le_bytes());
+        buf.extend_from_slice(b"WAVE");
+        buf.extend_from_slice(b"fmt ");
+        buf.extend_from_slice(&16u32.to_le_bytes());
+        buf.extend_from_slice(&1u16.to_le_bytes());
+        buf.extend_from_slice(&channels.to_le_bytes());
+        buf.extend_from_slice(&sample_rate.to_le_bytes());
+        buf.extend_from_slice(&(sample_rate * bytes_per_frame).to_le_bytes());
+        buf.extend_from_slice(&(bytes_per_frame as u16).to_le_bytes());
+        buf.extend_from_slice(&16u16.to_le_bytes());
+        buf.extend_from_slice(b"data");
+        buf.extend_from_slice(&data_size.to_le_bytes());
+        buf.extend(vec![0u8; data_size as usize]);
+        buf
+    }
+
+    /// Enough header for probe, then a reset so `decode_next` sees `IoError`.
+    struct DroppingWav {
+        data: std::io::Cursor<Vec<u8>>,
+        read_bytes: usize,
+        drop_after: usize,
+    }
+
+    impl DroppingWav {
+        fn new() -> Self {
+            Self {
+                data: std::io::Cursor::new(silent_wav_bytes(44_100)),
+                read_bytes: 0,
+                drop_after: 4_096,
+            }
+        }
+    }
+
+    impl std::io::Read for DroppingWav {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.read_bytes >= self.drop_after {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    "dropped connection",
+                ));
+            }
+            let n = self.data.read(buf)?;
+            self.read_bytes += n;
+            Ok(n)
+        }
+    }
+
+    impl std::io::Seek for DroppingWav {
+        fn seek(&mut self, _pos: std::io::SeekFrom) -> std::io::Result<u64> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "no seek",
+            ))
+        }
+    }
+
+    impl symphonia::core::io::MediaSource for DroppingWav {
+        fn is_seekable(&self) -> bool {
+            false
+        }
+        fn byte_len(&self) -> Option<u64> {
+            None
+        }
+    }
+
+    struct MockStreamSource;
+
+    impl AudioSource for MockStreamSource {
+        fn path(&self) -> Option<&Path> {
+            None
+        }
+        fn url(&self) -> Option<&str> {
+            Some("http://127.0.0.1:1/stream")
+        }
+        fn title_hint(&self) -> &str {
+            "Mock"
+        }
+        fn read_info(&self) -> Result<TrackInfo> {
+            unimplemented!()
+        }
+        fn open_reader(&self) -> Result<Box<dyn symphonia::core::io::MediaSource>> {
+            Ok(Box::new(DroppingWav::new()))
+        }
+    }
+
+    #[test]
+    fn stream_io_error_returns_decode_error_not_eof() {
+        let (mut decoder, _) = AudioDecoder::open(&MockStreamSource).expect("probe stream wav");
+        let mut err = None;
+        for _ in 0..32 {
+            match decoder.decode_next() {
+                Err(e) => {
+                    err = Some(e);
+                    break;
+                }
+                Ok(None) => panic!("stream ended silently on io error"),
+                Ok(Some(_)) => {}
+            }
+        }
+        let err = err.expect("expected an error from dropping connection");
+        assert!(
+            err.to_string().contains("dropped connection"),
+            "got error: {err}"
+        );
     }
 }

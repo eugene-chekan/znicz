@@ -40,6 +40,8 @@ Linux uses ALSA (often via PipeWire). Windows uses WASAPI.
 - `decode` packets to interleaved `f32`
 - gapless option enabled
 
+A local file may treat a read error as end of track (`Ok(None)`). A radio stream is opened with `source.url()` set; the same Symphonia `IoError` is a decode failure. The engine then takes the Failed pump path and emits `PlayerEvent::Error`, not a silent finish.
+
 ## Files to read
 
 | File | Role |
