@@ -886,7 +886,8 @@ impl App {
                         Command::QueueRemove(index),
                         Some("removed from queue".into()),
                     );
-                    self.queue_cursor.clamp(state.queue.len().saturating_sub(1));
+                    let len = self.player.state().queue.len();
+                    self.queue_cursor.clamp(len);
                 }
             }
             KeyCode::Char('C') => {
