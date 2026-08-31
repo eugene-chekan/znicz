@@ -14,11 +14,24 @@ Shared crate versions live in `[workspace.dependencies]`. Each member says `serd
 ```bash
 cargo build --workspace
 cargo test --workspace
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p znicz -- --list-devices
 cargo run -p znicz -- path/to/file.flac
 ```
 
 `target/` holds build output. Do not commit it (see `.gitignore`).
+
+## CI
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on pushes to `main` and on
+pull requests. A **lint** job on Ubuntu checks rustfmt and Clippy (`-D warnings`).
+A **test** job runs `cargo test --workspace` on Ubuntu and Windows. Linux
+installs `pkg-config` and `libasound2-dev` so cpal can compile. Playback tests
+skip when the runner has no sound device.
+
+The compiler comes from `rust-toolchain.toml` (`stable`, minimum 1.85, plus
+clippy and rustfmt).
 
 ## Edition
 

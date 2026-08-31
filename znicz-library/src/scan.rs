@@ -7,7 +7,7 @@ use walkdir::WalkDir;
 use znicz_core::{is_audio_file, read_metadata, title_from_path};
 
 use crate::error::{LibraryError, Result};
-use crate::store::{Library, path_str};
+use crate::store::{path_str, Library};
 
 /// What a scan did.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

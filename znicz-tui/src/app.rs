@@ -1,6 +1,6 @@
 //! The application: what is on screen, and what the keys do.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -773,7 +773,7 @@ impl App {
         }
     }
 
-    fn queue_label_len(&self, path: &PathBuf) -> usize {
+    fn queue_label_len(&self, path: &Path) -> usize {
         match self.meta.get(path) {
             Some(entry) => entry.label().chars().count(),
             None => path

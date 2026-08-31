@@ -85,6 +85,9 @@ cargo build --release
 
 See the root [README.md](../README.md) for keys and config.
 
+Pushes to `main` and pull requests run rustfmt, Clippy, and tests on Linux
+and Windows. Details: [Cargo workspaces](Rust/Cargo-Workspace.md#ci).
+
 This wiki must match the running player. When behaviour, keys, crates, or the
 backlog change, update the pages in the same change. Open work is listed on
 [Issues](Issues.md) and on [GitHub](https://github.com/eugene-chekan/znicz/issues).

@@ -32,6 +32,9 @@ cargo build --release
 
 Uses WASAPI via cpal. For ASIO or exclusive WASAPI, see future roadmap.
 
+GitHub Actions on `main` and pull requests run rustfmt, Clippy, and
+`cargo test --workspace` on Linux and Windows.
+
 ## Documentation
 
 Start at **[wiki/Home.md](wiki/Home.md)**. It covers digital audio, the playback pipeline, crate layout, and the Rust ideas (ownership, threads, traits) used in this repo.

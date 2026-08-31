@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use znicz_core::{AudioConfig, Command, PlaybackStatus, RepeatMode, spawn_player};
+use znicz_core::{spawn_player, AudioConfig, Command, PlaybackStatus, RepeatMode};
 
 fn paths(count: usize) -> Vec<PathBuf> {
     (0..count)
