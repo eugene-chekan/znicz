@@ -33,7 +33,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let focused = app.modal == Modal::Radio;
     let prompting = app.radio_prompt.is_some();
     let hint = if prompting {
-        "Enter confirm · Esc cancel"
+        "← → move · Enter confirm · Esc cancel"
     } else {
         "Enter play · a add · w rename · c URL · d delete · Esc close"
     };
@@ -52,18 +52,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     if let (Some(rect), Some(prompt)) = (prompt_area, &app.radio_prompt) {
-        let (prefix, text) = match prompt {
-            RadioPrompt::AddName(s) => ("name: ", s.as_str()),
-            RadioPrompt::AddUrl { buffer, .. } => ("url: ", buffer.as_str()),
-            RadioPrompt::Rename(s) => ("rename: ", s.as_str()),
-            RadioPrompt::ChangeUrl(s) => ("url: ", s.as_str()),
+        let (prefix, edit) = match prompt {
+            RadioPrompt::AddName(s) => ("name: ", s),
+            RadioPrompt::AddUrl { buffer, .. } => ("url: ", buffer),
+            RadioPrompt::Rename(s) => ("rename: ", s),
+            RadioPrompt::ChangeUrl(s) => ("url: ", s),
         };
-        let line = Line::from(vec![
-            Span::styled(prefix, theme::key()),
-            Span::styled(text.to_string(), theme::strong()),
-            Span::styled("█", theme::progress()),
-        ]);
-        frame.render_widget(Paragraph::new(line), rect);
+        frame.render_widget(Paragraph::new(views::prompt_line(prefix, edit)), rect);
     }
 
     if app.stations.is_empty() {

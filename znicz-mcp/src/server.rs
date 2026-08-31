@@ -13,8 +13,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use znicz_core::{
-    apply_to_player, list_saved, load_path, sanitize_stem, saved_path, write_path, AudioOutput,
-    Command, LoadResult, PlaybackStatus, PlayerHandle, PlayerState,
+    apply_to_player, list_saved, load_path, rename_saved, sanitize_stem, saved_path, write_path,
+    AudioOutput, Command, LoadResult, PlaybackStatus, PlayerHandle, PlayerState,
 };
 use znicz_library::{Library, Track};
 
@@ -315,6 +315,12 @@ struct SavePlaylistParams {
     name: String,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+struct RenamePlaylistParams {
+    name: String,
+    new_name: String,
+}
+
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 struct StationAddParams {
     name: String,
@@ -600,6 +606,16 @@ impl ZniczMcpServer {
         })?;
         let result = load_path(&path).map_err(Self::map_io)?;
         self.apply_playlist(result, params.append)
+    }
+
+    #[tool(description = "Rename a saved M3U playlist")]
+    fn rename_playlist(
+        &self,
+        Parameters(params): Parameters<RenamePlaylistParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let stem = rename_saved(&self.playlists_dir, &params.name, &params.new_name)
+            .map_err(Self::map_io)?;
+        Self::json_result(&serde_json::json!({ "renamed": stem }))
     }
 
     #[tool(description = "Add a radio station (name + HTTP URL)")]
@@ -1286,6 +1302,25 @@ mod tests {
             serde_json::from_str(&result_text(&result)).expect("save json");
         assert_eq!(payload["saved"], "evening.m3u");
         assert!(dir.join("evening.m3u").is_file());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rename_playlist_moves_the_file() {
+        let (server, dir) = playlist_server();
+        std::fs::write(dir.join("evening.m3u"), "x\n").unwrap();
+        let result = server
+            .rename_playlist(Parameters(RenamePlaylistParams {
+                name: "evening".into(),
+                new_name: "night".into(),
+            }))
+            .expect("rename");
+        let payload: serde_json::Value =
+            serde_json::from_str(&result_text(&result)).expect("rename json");
+        assert_eq!(payload["renamed"], "night");
+        assert!(dir.join("night.m3u").is_file());
+        assert!(!dir.join("evening.m3u").is_file());
 
         std::fs::remove_dir_all(&dir).ok();
     }

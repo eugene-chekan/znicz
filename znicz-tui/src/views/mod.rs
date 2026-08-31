@@ -19,6 +19,7 @@ use znicz_core::PlayerState;
 
 use crate::app::{App, Modal};
 use crate::format;
+use crate::line_edit::LineEdit;
 use crate::theme;
 use crate::toast::Level;
 
@@ -144,6 +145,17 @@ pub(crate) fn pane_block(title: &str, focused: bool, right: Option<String>) -> B
         );
     }
     block
+}
+
+/// A one-line prompt: prefix, typed text, and a block caret at the cursor.
+pub(crate) fn prompt_line(prefix: &str, edit: &LineEdit) -> Line<'static> {
+    let (before, after) = edit.split_at_cursor();
+    Line::from(vec![
+        Span::styled(prefix.to_string(), theme::key()),
+        Span::styled(before.to_string(), theme::strong()),
+        Span::styled("█", theme::progress()),
+        Span::styled(after.to_string(), theme::strong()),
+    ])
 }
 
 /// A row that fills a pane which has nothing to show.

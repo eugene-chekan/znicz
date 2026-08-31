@@ -59,7 +59,7 @@ Details: [TUI architecture](../Architecture/TUI.md).
 M3U files for the queue. Spec:
 **[Playlist files](../../docs/superpowers/specs/2026-08-27-playlist-files-design.md)**
 
-- Save / play from `~/.local/share/znicz/playlists/`
+- Save / play / rename from `~/.local/share/znicz/playlists/`
 - Clear and play, or add to queue (`P` overlay, CLI, MCP)
 - PLS / XSPF still later
 

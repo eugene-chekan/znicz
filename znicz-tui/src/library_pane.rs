@@ -7,6 +7,7 @@
 use znicz_library::{AlbumSummary, Library, Track};
 
 use crate::cursor::Cursor;
+use crate::line_edit::LineEdit;
 
 /// How many search hits to keep. Enough to scroll, small enough to stay quick.
 const SEARCH_LIMIT: usize = 500;
@@ -37,7 +38,7 @@ pub struct LibraryPane {
     tracks: Vec<Track>,
     cursor: Cursor,
     /// Text being typed while the search prompt is open.
-    input: Option<String>,
+    input: Option<LineEdit>,
     /// Why the pane is empty, when it is.
     notice: Option<String>,
     h_offset: usize,
@@ -243,11 +244,19 @@ impl LibraryPane {
     // --- search prompt ---
 
     pub fn begin_search(&mut self) {
-        self.input = Some(String::new());
+        self.input = Some(LineEdit::new());
     }
 
     pub fn input(&self) -> Option<&str> {
         self.input.as_deref()
+    }
+
+    pub fn prompt(&self) -> Option<&LineEdit> {
+        self.input.as_ref()
+    }
+
+    pub fn prompt_mut(&mut self) -> Option<&mut LineEdit> {
+        self.input.as_mut()
     }
 
     pub fn is_typing(&self) -> bool {
@@ -256,13 +265,13 @@ impl LibraryPane {
 
     pub fn push_char(&mut self, c: char) {
         if let Some(input) = self.input.as_mut() {
-            input.push(c);
+            input.insert(c);
         }
     }
 
     pub fn pop_char(&mut self) {
         if let Some(input) = self.input.as_mut() {
-            input.pop();
+            input.backspace();
         }
     }
 

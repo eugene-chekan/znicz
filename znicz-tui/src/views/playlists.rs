@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
-use crate::app::{App, Modal};
+use crate::app::{App, Modal, PlaylistPrompt};
 use crate::format;
 use crate::theme;
 use crate::views;
@@ -31,17 +31,17 @@ fn centered_modal(area: Rect) -> Rect {
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let focused = app.modal == Modal::Playlists;
-    let saving = app.playlist_input.is_some();
-    let hint = if saving {
-        "Enter save · Esc cancel"
+    let prompting = app.playlist_prompt.is_some();
+    let hint = if prompting {
+        "← → move · Enter confirm · Esc cancel"
     } else {
-        "Enter play · a add · w save · Esc close"
+        "Enter play · a add · w save · c rename · Esc close"
     };
     let block = views::pane_block("Playlists", focused, Some(hint.to_string()));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let (prompt_area, list_area) = if saving {
+    let (prompt_area, list_area) = if prompting {
         let parts = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(1), Constraint::Min(1)])
@@ -51,13 +51,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         (None, inner)
     };
 
-    if let (Some(rect), Some(text)) = (prompt_area, &app.playlist_input) {
-        let prompt = Line::from(vec![
-            Span::styled("save: ", theme::key()),
-            Span::styled(text.clone(), theme::strong()),
-            Span::styled("█", theme::progress()),
-        ]);
-        frame.render_widget(Paragraph::new(prompt), rect);
+    if let (Some(rect), Some(prompt)) = (prompt_area, &app.playlist_prompt) {
+        let (prefix, edit) = match prompt {
+            PlaylistPrompt::Save(edit) => ("save: ", edit),
+            PlaylistPrompt::Rename(edit) => ("rename: ", edit),
+        };
+        frame.render_widget(Paragraph::new(views::prompt_line(prefix, edit)), rect);
     }
 
     if app.playlists.is_empty() {

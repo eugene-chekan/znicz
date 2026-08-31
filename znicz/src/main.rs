@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
 use znicz_core::{
-    apply_to_player, list_saved, load_path, saved_path, skipped_notice, spawn_player, AudioConfig,
-    AudioOutput, Command,
+    apply_to_player, list_saved, load_path, rename_saved, saved_path, skipped_notice, spawn_player,
+    AudioConfig, AudioOutput, Command,
 };
 use znicz_library::Library;
 use znicz_mcp::run_stdio;
@@ -86,6 +86,8 @@ enum PlaylistCmd {
     },
     /// Save the queue (use the player: P then w, or MCP save_playlist)
     Save { name: String },
+    /// Rename a saved playlist
+    Rename { name: String, new_name: String },
     /// Load a saved playlist and open the player
     Play {
         name: String,
@@ -203,6 +205,11 @@ fn main() -> color_eyre::Result<()> {
                 let path = saved_path(&dir, &name)
                     .ok_or_else(|| color_eyre::eyre::eyre!("no playlist named {name}"))?;
                 load_playlist_and_run(path, append, audio_config, library_path)?;
+            }
+            PlaylistCmd::Rename { name, new_name } => {
+                let dir = playlists_dir()?;
+                let stem = rename_saved(&dir, &name, &new_name)?;
+                println!("{stem}");
             }
         },
         Some(Commands::Station { command }) => match command {

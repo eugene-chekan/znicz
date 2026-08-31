@@ -71,6 +71,7 @@ pub const PLAYLISTS: &[Binding] = &[
     b("Enter", "clear the queue and play"),
     b("a", "add to the queue"),
     b("w", "save the queue"),
+    b("c", "rename"),
     b("Esc", "close"),
 ];
 
@@ -95,7 +96,7 @@ pub fn hints(pane: &str) -> &'static str {
         }
         "Devices" => "Enter select · r rescan · Esc close · ? help",
         "Inspector" => "i / Esc close · Space pause · ? help",
-        "Playlists" => "Enter play · a add · w save · Esc close · ? help",
+        "Playlists" => "Enter play · a add · w save · c rename · Esc close · ? help",
         "Radio" => {
             "Enter play · a add · w rename · c URL · d delete · Esc close · ? help"
         }
@@ -210,6 +211,11 @@ mod tests {
             hints("Radio").contains("add"),
             "radio hints should mention add, got {}",
             hints("Radio")
+        );
+        assert!(
+            hints("Playlists").contains("c rename"),
+            "playlist hints should mention rename, got {}",
+            hints("Playlists")
         );
     }
 }

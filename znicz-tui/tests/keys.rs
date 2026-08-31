@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use znicz_core::{spawn_player, AudioConfig, Command, PlayerHandle, QueueItem, RepeatMode};
-use znicz_tui::{App, Focus, Modal, RadioPrompt};
+use znicz_tui::{App, Focus, Modal, PlaylistPrompt, RadioPrompt};
 
 fn player() -> PlayerHandle {
     let (player, _thread) = spawn_player(AudioConfig::default());
@@ -359,6 +359,24 @@ fn slash_opens_the_search_prompt_and_letters_become_text() {
 }
 
 #[test]
+fn search_prompt_left_inserts_in_the_middle() {
+    let mut app = new_app();
+    press_char(&mut app, '/');
+    press_typed(&mut app, "quee");
+    press(&mut app, KeyCode::Left);
+    press_char(&mut app, 'n');
+    assert_eq!(
+        app.library.input(),
+        Some("quene"),
+        "Left should move the search caret, got {:?}",
+        app.library.input()
+    );
+    press(&mut app, KeyCode::Right);
+    press_char(&mut app, 'n');
+    assert_eq!(app.library.input(), Some("quenen"));
+}
+
+#[test]
 fn navigation_keys_move_the_queue_cursor() {
     let mut app = new_app();
     queue(&mut app, 30);
@@ -554,7 +572,7 @@ fn w_on_an_empty_queue_does_not_open_the_save_prompt() {
     let mut app = new_app();
     press_char(&mut app, 'P');
     press_char(&mut app, 'w');
-    assert!(app.playlist_input.is_none());
+    assert!(app.playlist_prompt.is_none());
     assert_eq!(app.toasts.current().unwrap().text, "queue is empty");
 }
 
@@ -571,14 +589,35 @@ fn save_prompt_treats_s_as_a_letter() {
     queue(&mut app, 1);
     press_char(&mut app, 'P');
     press_char(&mut app, 'w');
-    assert!(app.playlist_input.is_some());
+    assert!(app.playlist_prompt.is_some());
     press_char(&mut app, 's');
     press_char(&mut app, 'o');
     press_char(&mut app, 'n');
     press_char(&mut app, 'g');
     press_char(&mut app, 's');
-    assert_eq!(app.playlist_input.as_deref(), Some("songs"));
+    assert_eq!(
+        app.playlist_prompt.as_ref().map(PlaylistPrompt::as_str),
+        Some("songs")
+    );
     assert_eq!(app.modal, Modal::Playlists);
+}
+
+#[test]
+fn save_prompt_left_inserts_in_the_middle() {
+    let mut app = new_app();
+    queue(&mut app, 1);
+    press_char(&mut app, 'P');
+    press_char(&mut app, 'w');
+    press_typed(&mut app, "sogs");
+    press(&mut app, KeyCode::Left);
+    press(&mut app, KeyCode::Left);
+    press_char(&mut app, 'n');
+    assert_eq!(
+        app.playlist_prompt.as_ref().map(PlaylistPrompt::as_str),
+        Some("songs"),
+        "Left should move the save caret, got {:?}",
+        app.playlist_prompt
+    );
 }
 
 #[test]
@@ -589,9 +628,37 @@ fn save_prompt_accepts_to_listen() {
     press_char(&mut app, 'w');
     press_typed(&mut app, "To Listen");
     assert_eq!(
-        app.playlist_input.as_deref(),
+        app.playlist_prompt.as_ref().map(PlaylistPrompt::as_str),
         Some("To Listen"),
         "s/n/i/L/Space are global elsewhere; they must type in the name"
+    );
+}
+
+#[test]
+fn c_renames_the_highlighted_playlist() {
+    let (mut app, dir) = playlist_fixture();
+    press_char(&mut app, 'P');
+    press_char(&mut app, 'c');
+    assert!(
+        matches!(
+            app.playlist_prompt,
+            Some(PlaylistPrompt::Rename(ref s)) if s.as_str() == "evening"
+        ),
+        "c should open a rename prompt with the current name, got {:?}",
+        app.playlist_prompt
+    );
+    press(&mut app, KeyCode::Home);
+    for _ in 0..7 {
+        press(&mut app, KeyCode::Delete);
+    }
+    press_typed(&mut app, "night");
+    press(&mut app, KeyCode::Enter);
+    assert!(app.playlist_prompt.is_none());
+    assert!(dir.join("night.m3u").is_file());
+    assert!(!dir.join("evening.m3u").is_file());
+    assert_eq!(
+        app.playlists,
+        vec!["night".to_string(), "weekend".to_string()]
     );
 }
 
@@ -638,6 +705,47 @@ fn radio_add_prompt_treats_letters_as_text() {
         Some(RadioPrompt::AddName(ref s)) if s == "songs"
     ));
     assert!(!app.should_quit);
+}
+
+#[test]
+fn radio_add_prompt_left_inserts_in_the_middle() {
+    let (mut app, _path) = station_fixture();
+    press_char(&mut app, 'R');
+    press_char(&mut app, 'a');
+    press_typed(&mut app, "Exmple");
+    press(&mut app, KeyCode::Left);
+    press(&mut app, KeyCode::Left);
+    press(&mut app, KeyCode::Left);
+    press(&mut app, KeyCode::Left);
+    press_char(&mut app, 'a');
+    assert!(
+        matches!(
+            app.radio_prompt,
+            Some(RadioPrompt::AddName(ref s)) if s.as_str() == "Example"
+        ),
+        "Left should move the caret so a missing letter can be inserted, got {:?}",
+        app.radio_prompt
+    );
+}
+
+#[test]
+fn radio_add_prompt_right_moves_the_caret_forward() {
+    let (mut app, _path) = station_fixture();
+    press_char(&mut app, 'R');
+    press_char(&mut app, 'a');
+    press_typed(&mut app, "abc");
+    press(&mut app, KeyCode::Left);
+    press(&mut app, KeyCode::Left);
+    press(&mut app, KeyCode::Right);
+    press_char(&mut app, 'X');
+    assert!(
+        matches!(
+            app.radio_prompt,
+            Some(RadioPrompt::AddName(ref s)) if s.as_str() == "abXc"
+        ),
+        "Right should move the caret forward, got {:?}",
+        app.radio_prompt
+    );
 }
 
 #[test]
@@ -736,7 +844,7 @@ fn playlist_save_of_a_stream_queue_is_refused() {
         .unwrap();
     press_char(&mut app, 'P');
     press_char(&mut app, 'w');
-    assert!(app.playlist_input.is_none());
+    assert!(app.playlist_prompt.is_none());
     let toast = app.toasts.current().unwrap();
     assert!(
         toast.text.contains("radio") || toast.text.contains("playlist"),

@@ -77,6 +77,7 @@ znicz albums
 # Playlists (M3U files in ~/.local/share/znicz/playlists/)
 znicz playlist list
 znicz playlist play evening
+znicz playlist rename evening night
 znicz playlist import ~/sets/club.m3u
 znicz playlist import ~/sets/club.m3u --append
 

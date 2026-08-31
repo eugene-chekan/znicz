@@ -16,8 +16,8 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn hints_for(app: &App) -> &'static str {
-    if app.playlist_input.is_some() || app.radio_prompt.is_some() {
-        return "type a name · Enter · Esc cancel";
+    if app.library.is_typing() || app.playlist_prompt.is_some() || app.radio_prompt.is_some() {
+        return "type · ← → · Enter · Esc cancel";
     }
     let pane = match app.modal {
         Modal::Devices => "Devices",

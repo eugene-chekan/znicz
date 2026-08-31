@@ -52,6 +52,11 @@ Play has two actions, from the TUI (`P`), CLI (`znicz playlist …`), and MCP:
 1. **Clear and play** — replace the queue and start the first track
 2. **Add to queue** — append, do not start or stop playback
 
+Rename is `c` in the overlay, `znicz playlist rename OLD NEW` on the CLI, and
+MCP `rename_playlist`. The file is moved in the playlists folder. A name that
+already exists is refused. If you omit `.m3u` / `.m3u8` on the new name, the
+old suffix is kept.
+
 Parsing lives in `znicz-core::playlist`. The engine has no extra commands:
 callers send `QueueClear` / `QueueAdd` / `QueuePlayIndex(0)`.
 

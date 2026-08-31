@@ -14,6 +14,7 @@ use znicz_library::{Library, Track};
 use crate::cursor::Cursor;
 use crate::layout;
 use crate::library_pane::{Item, LibraryPane};
+use crate::line_edit::LineEdit;
 use crate::meta::{Entry, MetaCache};
 use crate::toast::Toasts;
 use crate::views;
@@ -54,10 +55,30 @@ pub enum Modal {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RadioPrompt {
-    AddName(String),
-    AddUrl { name: String, buffer: String },
-    Rename(String),
-    ChangeUrl(String),
+    AddName(LineEdit),
+    AddUrl { name: String, buffer: LineEdit },
+    Rename(LineEdit),
+    ChangeUrl(LineEdit),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlaylistPrompt {
+    Save(LineEdit),
+    Rename(LineEdit),
+}
+
+impl PlaylistPrompt {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Save(s) | Self::Rename(s) => s.as_str(),
+        }
+    }
+
+    fn buffer_mut(&mut self) -> &mut LineEdit {
+        match self {
+            Self::Save(s) | Self::Rename(s) => s,
+        }
+    }
 }
 
 impl Modal {
@@ -85,7 +106,7 @@ pub struct App {
     pub playlists_dir: PathBuf,
     pub playlists: Vec<String>,
     pub playlist_cursor: Cursor,
-    pub playlist_input: Option<String>,
+    pub playlist_prompt: Option<PlaylistPrompt>,
     pub stations_path: PathBuf,
     pub stations: Vec<znicz_core::Station>,
     pub station_cursor: Cursor,
@@ -118,7 +139,7 @@ impl App {
                 .unwrap_or_else(|| std::env::temp_dir().join("znicz-playlists")),
             playlists: Vec::new(),
             playlist_cursor: Cursor::new(),
-            playlist_input: None,
+            playlist_prompt: None,
             stations_path: znicz_library::default_stations_path()
                 .unwrap_or_else(|| std::env::temp_dir().join("znicz-stations.toml")),
             stations: Vec::new(),
@@ -212,7 +233,7 @@ impl App {
             return;
         }
 
-        if self.playlist_input.is_some() {
+        if self.playlist_prompt.is_some() {
             self.on_playlist_input_key(key);
             return;
         }
@@ -267,7 +288,7 @@ impl App {
             Modal::Devices | Modal::Inspector | Modal::Playlists | Modal::Radio
         ) {
             self.modal = Modal::None;
-            self.playlist_input = None;
+            self.playlist_prompt = None;
             self.radio_prompt = None;
         } else if self.focus == Focus::Queue && self.queue_open {
             self.close_queue();
@@ -286,9 +307,11 @@ impl App {
                 let message = self.library.submit_search();
                 self.toasts.info(message);
             }
-            KeyCode::Backspace => self.library.pop_char(),
-            KeyCode::Char(c) => self.library.push_char(c),
-            _ => {}
+            _ => {
+                if let Some(input) = self.library.prompt_mut() {
+                    input.on_key(key);
+                }
+            }
         }
     }
 
@@ -303,7 +326,7 @@ impl App {
 
     /// Returns true when the key was a global one and needs no focus handling.
     fn on_global_key(&mut self, key: KeyEvent) -> bool {
-        if self.library.is_typing() || self.playlist_input.is_some() || self.radio_prompt.is_some()
+        if self.library.is_typing() || self.playlist_prompt.is_some() || self.radio_prompt.is_some()
         {
             return false;
         }
@@ -419,7 +442,7 @@ impl App {
     fn toggle_playlists_modal(&mut self) {
         if self.modal == Modal::Playlists {
             self.modal = Modal::None;
-            self.playlist_input = None;
+            self.playlist_prompt = None;
         } else {
             self.reload_playlists();
             self.modal = Modal::Playlists;
@@ -431,7 +454,7 @@ impl App {
             self.modal = Modal::None;
             self.radio_prompt = None;
         } else {
-            self.playlist_input = None;
+            self.playlist_prompt = None;
             self.reload_stations();
             self.modal = Modal::Radio;
         }
@@ -474,6 +497,7 @@ impl App {
             KeyCode::Enter => self.play_selected_playlist(false),
             KeyCode::Char('a') => self.play_selected_playlist(true),
             KeyCode::Char('w') => self.begin_playlist_save(),
+            KeyCode::Char('c') => self.begin_playlist_rename(),
             _ => {}
         }
     }
@@ -482,7 +506,7 @@ impl App {
         match key.code {
             KeyCode::Enter => self.play_selected_station(),
             KeyCode::Char('a') => {
-                self.radio_prompt = Some(RadioPrompt::AddName(String::new()));
+                self.radio_prompt = Some(RadioPrompt::AddName(LineEdit::new()));
             }
             KeyCode::Char('w') => self.begin_station_rename(),
             KeyCode::Char('c') => self.begin_station_url(),
@@ -495,21 +519,15 @@ impl App {
         match key.code {
             KeyCode::Esc => self.radio_prompt = None,
             KeyCode::Enter => self.confirm_radio_prompt(),
-            KeyCode::Backspace => {
+            _ => {
                 if let Some(input) = self.radio_prompt_buffer_mut() {
-                    input.pop();
+                    input.on_key(key);
                 }
             }
-            KeyCode::Char(c) => {
-                if let Some(input) = self.radio_prompt_buffer_mut() {
-                    input.push(c);
-                }
-            }
-            _ => {}
         }
     }
 
-    fn radio_prompt_buffer_mut(&mut self) -> Option<&mut String> {
+    fn radio_prompt_buffer_mut(&mut self) -> Option<&mut LineEdit> {
         match self.radio_prompt.as_mut() {
             Some(RadioPrompt::AddName(s) | RadioPrompt::Rename(s) | RadioPrompt::ChangeUrl(s)) => {
                 Some(s)
@@ -545,7 +563,7 @@ impl App {
             self.toasts.info("no stations");
             return;
         };
-        self.radio_prompt = Some(RadioPrompt::Rename(name));
+        self.radio_prompt = Some(RadioPrompt::Rename(LineEdit::from_text(name)));
     }
 
     fn begin_station_url(&mut self) {
@@ -553,7 +571,7 @@ impl App {
             self.toasts.info("no stations");
             return;
         };
-        self.radio_prompt = Some(RadioPrompt::ChangeUrl(url));
+        self.radio_prompt = Some(RadioPrompt::ChangeUrl(LineEdit::from_text(url)));
     }
 
     fn delete_selected_station(&mut self) {
@@ -581,7 +599,7 @@ impl App {
                 Ok(name) => {
                     self.radio_prompt = Some(RadioPrompt::AddUrl {
                         name,
-                        buffer: String::new(),
+                        buffer: LineEdit::new(),
                     });
                 }
                 Err(e) => {
@@ -628,20 +646,13 @@ impl App {
 
     fn on_playlist_input_key(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Esc => self.playlist_input = None,
-            KeyCode::Enter => self.confirm_playlist_save(),
-            KeyCode::Backspace => {
-                if let Some(input) = &mut self.playlist_input {
-                    input.pop();
+            KeyCode::Esc => self.playlist_prompt = None,
+            KeyCode::Enter => self.confirm_playlist_prompt(),
+            _ => {
+                if let Some(input) = self.playlist_prompt.as_mut() {
+                    input.buffer_mut().on_key(key);
                 }
             }
-            KeyCode::Char(c) => {
-                // Every character, including global letters like s / n / i.
-                if let Some(input) = &mut self.playlist_input {
-                    input.push(c);
-                }
-            }
-            _ => {}
         }
     }
 
@@ -692,17 +703,31 @@ impl App {
             self.toasts.error(e.to_string());
             return;
         }
-        self.playlist_input = Some(String::new());
+        self.playlist_prompt = Some(PlaylistPrompt::Save(LineEdit::new()));
     }
 
-    fn confirm_playlist_save(&mut self) {
-        let Some(raw) = self.playlist_input.take() else {
+    fn begin_playlist_rename(&mut self) {
+        let Some(name) = self.selected_playlist_name() else {
+            self.toasts.info("no playlists");
             return;
         };
+        self.playlist_prompt = Some(PlaylistPrompt::Rename(LineEdit::from_text(name)));
+    }
+
+    fn confirm_playlist_prompt(&mut self) {
+        match self.playlist_prompt.take() {
+            Some(PlaylistPrompt::Save(raw)) => self.confirm_playlist_save(raw),
+            Some(PlaylistPrompt::Rename(raw)) => self.confirm_playlist_rename(raw),
+            None => {}
+        }
+    }
+
+    fn confirm_playlist_save(&mut self, raw: LineEdit) {
         let name = match sanitize_stem(&raw) {
             Ok(name) => name,
             Err(e) => {
                 self.toasts.error(e.to_string());
+                self.playlist_prompt = Some(PlaylistPrompt::Save(raw));
                 return;
             }
         };
@@ -725,6 +750,26 @@ impl App {
                 self.reload_playlists();
             }
             Err(e) => self.toasts.error(e.to_string()),
+        }
+    }
+
+    fn confirm_playlist_rename(&mut self, raw: LineEdit) {
+        let Some(old_name) = self.selected_playlist_name() else {
+            self.toasts.info("no playlists");
+            return;
+        };
+        match znicz_core::rename_saved(&self.playlists_dir, &old_name, &raw) {
+            Ok(new_name) => {
+                self.toasts.success(format!("renamed {new_name}"));
+                self.reload_playlists();
+                if let Some(index) = self.playlists.iter().position(|n| n == &new_name) {
+                    self.playlist_cursor.set(index, self.playlists.len());
+                }
+            }
+            Err(e) => {
+                self.toasts.error(e.to_string());
+                self.playlist_prompt = Some(PlaylistPrompt::Rename(raw));
+            }
         }
     }
 

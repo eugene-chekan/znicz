@@ -75,9 +75,11 @@ details, filled in when the stream opens. See
 ### Library
 
 The home screen. Albums by default; `Enter` opens one, `Esc` goes back, `/`
-searches, `a` queues the selection (a whole album if the cursor is on one) and
-`A` queues everything listed. Queries go straight to SQLite, which is fast enough
-to run while handling the keypress. See [Library](Library.md).
+opens a search prompt, `a` queues the selection (a whole album if the cursor is
+on one) and `A` queues everything listed. While the prompt is open, Left and
+Right move the caret the same way they do when naming a playlist or a station.
+Queries go straight to SQLite, which is fast enough to run while handling the
+keypress. See [Library](Library.md).
 
 A library whose files carry **no album tags** cannot be grouped, so the pane
 falls back to a flat track list rather than looking empty.
@@ -115,11 +117,12 @@ Nothing is invented when a field is missing — an unknown sample format shows a
 A centered modal (`P`, shift-p — not `p`, which is previous track). Lists
 `.m3u` / `.m3u8` files in the playlists folder. Enter **clears the queue and
 plays** the highlighted file; `a` **adds** it without starting or stopping
-playback; `w` names a new file and writes the current queue (`save: █`). Esc
-closes the overlay, or cancels the name prompt. `s` still stops while the list
-is showing; while naming a file, every letter (including `s`, which is stop
-everywhere else) is part of the name. The footer switches to save/cancel so the
-global keymap is not what you type into.
+playback; `w` names a new file and writes the current queue (`save: █`); `c`
+renames the highlighted file (`rename: █`, pre-filled). Esc closes the overlay,
+or cancels a prompt. `s` still stops while the list is showing; while naming a
+file, every letter (including `s`, which is stop everywhere else) is part of the
+name. Left and Right move the caret; Home and End jump to the ends. The footer
+switches to type/cancel so the global keymap is not what you type into.
 
 ### Radio
 
@@ -128,7 +131,10 @@ queue and plays** the highlighted station. If the URL cannot be opened, playback
 stops so the previous file does not keep playing. `a` adds one (name, then URL); `w`
 renames; `c` changes the URL; `d` deletes. `r` reloads the file. Esc closes the
 overlay, or cancels a prompt. While typing, letters (including keys that mean
-something else globally) are part of the text.
+something else globally) are part of the text. Every prompt uses the same
+one-line editor (`line_edit.rs`): Left and Right move the caret, Home and End
+jump to the ends, Backspace and Delete edit at the caret. A typo at the start
+of a name does not mean retyping the whole line.
 
 Transport shows the station name. Duration is unknown, so the total time is
 `—` and the seek bar stays empty. Seek is refused. Playing a station puts that
@@ -178,6 +184,7 @@ top of the player.
 | `theme.rs` | every colour, in one place |
 | `keys.rs` | the keymap as data |
 | `cursor.rs` | list cursor movement |
+| `line_edit.rs` | one-line prompt caret (search, playlist save, radio) |
 | `meta.rs` | background tag cache |
 | `toast.rs` | boxed, level-coloured messages |
 | `format.rs` | durations, rates, bars, truncation |

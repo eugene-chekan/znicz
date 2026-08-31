@@ -10,7 +10,8 @@ use std::time::Duration;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 use znicz_core::{spawn_player, AudioConfig, Command, PlayerHandle};
-use znicz_tui::{views, App, Focus, Modal};
+use znicz_tui::line_edit::LineEdit;
+use znicz_tui::{views, App, Focus, Modal, PlaylistPrompt, RadioPrompt};
 
 /// Sizes worth checking: a default terminal, a wide one, a cramped one, and a
 /// window small enough that panes have to be dropped.
@@ -406,6 +407,25 @@ fn the_search_prompt_shows_what_is_being_typed() {
 }
 
 #[test]
+fn the_search_prompt_draws_the_caret_in_the_middle() {
+    let mut app = App::with_library(player(), None);
+    app.library.begin_search();
+    for c in "zeppelin".chars() {
+        app.library.push_char(c);
+    }
+    if let Some(edit) = app.library.prompt_mut() {
+        edit.home();
+        edit.right();
+    }
+
+    let screen = draw(&mut app, 90, 24);
+    assert!(
+        screen.contains("z█eppelin"),
+        "the search caret should sit at the cursor:\n{screen}"
+    );
+}
+
+#[test]
 fn the_focused_view_is_the_one_shown() {
     let mut app = App::with_library(player(), None);
 
@@ -431,6 +451,39 @@ fn the_focused_view_is_the_one_shown() {
     let screen = draw(&mut app, 90, 24);
     assert!(screen.contains("Radio"), "{screen}");
     assert!(screen.contains("Example FM"), "{screen}");
+}
+
+#[test]
+fn the_radio_add_prompt_draws_the_caret_in_the_middle() {
+    let mut app = App::with_library(player(), None);
+    app.modal = Modal::Radio;
+    let mut edit = LineEdit::from_text("Example");
+    edit.home();
+    edit.right();
+    edit.right();
+    app.radio_prompt = Some(RadioPrompt::AddName(edit));
+
+    let screen = draw(&mut app, 90, 24);
+    assert!(
+        screen.contains("Ex█ample"),
+        "the caret should sit at the cursor, not only at the end:\n{screen}"
+    );
+}
+
+#[test]
+fn the_playlist_save_prompt_draws_the_caret_in_the_middle() {
+    let mut app = App::with_library(player(), None);
+    app.modal = Modal::Playlists;
+    let mut edit = LineEdit::from_text("songs");
+    edit.home();
+    edit.right();
+    app.playlist_prompt = Some(PlaylistPrompt::Save(edit));
+
+    let screen = draw(&mut app, 90, 24);
+    assert!(
+        screen.contains("s█ongs"),
+        "the save caret should sit at the cursor, not only at the end:\n{screen}"
+    );
 }
 
 #[test]

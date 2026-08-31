@@ -28,14 +28,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     if let Some(prompt_area) = prompt_area {
-        let query = app.library.input().unwrap_or("");
-        let prompt = Line::from(vec![
-            Span::styled("search: ", theme::key()),
-            Span::styled(query.to_string(), theme::strong()),
-            // A block cursor, since the terminal cursor stays hidden.
-            Span::styled("█", theme::progress()),
-        ]);
-        frame.render_widget(Paragraph::new(prompt), prompt_area);
+        if let Some(edit) = app.library.prompt() {
+            frame.render_widget(
+                Paragraph::new(views::prompt_line("search: ", edit)),
+                prompt_area,
+            );
+        }
     }
 
     let focused = app.focus == Focus::Library && !app.modal.blocks_list_focus();
