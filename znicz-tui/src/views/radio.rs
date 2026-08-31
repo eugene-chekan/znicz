@@ -1,11 +1,11 @@
-//! Saved radio stations: pick one to play, or add, rename, and delete.
+//! Saved radio stations: pick one to play, or add, edit, copy, and delete.
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
-use crate::app::{App, Modal, RadioPrompt};
+use crate::app::{App, Modal, RadioPrompt, StationField};
 use crate::format;
 use crate::theme;
 use crate::views;
@@ -31,20 +31,28 @@ fn centered_modal(area: Rect) -> Rect {
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let focused = app.modal == Modal::Radio;
-    let prompting = app.radio_prompt.is_some();
-    let hint = if prompting {
-        "← → move · Enter confirm · Esc cancel"
+    let form_rows = match &app.radio_prompt {
+        Some(RadioPrompt::Form { .. }) => 2,
+        Some(RadioPrompt::Copy(_)) => 1,
+        None => 0,
+    };
+    let hint = if form_rows > 0 {
+        if form_rows == 2 {
+            "Tab field · ← → move · Enter confirm · Esc cancel"
+        } else {
+            "← → move · Enter confirm · Esc cancel"
+        }
     } else {
-        "Enter play · a add · w rename · c URL · d delete · Esc close"
+        "Enter play · a add · n new · e edit · c copy · d delete · Esc close"
     };
     let block = views::pane_block("Radio", focused, Some(hint.to_string()));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let (prompt_area, list_area) = if prompting {
+    let (prompt_area, list_area) = if form_rows > 0 {
         let parts = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .constraints([Constraint::Length(form_rows), Constraint::Min(1)])
             .split(inner);
         (Some(parts[0]), parts[1])
     } else {
@@ -52,17 +60,35 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     if let (Some(rect), Some(prompt)) = (prompt_area, &app.radio_prompt) {
-        let (prefix, edit) = match prompt {
-            RadioPrompt::AddName(s) => ("name: ", s),
-            RadioPrompt::AddUrl { buffer, .. } => ("url: ", buffer),
-            RadioPrompt::Rename(s) => ("rename: ", s),
-            RadioPrompt::ChangeUrl(s) => ("url: ", s),
-        };
-        frame.render_widget(Paragraph::new(views::prompt_line(prefix, edit)), rect);
+        match prompt {
+            RadioPrompt::Form {
+                name, url, field, ..
+            } => {
+                let rows = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Length(1), Constraint::Length(1)])
+                    .split(rect);
+                let name_line = if *field == StationField::Name {
+                    views::prompt_line("name: ", name)
+                } else {
+                    views::prompt_line_idle("name: ", name.as_str())
+                };
+                let url_line = if *field == StationField::Url {
+                    views::prompt_line("url: ", url)
+                } else {
+                    views::prompt_line_idle("url: ", url.as_str())
+                };
+                frame.render_widget(Paragraph::new(name_line), rows[0]);
+                frame.render_widget(Paragraph::new(url_line), rows[1]);
+            }
+            RadioPrompt::Copy(edit) => {
+                frame.render_widget(Paragraph::new(views::prompt_line("copy: ", edit)), rect);
+            }
+        }
     }
 
     if app.stations.is_empty() {
-        let hint = views::placeholder("(empty)  —  a to add a station");
+        let hint = views::placeholder("(empty)  —  n to add a station");
         frame.render_widget(Paragraph::new(hint), list_area);
         return;
     }

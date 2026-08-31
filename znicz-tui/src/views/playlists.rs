@@ -35,7 +35,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let hint = if prompting {
         "← → move · Enter confirm · Esc cancel"
     } else {
-        "Enter play · a add · w save · c rename · Esc close"
+        "Enter play · a add · n new · e edit · c copy · d delete · Esc close"
     };
     let block = views::pane_block("Playlists", focused, Some(hint.to_string()));
     let inner = block.inner(area);
@@ -55,12 +55,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         let (prefix, edit) = match prompt {
             PlaylistPrompt::Save(edit) => ("save: ", edit),
             PlaylistPrompt::Rename(edit) => ("rename: ", edit),
+            PlaylistPrompt::Copy(edit) => ("copy: ", edit),
         };
         frame.render_widget(Paragraph::new(views::prompt_line(prefix, edit)), rect);
     }
 
     if app.playlists.is_empty() {
-        let hint = views::placeholder("(empty)  —  w to save the queue");
+        let hint = views::placeholder("(empty)  —  n to save the queue");
         frame.render_widget(Paragraph::new(hint), list_area);
         return;
     }

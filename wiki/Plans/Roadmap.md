@@ -59,8 +59,9 @@ Details: [TUI architecture](../Architecture/TUI.md).
 M3U files for the queue. Spec:
 **[Playlist files](../../docs/superpowers/specs/2026-08-27-playlist-files-design.md)**
 
-- Save / play / rename from `~/.local/share/znicz/playlists/`
+- Save / play / rename / copy / delete from `~/.local/share/znicz/playlists/`
 - Clear and play, or add to queue (`P` overlay, CLI, MCP)
+- Overlay keys match Radio: `n` new, `e` edit, `c` copy, `d` delete
 - PLS / XSPF still later
 
 ## Phase 4 (done)
@@ -71,6 +72,7 @@ HTTP/Icecast byte streams and a station list. Spec:
 - Play an HTTP(S) stream (Symphonia on a blocking `Read`)
 - Stations in `stations.toml` (TUI `R`, CLI `znicz station`, MCP tools)
 - Playing a station clears the queue and starts that stream
+- Overlay keys match Playlists (`n` / `e` / `c` / `d`); `a` add-to-queue is later
 
 ### Later radio (after Phase 4)
 

@@ -1,6 +1,6 @@
 ---
 name: playlist-curation
-description: Import, save, play, and rename M3U playlists in znicz. Use when loading a setlist, restoring yesterday’s queue, writing the current queue to a file, or renaming a saved playlist.
+description: Import, save, play, rename, copy, and delete M3U playlists in znicz. Use when loading a setlist, restoring yesterday’s queue, writing the current queue to a file, or renaming a saved playlist.
 ---
 
 # Playlist Curation
@@ -21,6 +21,8 @@ Windows. Import-by-path can point anywhere.
 | `play_playlist` | `name`, `append` (default false) | Load a saved name |
 | `save_playlist` | `name` | Write the current queue; error if empty |
 | `rename_playlist` | `name`, `new_name` | Rename a saved file |
+| `copy_playlist` | `name`, `new_name` | Duplicate a saved file |
+| `remove_playlist` | `name` | Delete a saved file |
 
 `append: false` **clears the queue and starts the first track**.
 `append: true` **adds the paths and does not start or stop playback**.
@@ -40,12 +42,14 @@ counted. If nothing playable remains, the tool errors and the queue is unchanged
 5. After building a queue (`queue_add` / `queue_get`), `save_playlist { "name": "evening" }`
    writes `evening.m3u` (overwrite is allowed).
 6. `rename_playlist { "name": "evening", "new_name": "night" }` renames that file.
+7. `copy_playlist { "name": "night", "new_name": "night-backup" }` duplicates it.
+8. `remove_playlist { "name": "night-backup" }` deletes that file.
 
 ## Notes
 
 - Relative paths in a file resolve against that file’s directory.
 - The TUI does the same two play actions: `P` then Enter (clear and play) or `a`
-  (add). `w` saves. `c` renames.
+  (add). `n` saves. `e` renames. `c` copies. `d` deletes.
 - Do not invent stream playback from `http://` lines; they are skipped.
 
 ## Related

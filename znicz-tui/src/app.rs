@@ -53,30 +53,83 @@ pub enum Modal {
     Radio,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StationField {
+    Name,
+    Url,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RadioPrompt {
-    AddName(LineEdit),
-    AddUrl { name: String, buffer: LineEdit },
-    Rename(LineEdit),
-    ChangeUrl(LineEdit),
+    /// New station (`original` is None) or edit of that name.
+    Form {
+        name: LineEdit,
+        url: LineEdit,
+        field: StationField,
+        original: Option<String>,
+    },
+    Copy(LineEdit),
+}
+
+impl RadioPrompt {
+    fn new_station() -> Self {
+        Self::Form {
+            name: LineEdit::new(),
+            url: LineEdit::new(),
+            field: StationField::Name,
+            original: None,
+        }
+    }
+
+    fn edit_station(station: &znicz_core::Station) -> Self {
+        Self::Form {
+            name: LineEdit::from_text(station.name.clone()),
+            url: LineEdit::from_text(station.url.clone()),
+            field: StationField::Name,
+            original: Some(station.name.clone()),
+        }
+    }
+
+    fn buffer_mut(&mut self) -> &mut LineEdit {
+        match self {
+            Self::Form {
+                name, url, field, ..
+            } => match field {
+                StationField::Name => name,
+                StationField::Url => url,
+            },
+            Self::Copy(s) => s,
+        }
+    }
+
+    fn focus_url(&mut self, url: bool) {
+        if let Self::Form { field, .. } = self {
+            *field = if url {
+                StationField::Url
+            } else {
+                StationField::Name
+            };
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlaylistPrompt {
     Save(LineEdit),
     Rename(LineEdit),
+    Copy(LineEdit),
 }
 
 impl PlaylistPrompt {
     pub fn as_str(&self) -> &str {
         match self {
-            Self::Save(s) | Self::Rename(s) => s.as_str(),
+            Self::Save(s) | Self::Rename(s) | Self::Copy(s) => s.as_str(),
         }
     }
 
     fn buffer_mut(&mut self) -> &mut LineEdit {
         match self {
-            Self::Save(s) | Self::Rename(s) => s,
+            Self::Save(s) | Self::Rename(s) | Self::Copy(s) => s,
         }
     }
 }
@@ -253,22 +306,21 @@ impl App {
             return;
         }
 
+        // Named-list overlays steal a/n/e/c/d (and Enter) from the global map
+        // so new/edit are not next/repeat while P or R is open.
+        if self.modal == Modal::Playlists && self.on_playlists_key(key) {
+            return;
+        }
+        if self.modal == Modal::Radio && self.on_radio_key(key) {
+            return;
+        }
+
         if self.on_global_key(key) {
             return;
         }
 
         if self.modal == Modal::Devices {
             self.on_devices_key(key);
-            return;
-        }
-
-        if self.modal == Modal::Playlists {
-            self.on_playlists_key(key);
-            return;
-        }
-
-        if self.modal == Modal::Radio {
-            self.on_radio_key(key);
             return;
         }
 
@@ -492,48 +544,53 @@ impl App {
         }
     }
 
-    fn on_playlists_key(&mut self, key: KeyEvent) {
+    fn on_playlists_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
             KeyCode::Enter => self.play_selected_playlist(false),
             KeyCode::Char('a') => self.play_selected_playlist(true),
-            KeyCode::Char('w') => self.begin_playlist_save(),
-            KeyCode::Char('c') => self.begin_playlist_rename(),
-            _ => {}
+            KeyCode::Char('n') => self.begin_playlist_save(),
+            KeyCode::Char('e') => self.begin_playlist_rename(),
+            KeyCode::Char('c') => self.begin_playlist_copy(),
+            KeyCode::Char('d') => self.delete_selected_playlist(),
+            _ => return false,
         }
+        true
     }
 
-    fn on_radio_key(&mut self, key: KeyEvent) {
+    fn on_radio_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
             KeyCode::Enter => self.play_selected_station(),
-            KeyCode::Char('a') => {
-                self.radio_prompt = Some(RadioPrompt::AddName(LineEdit::new()));
+            KeyCode::Char('a') => self.toasts.info("adding a station to the queue is later"),
+            KeyCode::Char('n') => {
+                self.radio_prompt = Some(RadioPrompt::new_station());
             }
-            KeyCode::Char('w') => self.begin_station_rename(),
-            KeyCode::Char('c') => self.begin_station_url(),
+            KeyCode::Char('e') => self.begin_station_edit(),
+            KeyCode::Char('c') => self.begin_station_copy(),
             KeyCode::Char('d') => self.delete_selected_station(),
-            _ => {}
+            _ => return false,
         }
+        true
     }
 
     fn on_radio_input_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Esc => self.radio_prompt = None,
             KeyCode::Enter => self.confirm_radio_prompt(),
-            _ => {
-                if let Some(input) = self.radio_prompt_buffer_mut() {
-                    input.on_key(key);
+            KeyCode::Tab | KeyCode::Down => {
+                if let Some(prompt) = self.radio_prompt.as_mut() {
+                    prompt.focus_url(true);
                 }
             }
-        }
-    }
-
-    fn radio_prompt_buffer_mut(&mut self) -> Option<&mut LineEdit> {
-        match self.radio_prompt.as_mut() {
-            Some(RadioPrompt::AddName(s) | RadioPrompt::Rename(s) | RadioPrompt::ChangeUrl(s)) => {
-                Some(s)
+            KeyCode::BackTab | KeyCode::Up => {
+                if let Some(prompt) = self.radio_prompt.as_mut() {
+                    prompt.focus_url(false);
+                }
             }
-            Some(RadioPrompt::AddUrl { buffer, .. }) => Some(buffer),
-            None => None,
+            _ => {
+                if let Some(prompt) = self.radio_prompt.as_mut() {
+                    prompt.buffer_mut().on_key(key);
+                }
+            }
         }
     }
 
@@ -558,20 +615,20 @@ impl App {
         }
     }
 
-    fn begin_station_rename(&mut self) {
+    fn begin_station_edit(&mut self) {
+        let Some(station) = self.selected_station().cloned() else {
+            self.toasts.info("no stations");
+            return;
+        };
+        self.radio_prompt = Some(RadioPrompt::edit_station(&station));
+    }
+
+    fn begin_station_copy(&mut self) {
         let Some(name) = self.selected_station_name() else {
             self.toasts.info("no stations");
             return;
         };
-        self.radio_prompt = Some(RadioPrompt::Rename(LineEdit::from_text(name)));
-    }
-
-    fn begin_station_url(&mut self) {
-        let Some(url) = self.selected_station().map(|s| s.url.clone()) else {
-            self.toasts.info("no stations");
-            return;
-        };
-        self.radio_prompt = Some(RadioPrompt::ChangeUrl(LineEdit::from_text(url)));
+        self.radio_prompt = Some(RadioPrompt::Copy(LineEdit::from_text(name)));
     }
 
     fn delete_selected_station(&mut self) {
@@ -595,47 +652,36 @@ impl App {
 
     fn confirm_radio_prompt(&mut self) {
         match self.radio_prompt.take() {
-            Some(RadioPrompt::AddName(name)) => match znicz_core::validate_name(&name) {
-                Ok(name) => {
-                    self.radio_prompt = Some(RadioPrompt::AddUrl {
+            Some(RadioPrompt::Form {
+                name,
+                url,
+                field,
+                original,
+            }) => {
+                let result = match original.as_deref() {
+                    None => znicz_core::add_station(&mut self.stations, &name, &url),
+                    Some(old) => znicz_core::update_station(&mut self.stations, old, &name, &url),
+                };
+                if let Err(e) = result {
+                    self.toasts.error(e.to_string());
+                    self.radio_prompt = Some(RadioPrompt::Form {
                         name,
-                        buffer: LineEdit::new(),
+                        url,
+                        field,
+                        original,
                     });
-                }
-                Err(e) => {
-                    self.toasts.error(e.to_string());
-                    self.radio_prompt = Some(RadioPrompt::AddName(name));
-                }
-            },
-            Some(RadioPrompt::AddUrl { name, buffer }) => {
-                if let Err(e) = znicz_core::add_station(&mut self.stations, &name, &buffer) {
-                    self.toasts.error(e.to_string());
-                    self.radio_prompt = Some(RadioPrompt::AddUrl { name, buffer });
                     return;
                 }
                 self.persist_stations();
             }
-            Some(RadioPrompt::Rename(new_name)) => {
+            Some(RadioPrompt::Copy(new_name)) => {
                 let Some(old_name) = self.selected_station_name() else {
                     self.toasts.info("no stations");
                     return;
                 };
-                if let Err(e) = znicz_core::rename_station(&mut self.stations, &old_name, &new_name)
-                {
+                if let Err(e) = znicz_core::copy_station(&mut self.stations, &old_name, &new_name) {
                     self.toasts.error(e.to_string());
-                    self.radio_prompt = Some(RadioPrompt::Rename(new_name));
-                    return;
-                }
-                self.persist_stations();
-            }
-            Some(RadioPrompt::ChangeUrl(url)) => {
-                let Some(name) = self.selected_station_name() else {
-                    self.toasts.info("no stations");
-                    return;
-                };
-                if let Err(e) = znicz_core::set_station_url(&mut self.stations, &name, &url) {
-                    self.toasts.error(e.to_string());
-                    self.radio_prompt = Some(RadioPrompt::ChangeUrl(url));
+                    self.radio_prompt = Some(RadioPrompt::Copy(new_name));
                     return;
                 }
                 self.persist_stations();
@@ -714,10 +760,32 @@ impl App {
         self.playlist_prompt = Some(PlaylistPrompt::Rename(LineEdit::from_text(name)));
     }
 
+    fn begin_playlist_copy(&mut self) {
+        let Some(name) = self.selected_playlist_name() else {
+            self.toasts.info("no playlists");
+            return;
+        };
+        self.playlist_prompt = Some(PlaylistPrompt::Copy(LineEdit::from_text(name)));
+    }
+
+    fn delete_selected_playlist(&mut self) {
+        let Some(name) = self.selected_playlist_name() else {
+            self.toasts.info("no playlists");
+            return;
+        };
+        if let Err(e) = znicz_core::remove_saved(&self.playlists_dir, &name) {
+            self.toasts.error(e.to_string());
+            return;
+        }
+        self.toasts.success(format!("deleted {name}"));
+        self.reload_playlists();
+    }
+
     fn confirm_playlist_prompt(&mut self) {
         match self.playlist_prompt.take() {
             Some(PlaylistPrompt::Save(raw)) => self.confirm_playlist_save(raw),
             Some(PlaylistPrompt::Rename(raw)) => self.confirm_playlist_rename(raw),
+            Some(PlaylistPrompt::Copy(raw)) => self.confirm_playlist_copy(raw),
             None => {}
         }
     }
@@ -769,6 +837,26 @@ impl App {
             Err(e) => {
                 self.toasts.error(e.to_string());
                 self.playlist_prompt = Some(PlaylistPrompt::Rename(raw));
+            }
+        }
+    }
+
+    fn confirm_playlist_copy(&mut self, raw: LineEdit) {
+        let Some(old_name) = self.selected_playlist_name() else {
+            self.toasts.info("no playlists");
+            return;
+        };
+        match znicz_core::copy_saved(&self.playlists_dir, &old_name, &raw) {
+            Ok(new_name) => {
+                self.toasts.success(format!("copied {new_name}"));
+                self.reload_playlists();
+                if let Some(index) = self.playlists.iter().position(|n| n == &new_name) {
+                    self.playlist_cursor.set(index, self.playlists.len());
+                }
+            }
+            Err(e) => {
+                self.toasts.error(e.to_string());
+                self.playlist_prompt = Some(PlaylistPrompt::Copy(raw));
             }
         }
     }

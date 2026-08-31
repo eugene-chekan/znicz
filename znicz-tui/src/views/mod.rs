@@ -158,6 +158,14 @@ pub(crate) fn prompt_line(prefix: &str, edit: &LineEdit) -> Line<'static> {
     ])
 }
 
+/// The same prompt row without a caret, for the unfocused field of a two-line form.
+pub(crate) fn prompt_line_idle(prefix: &str, text: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(prefix.to_string(), theme::dim()),
+        Span::styled(text.to_string(), theme::strong()),
+    ])
+}
+
 /// A row that fills a pane which has nothing to show.
 pub(crate) fn placeholder(text: &str) -> Line<'static> {
     Line::from(Span::styled(text.to_string(), theme::dim()))

@@ -18,11 +18,11 @@ pub use player::state::{
     AudioDeviceInfo, OutputInfo, PlaybackStatus, PlayerState, QueueItem, RepeatMode, TrackInfo,
 };
 pub use playlist::{
-    apply_to_player, list_saved, load_path, m3u_paths, parse, rename_saved, sanitize_stem,
-    saved_path, skipped_notice, write_path, write_text, LoadResult,
+    apply_to_player, copy_saved, list_saved, load_path, m3u_paths, parse, remove_saved,
+    rename_saved, sanitize_stem, saved_path, skipped_notice, write_path, write_text, LoadResult,
 };
 pub use station::{
-    add as add_station, find as find_station, load as load_stations, play_station,
-    remove as remove_station, rename as rename_station, save as save_stations,
-    set_url as set_station_url, validate_name, validate_url, Station,
+    add as add_station, copy as copy_station, find as find_station, load as load_stations,
+    play_station, remove as remove_station, rename as rename_station, save as save_stations,
+    set_url as set_station_url, update as update_station, validate_name, validate_url, Station,
 };

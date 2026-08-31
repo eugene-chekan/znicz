@@ -13,8 +13,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use znicz_core::{
-    apply_to_player, list_saved, load_path, rename_saved, sanitize_stem, saved_path, write_path,
-    AudioOutput, Command, LoadResult, PlaybackStatus, PlayerHandle, PlayerState,
+    apply_to_player, copy_saved, list_saved, load_path, remove_saved, rename_saved, sanitize_stem,
+    saved_path, write_path, AudioOutput, Command, LoadResult, PlaybackStatus, PlayerHandle,
+    PlayerState,
 };
 use znicz_library::{Library, Track};
 
@@ -321,6 +322,11 @@ struct RenamePlaylistParams {
     new_name: String,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+struct PlaylistNameParams {
+    name: String,
+}
+
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 struct StationAddParams {
     name: String,
@@ -618,6 +624,25 @@ impl ZniczMcpServer {
         Self::json_result(&serde_json::json!({ "renamed": stem }))
     }
 
+    #[tool(description = "Copy a saved M3U playlist to a new name")]
+    fn copy_playlist(
+        &self,
+        Parameters(params): Parameters<RenamePlaylistParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let stem = copy_saved(&self.playlists_dir, &params.name, &params.new_name)
+            .map_err(Self::map_io)?;
+        Self::json_result(&serde_json::json!({ "copied": stem }))
+    }
+
+    #[tool(description = "Delete a saved M3U playlist")]
+    fn remove_playlist(
+        &self,
+        Parameters(params): Parameters<PlaylistNameParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        remove_saved(&self.playlists_dir, &params.name).map_err(Self::map_io)?;
+        Self::json_result(&serde_json::json!({ "removed": params.name }))
+    }
+
     #[tool(description = "Add a radio station (name + HTTP URL)")]
     fn add_radio_station(
         &self,
@@ -674,6 +699,16 @@ impl ZniczMcpServer {
     ) -> Result<rmcp::model::CallToolResult, McpError> {
         self.mutate_stations(|stations| {
             znicz_core::set_station_url(stations, &params.name, &params.url)
+        })
+    }
+
+    #[tool(description = "Copy a saved radio station to a new name (same URL)")]
+    fn copy_radio_station(
+        &self,
+        Parameters(params): Parameters<StationRenameParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        self.mutate_stations(|stations| {
+            znicz_core::copy_station(stations, &params.name, &params.new_name)
         })
     }
 
@@ -1325,6 +1360,42 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    #[test]
+    fn copy_playlist_duplicates_the_file() {
+        let (server, dir) = playlist_server();
+        std::fs::write(dir.join("evening.m3u"), "x\n").unwrap();
+        let result = server
+            .copy_playlist(Parameters(RenamePlaylistParams {
+                name: "evening".into(),
+                new_name: "night".into(),
+            }))
+            .expect("copy");
+        let payload: serde_json::Value =
+            serde_json::from_str(&result_text(&result)).expect("copy json");
+        assert_eq!(payload["copied"], "night");
+        assert!(dir.join("evening.m3u").is_file());
+        assert!(dir.join("night.m3u").is_file());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn remove_playlist_deletes_the_file() {
+        let (server, dir) = playlist_server();
+        std::fs::write(dir.join("evening.m3u"), "x\n").unwrap();
+        let result = server
+            .remove_playlist(Parameters(PlaylistNameParams {
+                name: "evening".into(),
+            }))
+            .expect("remove");
+        let payload: serde_json::Value =
+            serde_json::from_str(&result_text(&result)).expect("remove json");
+        assert_eq!(payload["removed"], "evening");
+        assert!(!dir.join("evening.m3u").is_file());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     /// Path is captured at `ZniczMcpServer::new`; set `ZNICZ_STATIONS_PATH` first.
     fn station_server() -> (ZniczMcpServer, PathBuf) {
         let path = std::env::temp_dir().join(format!(
@@ -1437,6 +1508,27 @@ mod tests {
             .unwrap();
         let listed = result_text(&server.list_stations().unwrap());
         assert!(!listed.contains("Renamed"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn copy_radio_station_clones_the_url() {
+        let (server, path) = station_server();
+        server
+            .add_radio_station(Parameters(StationAddParams {
+                name: "Example".into(),
+                url: "https://example.com/a".into(),
+            }))
+            .unwrap();
+        server
+            .copy_radio_station(Parameters(StationRenameParams {
+                name: "Example".into(),
+                new_name: "Example2".into(),
+            }))
+            .unwrap();
+        let listed = result_text(&server.list_stations().unwrap());
+        assert!(listed.contains("Example"));
+        assert!(listed.contains("Example2"));
         let _ = std::fs::remove_file(path);
     }
 }

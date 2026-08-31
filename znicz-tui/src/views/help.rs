@@ -9,7 +9,7 @@ use crate::keys::{self, Binding};
 use crate::theme;
 
 pub fn render(frame: &mut Frame, area: Rect) {
-    let popup = centered(86, 88, area);
+    let popup = centered(86, 100, area);
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -59,7 +59,6 @@ fn section(lines: &mut Vec<Line<'static>>, title: &str, bindings: &'static [Bind
             Span::styled(binding.action, theme::text()),
         ]));
     }
-    lines.push(Line::from(""));
 }
 
 /// A box centred in `area`, sized as a percentage of it.

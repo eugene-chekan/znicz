@@ -11,7 +11,7 @@ use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 use znicz_core::{spawn_player, AudioConfig, Command, PlayerHandle};
 use znicz_tui::line_edit::LineEdit;
-use znicz_tui::{views, App, Focus, Modal, PlaylistPrompt, RadioPrompt};
+use znicz_tui::{views, App, Focus, Modal, PlaylistPrompt, RadioPrompt, StationField};
 
 /// Sizes worth checking: a default terminal, a wide one, a cramped one, and a
 /// window small enough that panes have to be dropped.
@@ -192,7 +192,8 @@ fn the_help_overlay_draws_at_every_size() {
     assert!(screen.contains("playlists"), "{screen}");
     assert!(screen.contains("previous track"), "{screen}");
     assert!(screen.contains("Radio"), "{screen}");
-    assert!(screen.contains("add a station"), "{screen}");
+    assert!(screen.contains("new station"), "{screen}");
+    assert!(screen.contains("edit name"), "{screen}");
 }
 
 #[test]
@@ -461,7 +462,12 @@ fn the_radio_add_prompt_draws_the_caret_in_the_middle() {
     edit.home();
     edit.right();
     edit.right();
-    app.radio_prompt = Some(RadioPrompt::AddName(edit));
+    app.radio_prompt = Some(RadioPrompt::Form {
+        name: edit,
+        url: LineEdit::new(),
+        field: StationField::Name,
+        original: None,
+    });
 
     let screen = draw(&mut app, 90, 24);
     assert!(

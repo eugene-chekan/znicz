@@ -78,6 +78,8 @@ znicz albums
 znicz playlist list
 znicz playlist play evening
 znicz playlist rename evening night
+znicz playlist copy night night-backup
+znicz playlist remove night-backup
 znicz playlist import ~/sets/club.m3u
 znicz playlist import ~/sets/club.m3u --append
 
@@ -85,6 +87,7 @@ znicz playlist import ~/sets/club.m3u --append
 znicz station list
 znicz station add "Example" https://example.com/stream
 znicz station play Example
+znicz station copy Example Example2
 ```
 
 The index is a SQLite file, by default `~/.local/share/znicz/library.db`
@@ -94,6 +97,9 @@ The index is a SQLite file, by default `~/.local/share/znicz/library.db`
 
 The library is the home screen. The queue is a side overlay (`]`), devices
 are a modal (`,`), `P` opens saved playlists, and `R` opens radio stations.
+Those two overlays share a keymap: `n` new, `e` edit, `c` copy, `d` delete.
+While they are open, `n` and `e` are not next/repeat; close with Esc to get
+the global keys back.
 `i` opens a signal inspector
 with the full file → device path, including the device sample format that stays
 off the transport line.

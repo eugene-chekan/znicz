@@ -115,26 +115,52 @@ Nothing is invented when a field is missing — an unknown sample format shows a
 ### Playlists
 
 A centered modal (`P`, shift-p — not `p`, which is previous track). Lists
-`.m3u` / `.m3u8` files in the playlists folder. Enter **clears the queue and
-plays** the highlighted file; `a` **adds** it without starting or stopping
-playback; `w` names a new file and writes the current queue (`save: █`); `c`
-renames the highlighted file (`rename: █`, pre-filled). Esc closes the overlay,
-or cancels a prompt. `s` still stops while the list is showing; while naming a
-file, every letter (including `s`, which is stop everywhere else) is part of the
-name. Left and Right move the caret; Home and End jump to the ends. The footer
-switches to type/cancel so the global keymap is not what you type into.
+`.m3u` / `.m3u8` files in the playlists folder. The overlay uses the same
+saved-list keys as Radio. While it is open (and you are not typing a prompt),
+those keys win over the global map: `n` is new, not next track; `e` is edit,
+not repeat. Space, `s`, seek, and volume stay global. After Esc, `n` and `e`
+are next and repeat again.
+
+| Key | Action |
+| --- | --- |
+| Enter | Clear the queue and play |
+| `a` | Add the highlighted file to the queue |
+| `n` | New: name a file and write the current queue (`save: █`) |
+| `e` | Edit: rename the highlighted file (`rename: █`, pre-filled) |
+| `c` | Copy the file to a new name (`copy: █`, pre-filled) |
+| `d` | Delete the highlighted file (immediate, no confirm) |
+| Esc | Close the overlay, or cancel a prompt |
+
+`s` still stops while the list is showing; while naming a file, every letter
+(including `s`, which is stop everywhere else) is part of the name. Left and
+Right move the caret; Home and End jump to the ends. The footer switches to
+type/cancel so the global keymap is not what you type into.
 
 ### Radio
 
-A centered modal (`R`). Lists stations from `stations.toml`. Enter **clears the
-queue and plays** the highlighted station. If the URL cannot be opened, playback
-stops so the previous file does not keep playing. `a` adds one (name, then URL); `w`
-renames; `c` changes the URL; `d` deletes. `r` reloads the file. Esc closes the
-overlay, or cancels a prompt. While typing, letters (including keys that mean
-something else globally) are part of the text. Every prompt uses the same
-one-line editor (`line_edit.rs`): Left and Right move the caret, Home and End
-jump to the ends, Backspace and Delete edit at the caret. A typo at the start
-of a name does not mean retyping the whole line.
+A centered modal (`R`). Lists stations from `stations.toml`. Same saved-list
+keys as Playlists: overlay keys win until Esc. If the URL cannot be opened,
+playback stops so the previous file does not keep playing.
+
+| Key | Action |
+| --- | --- |
+| Enter | Clear the queue and play |
+| `a` | Add to the queue — later (toast for now; mixed queue is not in this version) |
+| `n` | New station: empty two-field form (name and URL) |
+| `e` | Edit: the same form, filled from the highlighted station |
+| `c` | Copy name+URL, then prompt for a new name |
+| `d` | Delete (immediate, no confirm) |
+| `r` | Reload `stations.toml` |
+| Esc | Close the overlay, or cancel a prompt |
+
+Tab (or Down) moves between name and URL; BackTab (or Up) goes back. Enter
+saves both fields. Copy is name-only; the same name as the original is an
+error. While typing, letters (including keys that mean something else globally)
+are part of the text. Every prompt uses the same one-line editor
+(`line_edit.rs`): Left and Right move the caret, Home and End jump to the
+ends, Backspace and Delete edit at the caret. A typo at the start of a name
+does not mean retyping the whole line. The unfocused field of the form shows
+the text without a caret.
 
 Transport shows the station name. Duration is unknown, so the total time is
 `—` and the seek bar stays empty. Seek is refused. Playing a station puts that

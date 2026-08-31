@@ -151,6 +151,38 @@ pub fn rename_saved(dir: &Path, old: &str, new: &str) -> Result<String> {
         .to_string())
 }
 
+/// Copy a saved playlist to a new name. Same suffix rules as [`rename_saved`].
+pub fn copy_saved(dir: &Path, old: &str, new: &str) -> Result<String> {
+    let src = saved_path(dir, old)
+        .ok_or_else(|| ZniczError::Player(format!("no playlist named {old}")))?;
+    let dest_file = dest_file_for_rename(&src, new)?;
+    let dest = dir.join(&dest_file);
+    if dest == src || same_path(&src, &dest) {
+        return Err(ZniczError::Player(format!(
+            "playlist {:?} already exists",
+            playlist_stem(&dest_file).unwrap_or(dest_file.as_str())
+        )));
+    }
+    if dest.exists() {
+        let stem = playlist_stem(&dest_file).unwrap_or(dest_file.as_str());
+        return Err(ZniczError::Player(format!(
+            "playlist {stem:?} already exists"
+        )));
+    }
+    fs::copy(&src, &dest)?;
+    Ok(playlist_stem(&dest_file)
+        .unwrap_or(dest_file.as_str())
+        .to_string())
+}
+
+/// Delete a saved playlist file.
+pub fn remove_saved(dir: &Path, name: &str) -> Result<()> {
+    let src = saved_path(dir, name)
+        .ok_or_else(|| ZniczError::Player(format!("no playlist named {name}")))?;
+    fs::remove_file(src)?;
+    Ok(())
+}
+
 fn dest_file_for_rename(src: &Path, new: &str) -> Result<String> {
     let new = new.trim();
     let lower = new.to_ascii_lowercase();
@@ -350,6 +382,36 @@ mod tests {
         assert!(!dir.join("evening.m3u8").is_file());
         assert!(dir.join("night.m3u8").is_file());
         assert_eq!(list_saved(&dir), vec!["night".to_string()]);
+    }
+
+    #[test]
+    fn copy_saved_duplicates_the_file() {
+        let dir = tmp();
+        fs::write(dir.join("evening.m3u"), "track\n").unwrap();
+        let stem = copy_saved(&dir, "evening", "night").unwrap();
+        assert_eq!(stem, "night");
+        assert_eq!(
+            fs::read_to_string(dir.join("evening.m3u")).unwrap(),
+            fs::read_to_string(dir.join("night.m3u")).unwrap()
+        );
+    }
+
+    #[test]
+    fn copy_saved_refuses_the_same_name() {
+        let dir = tmp();
+        fs::write(dir.join("evening.m3u"), "").unwrap();
+        let err = copy_saved(&dir, "evening", "evening").unwrap_err();
+        assert!(err.to_string().contains("already exists"));
+    }
+
+    #[test]
+    fn remove_saved_deletes_the_file() {
+        let dir = tmp();
+        fs::write(dir.join("evening.m3u"), "").unwrap();
+        remove_saved(&dir, "evening").unwrap();
+        assert!(list_saved(&dir).is_empty());
+        let err = remove_saved(&dir, "evening").unwrap_err();
+        assert!(err.to_string().contains("no playlist named evening"));
     }
 
     #[test]

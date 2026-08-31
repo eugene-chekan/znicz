@@ -1,6 +1,6 @@
 //! One-line text with a caret.
 //!
-//! Every TUI prompt (library search, playlist save, radio add/rename/URL)
+//! Every TUI prompt (library search, playlist save/rename/copy, radio name+URL)
 //! shares this buffer so Left/Right/Home/End/Backspace/Delete behave the same.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};

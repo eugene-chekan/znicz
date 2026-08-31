@@ -52,10 +52,12 @@ Play has two actions, from the TUI (`P`), CLI (`znicz playlist …`), and MCP:
 1. **Clear and play** — replace the queue and start the first track
 2. **Add to queue** — append, do not start or stop playback
 
-Rename is `c` in the overlay, `znicz playlist rename OLD NEW` on the CLI, and
-MCP `rename_playlist`. The file is moved in the playlists folder. A name that
-already exists is refused. If you omit `.m3u` / `.m3u8` on the new name, the
-old suffix is kept.
+Rename, copy, and delete are the same three verbs from the TUI (`P`: `e` / `c` /
+`d`), the CLI (`znicz playlist rename` / `copy` / `remove`), and MCP
+(`rename_playlist`, `copy_playlist`, `remove_playlist`). Rename moves the file
+in the playlists folder. Copy leaves the original and writes a second file. A
+name that already exists is refused. If you omit `.m3u` / `.m3u8` on the new
+name, the old suffix is kept. Delete is immediate.
 
 Parsing lives in `znicz-core::playlist`. The engine has no extra commands:
 callers send `QueueClear` / `QueueAdd` / `QueuePlayIndex(0)`.
@@ -83,9 +85,13 @@ znicz station add "Example" https://example.com/stream
 znicz station play Example
 ```
 
-CLI also has `remove`, `rename`, and `url`. MCP tools: `list_stations`, `add_radio_station`, `play_station`,
-`rename_radio_station`, `set_station_url`, `remove_radio_station`, plus
+CLI also has `remove`, `rename`, `url`, and `copy`. MCP tools: `list_stations`, `add_radio_station`, `play_station`,
+`rename_radio_station`, `set_station_url`, `copy_radio_station`, `remove_radio_station`, plus
 resource `znicz://stations`.
+
+The TUI overlay (`R`) uses the same saved-list keys as playlists: `n` new, `e`
+edit (name and URL on one form), `c` copy, `d` delete. `a` will add the
+highlighted station to the queue later; for now it only toasts.
 
 M3U playlists still **skip** `http://` / `https://` lines. **Later:** ICY song
 titles on the transport, HLS, those M3U URL lines as playable streams, and a

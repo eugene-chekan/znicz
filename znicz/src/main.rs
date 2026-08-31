@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
 use znicz_core::{
-    apply_to_player, list_saved, load_path, rename_saved, saved_path, skipped_notice, spawn_player,
-    AudioConfig, AudioOutput, Command,
+    apply_to_player, copy_saved, list_saved, load_path, remove_saved, rename_saved, saved_path,
+    skipped_notice, spawn_player, AudioConfig, AudioOutput, Command,
 };
 use znicz_library::Library;
 use znicz_mcp::run_stdio;
@@ -84,10 +84,14 @@ enum PlaylistCmd {
         #[arg(long)]
         append: bool,
     },
-    /// Save the queue (use the player: P then w, or MCP save_playlist)
+    /// Save the queue (use the player: P then n, or MCP save_playlist)
     Save { name: String },
     /// Rename a saved playlist
     Rename { name: String, new_name: String },
+    /// Copy a saved playlist to a new name
+    Copy { name: String, new_name: String },
+    /// Delete a saved playlist
+    Remove { name: String },
     /// Load a saved playlist and open the player
     Play {
         name: String,
@@ -111,6 +115,8 @@ enum StationCmd {
     Rename { name: String, new_name: String },
     /// Change a station's stream URL
     Url { name: String, url: String },
+    /// Copy a station to a new name (same URL)
+    Copy { name: String, new_name: String },
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -194,7 +200,7 @@ fn main() -> color_eyre::Result<()> {
             PlaylistCmd::List => list_playlists()?,
             PlaylistCmd::Save { name: _ } => {
                 color_eyre::eyre::bail!(
-                    "save the queue from the player (P then w, or MCP save_playlist)"
+                    "save the queue from the player (P then n, or MCP save_playlist)"
                 );
             }
             PlaylistCmd::Import { file, append } => {
@@ -210,6 +216,15 @@ fn main() -> color_eyre::Result<()> {
                 let dir = playlists_dir()?;
                 let stem = rename_saved(&dir, &name, &new_name)?;
                 println!("{stem}");
+            }
+            PlaylistCmd::Copy { name, new_name } => {
+                let dir = playlists_dir()?;
+                let stem = copy_saved(&dir, &name, &new_name)?;
+                println!("{stem}");
+            }
+            PlaylistCmd::Remove { name } => {
+                let dir = playlists_dir()?;
+                remove_saved(&dir, &name)?;
             }
         },
         Some(Commands::Station { command }) => match command {
@@ -228,6 +243,9 @@ fn main() -> color_eyre::Result<()> {
             }
             StationCmd::Url { name, url } => {
                 mutate_stations(|s| znicz_core::set_station_url(s, &name, &url))?
+            }
+            StationCmd::Copy { name, new_name } => {
+                mutate_stations(|s| znicz_core::copy_station(s, &name, &new_name))?
             }
         },
         None => {

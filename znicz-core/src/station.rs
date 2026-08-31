@@ -118,6 +118,34 @@ pub fn set_url(stations: &mut [Station], name: &str, url: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn copy(stations: &mut Vec<Station>, name: &str, new_name: &str) -> Result<()> {
+    let url = find(stations, name)
+        .ok_or_else(|| ZniczError::Player(format!("no station named {name}")))?
+        .url
+        .clone();
+    add(stations, new_name, &url)
+}
+
+pub fn update(stations: &mut [Station], name: &str, new_name: &str, url: &str) -> Result<()> {
+    let new_name = validate_name(new_name)?;
+    let url = validate_url(url)?;
+    if stations
+        .iter()
+        .any(|s| s.name == new_name && s.name != name)
+    {
+        return Err(ZniczError::Player(format!(
+            "station {new_name:?} already exists"
+        )));
+    }
+    let station = stations
+        .iter_mut()
+        .find(|s| s.name == name)
+        .ok_or_else(|| ZniczError::Player(format!("no station named {name}")))?;
+    station.name = new_name;
+    station.url = url;
+    Ok(())
+}
+
 pub fn play_station(player: &PlayerHandle, station: &Station) -> Result<()> {
     player.send_blocking(Command::QueueClear)?;
     player.send_blocking(Command::QueueAdd(vec![QueueItem::stream(
@@ -233,5 +261,36 @@ mod tests {
         remove(&mut stations, "A").unwrap();
         assert!(stations.is_empty());
         assert!(remove(&mut stations, "A").is_err());
+    }
+
+    #[test]
+    fn copy_clones_the_url_under_a_new_name() {
+        let mut stations = vec![Station {
+            name: "A".into(),
+            url: "https://a".into(),
+        }];
+        copy(&mut stations, "A", "B").unwrap();
+        assert_eq!(stations.len(), 2);
+        assert_eq!(stations[1].name, "B");
+        assert_eq!(stations[1].url, "https://a");
+        assert!(copy(&mut stations, "A", "B").is_err());
+    }
+
+    #[test]
+    fn update_changes_name_and_url_together() {
+        let mut stations = vec![
+            Station {
+                name: "A".into(),
+                url: "https://a".into(),
+            },
+            Station {
+                name: "B".into(),
+                url: "https://b".into(),
+            },
+        ];
+        update(&mut stations, "A", "C", "https://c").unwrap();
+        assert_eq!(stations[0].name, "C");
+        assert_eq!(stations[0].url, "https://c");
+        assert!(update(&mut stations, "C", "B", "https://x").is_err());
     }
 }
