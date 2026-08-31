@@ -57,7 +57,7 @@ callers send `QueueClear` / `QueueAdd` / `QueuePlayIndex(0)`.
 
 ## Radio (Phase 4)
 
-Radio is often an **HTTP stream** (Icecast): the player downloads audio forever instead of a file. HLS (`.m3u8`) is a playlist of short segments. Same decoder, different “source”.
+Radio is often an **HTTP stream** (Icecast): the player downloads audio forever instead of a file. Phase 4 plays that byte stream and keeps a station list. **Later:** HLS (`.m3u8` segments), ICY song titles on the transport, and `http://` lines inside M3U playlists. See the [roadmap](../Plans/Roadmap.md#later-radio-after-phase-4).
 
 ## Library
 
