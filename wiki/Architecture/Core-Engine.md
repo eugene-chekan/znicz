@@ -13,7 +13,7 @@ Each turn it:
 
 See `znicz-core/src/player/commands.rs`. Examples:
 
-- `Play(QueueItem)` — open a local file or an HTTP stream, open output, start decode
+- `Play(QueueItem)` — stop whatever is playing, then open a local file or an HTTP stream, open output, start decode. A failed open leaves the player Stopped.
 - `Pause` / `Resume` — atomic flag; callback writes silence while paused. Pause also skips `pump_decode`, so a radio stream stops pulling bytes.
 - `Seek(duration)` — seek the decoder, flush the ring. On a radio row this returns `radio cannot seek`.
 - `SetVolume`, `NextTrack`, `QueueAdd`, …
@@ -40,7 +40,7 @@ Linux uses ALSA (often via PipeWire). Windows uses WASAPI.
 - `decode` packets to interleaved `f32`
 - gapless option enabled
 
-A local file may treat a read error as end of track (`Ok(None)`). A radio stream is opened with `source.url()` set; the same Symphonia `IoError` is a decode failure. The engine then takes the Failed pump path and emits `PlayerEvent::Error`, not a silent finish.
+A local file may treat a read error as end of track (`Ok(None)`). A radio stream is opened with `source.url()` set; the same Symphonia `IoError` is a decode failure. The engine then takes the Failed pump path, emits `PlayerEvent::Error`, and **stops** (status Stopped, output dropped). It does not restore the decoder.
 
 ## HTTP radio
 

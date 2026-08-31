@@ -293,6 +293,9 @@ impl PlayerEngine {
     }
 
     fn play_item(&mut self, item: crate::player::state::QueueItem) -> Result<()> {
+        // Stop first so a failed open cannot leave the previous file playing.
+        self.stop()?;
+
         let source: Box<dyn AudioSource> = match &item {
             crate::player::state::QueueItem::File { path } => {
                 Box::new(LocalFileSource::new(path.clone()))
@@ -603,7 +606,7 @@ impl PlayerEngine {
             }
             PumpOutcome::Failed(message) => {
                 self.emit_error(message);
-                self.feeder.reset();
+                let _ = self.stop();
             }
         }
     }

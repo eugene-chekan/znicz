@@ -1,9 +1,13 @@
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::path::Path;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use znicz_core::{spawn_player, AudioConfig, Command, QueueItem};
+use znicz_core::{
+    play_station, spawn_player, AudioConfig, AudioOutput, Command, PlaybackStatus, PlayerEvent,
+    QueueItem, Station, TrackInfo,
+};
 
 fn serve_html() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -123,4 +127,147 @@ fn seek_is_refused_when_the_queue_row_is_a_stream() {
         .send_blocking(Command::Seek(Duration::from_secs(1)))
         .unwrap_err();
     assert!(err.to_string().contains("radio cannot seek"), "{err}");
+}
+
+fn skip_hardware_playback() -> bool {
+    if std::env::var_os("CI").is_some() {
+        eprintln!("CI: skipping hardware playback");
+        return true;
+    }
+    let no_device = AudioOutput::list_devices()
+        .map(|devices| devices.is_empty())
+        .unwrap_or(true);
+    if no_device {
+        eprintln!("no audio output device, skipping hardware playback");
+    }
+    no_device
+}
+
+fn write_silent_wav(path: &Path) {
+    std::fs::write(path, silent_wav_bytes(44_100, 2, 44_100)).expect("write wav");
+}
+
+fn file_track(path: &Path) -> TrackInfo {
+    TrackInfo {
+        path: Some(path.to_path_buf()),
+        url: None,
+        title: "old-file".into(),
+        codec: "WAV".into(),
+        sample_rate: 44_100,
+        channels: 2,
+        bits_per_sample: Some(16),
+        bitrate_kbps: Some(1411),
+        duration: None,
+        tags: Default::default(),
+    }
+}
+
+/// Failed station play must not leave the previous file as now-playing.
+#[test]
+fn failed_station_play_does_not_keep_the_old_file() {
+    let wav = std::env::temp_dir().join("znicz-failed-station-old.wav");
+    write_silent_wav(&wav);
+
+    let (player, _thread) = spawn_player(AudioConfig::default());
+    player
+        .send_blocking(Command::QueueAdd(vec![QueueItem::file(wav.clone())]))
+        .unwrap();
+
+    let played = if skip_hardware_playback() {
+        false
+    } else {
+        match player.send_blocking(Command::Play(QueueItem::file(wav.clone()))) {
+            Ok(()) => true,
+            Err(e) => {
+                eprintln!("could not play local wav, bookkeeping only: {e}");
+                false
+            }
+        }
+    };
+
+    if played {
+        let state = player.state();
+        assert_eq!(state.status, PlaybackStatus::Playing);
+        assert_eq!(
+            state.current_track.as_ref().and_then(|t| t.path.as_ref()),
+            Some(&wav)
+        );
+    } else {
+        let state = player.state_arc();
+        let mut state = state.write().unwrap();
+        state.current_track = Some(file_track(&wav));
+        state.status = PlaybackStatus::Playing;
+    }
+
+    let url = serve_html();
+    let result = play_station(
+        &player,
+        &Station {
+            name: "Bad".into(),
+            url,
+        },
+    );
+    assert!(result.is_err(), "got {result:?}");
+
+    let state = player.state();
+    assert_eq!(state.queue.len(), 1);
+    assert!(state.queue[0].is_stream(), "queue should be the stream row");
+    match &state.current_track {
+        None => {}
+        Some(track) => {
+            assert_ne!(
+                track.path.as_ref(),
+                Some(&wav),
+                "current_track must not still be the old file"
+            );
+        }
+    }
+
+    if played {
+        assert_ne!(
+            state.status,
+            PlaybackStatus::Playing,
+            "speakers must not keep playing the old file"
+        );
+    }
+
+    std::fs::remove_file(wav).ok();
+}
+
+/// A stream body that dies after probe must stop, not sit in Playing with no decoder.
+#[test]
+fn dropped_stream_body_stops_playback() {
+    if skip_hardware_playback() {
+        return;
+    }
+
+    let mut body = silent_wav_bytes(44_100, 2, 44_100);
+    body.truncate(44 + 4096);
+    let url = serve_once(body, "audio/wav");
+
+    let (player, _thread) = spawn_player(AudioConfig::default());
+    if let Err(e) = player.send_blocking(Command::Play(QueueItem::stream("Drop", url))) {
+        eprintln!("could not start truncated stream, skipping: {e}");
+        return;
+    }
+
+    let started = Instant::now();
+    let mut saw_error = false;
+    loop {
+        saw_error |= player
+            .drain_events()
+            .iter()
+            .any(|e| matches!(e, PlayerEvent::Error(_)));
+        let state = player.state();
+        if saw_error && state.status == PlaybackStatus::Stopped && state.output.is_none() {
+            return;
+        }
+        if started.elapsed() > Duration::from_secs(5) {
+            panic!(
+                "expected Error then Stopped with no output; saw_error={saw_error} status={:?} output={:?}",
+                state.status, state.output
+            );
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
 }

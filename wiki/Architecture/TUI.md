@@ -124,7 +124,8 @@ global keymap is not what you type into.
 ### Radio
 
 A centered modal (`R`). Lists stations from `stations.toml`. Enter **clears the
-queue and plays** the highlighted station; `a` adds one (name, then URL); `w`
+queue and plays** the highlighted station. If the URL cannot be opened, playback
+stops so the previous file does not keep playing. `a` adds one (name, then URL); `w`
 renames; `c` changes the URL; `d` deletes. `r` reloads the file. Esc closes the
 overlay, or cancels a prompt. While typing, letters (including keys that mean
 something else globally) are part of the text.
