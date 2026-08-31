@@ -30,6 +30,7 @@ pub struct ZniczMcpServer {
     skills: SkillRegistry,
     library: SharedLibrary,
     playlists_dir: PathBuf,
+    stations_path: PathBuf,
     tool_router: ToolRouter<Self>,
 }
 
@@ -55,6 +56,8 @@ impl ZniczMcpServer {
             library,
             playlists_dir: znicz_library::default_playlists_dir()
                 .unwrap_or_else(|| std::env::temp_dir().join("znicz-playlists")),
+            stations_path: znicz_library::default_stations_path()
+                .unwrap_or_else(|| std::env::temp_dir().join("znicz-stations.toml")),
             tool_router: Self::tool_router(),
         }
     }
@@ -126,6 +129,16 @@ impl ZniczMcpServer {
 
     fn not_implemented(feature: &str) -> McpError {
         McpError::internal_error(format!("{feature} is not implemented yet"), None)
+    }
+
+    fn mutate_stations(
+        &self,
+        op: impl FnOnce(&mut Vec<znicz_core::Station>) -> znicz_core::Result<()>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let mut stations = znicz_core::load_stations(&self.stations_path).map_err(Self::map_io)?;
+        op(&mut stations).map_err(Self::map_io)?;
+        znicz_core::save_stations(&self.stations_path, &stations).map_err(Self::map_io)?;
+        Self::json_result(&serde_json::json!({ "stations": stations }))
     }
 }
 
@@ -302,6 +315,29 @@ struct SavePlaylistParams {
     name: String,
 }
 
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+struct StationAddParams {
+    name: String,
+    url: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct StationNameParams {
+    name: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct StationRenameParams {
+    name: String,
+    new_name: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct StationUrlParams {
+    name: String,
+    url: String,
+}
+
 #[tool_router]
 impl ZniczMcpServer {
     #[tool(description = "Play a local audio file")]
@@ -359,7 +395,11 @@ impl ZniczMcpServer {
         &self,
         Parameters(params): Parameters<QueueAddParams>,
     ) -> Result<rmcp::model::CallToolResult, McpError> {
-        let items = params.paths.into_iter().map(znicz_core::QueueItem::file).collect();
+        let items = params
+            .paths
+            .into_iter()
+            .map(znicz_core::QueueItem::file)
+            .collect();
         self.apply(Command::QueueAdd(items))
     }
 
@@ -562,19 +602,63 @@ impl ZniczMcpServer {
         self.apply_playlist(result, params.append)
     }
 
-    #[tool(description = "Add radio station (Phase 4)")]
-    fn add_radio_station(&self) -> Result<rmcp::model::CallToolResult, McpError> {
-        Err(Self::not_implemented("add_radio_station"))
+    #[tool(description = "Add a radio station (name + HTTP URL)")]
+    fn add_radio_station(
+        &self,
+        Parameters(params): Parameters<StationAddParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        self.mutate_stations(|stations| {
+            znicz_core::add_station(stations, &params.name, &params.url)
+        })
     }
 
-    #[tool(description = "List radio stations (Phase 4)")]
+    #[tool(description = "List saved radio stations")]
     fn list_stations(&self) -> Result<rmcp::model::CallToolResult, McpError> {
-        Err(Self::not_implemented("list_stations"))
+        let stations = znicz_core::load_stations(&self.stations_path).map_err(Self::map_io)?;
+        Self::json_result(&serde_json::json!({ "stations": stations }))
     }
 
-    #[tool(description = "Play radio station (Phase 4)")]
-    fn play_station(&self) -> Result<rmcp::model::CallToolResult, McpError> {
-        Err(Self::not_implemented("play_station"))
+    #[tool(description = "Play a saved radio station by name (clears the queue)")]
+    fn play_station(
+        &self,
+        Parameters(params): Parameters<StationNameParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let stations = znicz_core::load_stations(&self.stations_path).map_err(Self::map_io)?;
+        let station = znicz_core::find_station(&stations, &params.name)
+            .cloned()
+            .ok_or_else(|| {
+                McpError::invalid_params(format!("no station named {:?}", params.name), None)
+            })?;
+        map_player_err(znicz_core::play_station(&self.player, &station))?;
+        self.ok_state()
+    }
+
+    #[tool(description = "Remove a saved radio station")]
+    fn remove_radio_station(
+        &self,
+        Parameters(params): Parameters<StationNameParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        self.mutate_stations(|stations| znicz_core::remove_station(stations, &params.name))
+    }
+
+    #[tool(description = "Rename a saved radio station")]
+    fn rename_radio_station(
+        &self,
+        Parameters(params): Parameters<StationRenameParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        self.mutate_stations(|stations| {
+            znicz_core::rename_station(stations, &params.name, &params.new_name)
+        })
+    }
+
+    #[tool(description = "Change a saved radio station URL")]
+    fn set_station_url(
+        &self,
+        Parameters(params): Parameters<StationUrlParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        self.mutate_stations(|stations| {
+            znicz_core::set_station_url(stations, &params.name, &params.url)
+        })
     }
 
     #[tool(description = "Enrich metadata via MusicBrainz (Phase 6)")]
@@ -612,6 +696,7 @@ impl ServerHandler for ZniczMcpServer {
             make_resource("znicz://player/status", "player-status", "Player status"),
             make_resource("znicz://devices", "devices", "Audio devices"),
             make_resource("znicz://config", "config", "Sanitized config"),
+            make_resource("znicz://stations", "stations", "Saved radio stations"),
             make_resource(
                 "skill://index.json",
                 "skills-index",
@@ -639,6 +724,7 @@ impl ServerHandler for ZniczMcpServer {
         let uri = request.uri.clone();
         let state = self.player.state();
         let skills = self.skills.clone();
+        let stations_path = self.stations_path.clone();
 
         async move {
             if uri == "skill://index.json" {
@@ -680,6 +766,12 @@ impl ServerHandler for ZniczMcpServer {
                 }
                 "znicz://config" => serde_json::to_string_pretty(&ConfigView::default())
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?,
+                "znicz://stations" => {
+                    let stations =
+                        znicz_core::load_stations(&stations_path).map_err(Self::map_io)?;
+                    serde_json::to_string_pretty(&stations)
+                        .map_err(|e| McpError::internal_error(e.to_string(), None))?
+                }
                 _ => return Err(McpError::resource_not_found(uri, None)),
             };
 
@@ -817,10 +909,21 @@ mod tests {
     use super::*;
     use znicz_core::{spawn_player, AudioConfig};
 
+    /// Serialises `ZNICZ_STATIONS_PATH` writes against other tests that read env
+    /// while constructing a server (`default_playlists_dir` / `default_stations_path`).
+    static STATIONS_ENV: Mutex<()> = Mutex::new(());
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        STATIONS_ENV
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     fn server() -> ZniczMcpServer {
         let (player, _thread) = spawn_player(AudioConfig::default());
         // The engine thread outlives the test; the handle keeps it alive.
         std::mem::forget(_thread);
+        let _lock = env_lock();
         ZniczMcpServer::new(player, Vec::new())
     }
 
@@ -828,6 +931,7 @@ mod tests {
         let (player, _thread) = spawn_player(AudioConfig::default());
         std::mem::forget(_thread);
         let library = Library::open_in_memory().expect("in-memory library");
+        let _lock = env_lock();
         ZniczMcpServer::with_library(player, Vec::new(), library)
     }
 
@@ -1184,5 +1288,120 @@ mod tests {
         assert!(dir.join("evening.m3u").is_file());
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Path is captured at `ZniczMcpServer::new`; set `ZNICZ_STATIONS_PATH` first.
+    fn station_server() -> (ZniczMcpServer, PathBuf) {
+        let path = std::env::temp_dir().join(format!(
+            "znicz-mcp-stations-{}-{}.toml",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        std::mem::forget(_thread);
+        let _lock = env_lock();
+        // SAFETY: `STATIONS_ENV` serialises env mutation against other server constructors.
+        unsafe {
+            std::env::set_var("ZNICZ_STATIONS_PATH", &path);
+        }
+        let server = ZniczMcpServer::new(player, Vec::new());
+        unsafe {
+            std::env::remove_var("ZNICZ_STATIONS_PATH");
+        }
+        (server, path)
+    }
+
+    #[test]
+    fn add_and_list_stations_round_trip() {
+        let (server, path) = station_server();
+        server
+            .add_radio_station(Parameters(StationAddParams {
+                name: "Example".into(),
+                url: "https://example.com/stream".into(),
+            }))
+            .unwrap();
+        let listed = server.list_stations().unwrap();
+        let text = result_text(&listed);
+        assert!(text.contains("Example"));
+        assert!(text.contains("https://example.com/stream"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn play_station_clears_the_queue_then_errors_on_a_dead_url() {
+        let (server, path) = station_server();
+        server
+            .add_radio_station(Parameters(StationAddParams {
+                name: "Dead".into(),
+                url: "http://127.0.0.1:1/nope".into(),
+            }))
+            .unwrap();
+        let err = server
+            .play_station(Parameters(StationNameParams {
+                name: "Dead".into(),
+            }))
+            .unwrap_err();
+        assert!(!err.to_string().contains("not implemented"));
+        let queue = server.player.state().queue;
+        assert_eq!(queue.len(), 1);
+        assert!(queue[0].is_stream());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn duplicate_station_name_is_an_error() {
+        let (server, path) = station_server();
+        let params = StationAddParams {
+            name: "Example".into(),
+            url: "https://example.com/a".into(),
+        };
+        server
+            .add_radio_station(Parameters(params.clone()))
+            .unwrap();
+        assert!(server
+            .add_radio_station(Parameters(StationAddParams {
+                name: "Example".into(),
+                url: "https://example.com/b".into(),
+            }))
+            .is_err());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn remove_rename_and_set_url_persist() {
+        let (server, path) = station_server();
+        server
+            .add_radio_station(Parameters(StationAddParams {
+                name: "Example".into(),
+                url: "https://example.com/a".into(),
+            }))
+            .unwrap();
+        server
+            .rename_radio_station(Parameters(StationRenameParams {
+                name: "Example".into(),
+                new_name: "Renamed".into(),
+            }))
+            .unwrap();
+        server
+            .set_station_url(Parameters(StationUrlParams {
+                name: "Renamed".into(),
+                url: "https://example.com/b".into(),
+            }))
+            .unwrap();
+        let listed = result_text(&server.list_stations().unwrap());
+        assert!(listed.contains("Renamed"));
+        assert!(listed.contains("https://example.com/b"));
+        assert!(!listed.contains("Example"));
+        server
+            .remove_radio_station(Parameters(StationNameParams {
+                name: "Renamed".into(),
+            }))
+            .unwrap();
+        let listed = result_text(&server.list_stations().unwrap());
+        assert!(!listed.contains("Renamed"));
+        let _ = std::fs::remove_file(path);
     }
 }

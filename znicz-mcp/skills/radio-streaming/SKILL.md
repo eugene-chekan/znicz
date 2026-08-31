@@ -1,16 +1,15 @@
 ---
 name: radio-streaming
-description: Add and play HTTP/Icecast radio stations and streams in znicz (Phase 4).
+description: Add and play HTTP/Icecast radio stations in znicz.
 ---
 
 # Radio Streaming
 
-## Status
+Stations are stored in `stations.toml` (override `ZNICZ_STATIONS_PATH`).
 
-Phase 4 — `add_radio_station`, `list_stations`, and `play_station` are stubbed.
+1. `add_radio_station` with `name` and `url` (`http://` or `https://`)
+2. `list_stations` or resource `znicz://stations`
+3. `play_station` with the exact name — this **clears the queue** and starts the stream
+4. `rename_radio_station`, `set_station_url`, `remove_radio_station` to edit
 
-## Planned workflow
-
-1. Add station URL with `add_radio_station`
-2. List presets via `list_stations` or `znicz://stations`
-3. Play with `play_station`
+This slice does not parse ICY titles or play HLS. Playlist `http://` lines are still skipped.
