@@ -17,6 +17,12 @@ Queue:
 
 - [#15 MCP `queue_remove` for a single queue row](https://github.com/eugene-chekan/znicz/issues/15)
 
+Playlists and session (file, do not start unless asked):
+
+- [#18 Browse and edit saved playlist contents](https://github.com/eugene-chekan/znicz/issues/18) (view, delete rows, reorder)
+- [#19 Add a library item to a saved playlist](https://github.com/eugene-chekan/znicz/issues/19)
+- [#20 Persist the queue across restarts](https://github.com/eugene-chekan/znicz/issues/20)
+
 Product phases 5–6 (album art, MusicBrainz) and **later radio** (ICY,
 HLS) are on the
 [roadmap](Plans/Roadmap.md), not duplicated as issues yet. Phase 4 (radio

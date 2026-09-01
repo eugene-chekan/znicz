@@ -84,6 +84,14 @@ Not in this version. Still later:
 
 PLS / XSPF stay under playlists (“still later”). Settings stay [#6](https://github.com/eugene-chekan/znicz/issues/6).
 
+## Later playlists and session (parked)
+
+Not in this version. Tracked as GitHub issues; see [Issues](../Issues.md).
+
+- Browse and edit a saved playlist (view, delete rows, reorder) — [#18](https://github.com/eugene-chekan/znicz/issues/18)
+- Add a library item to a saved playlist — [#19](https://github.com/eugene-chekan/znicz/issues/19)
+- Persist the queue across restarts — [#20](https://github.com/eugene-chekan/znicz/issues/20)
+
 ## Phase 5
 
 - Inline album cover in the TUI
