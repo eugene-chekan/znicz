@@ -15,3 +15,5 @@ Stations are stored in `stations.toml` (override `ZNICZ_STATIONS_PATH`).
 Copy keeps the URL and asks for a new name. The same name as the original is an error.
 
 This slice does not parse ICY titles or play HLS. M3U URL lines play as streams.
+`get_player_state` / now-playing includes `bitrate_kbps` once the stream has
+decoded about a quarter second (coded bytes vs PCM time).

@@ -24,10 +24,28 @@ Znicz reads tags when a track loads, so the TUI shows the real title and an
 "Artist — Album" line. Files with no tags fall back to the file name, because
 playing music matters more than metadata.
 
+## Playlist formats
+
+A **playlist** is a small text (or XML) file that lists tracks in order. It is
+not the music itself. Players disagree on which formats they open; the common
+ones are:
+
+| Format | What it is | Znicz |
+|--------|------------|--------|
+| **M3U** | One path or URL per line. `#` starts a comment. **Extended M3U** adds `#EXTM3U` and `#EXTINF:duration,title` before a row. Encoding is not guaranteed. | **Yes.** UTF-8 `.m3u` / `.m3u8` files of local paths and `http(s)` streams. |
+| **M3U8** | Same grammar as M3U, saved as UTF-8. Winamp used the `8` to mean UTF-8. | **Yes**, as a UTF-8 M3U list. |
+| **HLS `.m3u8`** | A *different* use of the same suffix: `#EXT-X-…` tags and a list of **media segments** (short `.ts` / `.m4s` files) that a live or VOD stream is cut into. | **Not yet.** A saved playlist named `.m3u8` is still an M3U list. An `http(s)` URL that is really an HLS playlist is enqueued as a stream and play fails until HLS exists. |
+| **PLS** | INI-style (`[playlist]`, `File1=`, `Title1=`, `Length1=`). Common with Winamp / Icecast “listen” links. | **Later** (see [roadmap](../Plans/Roadmap.md#later-radio-after-phase-4)). |
+| **XSPF** | XML Shareable Playlist Format (`<trackList>`, `<location>`). Can hold local paths or URLs. | **Later** (same roadmap section). |
+| **CUE** | Indexes inside one audio file (CD images), not a list of separate files. | Not a playlist in this sense. Out of scope. |
+| **ASX / WPL** | Older Windows XML lists. | Out of scope. |
+
+Relative paths in a playlist file resolve against **that file’s directory**.
+
 ## Playlists (Phase 3)
 
-A playlist is an **M3U / M3U8 file** of local paths and `http://` / `https://`
-stream rows. PLS and XSPF are still later.
+Znicz playlists are **M3U / M3U8 files** of local paths and `http://` /
+`https://` stream rows. PLS and XSPF are still later.
 
 | Line | Meaning |
 |------|---------|
@@ -96,8 +114,12 @@ The TUI overlay (`R`) uses the same saved-list keys as playlists: `n` new, `e`
 edit (name and URL on one form), `c` copy, `d` delete. Radio `a` appends the
 station. Enter / `play_station` still replace the queue.
 
-M3U URL lines play as streams. **Later:** ICY song titles on the transport,
-HLS. See the
+M3U URL lines play as streams. While a stream plays, the signal path shows a
+**coded bitrate** (compressed bytes versus PCM duration, once a quarter second
+has decoded). That is the stream’s audio rate, not Icecast `icy-br` and not
+the decoded PCM rate (1411 kbps for CD-shape WAV).
+
+**Later:** ICY song titles on the transport, HLS, PLS, XSPF. See the
 [roadmap](../Plans/Roadmap.md#later-radio-after-phase-4).
 
 ## Library
@@ -119,4 +141,7 @@ Embedded **album art** is part of the same tag data. Displaying it in the TUI is
 
 - [FLAC format](https://xiph.org/flac/documentation.html)
 - [M3U (Wikipedia)](https://en.wikipedia.org/wiki/M3U)
+- [XSPF](https://xspf.org/)
+- [PLS (Wikipedia)](https://en.wikipedia.org/wiki/PLS_(file_format))
+- [HTTP Live Streaming](https://datatracker.ietf.org/doc/html/rfc8216)
 - [Icecast](https://icecast.org/)

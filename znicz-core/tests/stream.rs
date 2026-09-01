@@ -107,6 +107,27 @@ fn decode_loopback_body(body: Vec<u8>, content_type: &str) {
 }
 
 #[test]
+fn audio_decoder_measures_coded_bitrate_on_a_wav_stream() {
+    let url = serve_once(silent_wav_bytes(44_100, 2, 44_100), "audio/wav");
+    let source = znicz_core::audio::http::HttpStreamSource::new("TestStream", url);
+    let (mut decoder, _) =
+        znicz_core::audio::source::AudioDecoder::open(&source).expect("open decoder");
+    while decoder.measured_bitrate_kbps().is_none() {
+        match decoder.decode_next().expect("decode") {
+            Some(_) => {}
+            None => break,
+        }
+    }
+    let kbps = decoder
+        .measured_bitrate_kbps()
+        .expect("enough PCM to measure bitrate");
+    assert!(
+        (1200..=1600).contains(&kbps),
+        "16-bit stereo 44.1 kHz is 1411 kbps; got {kbps}"
+    );
+}
+
+#[test]
 fn playing_a_non_audio_url_returns_an_error() {
     let (player, _thread) = spawn_player(AudioConfig::default());
     let url = serve_html();

@@ -199,6 +199,21 @@ fn uncompressed_bitrate_kbps(sample_rate: u32, channels: u16, bits: Option<u32>)
     Some((u64::from(sample_rate) * u64::from(channels) * u64::from(bits) / 1000) as u32)
 }
 
+/// Coded audio bitrate from bytes fed to the decoder and PCM duration produced.
+///
+/// Needs at least a quarter second of audio so the first packets do not flash a
+/// nonsense number. Used for live radio; files still use tags.
+fn coded_bitrate_kbps(coded_bytes: u64, pcm_frames: u64, sample_rate: u32) -> Option<u32> {
+    if pcm_frames == 0 || sample_rate == 0 {
+        return None;
+    }
+    let seconds = pcm_frames as f64 / f64::from(sample_rate);
+    if seconds < 0.25 {
+        return None;
+    }
+    Some(((coded_bytes as f64 * 8.0) / seconds / 1000.0).round() as u32)
+}
+
 fn format_options() -> FormatOptions {
     FormatOptions {
         enable_gapless: true,
@@ -283,6 +298,8 @@ pub struct AudioDecoder {
     channels: u16,
     /// True when opened from a URL source. Stream body I/O is not EOF.
     is_stream: bool,
+    coded_bytes: u64,
+    pcm_frames: u64,
 }
 
 impl AudioDecoder {
@@ -333,6 +350,8 @@ impl AudioDecoder {
                 sample_rate,
                 channels,
                 is_stream,
+                coded_bytes: 0,
+                pcm_frames: 0,
             },
             track_info,
         ))
@@ -348,6 +367,17 @@ impl AudioDecoder {
 
     pub fn channels(&self) -> u16 {
         self.channels
+    }
+
+    pub fn is_stream(&self) -> bool {
+        self.is_stream
+    }
+
+    /// Live coded bitrate once enough PCM has been decoded. `None` for files
+    /// that have not produced a quarter second yet, or for a stream that just
+    /// opened.
+    pub fn measured_bitrate_kbps(&self) -> Option<u32> {
+        coded_bitrate_kbps(self.coded_bytes, self.pcm_frames, self.sample_rate)
     }
 
     pub fn seek(&mut self, position: std::time::Duration) -> Result<()> {
@@ -390,13 +420,18 @@ impl AudioDecoder {
                 continue;
             }
 
+            let coded = packet.buf().len() as u64;
             match self.decoder.decode(&packet) {
                 Ok(decoded) => {
                     let spec = *decoded.spec();
                     let duration = decoded.capacity() as u64;
                     let mut sample_buf = SampleBuffer::<f32>::new(duration, spec);
                     sample_buf.copy_interleaved_ref(decoded);
-                    return Ok(Some(sample_buf.samples().to_vec()));
+                    let samples = sample_buf.samples().to_vec();
+                    let channels = self.channels.max(1) as u64;
+                    self.coded_bytes += coded;
+                    self.pcm_frames += samples.len() as u64 / channels;
+                    return Ok(Some(samples));
                 }
                 Err(SymphoniaError::IoError(e)) => {
                     if self.is_stream {
@@ -443,6 +478,14 @@ mod tests {
     #[test]
     fn uncompressed_cd_audio_is_1411_kbps() {
         assert_eq!(uncompressed_bitrate_kbps(44_100, 2, Some(16)), Some(1411));
+    }
+
+    #[test]
+    fn coded_bitrate_needs_a_quarter_second_of_pcm() {
+        assert_eq!(coded_bitrate_kbps(16_000, 0, 44_100), None);
+        assert_eq!(coded_bitrate_kbps(16_000, 100, 44_100), None);
+        // 192 kbps CBR: 24_000 bytes over 1 s of 44.1 kHz audio.
+        assert_eq!(coded_bitrate_kbps(24_000, 44_100, 44_100), Some(192));
     }
 
     fn silent_wav_bytes(frames: u32) -> Vec<u8> {

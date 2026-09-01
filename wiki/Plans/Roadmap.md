@@ -63,7 +63,7 @@ M3U files for the queue. Spec:
 - Clear and play, or add to queue (`P` overlay, CLI, MCP)
 - Overlay keys match Radio: `n` new, `e` edit, `c` copy, `d` delete
 - `http(s)` lines in an M3U enqueue as streams; save writes URLs and `#EXTINF` names
-- PLS / XSPF still later
+- PLS / XSPF — [later radio](#later-radio-after-phase-4)
 
 ## Phase 4 (done)
 
@@ -74,6 +74,7 @@ HTTP/Icecast byte streams and a station list. Spec:
 - Stations in `stations.toml` (TUI `R`, CLI `znicz station`, MCP tools)
 - Playing a station clears the queue and starts that stream
 - Overlay keys match Playlists (`n` / `e` / `c` / `d`); `a` appends a station; Enter still replaces
+- Live **coded bitrate** on the transport while a stream plays (compressed bytes vs PCM time)
 
 ### Later radio (after Phase 4)
 
@@ -81,8 +82,10 @@ Not in this version. Still later:
 
 - **ICY now playing** — parse Icecast `StreamTitle` and show the current song on the transport (not only the station name)
 - **HLS** — `.m3u8` segment playlists (a second source type)
+- **PLS** — INI-style playlist files (`File1=`, `Title1=`)
+- **XSPF** — XML Shareable Playlist Format
 
-PLS / XSPF stay under playlists (“still later”). Settings stay [#6](https://github.com/eugene-chekan/znicz/issues/6).
+Settings stay [#6](https://github.com/eugene-chekan/znicz/issues/6). Playlist formats themselves are described in [Formats and metadata](../Domain/Formats-and-Metadata.md#playlist-formats).
 
 ## Later playlists and session (parked)
 

@@ -53,6 +53,9 @@ pub struct TrackInfo {
     pub channels: u16,
     pub bits_per_sample: Option<u32>,
     /// Average audio bitrate in kilobits per second, when known.
+    ///
+    /// Files use the tagger or the uncompressed PCM formula. Radio streams
+    /// fill this in while playing from coded bytes versus PCM duration.
     #[serde(default)]
     pub bitrate_kbps: Option<u32>,
     pub duration: Option<Duration>,
