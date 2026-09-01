@@ -9,8 +9,8 @@ znicz mcp
 ```
 
 On start the MCP server restores `session.toml` (queue and transport extras,
-**Stopped**). Mutating player tools write it again. Same file as the TUI.
-The host then sends JSON-RPC messages.
+**Stopped**). Mutating player tools write it again. Same **file** as the TUI,
+not the same running player. The host then sends JSON-RPC messages.
 
 We use the Rust SDK [`rmcp`](https://crates.io/crates/rmcp).
 
@@ -23,7 +23,11 @@ We use the Rust SDK [`rmcp`](https://crates.io/crates/rmcp).
 | **Prompts** | Ready-made instructions for the model |
 | **Skills** | Longer how-to files (`SKILL.md`) the model loads when needed |
 
-Tools call the same `Command`s as the TUI. No second player.
+Tools use the same `Command`s as the TUI. A Cursor `znicz mcp` process still
+starts **its own** engine. It does not see what a separate TUI is playing
+([#27](https://github.com/eugene-chekan/znicz/issues/27)). `session.toml` is a
+snapshot on start and after MCP mutations, not a live bus. Playing, pause,
+seek, and ICY titles stay in that process’s memory.
 
 Library tools (`scan_library`, `search_library`, `get_track`, `browse_album`,
 `list_albums`, `library_stats`, `library_prune`) talk to

@@ -13,7 +13,10 @@ Human keys ---------------> znicz-tui --commands--> znicz-core --> DAC
 Both front ends can browse the library: the MCP server for agents, and the TUI
 for its library pane.
 
-`znicz` (the binary) starts either the TUI or the MCP server. Both talk to the same player type: `PlayerHandle`.
+`znicz` (the binary) starts either the TUI or the MCP server. Both talk to the
+same player **type** (`PlayerHandle`). Two processes still means two engines:
+Cursor’s `znicz mcp` does not see a TUI you started in a terminal
+([#27](https://github.com/eugene-chekan/znicz/issues/27)).
 
 ## Why split crates?
 

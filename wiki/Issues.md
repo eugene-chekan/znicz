@@ -5,6 +5,10 @@ This page is an index plus write-ups that never had a GitHub ticket.
 
 ## Open
 
+### Bugs
+
+- [#27 MCP and TUI do not share live player state](https://github.com/eugene-chekan/znicz/issues/27) — `znicz mcp` is a second process; `get_player_state` is not the TUI
+
 Parked TUI ideas (file, do not start unless asked):
 
 - [#5 Command palette](https://github.com/eugene-chekan/znicz/issues/5)
