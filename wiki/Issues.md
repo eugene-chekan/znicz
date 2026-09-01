@@ -14,11 +14,10 @@ Parked TUI ideas (file, do not start unless asked):
 - [#9 Library tree view with expandable nodes](https://github.com/eugene-chekan/znicz/issues/9)
 - [#22 Show the app version](https://github.com/eugene-chekan/znicz/issues/22) (place and shape still open)
 
-Playlists and session (file, do not start unless asked):
+Playlists (file, do not start unless asked):
 
 - [#18 Browse and edit saved playlist contents](https://github.com/eugene-chekan/znicz/issues/18) (view, delete rows, reorder)
 - [#19 Add a library item to a saved playlist](https://github.com/eugene-chekan/znicz/issues/19)
-- [#20 Persist the queue across restarts](https://github.com/eugene-chekan/znicz/issues/20)
 
 Product phases 5–6 (album art, MusicBrainz) and **later radio** (ICY,
 HLS, PLS, XSPF) are on the
@@ -26,6 +25,16 @@ HLS, PLS, XSPF) are on the
 streams) is done.
 
 ## Closed
+
+### [#20 Persist the queue across restarts](https://github.com/eugene-chekan/znicz/issues/20)
+
+- **Fixed:** 2026-09-01
+- **Component:** `znicz-core`, `znicz-tui`, `znicz-mcp`, `znicz`
+- **Status:** **Fixed** in 0.3.6
+
+`session.toml` stores the queue, index, volume, mute, repeat, and shuffle.
+Restore is Stopped at 0. Missing files are skipped. A later app-state database
+is still later.
 
 ### [#15 MCP `queue_remove`](https://github.com/eugene-chekan/znicz/issues/15)
 

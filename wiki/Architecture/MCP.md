@@ -8,7 +8,9 @@ Znicz speaks MCP on **stdio** (stdin/stdout). The host starts:
 znicz mcp
 ```
 
-and sends JSON-RPC messages.
+On start the MCP server restores `session.toml` (queue and transport extras,
+**Stopped**). Mutating player tools write it again. Same file as the TUI.
+The host then sends JSON-RPC messages.
 
 We use the Rust SDK [`rmcp`](https://crates.io/crates/rmcp).
 

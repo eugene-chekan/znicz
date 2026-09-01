@@ -46,6 +46,11 @@ pub enum Command {
     QueuePlayIndex(usize),
     /// Drop one queue entry.
     QueueRemove(usize),
+    /// Replace the queue and index without starting playback.
+    ReplaceQueue {
+        items: Vec<QueueItem>,
+        position: usize,
+    },
     SetRepeat(crate::player::state::RepeatMode),
     SetShuffle(bool),
     SetDevice(String),

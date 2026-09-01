@@ -105,6 +105,29 @@ fn removing_from_an_empty_queue_is_harmless() {
 }
 
 #[test]
+fn replace_queue_sets_the_list_and_stays_stopped() {
+    let (player, _thread) = spawn_player(AudioConfig::default());
+    player
+        .send_blocking(Command::QueueAdd(paths(1)))
+        .expect("queue add");
+    player
+        .send_blocking(Command::ReplaceQueue {
+            items: vec![
+                QueueItem::file("/music/a.flac"),
+                QueueItem::stream("Live", "https://example.com/s"),
+            ],
+            position: 1,
+        })
+        .expect("replace queue");
+
+    let state = player.state();
+    assert_eq!(state.queue.len(), 2);
+    assert_eq!(state.queue_position, 1);
+    assert_eq!(state.status, PlaybackStatus::Stopped);
+    assert!(state.current_track.is_none());
+}
+
+#[test]
 fn repeat_and_shuffle_are_remembered() {
     let (player, _thread) = spawn_player(AudioConfig::default());
 

@@ -3,8 +3,9 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
 use znicz_core::{
-    apply_to_player, copy_saved, list_saved, load_path, remove_saved, rename_saved, saved_path,
-    skipped_notice, spawn_player, AudioConfig, AudioOutput, Command,
+    apply_to_player, copy_saved, list_saved, load_path, remove_saved, rename_saved,
+    restore_session, save_session_from_player, saved_path, skipped_notice, spawn_player,
+    AudioConfig, AudioOutput, Command,
 };
 use znicz_library::Library;
 use znicz_mcp::run_stdio;
@@ -320,6 +321,7 @@ fn run_tui(
     library_path: Option<PathBuf>,
 ) -> color_eyre::Result<()> {
     let (player, _thread) = spawn_player(audio_config);
+    let session_notice = restore_player(&player, files.is_empty())?;
 
     if !files.is_empty() {
         let items: Vec<znicz_core::QueueItem> = files
@@ -334,7 +336,7 @@ fn run_tui(
         }
     }
 
-    run_tui_with_player(player, library_path, None)
+    run_tui_with_player(player, library_path, session_notice)
 }
 
 fn playlists_dir() -> color_eyre::Result<PathBuf> {
@@ -347,6 +349,34 @@ fn stations_path() -> color_eyre::Result<PathBuf> {
     znicz_library::default_stations_path().ok_or_else(|| {
         color_eyre::eyre::eyre!("cannot work out where to keep stations; set ZNICZ_STATIONS_PATH")
     })
+}
+
+fn session_path() -> color_eyre::Result<PathBuf> {
+    znicz_library::default_session_path().ok_or_else(|| {
+        color_eyre::eyre::eyre!("cannot work out where to keep the session; set ZNICZ_SESSION_PATH")
+    })
+}
+
+fn restore_player(
+    player: &znicz_core::PlayerHandle,
+    restore_queue: bool,
+) -> color_eyre::Result<Option<String>> {
+    let skipped = restore_session(player, &session_path()?, restore_queue)?;
+    Ok(if skipped > 0 {
+        Some(format!(
+            "skipped {skipped} missing file(s) from last session"
+        ))
+    } else {
+        None
+    })
+}
+
+fn merge_notices(a: Option<String>, b: Option<String>) -> Option<String> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(format!("{a}; {b}")),
+        (Some(a), None) | (None, Some(a)) => Some(a),
+        (None, None) => None,
+    }
 }
 
 fn list_stations() -> color_eyre::Result<()> {
@@ -379,8 +409,9 @@ fn play_station_and_run(
         .ok_or_else(|| color_eyre::eyre::eyre!("no station named {name}"))?
         .clone();
     let (player, _thread) = spawn_player(audio_config);
+    let session_notice = restore_player(&player, append)?;
     znicz_core::play_station(&player, &station, append)?;
-    run_tui_with_player(player, library_path, None)
+    run_tui_with_player(player, library_path, session_notice)
 }
 
 fn list_playlists() -> color_eyre::Result<()> {
@@ -399,8 +430,13 @@ fn load_playlist_and_run(
 ) -> color_eyre::Result<()> {
     let result = load_path(&path)?;
     let (player, _thread) = spawn_player(audio_config);
+    let session_notice = restore_player(&player, append)?;
     apply_to_player(&player, &result, append)?;
-    run_tui_with_player(player, library_path, skipped_notice(&result))
+    run_tui_with_player(
+        player,
+        library_path,
+        merge_notices(session_notice, skipped_notice(&result)),
+    )
 }
 
 fn run_tui_with_player(
@@ -509,6 +545,9 @@ fn run_mcp(
     library_path: Option<PathBuf>,
 ) -> color_eyre::Result<()> {
     let (player, _thread) = spawn_player(audio_config);
+    if let Err(e) = restore_player(&player, true) {
+        tracing::warn!("session restore: {e}");
+    }
 
     // A broken library must not stop the player tools from working.
     let library = library_path.and_then(|path| match Library::open(&path) {
@@ -522,8 +561,13 @@ fn run_mcp(
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
-        .block_on(run_stdio(player, skills_dirs, library))
+        .block_on(run_stdio(player.clone(), skills_dirs, library))
         .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
+    if let Ok(path) = session_path() {
+        if let Err(e) = save_session_from_player(&player, &path) {
+            tracing::warn!("session.toml: {e}");
+        }
+    }
     Ok(())
 }
 

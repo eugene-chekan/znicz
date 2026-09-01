@@ -122,6 +122,26 @@ the decoded PCM rate (1411 kbps for CD-shape WAV).
 **Later:** ICY song titles on the transport, HLS, PLS, XSPF. See the
 [roadmap](../Plans/Roadmap.md#later-radio-after-phase-4).
 
+## Session
+
+The live queue is **`session.toml`** beside stations and the library database:
+
+- Linux: `~/.local/share/znicz/session.toml`
+- Windows: `%APPDATA%\znicz\session.toml`
+
+Override with `ZNICZ_SESSION_PATH`. It holds file and stream rows, the queue
+index, volume, mute, repeat, and shuffle. Not seek, not whether you were
+playing, not the output device.
+
+Bare `znicz` and `znicz mcp` restore it **Stopped** (Space starts the current
+row). Missing local files are skipped; streams stay. `znicz file.flac`,
+playlist play, and station play without `--append` do not load the old queue.
+`--append` restores first, then appends. Clearing the queue writes an empty
+session.
+
+This is not `~/.cache/znicz/znicz-session.log` (TUI stderr). A later app-state
+database may replace this file; see the [roadmap](../Plans/Roadmap.md).
+
 ## Library
 
 A library is a **database of tracks** (path, tags, duration) plus search:

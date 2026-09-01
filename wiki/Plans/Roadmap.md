@@ -87,13 +87,18 @@ Not in this version. Still later:
 
 Settings stay [#6](https://github.com/eugene-chekan/znicz/issues/6). Playlist formats themselves are described in [Formats and metadata](../Domain/Formats-and-Metadata.md#playlist-formats).
 
-## Later playlists and session (parked)
+## Later playlists (parked)
 
 Not in this version. Tracked as GitHub issues; see [Issues](../Issues.md).
 
 - Browse and edit a saved playlist (view, delete rows, reorder) — [#18](https://github.com/eugene-chekan/znicz/issues/18)
 - Add a library item to a saved playlist — [#19](https://github.com/eugene-chekan/znicz/issues/19)
-- Persist the queue across restarts — [#20](https://github.com/eugene-chekan/znicz/issues/20)
+
+## Later app state
+
+Session today is `session.toml` ([#20](https://github.com/eugene-chekan/znicz/issues/20), done).
+A **separate database** for app state and configuration (not `library.db`) is
+later, with the settings overlay ([#6](https://github.com/eugene-chekan/znicz/issues/6)).
 
 ## Phase 5
 

@@ -73,6 +73,8 @@ path = "~/.local/share/znicz/library.db"
 
 `bit_perfect` is a flag for later policy (skip software volume, refuse resampling). Phase 1 still has a software volume control.
 
+The last queue lives in `session.toml` in the data dir (see [Formats and metadata](../Domain/Formats-and-Metadata.md#session)). Device pick stays in `config.toml`. A later app-state database may hold both.
+
 ## Pages
 
 - [Audio engine](Core-Engine.md)

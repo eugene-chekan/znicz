@@ -12,6 +12,7 @@ Cross-platform audiophile TUI music player with a native MCP server for AI agent
 - Music library: folder scan, tag indexing, search and album browse
 - Repeat, shuffle, mute, and errors reported on screen rather than only in the log
 - Radio stations: HTTP/Icecast byte streams from the TUI, CLI, and MCP
+- Session restore: queue, volume, mute, repeat, and shuffle survive a restart
 - MCP server: tools, resources, prompts, and bundled Agent Skills
 
 ## Build
@@ -145,7 +146,7 @@ cargo run -p znicz-tui --example preview -- 120 40
 
 While the TUI is running, stderr is redirected to `~/.cache/znicz/znicz-session.log`
 so that ALSA's warnings cannot draw over the interface. Look there if the player
-misbehaves.
+misbehaves. That log is not `session.toml` (the saved queue).
 
 ## Configuration
 
@@ -164,6 +165,12 @@ skills_dirs = []
 # Optional. Defaults to the user data directory.
 path = "~/.local/share/znicz/library.db"
 ```
+
+The last queue (and volume, mute, repeat, shuffle) is
+`~/.local/share/znicz/session.toml`. Override with `ZNICZ_SESSION_PATH`.
+Opening the player restores it **Stopped**; it does not auto-play.
+`znicz file.flac` / playlist or station play without `--append` does not load
+the old queue. This is not the stderr log above.
 
 ## MCP (Cursor)
 

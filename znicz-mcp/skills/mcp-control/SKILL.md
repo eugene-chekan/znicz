@@ -34,3 +34,6 @@ description: Control znicz via MCP tools and resources. Use when driving playbac
 2. `queue_remove` with a 0-based index to drop one row (same rule as TUI `d`)
 3. Poll `get_player_state` or subscribe to resources for progress
 4. Load domain skills (`audiophile-playback`, etc.) only when needed
+
+The live queue is restored from `session.toml` when `znicz mcp` starts (Stopped).
+Mutating tools write that file. Override `ZNICZ_SESSION_PATH`.
