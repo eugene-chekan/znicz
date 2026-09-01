@@ -75,12 +75,12 @@ HTTP/Icecast byte streams and a station list. Spec:
 - Playing a station clears the queue and starts that stream
 - Overlay keys match Playlists (`n` / `e` / `c` / `d`); `a` appends a station; Enter still replaces
 - Live **coded bitrate** on the transport while a stream plays (compressed bytes vs PCM time)
+- Icecast **ICY now playing** — `StreamTitle` on the transport; queue rows stay the station name
 
 ### Later radio (after Phase 4)
 
 Not in this version. Still later:
 
-- **ICY now playing** — parse Icecast `StreamTitle` and show the current song on the transport (not only the station name)
 - **HLS** — `.m3u8` segment playlists (a second source type)
 - **PLS** — INI-style playlist files (`File1=`, `Title1=`)
 - **XSPF** — XML Shareable Playlist Format

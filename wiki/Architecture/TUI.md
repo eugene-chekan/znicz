@@ -168,10 +168,12 @@ ends, Backspace and Delete edit at the caret. A typo at the start of a name
 does not mean retyping the whole line. The unfocused field of the form shows
 the text without a caret.
 
-Transport shows the station name. Duration is unknown, so the total time is
-`—` and the seek bar stays empty. Seek is refused. After a short decode, the
-signal-path line includes the stream’s coded bitrate (`N kbps`). Playing a
-station puts that stream on the queue, so the queue can show a station name.
+Transport shows Icecast `StreamTitle` when the station sends it, otherwise the
+station name. Queue rows stay the station name. Duration is unknown, so the
+total time is `—` and the seek bar stays empty. Seek is refused. After a short
+decode, the signal-path line includes the stream’s coded bitrate (`N kbps`).
+Playing a station puts that stream on the queue, so the queue can show a
+station name.
 
 `r` on the library, playlists, devices, or radio reloads **the list in front**.
 Repeat is `e`, shuffle is `z`. The full keymap lives in `znicz-tui/src/keys.rs`

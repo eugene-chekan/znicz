@@ -19,10 +19,10 @@ Playlists (file, do not start unless asked):
 - [#18 Browse and edit saved playlist contents](https://github.com/eugene-chekan/znicz/issues/18) (view, delete rows, reorder)
 - [#19 Add a library item to a saved playlist](https://github.com/eugene-chekan/znicz/issues/19)
 
-Product phases 5–6 (album art, MusicBrainz) and **later radio** (ICY,
-HLS, PLS, XSPF) are on the
+Product phases 5–6 (album art, MusicBrainz) and **later radio** (HLS, PLS,
+XSPF) are on the
 [roadmap](Plans/Roadmap.md), not duplicated as issues yet. Phase 4 (radio
-streams) is done.
+streams, including ICY now playing) is done.
 
 ## Closed
 
