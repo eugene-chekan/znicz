@@ -90,22 +90,36 @@ pub fn load_path(path: &Path) -> Result<LoadResult> {
     Ok(parse(&text, base))
 }
 
-/// UTF-8, no BOM, one absolute path per line.
-pub fn write_text(paths: &[PathBuf]) -> String {
+/// UTF-8, no BOM. Files as absolute paths; streams as URL lines, with
+/// `#EXTINF:-1,Name` when the name is not the URL.
+pub fn write_text(queue: &[QueueItem]) -> String {
     let mut out = String::new();
-    for path in paths {
-        let absolute = path.canonicalize().unwrap_or_else(|_| path.clone());
-        out.push_str(&absolute.to_string_lossy());
-        out.push('\n');
+    for item in queue {
+        match item {
+            QueueItem::File { path } => {
+                let absolute = path.canonicalize().unwrap_or_else(|_| path.clone());
+                out.push_str(&absolute.to_string_lossy());
+                out.push('\n');
+            }
+            QueueItem::Stream { name, url } => {
+                if name != url {
+                    out.push_str("#EXTINF:-1,");
+                    out.push_str(name);
+                    out.push('\n');
+                }
+                out.push_str(url);
+                out.push('\n');
+            }
+        }
     }
     out
 }
 
-pub fn write_path(path: &Path, paths: &[PathBuf]) -> Result<()> {
+pub fn write_path(path: &Path, queue: &[QueueItem]) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, write_text(paths))?;
+    fs::write(path, write_text(queue))?;
     Ok(())
 }
 
@@ -260,22 +274,6 @@ pub fn saved_path(dir: &Path, name: &str) -> Option<PathBuf> {
         }
     }
     None
-}
-
-pub fn m3u_paths(queue: &[QueueItem]) -> Result<Vec<PathBuf>> {
-    if queue.iter().any(|item| item.is_stream()) {
-        return Err(ZniczError::Player(
-            "cannot save a queue that contains a radio station".into(),
-        ));
-    }
-    let paths: Vec<PathBuf> = queue
-        .iter()
-        .filter_map(|item| item.as_path().map(Path::to_path_buf))
-        .collect();
-    if paths.is_empty() {
-        return Err(ZniczError::Player("queue is empty".into()));
-    }
-    Ok(paths)
 }
 
 /// Clear and play (`append == false`) or only append.
@@ -449,7 +447,7 @@ mod tests {
         let dir = tmp();
         let a = touch(&dir, "a.flac");
         let b = touch(&dir, "b.flac");
-        let text = write_text(&[a.clone(), b.clone()]);
+        let text = write_text(&[QueueItem::file(a.clone()), QueueItem::file(b.clone())]);
         assert!(!text.contains('\u{feff}'));
         let result = parse(&text, &dir);
         // `write_text` writes `canonicalize()` output. On Windows that adds a
@@ -570,28 +568,34 @@ mod tests {
     }
 
     #[test]
-    fn m3u_paths_writes_files_only_queues() {
-        use crate::player::state::QueueItem;
-        let paths = m3u_paths(&[QueueItem::file("/music/a.flac")]).unwrap();
-        assert_eq!(paths, vec![std::path::PathBuf::from("/music/a.flac")]);
-    }
-
-    #[test]
-    fn m3u_paths_refuses_a_queue_that_contains_a_station() {
-        use crate::player::state::QueueItem;
-        let err = m3u_paths(&[
-            QueueItem::file("/music/a.flac"),
+    fn write_text_emits_extinf_for_named_streams_and_bare_urls() {
+        let dir = tmp();
+        let a = touch(&dir, "a.flac");
+        let text = write_text(&[
+            QueueItem::file(a.clone()),
             QueueItem::stream("Live", "http://127.0.0.1:1/s"),
-        ])
-        .unwrap_err();
-        assert!(err.to_string().contains("radio station"), "{err}");
-    }
-
-    #[test]
-    fn m3u_paths_refuses_a_station_only_queue() {
-        use crate::player::state::QueueItem;
-        let err = m3u_paths(&[QueueItem::stream("Live", "http://127.0.0.1:1/s")]).unwrap_err();
-        assert!(err.to_string().contains("radio station"), "{err}");
+            QueueItem::stream("http://example.com/bare", "http://example.com/bare"),
+        ]);
+        assert!(!text.contains('\u{feff}'));
+        assert!(
+            text.contains("#EXTINF:-1,Live\nhttp://127.0.0.1:1/s\n"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("#EXTINF:-1,http://example.com/bare"),
+            "{text}"
+        );
+        assert!(text.contains("http://example.com/bare\n"), "{text}");
+        let parsed = parse(&text, &dir);
+        assert_eq!(
+            parsed.items,
+            vec![
+                QueueItem::file(a.canonicalize().unwrap()),
+                QueueItem::stream("Live", "http://127.0.0.1:1/s"),
+                QueueItem::stream("http://example.com/bare", "http://example.com/bare"),
+            ]
+        );
+        assert_eq!(parsed.skipped, 0);
     }
 
     #[test]

@@ -870,7 +870,7 @@ fn seek_on_a_stream_queue_row_toasts() {
 }
 
 #[test]
-fn playlist_save_of_a_stream_queue_is_refused() {
+fn playlist_save_of_a_stream_queue_opens_the_prompt() {
     let mut app = new_app();
     app.player
         .send_blocking(Command::QueueAdd(vec![QueueItem::stream(
@@ -880,9 +880,11 @@ fn playlist_save_of_a_stream_queue_is_refused() {
         .unwrap();
     press_char(&mut app, 'P');
     press_char(&mut app, 'n');
-    assert!(app.playlist_prompt.is_none());
-    let toast = app.toasts.current().unwrap();
-    assert!(toast.text.contains("radio station"), "{}", toast.text);
+    assert!(
+        matches!(app.playlist_prompt, Some(PlaylistPrompt::Save(_))),
+        "n should save a station-only queue, got {:?}",
+        app.playlist_prompt
+    );
 }
 
 #[test]
@@ -1003,7 +1005,7 @@ fn n_on_a_stream_with_another_row_moves_on() {
 }
 
 #[test]
-fn playlist_save_of_a_mixed_queue_is_refused() {
+fn playlist_save_of_a_mixed_queue_opens_the_prompt() {
     let mut app = new_app();
     app.player
         .send_blocking(Command::QueueAdd(vec![
@@ -1013,9 +1015,11 @@ fn playlist_save_of_a_mixed_queue_is_refused() {
         .unwrap();
     press_char(&mut app, 'P');
     press_char(&mut app, 'n');
-    assert!(app.playlist_prompt.is_none());
-    let toast = app.toasts.current().unwrap();
-    assert!(toast.text.contains("radio station"), "{}", toast.text);
+    assert!(
+        matches!(app.playlist_prompt, Some(PlaylistPrompt::Save(_))),
+        "n should save a mixed queue, got {:?}",
+        app.playlist_prompt
+    );
 }
 
 #[test]

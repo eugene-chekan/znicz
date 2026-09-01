@@ -756,10 +756,6 @@ impl App {
             self.toasts.warn("queue is empty");
             return;
         }
-        if let Err(e) = znicz_core::m3u_paths(&queue) {
-            self.toasts.error(e.to_string());
-            return;
-        }
         self.playlist_prompt = Some(PlaylistPrompt::Save(LineEdit::new()));
     }
 
@@ -812,14 +808,7 @@ impl App {
         };
         let path = self.playlists_dir.join(&name);
         let queue = self.player.state().queue;
-        let paths = match znicz_core::m3u_paths(&queue) {
-            Ok(paths) => paths,
-            Err(e) => {
-                self.toasts.error(e.to_string());
-                return;
-            }
-        };
-        match write_path(&path, &paths) {
+        match write_path(&path, &queue) {
             Ok(()) => {
                 let stem = name
                     .strip_suffix(".m3u8")

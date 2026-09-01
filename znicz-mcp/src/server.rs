@@ -604,8 +604,7 @@ impl ZniczMcpServer {
             return Err(McpError::invalid_params("queue is empty", None));
         }
         let name = sanitize_stem(&params.name).map_err(Self::map_io)?;
-        let paths = znicz_core::m3u_paths(&queue).map_err(Self::map_io)?;
-        write_path(&self.playlists_dir.join(&name), &paths).map_err(Self::map_io)?;
+        write_path(&self.playlists_dir.join(&name), &queue).map_err(Self::map_io)?;
         Self::json_result(&serde_json::json!({ "saved": name }))
     }
 
@@ -1527,32 +1526,33 @@ mod tests {
     }
 
     #[test]
-    fn save_playlist_errors_when_the_queue_has_a_station() {
-        let (server, path) = station_server();
+    fn save_playlist_writes_a_station_row() {
+        let (server, dir) = playlist_server();
         server
             .queue_add(Parameters(QueueAddParams {
                 paths: vec!["/music/a.flac".into()],
             }))
             .unwrap();
         server
-            .add_radio_station(Parameters(StationAddParams {
-                name: "Live".into(),
-                url: "http://127.0.0.1:1/s".into(),
-            }))
+            .player
+            .send_blocking(Command::QueueAdd(vec![znicz_core::QueueItem::stream(
+                "Live",
+                "http://127.0.0.1:1/s",
+            )]))
             .unwrap();
         server
-            .play_station(Parameters(StationPlayParams {
-                name: "Live".into(),
-                append: true,
-            }))
-            .expect("append station");
-        let err = server
             .save_playlist(Parameters(SavePlaylistParams {
                 name: "evening".into(),
             }))
-            .unwrap_err();
-        assert!(err.to_string().contains("radio station"), "{err}");
-        let _ = std::fs::remove_file(path);
+            .expect("save mixed queue");
+        let body = std::fs::read_to_string(dir.join("evening.m3u")).unwrap();
+        assert!(body.contains("#EXTINF:-1,Live"), "{body}");
+        assert!(body.contains("http://127.0.0.1:1/s"), "{body}");
+        assert!(
+            body.contains("/music/a.flac") || body.contains("a.flac"),
+            "{body}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
