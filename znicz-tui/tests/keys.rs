@@ -310,6 +310,42 @@ fn d_removes_the_selected_queue_entry() {
 }
 
 #[test]
+fn d_on_the_last_queue_row_leaves_the_cursor_on_the_new_last() {
+    let mut app = new_app();
+    queue(&mut app, 3);
+    open_queue(&mut app);
+    press_char(&mut app, 'G');
+    assert_eq!(app.queue_cursor.index(), 2);
+
+    press_char(&mut app, 'd');
+
+    assert_eq!(app.state().queue.len(), 2);
+    assert_eq!(
+        app.queue_cursor.selected(app.state().queue.len()),
+        Some(1),
+        "cursor should sit on the last remaining row"
+    );
+}
+
+#[test]
+fn d_on_a_middle_queue_row_keeps_the_cursor_on_that_index() {
+    let mut app = new_app();
+    queue(&mut app, 3);
+    open_queue(&mut app);
+    press_char(&mut app, 'j');
+    assert_eq!(app.queue_cursor.index(), 1);
+
+    press_char(&mut app, 'd');
+
+    assert_eq!(app.state().queue.len(), 2);
+    assert_eq!(
+        app.queue_cursor.selected(app.state().queue.len()),
+        Some(1),
+        "the row that slid in should stay under the cursor"
+    );
+}
+
+#[test]
 fn shift_c_clears_the_whole_queue() {
     let mut app = new_app();
     queue(&mut app, 3);
