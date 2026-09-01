@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::error::{Result, ZniczError};
 use crate::player::commands::Command;
 use crate::player::engine::PlayerHandle;
-use crate::player::state::QueueItem;
+use crate::player::state::{is_http_url, QueueItem};
 
 /// What a playlist file turned into.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -18,11 +18,6 @@ pub struct LoadResult {
     pub items: Vec<QueueItem>,
     /// Missing local files and non-http(s) URLs. Comments and blank lines are not counted.
     pub skipped: usize,
-}
-
-fn is_http_url(line: &str) -> bool {
-    let lower = line.to_ascii_lowercase();
-    lower.starts_with("http://") || lower.starts_with("https://")
 }
 
 fn extinf_title(line: &str) -> Option<Option<String>> {
