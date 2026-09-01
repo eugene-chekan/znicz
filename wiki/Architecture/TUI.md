@@ -116,7 +116,8 @@ Nothing is invented when a field is missing — an unknown sample format shows a
 ### Playlists
 
 A centered modal (`P`, shift-p — not `p`, which is previous track). Lists
-`.m3u` / `.m3u8` files in the playlists folder. The overlay uses the same
+`.m3u` / `.m3u8` files in the playlists folder. A playlist file may list
+local paths and http(s) URLs; save writes both. The overlay uses the same
 saved-list keys as Radio. While it is open (and you are not typing a prompt),
 those keys win over the global map: `n` is new, not next track; `e` is edit,
 not repeat. Space, `s`, seek, and volume stay global. After Esc, `n` and `e`

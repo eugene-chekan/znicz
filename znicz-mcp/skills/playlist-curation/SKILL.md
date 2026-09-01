@@ -5,8 +5,9 @@ description: Import, save, play, rename, copy, and delete M3U playlists in znicz
 
 # Playlist Curation
 
-Playlists are **M3U / M3U8 files of local paths**. There is no playlist table in
-SQLite. PLS, XSPF, and stream URLs are out of scope.
+Playlists are **M3U / M3U8 files of local paths and http(s) URLs**. There is no
+playlist table in SQLite. Stream URLs are in scope for load/save. PLS and XSPF
+are still out of scope.
 
 Saved files live beside the library database:
 `~/.local/share/znicz/playlists/` on Linux, `%APPDATA%\znicz\playlists\` on
@@ -25,10 +26,11 @@ Windows. Import-by-path can point anywhere.
 | `remove_playlist` | `name` | Delete a saved file |
 
 `append: false` **clears the queue and starts the first track**.
-`append: true` **adds the paths and does not start or stop playback**.
+`append: true` **adds and does not start or stop playback**.
 
-Each play/import result includes `loaded`, `skipped`, and `state`. Comments and
-blank lines are ignored. Lines with `://` and missing files are skipped and
+Each play/import result includes `loaded`, `skipped`, and `state`. `loaded`
+counts files and stream rows. Comments and blank lines are ignored. Other
+`://` lines (`ftp://`, `file://`, …) and missing files are skipped and
 counted. If nothing playable remains, the tool errors and the queue is unchanged.
 
 ## Typical workflow
@@ -50,7 +52,8 @@ counted. If nothing playable remains, the tool errors and the queue is unchanged
 - Relative paths in a file resolve against that file’s directory.
 - The TUI does the same two play actions: `P` then Enter (clear and play) or `a`
   (add). `n` saves. `e` renames. `c` copies. `d` deletes.
-- Do not invent stream playback from `http://` lines; they are skipped.
+- `#EXTINF` before a URL is the queue name. A bare URL uses the URL as the name.
+  `save_playlist` writes `#EXTINF` when the row has a name that is not the URL.
 
 ## Related
 

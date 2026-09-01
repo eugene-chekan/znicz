@@ -18,7 +18,7 @@ Queue:
 - [#15 MCP `queue_remove` for a single queue row](https://github.com/eugene-chekan/znicz/issues/15)
 
 Product phases 5–6 (album art, MusicBrainz) and **later radio** (ICY,
-HLS, M3U stream lines) are on the
+HLS) are on the
 [roadmap](Plans/Roadmap.md), not duplicated as issues yet. Phase 4 (radio
 streams) is done.
 
