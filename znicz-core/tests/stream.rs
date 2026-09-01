@@ -50,10 +50,17 @@ fn silent_wav_bytes(sample_rate: u32, channels: u16, frames: u32) -> Vec<u8> {
 }
 
 fn serve_once(body: Vec<u8>, content_type: &str) -> String {
+    serve_once_with(body, content_type, None)
+}
+
+fn serve_once_with(body: Vec<u8>, content_type: &str, icy_metaint: Option<usize>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
+    let icy = icy_metaint
+        .map(|n| format!("icy-metaint: {n}\r\n"))
+        .unwrap_or_default();
     let header = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\n{icy}Content-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
     thread::spawn(move || {
@@ -64,6 +71,15 @@ fn serve_once(body: Vec<u8>, content_type: &str) -> String {
         let _ = stream.write_all(&body);
     });
     format!("http://{addr}/stream")
+}
+
+fn icy_block(payload: &str) -> Vec<u8> {
+    let mut bytes = payload.as_bytes().to_vec();
+    let padded = bytes.len().div_ceil(16) * 16;
+    bytes.resize(padded, 0);
+    let mut out = vec![(padded / 16) as u8];
+    out.extend(bytes);
+    out
 }
 
 /// Decode-only: no cpal, no device. Skip only when ffmpeg cannot make the MP3.
@@ -288,6 +304,51 @@ fn dropped_stream_body_stops_playback() {
             panic!(
                 "expected Error then Stopped with no output; saw_error={saw_error} status={:?} output={:?}",
                 state.status, state.output
+            );
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn icy_stream_title_reaches_player_state() {
+    if skip_hardware_playback() {
+        return;
+    }
+
+    let wav = silent_wav_bytes(44_100, 2, 44_100);
+    let mut body = wav[..44].to_vec();
+    body.extend_from_slice(&icy_block("StreamTitle='Song';"));
+    body.extend_from_slice(&wav[44..]);
+    let url = serve_once_with(body, "audio/wav", Some(44));
+
+    let (player, _thread) = spawn_player(AudioConfig::default());
+    if let Err(e) = player.send_blocking(Command::Play(QueueItem::stream("Station", url))) {
+        eprintln!("could not start icy stream, skipping: {e}");
+        return;
+    }
+
+    let started = Instant::now();
+    loop {
+        let state = player.state();
+        let title_ok = state.current_track.as_ref().is_some_and(|track| {
+            track.title == "Song" && track.tags.title.as_deref() == Some("Song")
+        });
+        if title_ok {
+            match state.queue.get(state.queue_position) {
+                Some(QueueItem::Stream { name, .. }) => assert_eq!(name, "Station"),
+                other => panic!("queue row should stay the station, got {other:?}"),
+            }
+            return;
+        }
+        if started.elapsed() > Duration::from_secs(5) {
+            panic!(
+                "expected StreamTitle on now-playing; title={:?} tags.title={:?}",
+                state.current_track.as_ref().map(|t| t.title.as_str()),
+                state
+                    .current_track
+                    .as_ref()
+                    .and_then(|t| t.tags.title.clone())
             );
         }
         thread::sleep(Duration::from_millis(20));
