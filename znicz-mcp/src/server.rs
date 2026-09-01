@@ -164,6 +164,12 @@ struct QueueAddParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+struct QueueRemoveParams {
+    /// 0-based queue index, same as TUI `d` / `Command::QueueRemove`.
+    index: usize,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 struct DeviceParams {
     device_id: String,
 }
@@ -420,6 +426,14 @@ impl ZniczMcpServer {
             .map(znicz_core::QueueItem::file)
             .collect();
         self.apply(Command::QueueAdd(items))
+    }
+
+    #[tool(description = "Remove one queue row by 0-based index")]
+    fn queue_remove(
+        &self,
+        Parameters(params): Parameters<QueueRemoveParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        self.apply(Command::QueueRemove(params.index))
     }
 
     #[tool(description = "Clear the playback queue")]
@@ -1040,6 +1054,29 @@ mod tests {
         let queue = state["queue"].as_array().expect("queue field");
 
         assert_eq!(queue.len(), 2, "tool reported queue {queue:?}");
+    }
+
+    #[test]
+    fn queue_remove_drops_one_row_and_returns_the_new_queue() {
+        let server = server();
+        server
+            .queue_add(Parameters(QueueAddParams {
+                paths: vec!["/music/a.flac".into(), "/music/b.flac".into()],
+            }))
+            .expect("queue_add");
+
+        let result = server
+            .queue_remove(Parameters(QueueRemoveParams { index: 0 }))
+            .expect("queue_remove");
+
+        let state: serde_json::Value =
+            serde_json::from_str(&result_text(&result)).expect("state json");
+        let queue = state["queue"].as_array().expect("queue field");
+        assert_eq!(queue.len(), 1, "tool reported queue {queue:?}");
+        assert!(
+            queue[0]["path"].as_str().unwrap().ends_with("b.flac"),
+            "row 0 should slide up; got {queue:?}"
+        );
     }
 
     /// A failing command must surface as an error, not a silent stale snapshot.

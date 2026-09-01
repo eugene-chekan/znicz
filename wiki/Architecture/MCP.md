@@ -30,7 +30,8 @@ Library tools (`scan_library`, `search_library`, `get_track`, `browse_album`,
 `copy_playlist`, `remove_playlist`) load, write, rename, copy, and delete M3U
 files; see [Formats and metadata](../Domain/Formats-and-Metadata.md#playlists-phase-3).
 Playlists may contain http(s) stream rows; `save_playlist` writes those URLs
-(and `#EXTINF` when named). `queue_add` stays paths-only.
+(and `#EXTINF` when named). `queue_add` stays paths-only. `queue_remove`
+drops one row by 0-based index (same engine command as TUI `d`).
 
 Radio tools talk to `stations.toml`: `list_stations`, `add_radio_station`,
 `play_station` (clears the queue and starts the stream by default; `append: true` adds without starting), `rename_radio_station`,

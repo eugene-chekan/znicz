@@ -14,10 +14,6 @@ Parked TUI ideas (file, do not start unless asked):
 - [#9 Library tree view with expandable nodes](https://github.com/eugene-chekan/znicz/issues/9)
 - [#22 Show the app version](https://github.com/eugene-chekan/znicz/issues/22) (place and shape still open)
 
-Queue:
-
-- [#15 MCP `queue_remove` for a single queue row](https://github.com/eugene-chekan/znicz/issues/15)
-
 Playlists and session (file, do not start unless asked):
 
 - [#18 Browse and edit saved playlist contents](https://github.com/eugene-chekan/znicz/issues/18) (view, delete rows, reorder)
@@ -30,6 +26,16 @@ HLS, PLS, XSPF) are on the
 streams) is done.
 
 ## Closed
+
+### [#15 MCP `queue_remove`](https://github.com/eugene-chekan/znicz/issues/15)
+
+- **Fixed:** 2026-09-01
+- **Component:** `znicz-mcp`
+- **Status:** **Fixed** in 0.3.5
+
+`queue_remove` takes a 0-based index and uses `Command::QueueRemove`, so a
+playing-row delete matches TUI `d`. An index past the end is ignored. The
+tool waits for the engine and returns the new state.
 
 ### [#14 Deleting the playing queue row](https://github.com/eugene-chekan/znicz/issues/14)
 
