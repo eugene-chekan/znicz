@@ -32,6 +32,7 @@ pub struct ZniczMcpServer {
     library: SharedLibrary,
     playlists_dir: PathBuf,
     stations_path: PathBuf,
+    session_path: PathBuf,
     tool_router: ToolRouter<Self>,
 }
 
@@ -59,6 +60,8 @@ impl ZniczMcpServer {
                 .unwrap_or_else(|| std::env::temp_dir().join("znicz-playlists")),
             stations_path: znicz_library::default_stations_path()
                 .unwrap_or_else(|| std::env::temp_dir().join("znicz-stations.toml")),
+            session_path: znicz_library::default_session_path()
+                .unwrap_or_else(|| std::env::temp_dir().join("znicz-session.toml")),
             tool_router: Self::tool_router(),
         }
     }
@@ -108,7 +111,14 @@ impl ZniczMcpServer {
     /// the command worked.
     fn apply(&self, command: Command) -> Result<rmcp::model::CallToolResult, McpError> {
         map_player_err(self.player.send_blocking(command))?;
+        self.persist_session();
         self.ok_state()
+    }
+
+    fn persist_session(&self) {
+        if let Err(e) = znicz_core::save_session_from_player(&self.player, &self.session_path) {
+            tracing::warn!("session.toml: {e}");
+        }
     }
 
     fn apply_playlist(
@@ -117,6 +127,7 @@ impl ZniczMcpServer {
         append: bool,
     ) -> Result<rmcp::model::CallToolResult, McpError> {
         map_player_err(apply_to_player(&self.player, &result, append))?;
+        self.persist_session();
         Self::json_result(&serde_json::json!({
             "loaded": result.items.len(),
             "skipped": result.skipped,
@@ -692,11 +703,9 @@ impl ZniczMcpServer {
             .ok_or_else(|| {
                 McpError::invalid_params(format!("no station named {:?}", params.name), None)
             })?;
-        map_player_err(znicz_core::play_station(
-            &self.player,
-            &station,
-            params.append,
-        ))?;
+        let result = znicz_core::play_station(&self.player, &station, params.append);
+        self.persist_session();
+        map_player_err(result)?;
         self.ok_state()
     }
 
@@ -986,8 +995,8 @@ mod tests {
     use super::*;
     use znicz_core::{spawn_player, AudioConfig, PlaybackStatus};
 
-    /// Serialises `ZNICZ_STATIONS_PATH` writes against other tests that read env
-    /// while constructing a server (`default_playlists_dir` / `default_stations_path`).
+    /// Serialises `ZNICZ_STATIONS_PATH` / `ZNICZ_SESSION_PATH` writes against
+    /// other tests that read env while constructing a server.
     static STATIONS_ENV: Mutex<()> = Mutex::new(());
 
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
@@ -996,12 +1005,30 @@ mod tests {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    fn unique_temp(prefix: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "{prefix}-{}-{}.toml",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
     fn server() -> ZniczMcpServer {
         let (player, _thread) = spawn_player(AudioConfig::default());
-        // The engine thread outlives the test; the handle keeps it alive.
         std::mem::forget(_thread);
         let _lock = env_lock();
-        ZniczMcpServer::new(player, Vec::new())
+        let session = unique_temp("znicz-mcp-session");
+        unsafe {
+            std::env::set_var("ZNICZ_SESSION_PATH", &session);
+        }
+        let server = ZniczMcpServer::new(player, Vec::new());
+        unsafe {
+            std::env::remove_var("ZNICZ_SESSION_PATH");
+        }
+        server
     }
 
     fn server_with_library() -> ZniczMcpServer {
@@ -1009,7 +1036,15 @@ mod tests {
         std::mem::forget(_thread);
         let library = Library::open_in_memory().expect("in-memory library");
         let _lock = env_lock();
-        ZniczMcpServer::with_library(player, Vec::new(), library)
+        let session = unique_temp("znicz-mcp-session");
+        unsafe {
+            std::env::set_var("ZNICZ_SESSION_PATH", &session);
+        }
+        let server = ZniczMcpServer::with_library(player, Vec::new(), library);
+        unsafe {
+            std::env::remove_var("ZNICZ_SESSION_PATH");
+        }
+        server
     }
 
     fn result_text(result: &rmcp::model::CallToolResult) -> String {
@@ -1037,6 +1072,21 @@ mod tests {
             (volume - 0.3).abs() < 1e-6,
             "tool reported volume {volume}, expected 0.3"
         );
+    }
+
+    #[test]
+    fn set_volume_writes_session_toml() {
+        let server = server();
+        server
+            .set_volume(Parameters(VolumeParams { volume: 0.3 }))
+            .expect("set_volume");
+        let loaded = znicz_core::load_session(&server.session_path).expect("load session");
+        assert!(
+            (loaded.volume - 0.3).abs() < 1e-6,
+            "session volume {}",
+            loaded.volume
+        );
+        let _ = std::fs::remove_file(&server.session_path);
     }
 
     #[test]
@@ -1517,9 +1567,14 @@ mod tests {
         unsafe {
             std::env::set_var("ZNICZ_STATIONS_PATH", &path);
         }
+        let session = unique_temp("znicz-mcp-session");
+        unsafe {
+            std::env::set_var("ZNICZ_SESSION_PATH", &session);
+        }
         let server = ZniczMcpServer::new(player, Vec::new());
         unsafe {
             std::env::remove_var("ZNICZ_STATIONS_PATH");
+            std::env::remove_var("ZNICZ_SESSION_PATH");
         }
         (server, path)
     }

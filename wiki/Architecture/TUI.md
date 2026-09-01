@@ -8,6 +8,10 @@ experience lives. The interface is an **immediate-mode** loop:
 3. Wait for a key, or for the tick that advances the seek bar
 4. Repeat until `q`
 
+On quit (and shortly after the queue or volume/repeat/shuffle/mute changes)
+the TUI writes `session.toml`. Bare start restores that session **Stopped**.
+See [Formats and metadata](../Domain/Formats-and-Metadata.md#session).
+
 Ratatui does not keep widgets as a tree you mutate. You describe the layout
 **every frame**. That suits a player, where the position moves constantly.
 
@@ -195,7 +199,8 @@ The traffic goes the other way too. ALSA and other C libraries write warnings
 full-screen interface that means text appearing on top of the layout — during
 device enumeration, and again whenever a stream is opened. So the binary points
 stderr at `~/.cache/znicz/znicz-session.log` for as long as the TUI owns the
-terminal, and restores it on exit. Nothing is lost; it just stops being drawn on
+terminal, and restores it on exit. That file is a log, not the saved queue
+(`session.toml`). Nothing is lost; it just stops being drawn on
 top of the player.
 
 ## Modules

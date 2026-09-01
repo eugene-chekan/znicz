@@ -45,7 +45,7 @@ Goals:
 - [Digital audio](Domain/Digital-Audio.md) — sample rate, bit depth, PCM
 - [Audiophile ideas](Domain/Audiophile-Basics.md) — bit-perfect, DACs, why resampling matters
 - [Playback pipeline](Domain/Playback-Pipeline.md) — file → decode → ring → speakers
-- [Formats and tags](Domain/Formats-and-Metadata.md) — FLAC, WAV, playlist formats, radio
+- [Formats and tags](Domain/Formats-and-Metadata.md) — FLAC, WAV, playlist formats, radio, session
 - [TUI players](Domain/TUI-Players.md) — why a terminal UI
 
 ### Architecture (this codebase)

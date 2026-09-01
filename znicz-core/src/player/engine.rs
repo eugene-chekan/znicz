@@ -11,7 +11,7 @@ use crate::audio::output::AudioOutput;
 use crate::audio::source::{AudioDecoder, AudioSource, LocalFileSource};
 use crate::error::{Result, ZniczError};
 use crate::player::commands::{Command, CommandEnvelope, PlayerEvent};
-use crate::player::state::{OutputInfo, PlaybackStatus, PlayerState, RepeatMode};
+use crate::player::state::{OutputInfo, PlaybackStatus, PlayerState, QueueItem, RepeatMode};
 
 /// Non-zero starting point for the shuffle generator.
 fn seed_from_clock() -> u64 {
@@ -270,6 +270,7 @@ impl PlayerEngine {
             }
             Command::QueuePlayIndex(index) => self.play_queue_index(index)?,
             Command::QueueRemove(index) => self.remove_from_queue(index)?,
+            Command::ReplaceQueue { items, position } => self.replace_queue(items, position)?,
             Command::SetRepeat(mode) => {
                 self.state.write().unwrap().repeat = mode;
                 self.emit_state_changed();
@@ -510,6 +511,18 @@ impl PlayerEngine {
         if index < state.queue.len() {
             state.queue_position = index;
         }
+        Ok(())
+    }
+
+    fn replace_queue(&mut self, items: Vec<QueueItem>, position: usize) -> Result<()> {
+        self.stop()?;
+        let mut state = self.state.write().unwrap();
+        let len = items.len();
+        state.queue = items;
+        state.queue_position = if len == 0 { 0 } else { position.min(len - 1) };
+        drop(state);
+        self.event_tx.send(PlayerEvent::QueueChanged).ok();
+        self.emit_state_changed();
         Ok(())
     }
 
