@@ -118,7 +118,7 @@ Press `?` in the player for the full keymap. The essentials:
 | Space | Play / pause |
 | s | Stop |
 | n | Next track |
-| N / p | Previous track |
+| p | Previous track |
 | P | Playlists |
 | R | Radio |
 | → ← or l h | Seek ±5s (`L` / `H` for ±30s) |

@@ -62,6 +62,7 @@ M3U files for the queue. Spec:
 - Save / play / rename / copy / delete from `~/.local/share/znicz/playlists/`
 - Clear and play, or add to queue (`P` overlay, CLI, MCP)
 - Overlay keys match Radio: `n` new, `e` edit, `c` copy, `d` delete
+- `http(s)` lines in an M3U enqueue as streams; save writes URLs and `#EXTINF` names
 - PLS / XSPF still later
 
 ## Phase 4 (done)
@@ -80,9 +81,16 @@ Not in this version. Still later:
 
 - **ICY now playing** — parse Icecast `StreamTitle` and show the current song on the transport (not only the station name)
 - **HLS** — `.m3u8` segment playlists (a second source type)
-- **M3U stream lines** — `http://` / `https://` rows in a playlist play as streams instead of being skipped
 
 PLS / XSPF stay under playlists (“still later”). Settings stay [#6](https://github.com/eugene-chekan/znicz/issues/6).
+
+## Later playlists and session (parked)
+
+Not in this version. Tracked as GitHub issues; see [Issues](../Issues.md).
+
+- Browse and edit a saved playlist (view, delete rows, reorder) — [#18](https://github.com/eugene-chekan/znicz/issues/18)
+- Add a library item to a saved playlist — [#19](https://github.com/eugene-chekan/znicz/issues/19)
+- Persist the queue across restarts — [#20](https://github.com/eugene-chekan/znicz/issues/20)
 
 ## Phase 5
 

@@ -26,21 +26,23 @@ playing music matters more than metadata.
 
 ## Playlists (Phase 3)
 
-A playlist is an **M3U / M3U8 file of local paths**. PLS and XSPF are still later.
-HTTP / Icecast lines are still skipped in this version (later radio).
+A playlist is an **M3U / M3U8 file** of local paths and `http://` / `https://`
+stream rows. PLS and XSPF are still later.
 
 | Line | Meaning |
 |------|---------|
-| Empty, or starts with `#` | Ignored (`#EXTM3U`, `#EXTINF:…`) |
-| Contains `://` | URL. Skipped and counted |
+| Empty, or a `#` comment other than `#EXTINF:` | Ignored (`#EXTM3U`, `#EXT-X-…`) |
+| `#EXTINF:…,Title` | Title for the **next** http(s) line only |
+| Starts with `http://` or `https://` | Stream row. Name is the `#EXTINF` title, or the URL |
+| Other `://` (`ftp://`, `file://`, …) | Skipped and counted |
 | Anything else | A path. Relative paths resolve against the playlist file’s directory |
 
 A UTF-8 BOM is stripped. Missing files are skipped and counted. If nothing
-playable remains, the queue is left alone.
+playable remains (no files and no http(s) lines), the queue is left alone.
 
-**Writing** is UTF-8, no BOM, one absolute path per line (the real path on
-disk, which on Windows can look different from the path you typed). Saved files live beside
-the library database:
+**Writing** is UTF-8, no BOM. File rows are one absolute path per line. Stream
+rows are the URL; if the queue name is not the URL, write `#EXTINF:-1,Name`
+on the line before. Saved files live beside the library database:
 
 - Linux: `~/.local/share/znicz/playlists/`
 - Windows: `%APPDATA%\znicz\playlists\`
@@ -94,8 +96,8 @@ The TUI overlay (`R`) uses the same saved-list keys as playlists: `n` new, `e`
 edit (name and URL on one form), `c` copy, `d` delete. Radio `a` appends the
 station. Enter / `play_station` still replace the queue.
 
-M3U playlists still **skip** `http://` / `https://` lines. **Later:** ICY song
-titles on the transport, HLS, those M3U URL lines as playable streams. See the
+M3U URL lines play as streams. **Later:** ICY song titles on the transport,
+HLS. See the
 [roadmap](../Plans/Roadmap.md#later-radio-after-phase-4).
 
 ## Library

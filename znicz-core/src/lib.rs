@@ -18,8 +18,8 @@ pub use player::state::{
     AudioDeviceInfo, OutputInfo, PlaybackStatus, PlayerState, QueueItem, RepeatMode, TrackInfo,
 };
 pub use playlist::{
-    apply_to_player, copy_saved, list_saved, load_path, m3u_paths, parse, remove_saved,
-    rename_saved, sanitize_stem, saved_path, skipped_notice, write_path, write_text, LoadResult,
+    apply_to_player, copy_saved, list_saved, load_path, parse, remove_saved, rename_saved,
+    sanitize_stem, saved_path, skipped_notice, write_path, write_text, LoadResult,
 };
 pub use station::{
     add as add_station, copy as copy_station, find as find_station, load as load_stations,

@@ -18,7 +18,7 @@ pub const GLOBAL: &[Binding] = &[
     b("Space", "play / pause"),
     b("s", "stop"),
     b("n", "next track"),
-    b("N / p", "previous track"),
+    b("p", "previous track"),
     b("P", "playlists"),
     b("R", "radio"),
     b("→ / l", "seek forward 5s"),
@@ -155,8 +155,12 @@ mod tests {
         assert!(
             GLOBAL
                 .iter()
-                .any(|b| b.keys.contains("p") && b.action.contains("previous")),
+                .any(|b| b.keys == "p" && b.action.contains("previous")),
             "global help should document p as previous"
+        );
+        assert!(
+            GLOBAL.iter().all(|b| !b.keys.contains('N')),
+            "N must not appear in the keymap"
         );
         assert!(
             hints("Library").contains("i inspect"),

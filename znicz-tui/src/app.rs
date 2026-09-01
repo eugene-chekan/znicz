@@ -421,7 +421,7 @@ impl App {
             KeyCode::Char(' ') => self.toggle_pause(),
             KeyCode::Char('s') => self.apply(Command::Stop, None),
             KeyCode::Char('n') => self.skip_track(false),
-            KeyCode::Char('N') | KeyCode::Char('p') => self.skip_track(true),
+            KeyCode::Char('p') => self.skip_track(true),
 
             KeyCode::Right if key.modifiers.contains(KeyModifiers::ALT) => {
                 self.pan_titles(1);
@@ -735,7 +735,7 @@ impl App {
                     } else if append {
                         self.toasts.success(format!(
                             "added {} from {name}",
-                            match result.paths.len() {
+                            match result.items.len() {
                                 1 => "1 track".to_string(),
                                 n => format!("{n} tracks"),
                             }
@@ -754,10 +754,6 @@ impl App {
         let queue = self.player.state().queue;
         if queue.is_empty() {
             self.toasts.warn("queue is empty");
-            return;
-        }
-        if let Err(e) = znicz_core::m3u_paths(&queue) {
-            self.toasts.error(e.to_string());
             return;
         }
         self.playlist_prompt = Some(PlaylistPrompt::Save(LineEdit::new()));
@@ -812,14 +808,7 @@ impl App {
         };
         let path = self.playlists_dir.join(&name);
         let queue = self.player.state().queue;
-        let paths = match znicz_core::m3u_paths(&queue) {
-            Ok(paths) => paths,
-            Err(e) => {
-                self.toasts.error(e.to_string());
-                return;
-            }
-        };
-        match write_path(&path, &paths) {
+        match write_path(&path, &queue) {
             Ok(()) => {
                 let stem = name
                     .strip_suffix(".m3u8")
