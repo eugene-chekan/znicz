@@ -18,6 +18,9 @@ use crate::player::state::{OutputInfo, PlaybackStatus, PlayerState, QueueItem, R
 pub trait PlayerOps: Send {
     fn send_blocking(&self, command: Command) -> Result<()>;
     fn state(&self) -> PlayerState;
+    fn drain_events(&self) -> Vec<PlayerEvent> {
+        Vec::new()
+    }
 }
 
 /// Non-zero starting point for the shuffle generator.
@@ -114,6 +117,10 @@ impl PlayerOps for PlayerHandle {
 
     fn state(&self) -> PlayerState {
         PlayerHandle::state(self)
+    }
+
+    fn drain_events(&self) -> Vec<PlayerEvent> {
+        PlayerHandle::drain_events(self)
     }
 }
 

@@ -95,7 +95,7 @@ impl ZniczMcpServer {
         mutate: bool,
         action: impl FnOnce(&dyn PlayerOps) -> znicz_core::Result<T>,
     ) -> Result<T, McpError> {
-        let result = match IpcClient::connect(&self.ipc_path) {
+        let result = match IpcClient::connect(&self.ipc_path, znicz_core::ClientRole::Agent) {
             Ok(client) => action(&client),
             Err(_) => {
                 if mutate {
@@ -113,7 +113,7 @@ impl ZniczMcpServer {
     }
 
     pub(crate) fn persist_on_exit(&self) {
-        if IpcClient::connect(&self.ipc_path).is_ok() {
+        if IpcClient::connect(&self.ipc_path, znicz_core::ClientRole::Agent).is_ok() {
             let session = Session::from_state(&self.live_state());
             if let Err(e) = save_session(&self.session_path, &session) {
                 tracing::warn!("session.toml: {e}");

@@ -15,7 +15,7 @@ pub use metadata::{
 };
 pub use player::commands::{Command, PlayerEvent};
 pub use player::engine::{spawn_player, AudioConfig, PlayerHandle, PlayerOps};
-pub use player::ipc::{try_state as ipc_try_state, IpcClient, IpcServer};
+pub use player::ipc::{try_state as ipc_try_state, ClientRole, IpcClient, IpcServer};
 pub use player::state::{
     AudioDeviceInfo, OutputInfo, PlaybackStatus, PlayerState, QueueItem, RepeatMode, TrackInfo,
 };
