@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::{CodecParameters, CodecType, DecoderOptions, CODEC_TYPE_NULL};
@@ -9,6 +10,7 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use symphonia::core::units::Time;
 
+use crate::audio::icy::IcyTitle;
 use crate::error::{Result, ZniczError};
 use crate::metadata::{read_metadata, title_from_path};
 use crate::player::state::TrackInfo;
@@ -227,6 +229,9 @@ pub trait AudioSource: Send {
     fn title_hint(&self) -> &str;
     fn read_info(&self) -> Result<TrackInfo>;
     fn open_reader(&self) -> Result<Box<dyn symphonia::core::io::MediaSource>>;
+    fn icy_title_slot(&self) -> Option<Arc<Mutex<IcyTitle>>> {
+        None
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -300,10 +305,12 @@ pub struct AudioDecoder {
     is_stream: bool,
     coded_bytes: u64,
     pcm_frames: u64,
+    icy_title: Option<Arc<Mutex<IcyTitle>>>,
 }
 
 impl AudioDecoder {
     pub fn open(source: &dyn AudioSource) -> Result<(Self, TrackInfo)> {
+        let icy_title = source.icy_title_slot();
         let reader = source.open_reader()?;
         let mss = MediaSourceStream::new(reader, Default::default());
 
@@ -352,6 +359,7 @@ impl AudioDecoder {
                 is_stream,
                 coded_bytes: 0,
                 pcm_frames: 0,
+                icy_title,
             },
             track_info,
         ))
@@ -378,6 +386,13 @@ impl AudioDecoder {
     /// opened.
     pub fn measured_bitrate_kbps(&self) -> Option<u32> {
         coded_bitrate_kbps(self.coded_bytes, self.pcm_frames, self.sample_rate)
+    }
+
+    pub fn icy_title(&self) -> IcyTitle {
+        self.icy_title
+            .as_ref()
+            .map(|slot| slot.lock().unwrap().clone())
+            .unwrap_or(IcyTitle::Unset)
     }
 
     pub fn seek(&mut self, position: std::time::Duration) -> Result<()> {

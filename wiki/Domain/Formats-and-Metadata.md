@@ -117,9 +117,12 @@ station. Enter / `play_station` still replace the queue.
 M3U URL lines play as streams. While a stream plays, the signal path shows a
 **coded bitrate** (compressed bytes versus PCM duration, once a quarter second
 has decoded). That is the stream’s audio rate, not Icecast `icy-br` and not
-the decoded PCM rate (1411 kbps for CD-shape WAV).
+the decoded PCM rate (1411 kbps for CD-shape WAV). Icecast `StreamTitle`
+replaces the now-playing title (and `tags.title`) when the station sends it.
+An empty title falls back to the station name. Queue rows stay the station
+name.
 
-**Later:** ICY song titles on the transport, HLS, PLS, XSPF. See the
+**Later:** HLS, PLS, XSPF. See the
 [roadmap](../Plans/Roadmap.md#later-radio-after-phase-4).
 
 ## Session

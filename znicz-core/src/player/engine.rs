@@ -7,6 +7,7 @@ use crossbeam_channel::{bounded, unbounded, Receiver, RecvTimeoutError, Sender};
 use crate::audio::convert::{adapt_channels, RateConverter};
 use crate::audio::feeder::{DecodeStep, Feeder, PumpOutcome};
 use crate::audio::http::HttpStreamSource;
+use crate::audio::icy::{apply_icy_to_track, IcyTitle};
 use crate::audio::output::AudioOutput;
 use crate::audio::source::{AudioDecoder, AudioSource, LocalFileSource};
 use crate::error::{Result, ZniczError};
@@ -611,11 +612,13 @@ impl PlayerEngine {
         match outcome {
             PumpOutcome::SinkFull => {
                 self.publish_stream_bitrate(&decoder);
+                self.publish_stream_title(&decoder);
                 self.decoder = Some(decoder);
                 self.converter = converter;
             }
             PumpOutcome::Finished => {
                 self.publish_stream_bitrate(&decoder);
+                self.publish_stream_title(&decoder);
                 // The buffer still holds audio. Let it play out, otherwise the
                 // last seconds of the track are cut off.
                 self.converter = None;
@@ -692,6 +695,28 @@ impl PlayerEngine {
         let mut state = self.state.write().unwrap();
         if let Some(track) = state.current_track.as_mut() {
             track.bitrate_kbps = Some(kbps);
+        }
+    }
+
+    fn publish_stream_title(&self, decoder: &AudioDecoder) {
+        let icy = decoder.icy_title();
+        if matches!(icy, IcyTitle::Unset) {
+            return;
+        }
+        let station_name = {
+            let state = self.state.read().unwrap();
+            match state.queue.get(state.queue_position) {
+                Some(QueueItem::Stream { name, .. }) => name.clone(),
+                _ => return,
+            }
+        };
+        let mut state = self.state.write().unwrap();
+        let Some(track) = state.current_track.as_mut() else {
+            return;
+        };
+        if apply_icy_to_track(track, &icy, &station_name) {
+            drop(state);
+            self.emit_state_changed();
         }
     }
 
