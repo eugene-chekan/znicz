@@ -9,8 +9,12 @@ znicz mcp
 ```
 
 On start the MCP server restores `session.toml` (queue and transport extras,
-**Stopped**). Mutating player tools write it again. Same **file** as the TUI,
-not the same running player. The host then sends JSON-RPC messages.
+**Stopped**). If a TUI is already running, tools and resources **attach** to
+that live engine instead. The TUI writes `ipc.toml` (`port` and a token, Unix
+mode `0600`) at `$XDG_RUNTIME_DIR/znicz/ipc.toml` or `{temp}/znicz/ipc.toml`.
+Override with `ZNICZ_IPC_PATH`. Mutating tools write `session.toml` from the
+engine they actually used. If MCP never used its own player, exit does not
+overwrite `session.toml`. The host then sends JSON-RPC messages.
 
 We use the Rust SDK [`rmcp`](https://crates.io/crates/rmcp).
 
@@ -23,11 +27,10 @@ We use the Rust SDK [`rmcp`](https://crates.io/crates/rmcp).
 | **Prompts** | Ready-made instructions for the model |
 | **Skills** | Longer how-to files (`SKILL.md`) the model loads when needed |
 
-Tools use the same `Command`s as the TUI. A Cursor `znicz mcp` process still
-starts **its own** engine. It does not see what a separate TUI is playing
-([#27](https://github.com/eugene-chekan/znicz/issues/27)). `session.toml` is a
-snapshot on start and after MCP mutations, not a live bus. Playing, pause,
-seek, and ICY titles stay in that process’s memory.
+Tools use the same `Command`s as the TUI. While the TUI is running, MCP talks
+to **that** player over localhost ([#27](https://github.com/eugene-chekan/znicz/issues/27)).
+With no TUI, `znicz mcp` still has its own headless engine. `session.toml` is
+the restart snapshot (Stopped); it is not the live bus.
 
 Library tools (`scan_library`, `search_library`, `get_track`, `browse_album`,
 `list_albums`, `library_stats`, `library_prune`) talk to

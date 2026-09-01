@@ -4,8 +4,7 @@ use clap::{Parser, Subcommand};
 use serde::Deserialize;
 use znicz_core::{
     apply_to_player, copy_saved, list_saved, load_path, remove_saved, rename_saved,
-    restore_session, save_session_from_player, saved_path, skipped_notice, spawn_player,
-    AudioConfig, AudioOutput, Command,
+    restore_session, saved_path, skipped_notice, spawn_player, AudioConfig, AudioOutput, Command,
 };
 use znicz_library::Library;
 use znicz_mcp::run_stdio;
@@ -33,7 +32,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Run MCP server on stdio (headless player)
+    /// Run MCP server on stdio (attaches to a running TUI)
     Mcp {
         #[arg(long, help = "Additional skills directory")]
         skills_dir: Vec<PathBuf>,
@@ -458,6 +457,7 @@ fn run_tui_with_player(
     // long as the TUI owns the terminal; nothing is lost, it just moves.
     let log = stderr::redirect_to_log();
     let mut app = App::with_library(player, library);
+    app.host_player_ipc();
     if let Some(message) = skip_notice {
         app.toasts.warn(message);
     }
@@ -563,11 +563,6 @@ fn run_mcp(
         .build()?
         .block_on(run_stdio(player.clone(), skills_dirs, library))
         .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-    if let Ok(path) = session_path() {
-        if let Err(e) = save_session_from_player(&player, &path) {
-            tracing::warn!("session.toml: {e}");
-        }
-    }
     Ok(())
 }
 

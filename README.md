@@ -188,6 +188,8 @@ Add to `.cursor/mcp.json`:
 ```
 
 Build first and ensure `znicz` is on `PATH`, or use the full path to `target/release/znicz`.
+If the TUI is already running, MCP tools attach to that player; otherwise MCP
+uses a headless engine.
 
 ## Checking playback speed
 

@@ -50,6 +50,21 @@ pub fn default_session_path() -> Option<std::path::PathBuf> {
     dirs_data_dir().map(|dir| dir.join("znicz").join("session.toml"))
 }
 
+/// Where the TUI writes its live-player advertise file, unless `ZNICZ_IPC_PATH` is set.
+pub fn default_ipc_path() -> Option<std::path::PathBuf> {
+    if let Some(path) = std::env::var_os("ZNICZ_IPC_PATH") {
+        if !path.is_empty() {
+            return Some(std::path::PathBuf::from(path));
+        }
+    }
+    if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
+        if !dir.is_empty() {
+            return Some(std::path::PathBuf::from(dir).join("znicz").join("ipc.toml"));
+        }
+    }
+    Some(std::env::temp_dir().join("znicz").join("ipc.toml"))
+}
+
 /// Data directory without pulling in an extra dependency here.
 fn dirs_data_dir() -> Option<std::path::PathBuf> {
     if let Some(dir) = std::env::var_os("XDG_DATA_HOME") {
@@ -118,6 +133,29 @@ mod tests {
             _ => {
                 assert_eq!(default_session_path().expect("data dir"), expected);
             }
+        }
+    }
+
+    #[test]
+    fn ipc_path_honours_override_or_runtime_dir() {
+        match std::env::var_os("ZNICZ_IPC_PATH") {
+            Some(path) if !path.is_empty() => {
+                assert_eq!(default_ipc_path().unwrap(), std::path::PathBuf::from(path));
+            }
+            _ => match std::env::var_os("XDG_RUNTIME_DIR") {
+                Some(dir) if !dir.is_empty() => {
+                    assert_eq!(
+                        default_ipc_path().unwrap(),
+                        std::path::PathBuf::from(dir).join("znicz").join("ipc.toml")
+                    );
+                }
+                _ => {
+                    assert_eq!(
+                        default_ipc_path().unwrap(),
+                        std::env::temp_dir().join("znicz").join("ipc.toml")
+                    );
+                }
+            },
         }
     }
 }

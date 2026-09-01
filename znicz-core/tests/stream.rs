@@ -316,7 +316,7 @@ fn icy_stream_title_reaches_player_state() {
         return;
     }
 
-    let wav = silent_wav_bytes(44_100, 2, 44_100);
+    let wav = silent_wav_bytes(44_100, 2, 44_100 * 8);
     let mut body = wav[..44].to_vec();
     body.extend_from_slice(&icy_block("StreamTitle='Song';"));
     body.extend_from_slice(&wav[44..]);
@@ -343,7 +343,8 @@ fn icy_stream_title_reaches_player_state() {
         }
         if started.elapsed() > Duration::from_secs(5) {
             panic!(
-                "expected StreamTitle on now-playing; title={:?} tags.title={:?}",
+                "expected StreamTitle on now-playing; status={:?} title={:?} tags.title={:?}",
+                state.status,
                 state.current_track.as_ref().map(|t| t.title.as_str()),
                 state
                     .current_track

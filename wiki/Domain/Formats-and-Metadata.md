@@ -142,6 +142,9 @@ playlist play, and station play without `--append` do not load the old queue.
 `--append` restores first, then appends. Clearing the queue writes an empty
 session.
 
+While the TUI is running, MCP attaches to that live player (not this file).
+See [MCP](../Architecture/MCP.md).
+
 This is not `~/.cache/znicz/znicz-session.log` (TUI stderr). A later app-state
 database may replace this file; see the [roadmap](../Plans/Roadmap.md).
 

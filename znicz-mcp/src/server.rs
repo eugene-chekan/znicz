@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -13,9 +14,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use znicz_core::{
-    apply_to_player, copy_saved, list_saved, load_path, remove_saved, rename_saved, sanitize_stem,
-    saved_path, write_path, AudioOutput, Command, LoadResult, PlaybackStatus, PlayerHandle,
-    PlayerState,
+    apply_to_player, copy_saved, ipc_try_state, list_saved, load_path, remove_saved, rename_saved,
+    sanitize_stem, save_session, saved_path, write_path, AudioOutput, Command, IpcClient,
+    LoadResult, PlaybackStatus, PlayerHandle, PlayerOps, PlayerState, Session,
 };
 use znicz_library::{Library, Track};
 
@@ -25,6 +26,21 @@ use crate::skills::SkillRegistry;
 /// behind a mutex. `None` means no library was configured.
 type SharedLibrary = Option<Arc<Mutex<Library>>>;
 
+fn server_ipc_path() -> PathBuf {
+    #[cfg(test)]
+    {
+        std::env::temp_dir().join(format!(
+            "znicz-mcp-test-ipc-missing-{}.toml",
+            std::process::id()
+        ))
+    }
+    #[cfg(not(test))]
+    {
+        znicz_library::default_ipc_path()
+            .unwrap_or_else(|| std::env::temp_dir().join("znicz").join("ipc.toml"))
+    }
+}
+
 #[derive(Clone)]
 pub struct ZniczMcpServer {
     player: PlayerHandle,
@@ -33,6 +49,8 @@ pub struct ZniczMcpServer {
     playlists_dir: PathBuf,
     stations_path: PathBuf,
     session_path: PathBuf,
+    ipc_path: PathBuf,
+    local_used: Arc<AtomicBool>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -62,7 +80,51 @@ impl ZniczMcpServer {
                 .unwrap_or_else(|| std::env::temp_dir().join("znicz-stations.toml")),
             session_path: znicz_library::default_session_path()
                 .unwrap_or_else(|| std::env::temp_dir().join("znicz-session.toml")),
+            ipc_path: server_ipc_path(),
+            local_used: Arc::new(AtomicBool::new(false)),
             tool_router: Self::tool_router(),
+        }
+    }
+
+    fn live_state(&self) -> PlayerState {
+        ipc_try_state(&self.ipc_path).unwrap_or_else(|_| self.player.state())
+    }
+
+    fn with_live<T>(
+        &self,
+        mutate: bool,
+        action: impl FnOnce(&dyn PlayerOps) -> znicz_core::Result<T>,
+    ) -> Result<T, McpError> {
+        let result = match IpcClient::connect(&self.ipc_path) {
+            Ok(client) => action(&client),
+            Err(_) => {
+                if mutate {
+                    self.local_used.store(true, Ordering::Relaxed);
+                }
+                action(&self.player)
+            }
+        };
+        result.map_err(|e| McpError::internal_error(e.to_string(), None))
+    }
+
+    #[cfg(test)]
+    fn set_ipc_path_for_test(&mut self, path: PathBuf) {
+        self.ipc_path = path;
+    }
+
+    pub(crate) fn persist_on_exit(&self) {
+        if IpcClient::connect(&self.ipc_path).is_ok() {
+            let session = Session::from_state(&self.live_state());
+            if let Err(e) = save_session(&self.session_path, &session) {
+                tracing::warn!("session.toml: {e}");
+            }
+            return;
+        }
+        if !self.local_used.load(Ordering::Relaxed) {
+            return;
+        }
+        if let Err(e) = znicz_core::save_session_from_player(&self.player, &self.session_path) {
+            tracing::warn!("session.toml: {e}");
         }
     }
 
@@ -94,7 +156,7 @@ impl ZniczMcpServer {
     }
 
     fn state_json(&self) -> Result<String, McpError> {
-        serde_json::to_string_pretty(&self.player.state())
+        serde_json::to_string_pretty(&self.live_state())
             .map_err(|e| McpError::internal_error(e.to_string(), None))
     }
 
@@ -110,13 +172,14 @@ impl ZniczMcpServer {
     /// command returns the previous snapshot, so callers cannot tell whether
     /// the command worked.
     fn apply(&self, command: Command) -> Result<rmcp::model::CallToolResult, McpError> {
-        map_player_err(self.player.send_blocking(command))?;
+        self.with_live(true, |player| player.send_blocking(command))?;
         self.persist_session();
         self.ok_state()
     }
 
     fn persist_session(&self) {
-        if let Err(e) = znicz_core::save_session_from_player(&self.player, &self.session_path) {
+        let session = Session::from_state(&self.live_state());
+        if let Err(e) = save_session(&self.session_path, &session) {
             tracing::warn!("session.toml: {e}");
         }
     }
@@ -126,12 +189,12 @@ impl ZniczMcpServer {
         result: LoadResult,
         append: bool,
     ) -> Result<rmcp::model::CallToolResult, McpError> {
-        map_player_err(apply_to_player(&self.player, &result, append))?;
+        self.with_live(true, |player| apply_to_player(player, &result, append))?;
         self.persist_session();
         Self::json_result(&serde_json::json!({
             "loaded": result.items.len(),
             "skipped": result.skipped,
-            "state": self.player.state(),
+            "state": self.live_state(),
         }))
     }
 
@@ -624,7 +687,7 @@ impl ZniczMcpServer {
         &self,
         Parameters(params): Parameters<SavePlaylistParams>,
     ) -> Result<rmcp::model::CallToolResult, McpError> {
-        let queue = self.player.state().queue;
+        let queue = self.live_state().queue;
         if queue.is_empty() {
             return Err(McpError::invalid_params("queue is empty", None));
         }
@@ -703,9 +766,10 @@ impl ZniczMcpServer {
             .ok_or_else(|| {
                 McpError::invalid_params(format!("no station named {:?}", params.name), None)
             })?;
-        let result = znicz_core::play_station(&self.player, &station, params.append);
+        self.with_live(true, |player| {
+            znicz_core::play_station(player, &station, params.append)
+        })?;
         self.persist_session();
-        map_player_err(result)?;
         self.ok_state()
     }
 
@@ -808,7 +872,7 @@ impl ServerHandler for ZniczMcpServer {
         _context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> impl std::future::Future<Output = Result<ReadResourceResult, McpError>> + Send + '_ {
         let uri = request.uri.clone();
-        let state = self.player.state();
+        let state = self.live_state();
         let skills = self.skills.clone();
         let stations_path = self.stations_path.clone();
 
@@ -899,7 +963,7 @@ impl ServerHandler for ZniczMcpServer {
         _context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> impl std::future::Future<Output = Result<GetPromptResult, McpError>> + Send + '_ {
         let name = request.name.clone();
-        let state = self.player.state();
+        let state = self.live_state();
 
         async move {
             let text = match name.as_str() {
@@ -984,10 +1048,6 @@ fn prompt_meta(name: &str, description: &str) -> Prompt {
         description: Some(description.into()),
         arguments: None,
     }
-}
-
-fn map_player_err(result: znicz_core::Result<()>) -> Result<(), McpError> {
-    result.map_err(|e| McpError::internal_error(e.to_string(), None))
 }
 
 #[cfg(test)]
@@ -1080,6 +1140,89 @@ mod tests {
         server
             .set_volume(Parameters(VolumeParams { volume: 0.3 }))
             .expect("set_volume");
+        let loaded = znicz_core::load_session(&server.session_path).expect("load session");
+        assert!(
+            (loaded.volume - 0.3).abs() < 1e-6,
+            "session volume {}",
+            loaded.volume
+        );
+        let _ = std::fs::remove_file(&server.session_path);
+    }
+
+    #[test]
+    fn persist_on_exit_does_not_overwrite_session_when_local_player_was_unused() {
+        let server = server();
+        let existing = znicz_core::Session {
+            volume: 0.7,
+            ..znicz_core::Session::default()
+        };
+        znicz_core::save_session(&server.session_path, &existing).expect("seed session");
+        server.persist_on_exit();
+        let loaded = znicz_core::load_session(&server.session_path).expect("load session");
+        assert!(
+            (loaded.volume - 0.7).abs() < 1e-6,
+            "unused MCP must not wipe session, got {}",
+            loaded.volume
+        );
+        let _ = std::fs::remove_file(&server.session_path);
+    }
+
+    #[test]
+    fn get_player_state_reads_the_tui_host() {
+        let path = unique_temp("znicz-mcp-live-ipc");
+        let (host, _thread) = spawn_player(AudioConfig::default());
+        std::mem::forget(_thread);
+        host.send_blocking(Command::SetVolume(0.4))
+            .expect("host volume");
+        let _ipc = znicz_core::IpcServer::start(host.clone(), &path).expect("start ipc");
+        let mut server = server();
+        server.set_ipc_path_for_test(path);
+        let result = server.get_player_state().expect("state");
+        let state: serde_json::Value =
+            serde_json::from_str(&result_text(&result)).expect("state json");
+        let volume = state["volume"].as_f64().expect("volume field");
+        assert!(
+            (volume - 0.4).abs() < 1e-6,
+            "MCP reported volume {volume}, expected the TUI host 0.4"
+        );
+        assert!(
+            (server.player.state().volume - 1.0).abs() < 1e-6,
+            "local fallback player must stay unused"
+        );
+    }
+
+    #[test]
+    fn set_volume_changes_the_tui_host_not_the_local_player() {
+        let path = unique_temp("znicz-mcp-live-ipc");
+        let (host, _thread) = spawn_player(AudioConfig::default());
+        std::mem::forget(_thread);
+        let _ipc = znicz_core::IpcServer::start(host.clone(), &path).expect("start ipc");
+        let mut server = server();
+        server.set_ipc_path_for_test(path);
+        server
+            .set_volume(Parameters(VolumeParams { volume: 0.25 }))
+            .expect("set_volume");
+        assert!(
+            (host.state().volume - 0.25).abs() < 1e-6,
+            "host volume {}",
+            host.state().volume
+        );
+        assert!(
+            (server.player.state().volume - 1.0).abs() < 1e-6,
+            "local player volume {}",
+            server.player.state().volume
+        );
+        let _ = std::fs::remove_file(&server.session_path);
+    }
+
+    #[test]
+    fn persist_on_exit_writes_after_local_mutation() {
+        let server = server();
+        server
+            .set_volume(Parameters(VolumeParams { volume: 0.3 }))
+            .expect("set_volume");
+        let _ = std::fs::remove_file(&server.session_path);
+        server.persist_on_exit();
         let loaded = znicz_core::load_session(&server.session_path).expect("load session");
         assert!(
             (loaded.volume - 0.3).abs() < 1e-6,

@@ -12,6 +12,10 @@ On quit (and shortly after the queue or volume/repeat/shuffle/mute changes)
 the TUI writes `session.toml`. Bare start restores that session **Stopped**.
 See [Formats and metadata](../Domain/Formats-and-Metadata.md#session).
 
+While `znicz` is on screen it also writes a localhost advertise file
+(`ipc.toml`) so `znicz mcp` can attach to this same engine. See
+[MCP](MCP.md).
+
 Ratatui does not keep widgets as a tree you mutate. You describe the layout
 **every frame**. That suits a player, where the position moves constantly.
 

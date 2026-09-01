@@ -14,9 +14,9 @@ Both front ends can browse the library: the MCP server for agents, and the TUI
 for its library pane.
 
 `znicz` (the binary) starts either the TUI or the MCP server. Both talk to the
-same player **type** (`PlayerHandle`). Two processes still means two engines:
-Cursor’s `znicz mcp` does not see a TUI you started in a terminal
-([#27](https://github.com/eugene-chekan/znicz/issues/27)).
+same player **type** (`PlayerHandle`). When the TUI is running, MCP attaches to
+that live engine ([#27](https://github.com/eugene-chekan/znicz/issues/27)).
+Headless MCP (no TUI) keeps its own player.
 
 ## Why split crates?
 

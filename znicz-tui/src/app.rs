@@ -38,6 +38,21 @@ const SEEK_SMALL: i64 = 5;
 const SEEK_LARGE: i64 = 30;
 const VOLUME_STEP: f32 = 0.05;
 
+fn ipc_advertise_path() -> PathBuf {
+    znicz_library::default_ipc_path()
+        .unwrap_or_else(|| std::env::temp_dir().join("znicz").join("ipc.toml"))
+}
+
+fn start_ipc(player: &PlayerHandle) -> Option<znicz_core::IpcServer> {
+    match znicz_core::IpcServer::start(player.clone(), ipc_advertise_path()) {
+        Ok(server) => Some(server),
+        Err(e) => {
+            tracing::warn!("player ipc: {e}");
+            None
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     Library,
@@ -171,6 +186,8 @@ pub struct App {
     session_path: PathBuf,
     last_saved_session: Session,
     session_dirty_since: Option<Instant>,
+    /// Advertise file for MCP attach. Dropped with the app so the socket dies.
+    _ipc: Option<znicz_core::IpcServer>,
 }
 
 impl App {
@@ -210,6 +227,15 @@ impl App {
                 .unwrap_or_else(|| std::env::temp_dir().join("znicz-session.toml")),
             last_saved_session,
             session_dirty_since: None,
+            _ipc: None,
+        }
+    }
+
+    /// Advertise this engine so `znicz mcp` can attach. Tests and the preview
+    /// example skip this so they do not steal a live TUI's socket.
+    pub fn host_player_ipc(&mut self) {
+        if self._ipc.is_none() {
+            self._ipc = start_ipc(&self.player);
         }
     }
 

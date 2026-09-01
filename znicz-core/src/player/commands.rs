@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use crossbeam_channel::Sender;
+use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use crate::player::state::QueueItem;
@@ -29,7 +30,8 @@ impl CommandEnvelope {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Command {
     Play(QueueItem),
     Pause,

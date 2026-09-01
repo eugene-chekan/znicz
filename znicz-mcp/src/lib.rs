@@ -24,7 +24,10 @@ pub async fn run_stdio(
         Some(library) => ZniczMcpServer::with_library(player, skills_dirs, library),
         None => ZniczMcpServer::new(player, skills_dirs),
     };
+    let on_exit = server.clone();
     let service = server.serve((stdin, stdout)).await?;
-    service.waiting().await?;
+    let waiting = service.waiting().await;
+    on_exit.persist_on_exit();
+    waiting?;
     Ok(())
 }

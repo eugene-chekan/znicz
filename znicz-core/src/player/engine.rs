@@ -14,6 +14,12 @@ use crate::error::{Result, ZniczError};
 use crate::player::commands::{Command, CommandEnvelope, PlayerEvent};
 use crate::player::state::{OutputInfo, PlaybackStatus, PlayerState, QueueItem, RepeatMode};
 
+/// Commands and snapshots used by the TUI, MCP, and the localhost IPC attach.
+pub trait PlayerOps: Send {
+    fn send_blocking(&self, command: Command) -> Result<()>;
+    fn state(&self) -> PlayerState;
+}
+
 /// Non-zero starting point for the shuffle generator.
 fn seed_from_clock() -> u64 {
     std::time::SystemTime::now()
@@ -98,6 +104,16 @@ impl PlayerHandle {
             events.push(event);
         }
         events
+    }
+}
+
+impl PlayerOps for PlayerHandle {
+    fn send_blocking(&self, command: Command) -> Result<()> {
+        PlayerHandle::send_blocking(self, command)
+    }
+
+    fn state(&self) -> PlayerState {
+        PlayerHandle::state(self)
     }
 }
 
