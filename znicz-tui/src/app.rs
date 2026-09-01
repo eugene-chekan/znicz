@@ -560,7 +560,7 @@ impl App {
     fn on_radio_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
             KeyCode::Enter => self.play_selected_station(),
-            KeyCode::Char('a') => self.toasts.info("adding a station to the queue is later"),
+            KeyCode::Char('a') => self.queue_selected_station(),
             KeyCode::Char('n') => {
                 self.radio_prompt = Some(RadioPrompt::new_station());
             }
@@ -609,8 +609,19 @@ impl App {
             self.toasts.info("no stations");
             return;
         };
-        match znicz_core::play_station(&self.player, &station) {
+        match znicz_core::play_station(&self.player, &station, false) {
             Ok(()) => self.toasts.success(format!("playing {}", station.name)),
+            Err(e) => self.toasts.error(e.to_string()),
+        }
+    }
+
+    fn queue_selected_station(&mut self) {
+        let Some(station) = self.selected_station().cloned() else {
+            self.toasts.info("no stations");
+            return;
+        };
+        match znicz_core::play_station(&self.player, &station, true) {
+            Ok(()) => self.toasts.success(format!("added {}", station.name)),
             Err(e) => self.toasts.error(e.to_string()),
         }
     }
@@ -875,7 +886,8 @@ impl App {
                         Command::QueueRemove(index),
                         Some("removed from queue".into()),
                     );
-                    self.queue_cursor.clamp(state.queue.len().saturating_sub(1));
+                    let len = self.player.state().queue.len();
+                    self.queue_cursor.clamp(len);
                 }
             }
             KeyCode::Char('C') => {

@@ -96,7 +96,8 @@ database already has the tags. A station row shows the **station name**; it has
 no duration (`—`).
 
 `Enter` plays a row, `d` removes one, `C` clears, `o` jumps back to whatever is
-playing.
+playing. `d` on the playing row starts the next remaining one, or stops if
+that was the last row.
 
 ### Devices
 
@@ -145,7 +146,7 @@ playback stops so the previous file does not keep playing.
 | Key | Action |
 | --- | --- |
 | Enter | Clear the queue and play |
-| `a` | Add to the queue — later (toast for now; mixed queue is not in this version) |
+| `a` | Add the highlighted station to the queue (does not start or stop playback) |
 | `n` | New station: empty two-field form (name and URL) |
 | `e` | Edit: the same form, filled from the highlighted station |
 | `c` | Copy name+URL, then prompt for a new name |

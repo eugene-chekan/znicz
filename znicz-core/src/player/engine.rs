@@ -505,7 +505,12 @@ impl PlayerEngine {
             }
         };
         self.state.write().unwrap().queue_position = index;
-        self.play_item(item)
+        self.play_item(item)?;
+        let mut state = self.state.write().unwrap();
+        if index < state.queue.len() {
+            state.queue_position = index;
+        }
+        Ok(())
     }
 
     fn remove_from_queue(&mut self, index: usize) -> Result<()> {
@@ -514,30 +519,27 @@ impl PlayerEngine {
             if index >= state.queue.len() {
                 return Ok(());
             }
-            state.queue.remove(index);
-
             let playing = state.status != PlaybackStatus::Stopped;
+            let was_playing_row = index == state.queue_position && playing;
+            state.queue.remove(index);
             if index < state.queue_position {
                 state.queue_position -= 1;
-                false
-            } else {
-                index == state.queue_position && playing
             }
+            was_playing_row
         };
 
         self.event_tx.send(PlayerEvent::QueueChanged).ok();
 
-        // Removing the track under the playhead stops it; anything else keeps playing.
         if playing_removed {
-            let has_replacement = {
+            self.stop()?;
+            let (pos, len) = {
                 let state = self.state.read().unwrap();
-                state.queue_position < state.queue.len()
+                (state.queue_position, state.queue.len())
             };
-            if has_replacement {
-                let index = self.state.read().unwrap().queue_position;
-                self.play_queue_index(index)?;
+            if pos < len {
+                self.play_queue_index(pos)?;
             } else {
-                self.stop()?;
+                self.state.write().unwrap().queue_position = len.saturating_sub(1);
             }
         }
 

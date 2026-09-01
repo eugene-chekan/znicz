@@ -87,6 +87,7 @@ znicz playlist import ~/sets/club.m3u --append
 znicz station list
 znicz station add "Example" https://example.com/stream
 znicz station play Example
+znicz station play Example --append
 znicz station copy Example Example2
 ```
 

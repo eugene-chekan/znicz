@@ -72,7 +72,7 @@ HTTP/Icecast byte streams and a station list. Spec:
 - Play an HTTP(S) stream (Symphonia on a blocking `Read`)
 - Stations in `stations.toml` (TUI `R`, CLI `znicz station`, MCP tools)
 - Playing a station clears the queue and starts that stream
-- Overlay keys match Playlists (`n` / `e` / `c` / `d`); `a` add-to-queue is later
+- Overlay keys match Playlists (`n` / `e` / `c` / `d`); `a` appends a station; Enter still replaces
 
 ### Later radio (after Phase 4)
 
@@ -81,7 +81,6 @@ Not in this version. Still later:
 - **ICY now playing** — parse Icecast `StreamTitle` and show the current song on the transport (not only the station name)
 - **HLS** — `.m3u8` segment playlists (a second source type)
 - **M3U stream lines** — `http://` / `https://` rows in a playlist play as streams instead of being skipped
-- **Mixed queue** — stations and local files in one queue (next/previous rules)
 
 PLS / XSPF stay under playlists (“still later”). Settings stay [#6](https://github.com/eugene-chekan/znicz/issues/6).
 

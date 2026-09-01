@@ -83,6 +83,7 @@ Open the list in the player with `R`. Same list from the CLI and MCP:
 znicz station list
 znicz station add "Example" https://example.com/stream
 znicz station play Example
+znicz station play Example --append
 ```
 
 CLI also has `remove`, `rename`, `url`, and `copy`. MCP tools: `list_stations`, `add_radio_station`, `play_station`,
@@ -90,12 +91,11 @@ CLI also has `remove`, `rename`, `url`, and `copy`. MCP tools: `list_stations`, 
 resource `znicz://stations`.
 
 The TUI overlay (`R`) uses the same saved-list keys as playlists: `n` new, `e`
-edit (name and URL on one form), `c` copy, `d` delete. `a` will add the
-highlighted station to the queue later; for now it only toasts.
+edit (name and URL on one form), `c` copy, `d` delete. Radio `a` appends the
+station. Enter / `play_station` still replace the queue.
 
 M3U playlists still **skip** `http://` / `https://` lines. **Later:** ICY song
-titles on the transport, HLS, those M3U URL lines as playable streams, and a
-mixed queue of files and stations. See the
+titles on the transport, HLS, those M3U URL lines as playable streams. See the
 [roadmap](../Plans/Roadmap.md#later-radio-after-phase-4).
 
 ## Library

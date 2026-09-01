@@ -227,14 +227,17 @@ pub fn saved_path(dir: &Path, name: &str) -> Option<PathBuf> {
 }
 
 pub fn m3u_paths(queue: &[crate::player::state::QueueItem]) -> Result<Vec<PathBuf>> {
+    if queue.iter().any(|item| item.is_stream()) {
+        return Err(ZniczError::Player(
+            "cannot save a queue that contains a radio station".into(),
+        ));
+    }
     let paths: Vec<PathBuf> = queue
         .iter()
         .filter_map(|item| item.as_path().map(Path::to_path_buf))
         .collect();
     if paths.is_empty() {
-        return Err(ZniczError::Player(
-            "cannot save a radio queue as a playlist".into(),
-        ));
+        return Err(ZniczError::Player("queue is empty".into()));
     }
     Ok(paths)
 }
@@ -462,6 +465,31 @@ mod tests {
             .as_deref(),
             Some("1 tracks, 2 skipped")
         );
+    }
+
+    #[test]
+    fn m3u_paths_writes_files_only_queues() {
+        use crate::player::state::QueueItem;
+        let paths = m3u_paths(&[QueueItem::file("/music/a.flac")]).unwrap();
+        assert_eq!(paths, vec![std::path::PathBuf::from("/music/a.flac")]);
+    }
+
+    #[test]
+    fn m3u_paths_refuses_a_queue_that_contains_a_station() {
+        use crate::player::state::QueueItem;
+        let err = m3u_paths(&[
+            QueueItem::file("/music/a.flac"),
+            QueueItem::stream("Live", "http://127.0.0.1:1/s"),
+        ])
+        .unwrap_err();
+        assert!(err.to_string().contains("radio station"), "{err}");
+    }
+
+    #[test]
+    fn m3u_paths_refuses_a_station_only_queue() {
+        use crate::player::state::QueueItem;
+        let err = m3u_paths(&[QueueItem::stream("Live", "http://127.0.0.1:1/s")]).unwrap_err();
+        assert!(err.to_string().contains("radio station"), "{err}");
     }
 
     #[test]

@@ -206,6 +206,7 @@ fn failed_station_play_does_not_keep_the_old_file() {
             name: "Bad".into(),
             url,
         },
+        false,
     );
     assert!(result.is_err(), "got {result:?}");
 
