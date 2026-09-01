@@ -597,10 +597,12 @@ impl PlayerEngine {
 
         match outcome {
             PumpOutcome::SinkFull => {
+                self.publish_stream_bitrate(&decoder);
                 self.decoder = Some(decoder);
                 self.converter = converter;
             }
             PumpOutcome::Finished => {
+                self.publish_stream_bitrate(&decoder);
                 // The buffer still holds audio. Let it play out, otherwise the
                 // last seconds of the track are cut off.
                 self.converter = None;
@@ -665,6 +667,19 @@ impl PlayerEngine {
 
         self.state.write().unwrap().position = position;
         self.event_tx.send(PlayerEvent::PositionTick(position)).ok();
+    }
+
+    fn publish_stream_bitrate(&self, decoder: &crate::audio::source::AudioDecoder) {
+        if !decoder.is_stream() {
+            return;
+        }
+        let Some(kbps) = decoder.measured_bitrate_kbps() else {
+            return;
+        };
+        let mut state = self.state.write().unwrap();
+        if let Some(track) = state.current_track.as_mut() {
+            track.bitrate_kbps = Some(kbps);
+        }
     }
 
     fn update_status(&mut self, status: PlaybackStatus) {
