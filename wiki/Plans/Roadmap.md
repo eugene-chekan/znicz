@@ -116,3 +116,4 @@ Not in phases 3–6. Tracked as GitHub issues; see [Issues](../Issues.md).
 - Three-column artist / album / tracks — [#7](https://github.com/eugene-chekan/znicz/issues/7)
 - Mouse — [#8](https://github.com/eugene-chekan/znicz/issues/8)
 - Library tree with expandable nodes — [#9](https://github.com/eugene-chekan/znicz/issues/9)
+- Show the app version — [#22](https://github.com/eugene-chekan/znicz/issues/22)

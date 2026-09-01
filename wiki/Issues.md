@@ -12,6 +12,7 @@ Parked TUI ideas (file, do not start unless asked):
 - [#7 Three-column artist / album / tracks library](https://github.com/eugene-chekan/znicz/issues/7)
 - [#8 Mouse support](https://github.com/eugene-chekan/znicz/issues/8)
 - [#9 Library tree view with expandable nodes](https://github.com/eugene-chekan/znicz/issues/9)
+- [#22 Show the app version](https://github.com/eugene-chekan/znicz/issues/22) (place and shape still open)
 
 Queue:
 
