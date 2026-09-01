@@ -34,8 +34,9 @@ description: Control znicz via MCP tools and resources. Use when driving playbac
 2. `queue_remove` with a 0-based index to drop one row (same rule as TUI `d`)
 3. Poll `get_player_state` or subscribe to resources for progress
 4. Load domain skills (`audiophile-playback`, etc.) only when needed
+5. `stop` is playback. To exit the player process: `znicz player stop`
 
-The live queue is restored from `session.toml` when `znicz mcp` starts (Stopped)
-if no TUI is up. If the TUI is running, `get_player_state` and mutating tools
-use that live player. Mutating tools write `session.toml`. Override
-`ZNICZ_SESSION_PATH`. Advertise file override: `ZNICZ_IPC_PATH`.
+The live queue is restored from `session.toml` when `znicz player` starts
+(Stopped). TUI and MCP attach to that process. `stop` is playback; it does
+not exit the player. `znicz player stop` does. Override `ZNICZ_SESSION_PATH`.
+Advertise file override: `ZNICZ_IPC_PATH`.

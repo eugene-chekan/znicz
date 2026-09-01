@@ -29,13 +29,15 @@ streams, including ICY now playing) is done.
 ### [#27 MCP and TUI live player](https://github.com/eugene-chekan/znicz/issues/27)
 
 - **Fixed:** 2026-09-01
-- **Component:** `znicz-core`, `znicz-tui`, `znicz-mcp`
+- **Component:** `znicz-core`, `znicz-tui`, `znicz-mcp`, `znicz`
 - **Status:** **Fixed** in 0.3.8
 
-While the TUI is running it hosts a localhost advertise file. MCP tools and
-resources attach to that engine (Playing, ICY title, queue). Headless MCP (no
-TUI) still has its own player. MCP exit does not wipe `session.toml` with an
-unused empty local player.
+One `znicz player` process owns decode and the DAC. TUI (`role=ui`) and MCP
+(`role=agent`) are clients on localhost JSON TCP. The first `znicz` or
+`znicz mcp` autostarts that process. `q` in the TUI does not stop playback.
+Stopped with no UI for `idle_secs` (default 900) writes `session.toml` and
+exits. Agents do not block that timer. `znicz player stop` shuts the process
+down now.
 
 ### [#20 Persist the queue across restarts](https://github.com/eugene-chekan/znicz/issues/20)
 

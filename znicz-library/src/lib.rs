@@ -50,7 +50,7 @@ pub fn default_session_path() -> Option<std::path::PathBuf> {
     dirs_data_dir().map(|dir| dir.join("znicz").join("session.toml"))
 }
 
-/// Where the TUI writes its live-player advertise file, unless `ZNICZ_IPC_PATH` is set.
+/// Where the player process writes its live advertise file, unless `ZNICZ_IPC_PATH` is set.
 pub fn default_ipc_path() -> Option<std::path::PathBuf> {
     if let Some(path) = std::env::var_os("ZNICZ_IPC_PATH") {
         if !path.is_empty() {
@@ -63,6 +63,11 @@ pub fn default_ipc_path() -> Option<std::path::PathBuf> {
         }
     }
     Some(std::env::temp_dir().join("znicz").join("ipc.toml"))
+}
+
+/// Lock file beside `ipc.toml` so two autostarts cannot spawn two engines.
+pub fn default_player_lock_path() -> Option<std::path::PathBuf> {
+    default_ipc_path().map(|path| path.with_file_name("player.lock"))
 }
 
 /// Data directory without pulling in an extra dependency here.
@@ -157,5 +162,12 @@ mod tests {
                 }
             },
         }
+    }
+
+    #[test]
+    fn player_lock_sits_beside_the_advertise_file() {
+        let ipc = default_ipc_path().expect("ipc path");
+        let expected = ipc.with_file_name("player.lock");
+        assert_eq!(default_player_lock_path().expect("lock path"), expected);
     }
 }

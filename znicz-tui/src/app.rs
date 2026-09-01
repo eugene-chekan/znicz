@@ -1,13 +1,13 @@
 //! The application: what is on screen, and what the keys do.
 
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use znicz_core::{
-    apply_to_player, list_saved, load_path, sanitize_stem, save_session_from_player, saved_path,
-    skipped_notice, write_path, AudioDeviceInfo, AudioOutput, Command, PlaybackStatus, PlayerEvent,
-    PlayerHandle, PlayerState, RepeatMode, Session,
+    apply_to_player, list_saved, load_path, sanitize_stem, saved_path, skipped_notice, write_path,
+    AudioDeviceInfo, AudioOutput, Command, IpcClient, PlaybackStatus, PlayerEvent, PlayerHandle,
+    PlayerOps, PlayerState, RepeatMode,
 };
 use znicz_library::{Library, Track};
 
@@ -31,24 +31,52 @@ fn load_output_devices() -> Vec<AudioDeviceInfo> {
 /// Longest wait between redraws while nothing happens. Fast enough for a
 /// smooth seek bar, slow enough to stay near zero CPU.
 const TICK_RATE: Duration = Duration::from_millis(200);
-const SESSION_DEBOUNCE: Duration = Duration::from_millis(500);
 
 /// Seek step for the plain and shifted keys.
 const SEEK_SMALL: i64 = 5;
 const SEEK_LARGE: i64 = 30;
 const VOLUME_STEP: f32 = 0.05;
 
-fn ipc_advertise_path() -> PathBuf {
-    znicz_library::default_ipc_path()
-        .unwrap_or_else(|| std::env::temp_dir().join("znicz").join("ipc.toml"))
+/// Local tests and preview keep an in-process engine. Production talks to
+/// `znicz player` over IPC.
+pub enum Engine {
+    Local(PlayerHandle),
+    Remote(IpcClient),
 }
 
-fn start_ipc(player: &PlayerHandle) -> Option<znicz_core::IpcServer> {
-    match znicz_core::IpcServer::start(player.clone(), ipc_advertise_path()) {
-        Ok(server) => Some(server),
-        Err(e) => {
-            tracing::warn!("player ipc: {e}");
-            None
+impl Engine {
+    pub fn send_blocking(&self, command: Command) -> znicz_core::Result<()> {
+        PlayerOps::send_blocking(self, command)
+    }
+
+    pub fn state(&self) -> PlayerState {
+        PlayerOps::state(self)
+    }
+
+    pub fn drain_events(&self) -> Vec<PlayerEvent> {
+        PlayerOps::drain_events(self)
+    }
+}
+
+impl PlayerOps for Engine {
+    fn send_blocking(&self, command: Command) -> znicz_core::Result<()> {
+        match self {
+            Self::Local(player) => player.send_blocking(command),
+            Self::Remote(player) => player.send_blocking(command),
+        }
+    }
+
+    fn state(&self) -> PlayerState {
+        match self {
+            Self::Local(player) => player.state(),
+            Self::Remote(player) => player.state(),
+        }
+    }
+
+    fn drain_events(&self) -> Vec<PlayerEvent> {
+        match self {
+            Self::Local(player) => player.drain_events(),
+            Self::Remote(_) => Vec::new(),
         }
     }
 }
@@ -160,7 +188,7 @@ impl Modal {
 }
 
 pub struct App {
-    pub player: PlayerHandle,
+    pub player: Engine,
     pub focus: Focus,
     pub queue_open: bool,
     pub modal: Modal,
@@ -183,11 +211,6 @@ pub struct App {
     pub meta: MetaCache,
     pub toasts: Toasts,
     pub should_quit: bool,
-    session_path: PathBuf,
-    last_saved_session: Session,
-    session_dirty_since: Option<Instant>,
-    /// Advertise file for MCP attach. Dropped with the app so the socket dies.
-    _ipc: Option<znicz_core::IpcServer>,
 }
 
 impl App {
@@ -196,7 +219,14 @@ impl App {
     }
 
     pub fn with_library(player: PlayerHandle, library: Option<Library>) -> Self {
-        let last_saved_session = Session::from_state(&player.state());
+        Self::with_engine(Engine::Local(player), library)
+    }
+
+    pub fn with_remote(player: IpcClient, library: Option<Library>) -> Self {
+        Self::with_engine(Engine::Remote(player), library)
+    }
+
+    fn with_engine(player: Engine, library: Option<Library>) -> Self {
         Self {
             player,
             focus: Focus::Library,
@@ -223,19 +253,6 @@ impl App {
             meta: MetaCache::new(),
             toasts: Toasts::new(),
             should_quit: false,
-            session_path: znicz_library::default_session_path()
-                .unwrap_or_else(|| std::env::temp_dir().join("znicz-session.toml")),
-            last_saved_session,
-            session_dirty_since: None,
-            _ipc: None,
-        }
-    }
-
-    /// Advertise this engine so `znicz mcp` can attach. Tests and the preview
-    /// example skip this so they do not steal a live TUI's socket.
-    pub fn host_player_ipc(&mut self) {
-        if self._ipc.is_none() {
-            self._ipc = start_ipc(&self.player);
         }
     }
 
@@ -270,37 +287,10 @@ impl App {
             }
 
             if self.should_quit {
-                self.persist_session(true);
                 break;
             }
-            self.persist_session(false);
         }
         Ok(())
-    }
-
-    fn persist_session(&mut self, quitting: bool) {
-        let snap = Session::from_state(&self.player.state());
-        if snap != self.last_saved_session {
-            self.session_dirty_since.get_or_insert_with(Instant::now);
-        } else {
-            self.session_dirty_since = None;
-            if !quitting {
-                return;
-            }
-        }
-        let due = quitting
-            || self
-                .session_dirty_since
-                .is_some_and(|since| since.elapsed() >= SESSION_DEBOUNCE);
-        if !due {
-            return;
-        }
-        if let Err(e) = save_session_from_player(&self.player, &self.session_path) {
-            tracing::warn!("session.toml: {e}");
-            return;
-        }
-        self.last_saved_session = snap;
-        self.session_dirty_since = None;
     }
 
     /// Turn player events into something the user can actually see.

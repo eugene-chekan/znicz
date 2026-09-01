@@ -416,10 +416,8 @@ impl IpcClient {
             IpcResponse::Err { message } => Err(ZniczError::Player(message)),
         }
     }
-}
 
-impl PlayerOps for IpcClient {
-    fn send_blocking(&self, command: Command) -> Result<()> {
+    pub fn send_blocking(&self, command: Command) -> Result<()> {
         match self.rpc(IpcRequest::Command {
             token: self.inner.token.clone(),
             command,
@@ -429,7 +427,7 @@ impl PlayerOps for IpcClient {
         }
     }
 
-    fn state(&self) -> PlayerState {
+    pub fn state(&self) -> PlayerState {
         match self.rpc(IpcRequest::State {
             token: self.inner.token.clone(),
         }) {
@@ -443,6 +441,16 @@ impl PlayerOps for IpcClient {
                 PlayerState::default()
             }
         }
+    }
+}
+
+impl PlayerOps for IpcClient {
+    fn send_blocking(&self, command: Command) -> Result<()> {
+        IpcClient::send_blocking(self, command)
+    }
+
+    fn state(&self) -> PlayerState {
+        IpcClient::state(self)
     }
 }
 

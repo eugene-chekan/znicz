@@ -13,7 +13,7 @@ Cross-platform audiophile TUI music player with a native MCP server for AI agent
 - Repeat, shuffle, mute, and errors reported on screen rather than only in the log
 - Radio stations: HTTP/Icecast byte streams from the TUI, CLI, and MCP
 - Session restore: queue, volume, mute, repeat, and shuffle survive a restart
-- MCP server: tools, resources, prompts, and bundled Agent Skills
+- MCP server: tools, resources, prompts, and bundled Agent Skills (same live player as the TUI)
 
 ## Build
 
@@ -56,8 +56,12 @@ znicz --list-devices
 # Select device
 znicz --device "device-name" track.flac
 
-# MCP server (stdio)
+# MCP server (stdio; autostarts znicz player)
 znicz mcp
+
+# Shared player process (usually autostarted)
+znicz player
+znicz player stop
 ```
 
 ### Music library
@@ -136,7 +140,7 @@ Press `?` in the player for the full keymap. The essentials:
 | Alt-← / Alt-→ | Pan a long title |
 | i | Signal inspector |
 | , | Devices |
-| ? / q | Help / quit |
+| ? / q | Help / quit TUI (`s` stops playback) |
 
 To see the layout without starting the player:
 
@@ -160,6 +164,9 @@ bit_perfect = true
 
 [mcp]
 skills_dirs = []
+
+[player]
+idle_secs = 900
 
 [library]
 # Optional. Defaults to the user data directory.
@@ -188,8 +195,7 @@ Add to `.cursor/mcp.json`:
 ```
 
 Build first and ensure `znicz` is on `PATH`, or use the full path to `target/release/znicz`.
-If the TUI is already running, MCP tools attach to that player; otherwise MCP
-uses a headless engine.
+TUI and MCP share one `znicz player` process (autostarted if needed).
 
 ## Checking playback speed
 

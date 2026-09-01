@@ -1,7 +1,7 @@
 # Shared player process
 
 **Date:** 2026-09-01
-**Status:** Draft (awaiting review)
+**Status:** Approved
 **Crates:** `znicz-core` (IPC + shutdown + idle), `znicz-library` (paths), `znicz-tui` (client), `znicz-mcp` (client), `znicz` (`player` subcommand)
 **Version:** 0.3.7 → 0.3.8 (replaces TUI-as-host in [#27](https://github.com/eugene-chekan/znicz/issues/27) / PR 29)
 **Supersedes:** [MCP attaches to the running TUI](2026-09-01-mcp-attach-tui-design.md)

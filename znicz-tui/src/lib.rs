@@ -2,8 +2,8 @@
 //!
 //! Layout: library home with an overlay queue drawer, a two-line transport at
 //! the bottom (including the signal path on tall terminals), and hint lines.
-//! Player state is read fresh every frame from [`znicz_core::PlayerHandle`], so
-//! the interface owns no copy of it.
+//! Player state is read fresh every frame from the engine (local in tests, or
+//! `znicz player` over IPC in production), so the interface owns no copy of it.
 
 pub mod app;
 pub mod cursor;

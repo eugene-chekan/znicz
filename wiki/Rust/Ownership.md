@@ -11,7 +11,8 @@ The ring buffer has two ends. Only **one** thread may own the producer. Only **o
 - a channel **sender** (cheap to clone)
 - `Arc<RwLock<PlayerState>>` (`Arc` = shared ownership of the lock)
 
-The TUI and MCP can each hold a handle.
+The player process holds `PlayerHandle`. The TUI and MCP each hold an
+`IpcClient` to that one process.
 
 ## Borrow examples
 

@@ -97,8 +97,8 @@ Not in this version. Tracked as GitHub issues; see [Issues](../Issues.md).
 ## Later app state
 
 Session today is `session.toml` ([#20](https://github.com/eugene-chekan/znicz/issues/20), done).
-When the TUI is running, MCP attaches to that live engine ([#27](https://github.com/eugene-chekan/znicz/issues/27)).
-A **separate database** for app state and configuration (not `library.db`) is
+TUI and MCP share one `znicz player` process ([#27](https://github.com/eugene-chekan/znicz/issues/27)).
+That is the live bus. A **separate database** for app state and configuration (not `library.db`) is
 later, with the settings overlay ([#6](https://github.com/eugene-chekan/znicz/issues/6)).
 
 ## Phase 5

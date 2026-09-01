@@ -8,12 +8,16 @@ experience lives. The interface is an **immediate-mode** loop:
 3. Wait for a key, or for the tick that advances the seek bar
 4. Repeat until `q`
 
-On quit (and shortly after the queue or volume/repeat/shuffle/mute changes)
-the TUI writes `session.toml`. Bare start restores that session **Stopped**.
+`q` closes the TUI only. Playback keeps going in `znicz player` until you
+`s` (stop), `znicz player stop`, or the player is already Stopped and idle
+with no UI connected.
+
+The **player process** writes `session.toml` when it exits (idle or
+`znicz player stop`). Bare start restores that session **Stopped**.
 See [Formats and metadata](../Domain/Formats-and-Metadata.md#session).
 
-While `znicz` is on screen it also writes a localhost advertise file
-(`ipc.toml`) so `znicz mcp` can attach to this same engine. See
+The TUI is a **UI client**. It does not host the engine or write `ipc.toml`.
+`znicz` autostarts `znicz player` and connects with Hello `role=ui`. See
 [MCP](MCP.md).
 
 Ratatui does not keep widgets as a tree you mutate. You describe the layout
@@ -195,7 +199,7 @@ matching outline show the level at a glance: blue info, green success, yellow
 warn, red error. Errors stay up twice as long, since they need reading. Hints
 on the bottom line are never replaced.
 
-For this to work, key handlers use `PlayerHandle::send_blocking` rather than
+For this to work, key handlers use `send_blocking` rather than
 `send`: the engine's own result comes back, so a missing file or an unusable
 device is reported rather than dropped. It also means the next frame reads state
 that already includes the change, instead of drawing the old volume.

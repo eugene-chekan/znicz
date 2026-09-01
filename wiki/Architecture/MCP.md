@@ -8,13 +8,17 @@ Znicz speaks MCP on **stdio** (stdin/stdout). The host starts:
 znicz mcp
 ```
 
-On start the MCP server restores `session.toml` (queue and transport extras,
-**Stopped**). If a TUI is already running, tools and resources **attach** to
-that live engine instead. The TUI writes `ipc.toml` (`port` and a token, Unix
-mode `0600`) at `$XDG_RUNTIME_DIR/znicz/ipc.toml` or `{temp}/znicz/ipc.toml`.
-Override with `ZNICZ_IPC_PATH`. Mutating tools write `session.toml` from the
-engine they actually used. If MCP never used its own player, exit does not
-overwrite `session.toml`. The host then sends JSON-RPC messages.
+That command **autostarts** `znicz player` if needed, then keeps one TCP session
+(`role=agent`) for the life of the MCP host. It does not open the DAC itself
+and does not write `session.toml`. The player process owns the engine and the
+session file.
+
+Advertise file: `ipc.toml` (`port` and a token, Unix mode `0600`) at
+`$XDG_RUNTIME_DIR/znicz/ipc.toml` or `{temp}/znicz/ipc.toml`. Override with
+`ZNICZ_IPC_PATH`. `player.lock` sits beside it so two autostarts cannot spawn
+two engines.
+
+The host then sends JSON-RPC messages.
 
 We use the Rust SDK [`rmcp`](https://crates.io/crates/rmcp).
 
@@ -27,10 +31,9 @@ We use the Rust SDK [`rmcp`](https://crates.io/crates/rmcp).
 | **Prompts** | Ready-made instructions for the model |
 | **Skills** | Longer how-to files (`SKILL.md`) the model loads when needed |
 
-Tools use the same `Command`s as the TUI. While the TUI is running, MCP talks
-to **that** player over localhost ([#27](https://github.com/eugene-chekan/znicz/issues/27)).
-With no TUI, `znicz mcp` still has its own headless engine. `session.toml` is
-the restart snapshot (Stopped); it is not the live bus.
+Tools use the same `Command`s as the TUI. They talk to **`znicz player`**, not
+to the TUI ([#27](https://github.com/eugene-chekan/znicz/issues/27)).
+`session.toml` is the restart snapshot (Stopped); it is not the live bus.
 
 Library tools (`scan_library`, `search_library`, `get_track`, `browse_album`,
 `list_albums`, `library_stats`, `library_prune`) talk to
@@ -55,7 +58,7 @@ A tool that changes something must report what actually happened. Sending a
 command and immediately reading state gives the **previous** snapshot, because
 the player thread has not run yet — that was [Issue #1](../Issues.md).
 
-So mutating tools use `PlayerHandle::send_blocking`, which waits until the engine
+So mutating tools use `send_blocking`, which waits until the engine
 has applied the command and returns the engine's own result:
 
 - the returned state shows the change
@@ -64,7 +67,10 @@ has applied the command and returns the engine's own result:
 
 The TUI uses `send_blocking` too: the frame after a keypress must show the new
 volume, and a failure must become a toast instead of vanishing into the log.
-Startup paths that do not need an immediate redraw can still use `send`.
+
+`stop` sets playback to Stopped. It does not exit the player process. Use
+`znicz player stop` for that. If the MCP host exits, only the agent socket
+drops.
 
 ## Skills (SEP-2640 style)
 
@@ -86,4 +92,4 @@ They are also MCP resources (`skill://name/SKILL.md`) and listed by the `skills_
 
 - [MCP specification](https://modelcontextprotocol.io/)
 - [Agent Skills](https://agentskills.io/)
-- [rmcp docs](https://docs.rs/rmcp/)
+- [rmcp docs](https://crates.io/crates/rmcp)
