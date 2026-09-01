@@ -118,7 +118,7 @@ impl ZniczMcpServer {
     ) -> Result<rmcp::model::CallToolResult, McpError> {
         map_player_err(apply_to_player(&self.player, &result, append))?;
         Self::json_result(&serde_json::json!({
-            "loaded": result.paths.len(),
+            "loaded": result.items.len(),
             "skipped": result.skipped,
             "state": self.player.state(),
         }))
@@ -1319,7 +1319,7 @@ mod tests {
     fn import_playlist_errors_when_nothing_is_playable() {
         let (server, dir) = playlist_server();
         let path = dir.join("empty.m3u");
-        std::fs::write(&path, "# only a comment\nhttp://x\n").unwrap();
+        std::fs::write(&path, "# only a comment\nftp://x\n").unwrap();
 
         let result = server.import_playlist(Parameters(ImportPlaylistParams {
             path: path.to_string_lossy().into_owned(),
@@ -1327,6 +1327,33 @@ mod tests {
         }));
         assert!(result.is_err(), "expected an error, got {result:?}");
         assert!(server.player.state().queue.is_empty());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn import_playlist_appends_an_http_line() {
+        let (server, dir) = playlist_server();
+        let path = dir.join("radio.m3u");
+        std::fs::write(&path, "#EXTINF:-1,Live\nhttp://127.0.0.1:1/s\n").unwrap();
+
+        let result = server
+            .import_playlist(Parameters(ImportPlaylistParams {
+                path: path.to_string_lossy().into_owned(),
+                append: true,
+            }))
+            .expect("import stream line");
+        let payload: serde_json::Value =
+            serde_json::from_str(&result_text(&result)).expect("import json");
+        assert_eq!(payload["loaded"], 1);
+        assert_eq!(payload["skipped"], 0);
+        let queue = server.player.state().queue;
+        assert_eq!(queue.len(), 1);
+        assert_eq!(
+            queue[0],
+            znicz_core::QueueItem::stream("Live", "http://127.0.0.1:1/s")
+        );
+        assert_eq!(server.player.state().status, PlaybackStatus::Stopped);
 
         std::fs::remove_dir_all(&dir).ok();
     }

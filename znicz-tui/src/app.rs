@@ -735,7 +735,7 @@ impl App {
                     } else if append {
                         self.toasts.success(format!(
                             "added {} from {name}",
-                            match result.paths.len() {
+                            match result.items.len() {
                                 1 => "1 track".to_string(),
                                 n => format!("{n} tracks"),
                             }

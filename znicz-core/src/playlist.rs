@@ -1,8 +1,8 @@
-//! M3U / M3U8 playlists: a file of local paths for the queue.
+//! M3U / M3U8 playlists: local paths and http(s) stream rows for the queue.
 //!
-//! Comments and blanks are ignored. URLs and missing files are skipped and
-//! counted. The engine is unchanged: callers send `QueueClear` / `QueueAdd` /
-//! `QueuePlayIndex`.
+//! Comments and blanks are ignored. Missing files and non-http(s) URLs are
+//! skipped and counted. The engine is unchanged: callers send `QueueClear` /
+//! `QueueAdd` / `QueuePlayIndex`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,28 +10,64 @@ use std::path::{Path, PathBuf};
 use crate::error::{Result, ZniczError};
 use crate::player::commands::Command;
 use crate::player::engine::PlayerHandle;
+use crate::player::state::QueueItem;
 
 /// What a playlist file turned into.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LoadResult {
-    pub paths: Vec<PathBuf>,
-    /// URLs and missing files. Comments and blank lines are not counted.
+    pub items: Vec<QueueItem>,
+    /// Missing local files and non-http(s) URLs. Comments and blank lines are not counted.
     pub skipped: usize,
+}
+
+fn is_http_url(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower.starts_with("http://") || lower.starts_with("https://")
+}
+
+fn extinf_title(line: &str) -> Option<Option<String>> {
+    let rest = line.strip_prefix("#EXTINF:")?;
+    Some(match rest.split_once(',') {
+        Some((_, title)) => {
+            let title = title.trim();
+            if title.is_empty() {
+                None
+            } else {
+                Some(title.to_string())
+            }
+        }
+        None => None,
+    })
 }
 
 /// Read an M3U body. `base_dir` resolves relative paths.
 pub fn parse(text: &str, base_dir: &Path) -> LoadResult {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut result = LoadResult::default();
+    let mut pending: Option<String> = None;
     for line in text.lines() {
         let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(title) = extinf_title(line) {
+            pending = title;
+            continue;
+        }
+        if line.starts_with('#') {
+            continue;
+        }
+        if is_http_url(line) {
+            let name = pending.take().unwrap_or_else(|| line.to_string());
+            result.items.push(QueueItem::stream(name, line));
             continue;
         }
         if line.contains("://") {
+            pending = None;
             result.skipped += 1;
             continue;
         }
+        pending = None;
         let path = PathBuf::from(line);
         let path = if path.is_absolute() {
             path
@@ -39,7 +75,7 @@ pub fn parse(text: &str, base_dir: &Path) -> LoadResult {
             base_dir.join(path)
         };
         if path.is_file() {
-            result.paths.push(path);
+            result.items.push(QueueItem::file(path));
         } else {
             result.skipped += 1;
         }
@@ -226,7 +262,7 @@ pub fn saved_path(dir: &Path, name: &str) -> Option<PathBuf> {
     None
 }
 
-pub fn m3u_paths(queue: &[crate::player::state::QueueItem]) -> Result<Vec<PathBuf>> {
+pub fn m3u_paths(queue: &[QueueItem]) -> Result<Vec<PathBuf>> {
     if queue.iter().any(|item| item.is_stream()) {
         return Err(ZniczError::Player(
             "cannot save a queue that contains a radio station".into(),
@@ -244,34 +280,26 @@ pub fn m3u_paths(queue: &[crate::player::state::QueueItem]) -> Result<Vec<PathBu
 
 /// Clear and play (`append == false`) or only append.
 pub fn apply_to_player(player: &PlayerHandle, result: &LoadResult, append: bool) -> Result<()> {
-    if result.paths.is_empty() {
+    if result.items.is_empty() {
         return Err(ZniczError::Player("playlist had no playable files".into()));
     }
     if !append {
         player.send_blocking(Command::QueueClear)?;
     }
-    player.send_blocking(Command::QueueAdd(
-        result
-            .paths
-            .iter()
-            .cloned()
-            .map(crate::player::state::QueueItem::file)
-            .collect(),
-    ))?;
+    player.send_blocking(Command::QueueAdd(result.items.clone()))?;
     if !append {
         player.send_blocking(Command::QueuePlayIndex(0))?;
     }
     Ok(())
 }
 
-/// Warn text when some rows were URLs or missing files.
 pub fn skipped_notice(result: &LoadResult) -> Option<String> {
     if result.skipped == 0 {
         None
     } else {
         Some(format!(
             "{} tracks, {} skipped",
-            result.paths.len(),
+            result.items.len(),
             result.skipped
         ))
     }
@@ -306,7 +334,7 @@ mod tests {
         let a = touch(&dir, "a.flac");
         let text = format!("#EXTM3U\n\n#EXTINF:123,Title\n{}\n", a.display());
         let result = parse(&text, &dir);
-        assert_eq!(result.paths, vec![a]);
+        assert_eq!(result.items, vec![QueueItem::file(a)]);
         assert_eq!(result.skipped, 0);
     }
 
@@ -315,7 +343,7 @@ mod tests {
         let dir = tmp();
         let a = touch(&dir, "a.flac");
         let result = parse("a.flac\n", &dir);
-        assert_eq!(result.paths, vec![a]);
+        assert_eq!(result.items, vec![QueueItem::file(a)]);
     }
 
     #[test]
@@ -325,23 +353,94 @@ mod tests {
         let mut text = String::from("\u{feff}");
         text.push_str(&format!("{}\n", a.display()));
         let result = parse(&text, &dir);
-        assert_eq!(result.paths, vec![a]);
+        assert_eq!(result.items, vec![QueueItem::file(a)]);
     }
 
     #[test]
-    fn urls_and_missing_files_count_as_skipped() {
+    fn http_and_https_lines_become_stream_items() {
         let dir = tmp();
         let a = touch(&dir, "a.flac");
-        let text = format!("http://example.com/x.mp3\nmissing.flac\n{}\n", a.display());
+        let text = format!(
+            "http://example.com/x.mp3\nHTTPS://example.com/y\n{}\n",
+            a.display()
+        );
         let result = parse(&text, &dir);
-        assert_eq!(result.paths, vec![a]);
+        assert_eq!(
+            result.items,
+            vec![
+                QueueItem::stream("http://example.com/x.mp3", "http://example.com/x.mp3"),
+                QueueItem::stream("HTTPS://example.com/y", "HTTPS://example.com/y"),
+                QueueItem::file(a),
+            ]
+        );
+        assert_eq!(result.skipped, 0);
+    }
+
+    #[test]
+    fn extinf_names_the_next_stream_and_is_ignored_for_files() {
+        let dir = tmp();
+        let a = touch(&dir, "a.flac");
+        let text = format!(
+            "#EXTM3U\n#EXTINF:-1,Live\n# a comment\nhttp://127.0.0.1:1/s\n#EXTINF:123,Ignored\n{}\n",
+            a.display()
+        );
+        let result = parse(&text, &dir);
+        assert_eq!(
+            result.items,
+            vec![
+                QueueItem::stream("Live", "http://127.0.0.1:1/s"),
+                QueueItem::file(a),
+            ]
+        );
+        assert_eq!(result.skipped, 0);
+    }
+
+    #[test]
+    fn ftp_and_missing_files_are_still_skipped() {
+        let dir = tmp();
+        let a = touch(&dir, "a.flac");
+        let text = format!("ftp://x\nmissing.flac\n{}\n", a.display());
+        let result = parse(&text, &dir);
+        assert_eq!(result.items, vec![QueueItem::file(a)]);
         assert_eq!(result.skipped, 2);
     }
 
     #[test]
+    fn a_url_only_playlist_is_not_empty() {
+        let result = parse("http://127.0.0.1:1/s\n", &tmp());
+        assert_eq!(
+            result.items,
+            vec![QueueItem::stream(
+                "http://127.0.0.1:1/s",
+                "http://127.0.0.1:1/s"
+            )]
+        );
+        assert_eq!(result.skipped, 0);
+    }
+
+    #[test]
+    fn apply_append_enqueues_a_stream_without_opening_it() {
+        let (player, _thread) = crate::spawn_player(crate::AudioConfig::default());
+        apply_to_player(
+            &player,
+            &LoadResult {
+                items: vec![QueueItem::stream("Live", "http://127.0.0.1:1/s")],
+                skipped: 0,
+            },
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            player.state().queue,
+            vec![QueueItem::stream("Live", "http://127.0.0.1:1/s")]
+        );
+        assert_eq!(player.state().status, crate::PlaybackStatus::Stopped);
+    }
+
+    #[test]
     fn empty_result_when_nothing_playable() {
-        let result = parse("# only a comment\nhttp://x\n", &tmp());
-        assert!(result.paths.is_empty());
+        let result = parse("# only a comment\nftp://x\n", &tmp());
+        assert!(result.items.is_empty());
         assert_eq!(result.skipped, 1);
     }
 
@@ -357,8 +456,11 @@ mod tests {
         // `\\?\` prefix and may expand 8.3 names (`RUNNER~1`), so the strings
         // are not the temp paths we started with. The files are the same.
         assert_eq!(
-            result.paths,
-            vec![a.canonicalize().unwrap(), b.canonicalize().unwrap()]
+            result.items,
+            vec![
+                QueueItem::file(a.canonicalize().unwrap()),
+                QueueItem::file(b.canonicalize().unwrap())
+            ]
         );
         assert_eq!(result.skipped, 0);
     }
@@ -452,14 +554,14 @@ mod tests {
     fn skipped_notice_is_none_when_every_row_loaded() {
         assert_eq!(
             skipped_notice(&LoadResult {
-                paths: vec![PathBuf::from("a.flac")],
+                items: vec![QueueItem::file("a.flac")],
                 skipped: 0
             }),
             None
         );
         assert_eq!(
             skipped_notice(&LoadResult {
-                paths: vec![PathBuf::from("a.flac")],
+                items: vec![QueueItem::file("a.flac")],
                 skipped: 2
             })
             .as_deref(),
@@ -505,7 +607,7 @@ mod tests {
         let err = apply_to_player(
             &player,
             &LoadResult {
-                paths: Vec::new(),
+                items: Vec::new(),
                 skipped: 1,
             },
             false,
