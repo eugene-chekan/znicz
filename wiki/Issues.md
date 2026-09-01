@@ -15,8 +15,7 @@ Parked TUI ideas (file, do not start unless asked):
 
 Queue:
 
-- [#14 Deleting the playing queue row desyncs the list and the decoder](https://github.com/eugene-chekan/znicz/issues/14)
-- [#15 MCP `queue_remove` for a single queue row](https://github.com/eugene-chekan/znicz/issues/15) (after #14)
+- [#15 MCP `queue_remove` for a single queue row](https://github.com/eugene-chekan/znicz/issues/15)
 
 Product phases 5–6 (album art, MusicBrainz) and **later radio** (ICY,
 HLS, M3U stream lines) are on the
@@ -24,6 +23,16 @@ HLS, M3U stream lines) are on the
 streams) is done.
 
 ## Closed
+
+### [#14 Deleting the playing queue row](https://github.com/eugene-chekan/znicz/issues/14)
+
+- **Fixed:** 2026-09-01
+- **Component:** `znicz-core`, `znicz-tui`
+- **Status:** **Fixed** in 0.3.2
+
+`d` on the playing row now stops that file and starts the row that slides
+into its index, or stops if it was the last row. Pause/resume match the
+decoder.
 
 ### Wiki #1 — MCP tools return stale state (read-before-write race)
 
