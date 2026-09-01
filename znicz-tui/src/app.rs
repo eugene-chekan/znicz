@@ -421,7 +421,7 @@ impl App {
             KeyCode::Char(' ') => self.toggle_pause(),
             KeyCode::Char('s') => self.apply(Command::Stop, None),
             KeyCode::Char('n') => self.skip_track(false),
-            KeyCode::Char('N') | KeyCode::Char('p') => self.skip_track(true),
+            KeyCode::Char('p') => self.skip_track(true),
 
             KeyCode::Right if key.modifiers.contains(KeyModifiers::ALT) => {
                 self.pan_titles(1);

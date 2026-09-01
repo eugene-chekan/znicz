@@ -627,6 +627,22 @@ fn lowercase_p_is_still_previous_track() {
 }
 
 #[test]
+fn capital_n_is_not_previous_track() {
+    let mut app = new_app();
+    queue(&mut app, 2);
+    press_char(&mut app, 'n');
+    assert_eq!(app.state().queue_position, 1);
+    press_char(&mut app, 'N');
+    assert_eq!(
+        app.state().queue_position,
+        1,
+        "N must not go to the previous row"
+    );
+    press_char(&mut app, 'p');
+    assert_eq!(app.state().queue_position, 0);
+}
+
+#[test]
 fn save_prompt_treats_s_as_a_letter() {
     let mut app = new_app();
     queue(&mut app, 1);
