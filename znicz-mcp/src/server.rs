@@ -164,6 +164,12 @@ struct QueueAddParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+struct QueueRemoveParams {
+    /// 0-based queue index, same as TUI `d` / `Command::QueueRemove`.
+    index: usize,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 struct DeviceParams {
     device_id: String,
 }
@@ -409,7 +415,7 @@ impl ZniczMcpServer {
         self.apply(Command::PreviousTrack)
     }
 
-    #[tool(description = "Add paths to the playback queue")]
+    #[tool(description = "Add file paths and http(s) stream URLs to the playback queue")]
     fn queue_add(
         &self,
         Parameters(params): Parameters<QueueAddParams>,
@@ -417,9 +423,17 @@ impl ZniczMcpServer {
         let items = params
             .paths
             .into_iter()
-            .map(znicz_core::QueueItem::file)
+            .map(znicz_core::QueueItem::file_or_http_url)
             .collect();
         self.apply(Command::QueueAdd(items))
+    }
+
+    #[tool(description = "Remove one queue row by 0-based index")]
+    fn queue_remove(
+        &self,
+        Parameters(params): Parameters<QueueRemoveParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        self.apply(Command::QueueRemove(params.index))
     }
 
     #[tool(description = "Clear the playback queue")]
@@ -1040,6 +1054,57 @@ mod tests {
         let queue = state["queue"].as_array().expect("queue field");
 
         assert_eq!(queue.len(), 2, "tool reported queue {queue:?}");
+    }
+
+    #[test]
+    fn queue_add_treats_http_urls_as_stream_rows() {
+        let server = server();
+
+        let result = server
+            .queue_add(Parameters(QueueAddParams {
+                paths: vec![
+                    "/music/a.flac".into(),
+                    "HTTPS://example.com/live".into(),
+                    "ftp://example.com/x".into(),
+                ],
+            }))
+            .expect("queue_add");
+
+        let state: serde_json::Value =
+            serde_json::from_str(&result_text(&result)).expect("state json");
+        let queue = state["queue"].as_array().expect("queue field");
+        assert_eq!(queue.len(), 3, "tool reported queue {queue:?}");
+        assert_eq!(queue[0]["kind"], "file");
+        assert_eq!(queue[1]["kind"], "stream");
+        assert_eq!(queue[1]["url"], "HTTPS://example.com/live");
+        assert_eq!(queue[1]["name"], "HTTPS://example.com/live");
+        assert_eq!(
+            queue[2]["kind"], "file",
+            "non-http(s) URLs stay file rows; got {queue:?}"
+        );
+    }
+
+    #[test]
+    fn queue_remove_drops_one_row_and_returns_the_new_queue() {
+        let server = server();
+        server
+            .queue_add(Parameters(QueueAddParams {
+                paths: vec!["/music/a.flac".into(), "/music/b.flac".into()],
+            }))
+            .expect("queue_add");
+
+        let result = server
+            .queue_remove(Parameters(QueueRemoveParams { index: 0 }))
+            .expect("queue_remove");
+
+        let state: serde_json::Value =
+            serde_json::from_str(&result_text(&result)).expect("state json");
+        let queue = state["queue"].as_array().expect("queue field");
+        assert_eq!(queue.len(), 1, "tool reported queue {queue:?}");
+        assert!(
+            queue[0]["path"].as_str().unwrap().ends_with("b.flac"),
+            "row 0 should slide up; got {queue:?}"
+        );
     }
 
     /// A failing command must surface as an error, not a silent stale snapshot.

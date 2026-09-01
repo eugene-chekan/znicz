@@ -41,7 +41,7 @@ counted. If nothing playable remains, the tool errors and the queue is unchanged
    already playing and add the list.
 4. `import_playlist { "path": "/home/user/sets/club.m3u" }` for a file outside
    the saved folder.
-5. After building a queue (`queue_add` / `queue_get`), `save_playlist { "name": "evening" }`
+5. After building a queue (`queue_add` with paths and/or http(s) URLs, then `queue_get`), `save_playlist { "name": "evening" }`
    writes `evening.m3u` (overwrite is allowed).
 6. `rename_playlist { "name": "evening", "new_name": "night" }` renames that file.
 7. `copy_playlist { "name": "night", "new_name": "night-backup" }` duplicates it.

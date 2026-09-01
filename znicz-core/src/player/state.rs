@@ -19,6 +19,11 @@ pub enum QueueItem {
     Stream { name: String, url: String },
 }
 
+pub fn is_http_url(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower.starts_with("http://") || lower.starts_with("https://")
+}
+
 impl QueueItem {
     pub fn file(path: impl Into<PathBuf>) -> Self {
         Self::File { path: path.into() }
@@ -29,6 +34,19 @@ impl QueueItem {
             url: url.into(),
         }
     }
+
+    /// File path, or a stream row when the string is `http://` / `https://`.
+    ///
+    /// Same prefix rule as M3U. Display name for a URL is the URL itself.
+    pub fn file_or_http_url(entry: impl AsRef<str>) -> Self {
+        let entry = entry.as_ref();
+        if is_http_url(entry) {
+            Self::stream(entry, entry)
+        } else {
+            Self::file(entry)
+        }
+    }
+
     pub fn as_path(&self) -> Option<&Path> {
         match self {
             Self::File { path } => Some(path),
@@ -310,6 +328,22 @@ mod tests {
         assert_eq!(stream_json["kind"], "stream");
         assert_eq!(stream_json["name"], "Example");
         assert_eq!(stream_json["url"], "https://example.com/s");
+    }
+
+    #[test]
+    fn file_or_http_url_splits_on_http_prefix() {
+        assert_eq!(
+            QueueItem::file_or_http_url("/music/a.flac"),
+            QueueItem::file("/music/a.flac")
+        );
+        assert_eq!(
+            QueueItem::file_or_http_url("HTTPS://example.com/live"),
+            QueueItem::stream("HTTPS://example.com/live", "HTTPS://example.com/live")
+        );
+        assert_eq!(
+            QueueItem::file_or_http_url("ftp://example.com/x"),
+            QueueItem::file("ftp://example.com/x")
+        );
     }
 
     #[test]

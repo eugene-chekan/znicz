@@ -14,7 +14,7 @@ description: Control znicz via MCP tools and resources. Use when driving playbac
 | `seek` | Seek to seconds |
 | `set_volume` | 0.0–1.0 |
 | `next_track` / `previous_track` | Queue navigation |
-| `queue_add` / `queue_clear` / `queue_get` | Queue |
+| `queue_add` / `queue_remove` / `queue_clear` / `queue_get` | Queue (paths and http(s) URLs) |
 | `get_player_state` | Full snapshot |
 | `list_devices` / `set_device` | Output selection |
 
@@ -30,6 +30,7 @@ description: Control znicz via MCP tools and resources. Use when driving playbac
 
 ## Patterns
 
-1. `queue_add` then `play` first path, or `play` with auto-queue
-2. Poll `get_player_state` or subscribe to resources for progress
-3. Load domain skills (`audiophile-playback`, etc.) only when needed
+1. `queue_add` with file paths and/or `http(s)` URLs, then `play` first path, or `play` with auto-queue. URLs enqueue as streams and do not start playback.
+2. `queue_remove` with a 0-based index to drop one row (same rule as TUI `d`)
+3. Poll `get_player_state` or subscribe to resources for progress
+4. Load domain skills (`audiophile-playback`, etc.) only when needed
