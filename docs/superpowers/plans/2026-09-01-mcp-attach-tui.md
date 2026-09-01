@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans or subagent-driven-development.
 
+**Superseded** by [Shared player process](../specs/2026-09-01-shared-player-design.md). Do not implement TUI-as-host.
+
 **Goal:** While the TUI runs, MCP `get_player_state` and mutating tools use that engine ([#27](https://github.com/eugene-chekan/znicz/issues/27)).
 
 **Architecture:** TUI binds `127.0.0.1:0`, writes `ipc.toml` (`port`, `token`). MCP tries that file each call; otherwise the local headless player. MCP exit must not wipe `session.toml` with an unused empty local player.

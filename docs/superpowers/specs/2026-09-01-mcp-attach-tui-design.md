@@ -1,7 +1,7 @@
 # MCP attaches to the running TUI ([#27](https://github.com/eugene-chekan/znicz/issues/27))
 
 **Date:** 2026-09-01
-**Status:** Approved
+**Status:** Superseded by [Shared player process](2026-09-01-shared-player-design.md)
 **Crates:** `znicz-core` (IPC), `znicz-library` (path), `znicz-tui` (host), `znicz-mcp` (client), `znicz`
 **Version:** 0.3.7 → 0.3.8
 
