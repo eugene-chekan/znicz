@@ -28,35 +28,39 @@ Ratatui does not keep widgets as a tree you mutate. You describe the layout
 ## Layout
 
 ```
-┌ Library / Dummy ─────────────────────────────────────────┐
-│  1  Mysterons — Portishead                          5:02 │
-│  2  Sour Times — Portishead                         4:11 │
-│  3  Wandering Star — Portishead  ┌ Queue ────────────────┤
-│  4  It Could Be Sweet — Portis.  │  1 ▶ Sour Times  4:11 │
-│  5  Numb — Portishead            │  2   Strangers   3:58 │
-│                                  ┌───────────────────────┤
-│                                  │ × device refused 96 kHz
-│                                  └───────────────────────┘
-└ 12 tracks · Alt-← → pan ─────────┴ 3 tracks · ] close ───┘
-▶ Sour Times  Portishead — Dummy  ━━━━━── 1:02/4:11  70%
-  FLAC 96 kHz 24-bit 2882 kbps stereo → 96 kHz stereo  ● bit perfect
-  Space pause  a add  ] queue  i inspect  Alt-← → pan  , devices  ? help
+┌ Library ─────────────────────────────────────────────────┐
+│  tracks                                                  │
+└──────────────────────────────────────────────────────────┘
+┌ cover ┐  ▶ So What
+│ 8 rows│  Miles Davis — Kind of Blue
+│       │  ━━━●━━━━  1:02 / 9:22  70%
+│       │  FLAC 24/96 → DAC  ● bit perfect
+└───────┘
+Space pause  a add  ] queue  i inspect  …
 ```
 
 The library is the stage and always fills the list region. The queue is an
 overlay drawer on the right (`]` toggles it). Long titles pan horizontally with
-`Alt-←` and `Alt-→` on the highlighted row only. `<` and `>` are unbound. Transport is two lines at the bottom; hints stay on their own line
-and are never replaced by a toast.
+`Alt-←` and `Alt-→` on the highlighted row only. `<` and `>` are unbound.
+With cover on (default), transport is a square cover slot on the left and
+stacked chrome on the right. Missing art (and streams) keep the slot and draw
+the bundled logo. `show_cover = false` restores the old full-width one- or
+two-line transport. Hints stay on their own line and are never replaced by a
+toast. Config: `[tui]` in `config.toml` (`show_cover`, `cover_protocol`).
 
 ### Responsive behaviour
 
-The window is often small, so parts are dropped in order of importance:
+Always reserve **3** list rows and **1** hint row. `available = height - 4`.
+Compact windows (`height < 20`) still **drop the signal line**, whether or not
+a cover is showing.
 
-| Height | What is shown |
-| --- | --- |
-| 20 rows or more | everything, including both transport lines |
-| 12–19 rows | the signal-path line (transport line 2) is dropped |
-| under 12 rows | library + one transport line + hints |
+| Height | Cover | Transport text |
+| --- | --- | --- |
+| `show_cover = false`, ≥ 20 | none | two lines |
+| `show_cover = false`, < 20 | none | one line |
+| cover on, `available ≥ 8` | 8 rows | stacked chrome to the right; signal dropped if height < 20 |
+| cover on, `available` 4–7 | that many rows | same |
+| cover on, `available < 4` | none | same as `show_cover = false` |
 
 Every row is also truncated to the window width with `…`, counting **characters
 rather than bytes** so accented titles are never cut mid-character.
@@ -222,7 +226,7 @@ top of the player.
 | `app.rs` | state, event loop, key dispatch |
 | `layout.rs` | list region, drawer overlay, toast boxes, modal placement |
 | `views/` | drawing, one module per pane |
-| `views/now_playing.rs` | two-line transport (play state, seek, signal path) |
+| `views/now_playing.rs` | transport (cover slot + chrome, or one-/two-line text) |
 | `views/inspector.rs` | full signal-path overlay (`i`) |
 | `views/playlists.rs` | saved M3U overlay (`P`) |
 | `views/radio.rs` | saved stations overlay (`R`) |
@@ -232,6 +236,8 @@ top of the player.
 | `cursor.rs` | list cursor movement |
 | `line_edit.rs` | one-line prompt caret (search, playlist save, radio) |
 | `meta.rs` | background tag cache |
+| `cover.rs` | background cover cache + logo |
+| `tui_config.rs` | `show_cover` / `cover_protocol` |
 | `toast.rs` | boxed, level-coloured messages |
 | `format.rs` | durations, rates, bars, truncation |
 | `library_pane.rs` | browsing state |

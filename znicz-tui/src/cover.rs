@@ -38,6 +38,12 @@ pub struct CoverCache {
     logo: Arc<DynamicImage>,
 }
 
+impl Default for CoverCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CoverCache {
     pub fn new() -> Self {
         let logo = Arc::new(

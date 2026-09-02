@@ -12,7 +12,7 @@ use znicz_core::{
 };
 use znicz_library::Library;
 use znicz_mcp::run_stdio;
-use znicz_tui::App;
+use znicz_tui::{App, TuiConfig};
 
 #[derive(Debug, Parser)]
 #[command(name = "znicz", about = "Audiophile TUI music player")]
@@ -147,12 +147,28 @@ struct Config {
     mcp: McpSection,
     library: LibrarySection,
     player: PlayerSection,
+    tui: TuiSection,
 }
 
 #[derive(Debug, Deserialize, Default)]
 struct LibrarySection {
     /// Where the database file lives. Defaults to the user data directory.
     path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct TuiSection {
+    show_cover: Option<bool>,
+    cover_protocol: Option<String>,
+}
+
+fn tui_config(config: &Config) -> TuiConfig {
+    TuiConfig {
+        show_cover: config.tui.show_cover.unwrap_or(true),
+        cover_protocol: znicz_tui::CoverProtocol::parse(
+            config.tui.cover_protocol.as_deref().unwrap_or("auto"),
+        ),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -198,6 +214,7 @@ fn main() -> color_eyre::Result<()> {
     }
 
     let library_path = library_path(&config);
+    let tui = tui_config(&config);
     let config_file = cli.config.clone();
 
     let audio_config = AudioConfig {
@@ -249,6 +266,7 @@ fn main() -> color_eyre::Result<()> {
                     library_path,
                     audio_config.device_id.as_deref(),
                     config_file.as_deref(),
+                    tui,
                 )?;
             }
             PlaylistCmd::Play { name, append } => {
@@ -261,6 +279,7 @@ fn main() -> color_eyre::Result<()> {
                     library_path,
                     audio_config.device_id.as_deref(),
                     config_file.as_deref(),
+                    tui,
                 )?;
             }
             PlaylistCmd::Rename { name, new_name } => {
@@ -290,6 +309,7 @@ fn main() -> color_eyre::Result<()> {
                     library_path,
                     audio_config.device_id.as_deref(),
                     config_file.as_deref(),
+                    tui,
                 )?;
             }
             StationCmd::Remove { name } => {
@@ -311,6 +331,7 @@ fn main() -> color_eyre::Result<()> {
                 library_path,
                 audio_config.device_id.as_deref(),
                 config_file.as_deref(),
+                tui,
             )?;
         }
     }
@@ -548,6 +569,7 @@ fn run_tui(
     library_path: Option<PathBuf>,
     device: Option<&str>,
     config: Option<&Path>,
+    tui: TuiConfig,
 ) -> color_eyre::Result<()> {
     let player = connect_ui(device, config)?;
 
@@ -576,7 +598,7 @@ fn run_tui(
         }
     }
 
-    run_tui_with_client(player, library_path, None)
+    run_tui_with_client(player, library_path, None, tui)
 }
 
 fn playlists_dir() -> color_eyre::Result<PathBuf> {
@@ -603,6 +625,7 @@ fn play_station_and_run(
     library_path: Option<PathBuf>,
     device: Option<&str>,
     config: Option<&Path>,
+    tui: TuiConfig,
 ) -> color_eyre::Result<()> {
     let path = stations_path()?;
     let stations = znicz_core::load_stations(&path)?;
@@ -612,7 +635,7 @@ fn play_station_and_run(
     let player = connect_ui(device, config)?;
     znicz_core::play_station(&player, &station, append)
         .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-    run_tui_with_client(player, library_path, None)
+    run_tui_with_client(player, library_path, None, tui)
 }
 
 fn list_stations() -> color_eyre::Result<()> {
@@ -647,17 +670,19 @@ fn load_playlist_and_run(
     library_path: Option<PathBuf>,
     device: Option<&str>,
     config: Option<&Path>,
+    tui: TuiConfig,
 ) -> color_eyre::Result<()> {
     let result = load_path(&path)?;
     let player = connect_ui(device, config)?;
     apply_to_player(&player, &result, append).map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-    run_tui_with_client(player, library_path, skipped_notice(&result))
+    run_tui_with_client(player, library_path, skipped_notice(&result), tui)
 }
 
 fn run_tui_with_client(
     player: IpcClient,
     library_path: Option<PathBuf>,
     skip_notice: Option<String>,
+    tui: TuiConfig,
 ) -> color_eyre::Result<()> {
     // No library is not an error: the browser pane explains how to build one.
     let library = match open_library(library_path) {
@@ -673,6 +698,7 @@ fn run_tui_with_client(
     // long as the TUI owns the terminal; nothing is lost, it just moves.
     let log = stderr::redirect_to_log();
     let mut app = App::with_remote(player, library);
+    app.tui = tui;
     if let Some(message) = skip_notice {
         app.toasts.warn(message);
     }

@@ -3,7 +3,7 @@
 **Date:** 2026-09-02
 **Status:** Approved
 **Crates:** `znicz-core` (picture bytes), `znicz-tui` (worker + layout + draw), `znicz` (`[tui]` config)
-**Version:** 0.3.10 → **0.4.0** (Phase 5)
+**Version:** **0.4.0** (Phase 5 done)
 **Plan sketch:** [wiki/Plans/Phase-5-Album-Art.md](../../../wiki/Plans/Phase-5-Album-Art.md) (this spec wins where they differ: no cover bytes on `PlayerState`)
 
 ## Problem

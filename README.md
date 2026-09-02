@@ -13,6 +13,7 @@ Cross-platform audiophile TUI music player with a native MCP server for AI agent
 - Repeat, shuffle, mute, and errors reported on screen rather than only in the log
 - Radio stations: HTTP/Icecast byte streams from the TUI, CLI, and MCP
 - Session restore: queue, volume, mute, repeat, and shuffle survive a restart
+- Embedded album art in the TUI (Kitty / Sixel / half-blocks; logo when missing)
 - MCP server: tools, resources, prompts, and bundled Agent Skills (same live player as the TUI)
 
 ## Build
@@ -41,7 +42,7 @@ GitHub Actions on `main` and pull requests run rustfmt, Clippy, and
 
 Start at **[wiki/Home.md](wiki/Home.md)**. It covers digital audio, the playback pipeline, crate layout, and the Rust ideas (ownership, threads, traits) used in this repo.
 
-Future work is tracked in **[wiki/Plans/Roadmap.md](wiki/Plans/Roadmap.md)** (Phase 5: [album art in the TUI](wiki/Plans/Phase-5-Album-Art.md)).
+Future work is tracked in **[wiki/Plans/Roadmap.md](wiki/Plans/Roadmap.md)** (Phase 5 album art is done: [Phase 5](wiki/Plans/Phase-5-Album-Art.md)).
 
 ## Usage
 
@@ -109,8 +110,10 @@ the global keys back.
 `i` opens a signal inspector
 with the full file → device path, including the device sample format that stays
 off the transport line.
-Transport sits on two lines at the bottom: now playing plus
-the signal path, for example
+Transport sits at the bottom. With cover on (default), an eight-row slot on
+the left shows embedded album art (or the Znicz logo when there is none);
+chrome stacks to the right. With `show_cover = false`, transport is one or
+two full-width lines as before. Example signal path:
 `FLAC 96 kHz 24-bit 2882 kbps stereo → 96 kHz stereo  ● bit perfect`.
 When the device will not take the file's own rate the badge reads `▲ resampled`,
 so a silent conversion never goes unnoticed. Long titles pan with
@@ -171,6 +174,10 @@ idle_secs = 900
 [library]
 # Optional. Defaults to the user data directory.
 path = "~/.local/share/znicz/library.db"
+
+[tui]
+show_cover = true
+cover_protocol = "auto"   # auto | kitty | sixel | halfblocks | off
 ```
 
 The last queue (and volume, mute, repeat, shuffle) is

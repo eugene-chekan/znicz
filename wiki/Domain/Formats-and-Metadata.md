@@ -161,7 +161,8 @@ znicz search "kind of blue"
 znicz albums
 ```
 
-Embedded **album art** is part of the same tag data. Displaying it in the TUI is
+Embedded **album art** is part of the same tag data. The TUI reads the cover
+from the file path on `TrackInfo` (not over IPC); see
 [Phase 5](../Plans/Phase-5-Album-Art.md).
 
 ## Extra reading
