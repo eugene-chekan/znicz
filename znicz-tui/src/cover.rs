@@ -114,8 +114,9 @@ impl CoverCache {
 }
 
 /// Scale `image` (up or down) to fit inside the cover cells, then paint it
-/// onto an opaque canvas the size of the slot, pinned at the top left so the
-/// art meets the library border. Every cell gets a pixel so a previous
+/// onto an opaque canvas the size of the slot. Box-drawing `│` sits in the
+/// middle of a cell; graphics fill the cell, so the bitmap is inset by half a
+/// cell and pinned to the top. Every cell gets a pixel so a previous
 /// graphics-protocol image cannot remain.
 pub fn fill_cover_slot(
     image: &DynamicImage,
@@ -124,14 +125,16 @@ pub fn fill_cover_slot(
     font_w: u16,
     font_h: u16,
 ) -> DynamicImage {
-    let width = (u32::from(cols) * u32::from(font_w.max(1))).max(1);
+    let font_w = font_w.max(1);
+    let width = (u32::from(cols) * u32::from(font_w)).max(1);
     let height = (u32::from(rows) * u32::from(font_h.max(1))).max(1);
     let mut canvas: DynamicImage = ImageBuffer::from_pixel(width, height, SLOT_BG).into();
     if image.width() == 0 || image.height() == 0 {
         return canvas;
     }
+    let pad_x = u32::from(font_w) / 2;
     let fitted = image.resize(width, height, FilterType::Triangle);
-    imageops::overlay(&mut canvas, &fitted, 0, 0);
+    imageops::overlay(&mut canvas, &fitted, i64::from(pad_x), 0);
     canvas
 }
 
@@ -167,21 +170,25 @@ mod tests {
     }
 
     #[test]
-    fn a_wide_source_is_pinned_to_the_top_left() {
+    fn a_wide_source_is_pinned_to_the_top() {
         let mut src = DynamicImage::new_rgb8(100, 50);
         if let DynamicImage::ImageRgb8(ref mut buf) = src {
             for p in buf.pixels_mut() {
                 *p = image::Rgb([255, 0, 0]);
             }
         }
-        let out = fill_cover_slot(&src, 16, 8, 8, 16);
-        let top = out.get_pixel(0, 0);
+        let font_w = 8;
+        let out = fill_cover_slot(&src, 16, 8, font_w, 16);
+        let pad = u32::from(font_w) / 2;
+        let left = out.get_pixel(0, 0);
         assert_eq!(
-            [top[0], top[1], top[2]],
-            [255, 0, 0],
-            "letterbox must not sit above the cover or it pulls the art off the library border"
+            [left[0], left[1], left[2]],
+            [SLOT_BG[0], SLOT_BG[1], SLOT_BG[2]],
+            "half a cell of pad matches the library │, which does not sit on the cell's left edge"
         );
-        let bottom = out.get_pixel(0, out.height() - 1);
+        let art = out.get_pixel(pad, 0);
+        assert_eq!([art[0], art[1], art[2]], [255, 0, 0]);
+        let bottom = out.get_pixel(pad, out.height() - 1);
         assert_eq!(
             [bottom[0], bottom[1], bottom[2]],
             [SLOT_BG[0], SLOT_BG[1], SLOT_BG[2]]

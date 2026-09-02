@@ -18,7 +18,7 @@ This does not change audio quality. It is a display feature only.
 - Embedded front cover (or first picture) via `znicz_core::read_cover`
 - Eight-row cover slot; stacked chrome to the right; `show_cover = false` keeps the old one-/two-line transport
 - Kitty / Sixel / half-blocks through `ratatui-image` (picker after alternate screen). `cover_protocol = "off"` keeps the slot and draws the logo
-- Bundled Znicz logo when the path is missing, there is no picture, or decode fails (streams included). The picture is letterboxed onto an opaque canvas that fills the slot, so the previous cover cannot remain.
+- Bundled Znicz logo when the path is missing, there is no picture, or decode fails (streams included). The picture is letterboxed onto an opaque canvas that fills the slot, so the previous cover cannot remain. The bitmap is inset half a cell so its left edge matches the library pane's `│`.
 - In-memory cover cache (cap 16), decode off the UI thread, longest side capped at 512 px
 - Config under `[tui]`: `show_cover`, `cover_protocol` (`auto` | `kitty` | `sixel` | `halfblocks` | `off`)
 

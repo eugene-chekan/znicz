@@ -277,7 +277,7 @@ mod tests {
     fn cover_starts_on_the_library_left_border() {
         let area = Rect::new(0, 0, 80, 8);
         let (cover, chrome) = cover_chrome_split(area, 16);
-        assert_eq!(cover.x, 0, "flush with the library pane's left border");
+        assert_eq!(cover.x, 0, "same column as the library pane's left border");
         assert_eq!(cover.width, 16);
         assert_eq!(chrome.x, 16);
         assert_eq!(cover.y, 0);

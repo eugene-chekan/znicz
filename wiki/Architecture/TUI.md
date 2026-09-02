@@ -42,11 +42,13 @@ The library is the stage and always fills the list region. The queue is an
 overlay drawer on the right (`]` toggles it). Long titles pan horizontally with
 `Alt-←` and `Alt-→` on the highlighted row only. `<` and `>` are unbound.
 With cover on (default), transport is a square cover slot on the left and
-stacked chrome on the right. The cover starts on the same column as the
+stacked chrome on the right. The cover widget starts on the same column as the
 library pane's left border and is pinned to the top of the slot so it meets
-the library's bottom edge. Missing art (and streams) keep the slot and draw
-the bundled logo. The picture is letterboxed onto an opaque canvas the size of
-the slot, so a stream cannot leave the previous cover on screen.
+the library's bottom edge. The bitmap is inset half a cell so its left edge
+matches the pane's `│` (box drawing does not sit on the cell's left edge).
+Missing art (and streams) keep the slot and draw the bundled logo. The picture
+is letterboxed onto an opaque canvas the size of the slot, so a stream cannot
+leave the previous cover on screen.
 `show_cover = false` restores the old full-width one- or two-line transport.
 Hints stay on their own line and are never replaced by a toast. Config: `[tui]`
 in `config.toml` (`show_cover`, `cover_protocol`).
