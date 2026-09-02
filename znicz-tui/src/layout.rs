@@ -1,6 +1,6 @@
 //! Overlay vs full-width sheet, and the library strip the drawer leaves open.
 
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 pub const DRAWER_WIDTH: u16 = 41;
 pub const MIN_STRIP: u16 = 40;
@@ -42,6 +42,22 @@ pub fn cover_width(cover_rows: u16, font_w: u16, font_h: u16, area_width: u16) -
     }
     let cols = (u32::from(cover_rows) * u32::from(font_h) / u32::from(font_w)).max(1) as u16;
     cols.min(area_width / 2).max(1)
+}
+
+/// One column, same as the library pane's left border, so the cover lines up
+/// with the list rather than hanging off the window edge.
+pub const COVER_INSET: u16 = 1;
+
+pub fn cover_chrome_split(area: Rect, cover_w: u16) -> (Rect, Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(COVER_INSET),
+            Constraint::Length(cover_w),
+            Constraint::Min(1),
+        ])
+        .split(area);
+    (chunks[1], chunks[2])
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -263,5 +279,15 @@ mod tests {
         // 8×16 cells, 8 rows → 16 columns; never more than half the row.
         assert_eq!(cover_width(8, 8, 16, 80), 16);
         assert_eq!(cover_width(8, 8, 16, 20), 10);
+    }
+
+    #[test]
+    fn cover_sits_inside_the_library_left_border() {
+        let area = Rect::new(0, 0, 80, 8);
+        let (cover, chrome) = cover_chrome_split(area, 16);
+        assert_eq!(cover.x, 1, "same column as the list inside the pane");
+        assert_eq!(cover.width, 16);
+        assert_eq!(chrome.x, 17);
+        assert_eq!(cover.y, 0);
     }
 }

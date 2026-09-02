@@ -31,17 +31,16 @@ Now playing is text only. Files already carry a front cover. The TUI should show
 
 Frame stays **list / transport / hints**. Queue drawer still overlays the list only.
 
-With cover on, transport is **square cover | stacked chrome**. Same fields as today (title, artist/album, seek, volume, toggles, signal path), wrapped in the right column. Cover keeps aspect (`Resize::Fit`). Typical cells make an 8-row square about 16 columns; real width comes from the picker font size. If font size is unknown (tests), use `width = 2 * height` columns.
+With cover on, transport is **square cover | stacked chrome**. The cover is inset one column (the library pane's left border) and pinned to the top of the slot. Same fields as today (title, artist/album, seek, volume, toggles, signal path), wrapped in the right column. Cover keeps aspect (`Resize::Fit`). Typical cells make an 8-row square about 16 columns; real width comes from the picker font size. If font size is unknown (tests), use `width = 2 * height` columns.
 
 ```
 ┌ Library ─────────────────────────────────────────────────┐
 │  tracks                                                  │
 └──────────────────────────────────────────────────────────┘
-┌ cover ┐  ▶ So What
-│ 8 rows│  Miles Davis — Kind of Blue
-│       │  ━━━●━━━━  1:02 / 9:22  70%
-│       │  FLAC 24/96 → DAC  ● bit perfect
-└───────┘
+  cover  ▶ So What
+  8 rows  Miles Davis — Kind of Blue
+          ━━━●━━━━  1:02 / 9:22  70%
+          FLAC 24/96 → DAC  ● bit perfect
 Space pause  a add  ] queue  i inspect  …
 ```
 

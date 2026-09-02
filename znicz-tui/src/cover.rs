@@ -114,8 +114,9 @@ impl CoverCache {
 }
 
 /// Scale `image` (up or down) to fit inside the cover cells, then paint it
-/// onto an opaque canvas the size of the slot. Every cell gets a pixel so a
-/// previous graphics-protocol image cannot remain.
+/// onto an opaque canvas the size of the slot, pinned at the top left so the
+/// art meets the library border. Every cell gets a pixel so a previous
+/// graphics-protocol image cannot remain.
 pub fn fill_cover_slot(
     image: &DynamicImage,
     cols: u16,
@@ -130,9 +131,7 @@ pub fn fill_cover_slot(
         return canvas;
     }
     let fitted = image.resize(width, height, FilterType::Triangle);
-    let x = i64::from(width.saturating_sub(fitted.width()) / 2);
-    let y = i64::from(height.saturating_sub(fitted.height()) / 2);
-    imageops::overlay(&mut canvas, &fitted, x, y);
+    imageops::overlay(&mut canvas, &fitted, 0, 0);
     canvas
 }
 
@@ -144,6 +143,7 @@ fn decode_capped(bytes: &[u8]) -> Option<DynamicImage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::GenericImageView;
     use std::time::Duration;
 
     #[test]
@@ -164,6 +164,28 @@ mod tests {
         let out = fill_cover_slot(&src, 16, 8, 8, 16);
         assert_eq!(out.width(), 16 * 8);
         assert_eq!(out.height(), 8 * 16);
+    }
+
+    #[test]
+    fn a_wide_source_is_pinned_to_the_top_left() {
+        let mut src = DynamicImage::new_rgb8(100, 50);
+        if let DynamicImage::ImageRgb8(ref mut buf) = src {
+            for p in buf.pixels_mut() {
+                *p = image::Rgb([255, 0, 0]);
+            }
+        }
+        let out = fill_cover_slot(&src, 16, 8, 8, 16);
+        let top = out.get_pixel(0, 0);
+        assert_eq!(
+            [top[0], top[1], top[2]],
+            [255, 0, 0],
+            "letterbox must not sit above the cover or it pulls the art off the library border"
+        );
+        let bottom = out.get_pixel(0, out.height() - 1);
+        assert_eq!(
+            [bottom[0], bottom[1], bottom[2]],
+            [SLOT_BG[0], SLOT_BG[1], SLOT_BG[2]]
+        );
     }
 
     #[test]

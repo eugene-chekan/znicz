@@ -118,9 +118,15 @@ fn the_cover_slot_is_fully_painted_when_nothing_is_playing() {
     let buf = terminal.backend().buffer();
     let cover_w = znicz_tui::layout::cover_width(8, 10, 20, 80);
     let y0 = app.list_height;
+    let inset = znicz_tui::layout::COVER_INSET;
     let mut painted = 0u16;
     for y in y0..y0 + 8 {
-        for x in 0..cover_w {
+        let border = buf.cell((0, y)).expect("border column");
+        assert!(
+            border.bg == Color::Reset && border.symbol() == " ",
+            "column 0 is the library left border, not the cover"
+        );
+        for x in inset..inset + cover_w {
             let cell = buf.cell((x, y)).expect("cell");
             if cell.bg != Color::Reset || cell.symbol() != " " {
                 painted += 1;

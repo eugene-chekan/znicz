@@ -55,12 +55,9 @@ pub fn render_transport(
     let picker = app.picker.get_or_insert_with(Picker::halfblocks);
     let font = picker.font_size();
     let cover_w = crate::layout::cover_width(area.height, font.width, font.height, area.width);
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(cover_w), Constraint::Min(1)])
-        .split(area);
-    render_cover(frame, chunks[0], app, state);
-    render_stacked_chrome(frame, chunks[1], state, show_signal);
+    let (cover, chrome) = crate::layout::cover_chrome_split(area, cover_w);
+    render_cover(frame, cover, app, state);
+    render_stacked_chrome(frame, chrome, state, show_signal);
 }
 
 fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState) {
