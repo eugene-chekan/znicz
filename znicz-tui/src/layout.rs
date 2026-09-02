@@ -47,9 +47,13 @@ pub fn cover_width(cover_rows: u16, font_w: u16, font_h: u16, area_width: u16) -
 pub fn cover_chrome_split(area: Rect, cover_w: u16) -> (Rect, Rect) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(cover_w), Constraint::Min(1)])
+        .constraints([
+            Constraint::Length(cover_w),
+            Constraint::Length(1),
+            Constraint::Min(1),
+        ])
         .split(area);
-    (chunks[0], chunks[1])
+    (chunks[0], chunks[2])
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -279,7 +283,11 @@ mod tests {
         let (cover, chrome) = cover_chrome_split(area, 16);
         assert_eq!(cover.x, 0, "same column as the library pane's left border");
         assert_eq!(cover.width, 16);
-        assert_eq!(chrome.x, 16);
+        assert_eq!(
+            chrome.x,
+            cover.x + cover.width + 1,
+            "at least one empty cell between the cover and the playback text"
+        );
         assert_eq!(cover.y, 0);
     }
 }

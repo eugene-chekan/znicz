@@ -31,7 +31,7 @@ Now playing is text only. Files already carry a front cover. The TUI should show
 
 Frame stays **list / transport / hints**. Queue drawer still overlays the list only.
 
-With cover on, transport is **square cover | stacked chrome**. The cover widget starts on the library pane's left border column and is pinned to the top of the slot. The bitmap is inset half a cell so its left edge matches box-drawing `│` (the glyph does not sit on the cell's left pixel). Same fields as today (title, artist/album, seek, volume, toggles, signal path), wrapped in the right column. Cover keeps aspect (`Resize::Fit`). Typical cells make an 8-row square about 16 columns; real width comes from the picker font size. If font size is unknown (tests), use `width = 2 * height` columns.
+With cover on, transport is **square cover | stacked chrome**. The cover widget starts on the library pane's left border column and is pinned to the top of the slot. The bitmap is inset half a cell so its left edge matches box-drawing `│` (the glyph does not sit on the cell's left pixel). One empty cell sits between the cover and the playback text. Same fields as today (title, artist/album, seek, volume, toggles, signal path), wrapped in the right column. Cover keeps aspect (`Resize::Fit`). Typical cells make an 8-row square about 16 columns; real width comes from the picker font size. If font size is unknown (tests), use `width = 2 * height` columns.
 
 ```
 ┌ Library ─────────────────────────────────────────────────┐
