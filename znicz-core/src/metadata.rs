@@ -156,7 +156,7 @@ pub struct CoverArt {
     pub bytes: Vec<u8>,
 }
 
-fn sniff_image_mime(bytes: &[u8]) -> String {
+pub(crate) fn sniff_image_mime(bytes: &[u8]) -> String {
     if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
         "image/png".into()
     } else if bytes.len() >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF {
