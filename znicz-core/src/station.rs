@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Result, ZniczError};
 use crate::player::commands::Command;
-use crate::player::engine::PlayerHandle;
+use crate::player::engine::PlayerOps;
 use crate::player::state::QueueItem;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,7 +146,7 @@ pub fn update(stations: &mut [Station], name: &str, new_name: &str, url: &str) -
     Ok(())
 }
 
-pub fn play_station(player: &PlayerHandle, station: &Station, append: bool) -> Result<()> {
+pub fn play_station(player: &dyn PlayerOps, station: &Station, append: bool) -> Result<()> {
     if !append {
         player.send_blocking(Command::QueueClear)?;
     }

@@ -35,7 +35,7 @@ pub const GLOBAL: &[Binding] = &[
     b("i", "signal inspector"),
     b(",", "devices"),
     b("?", "this help"),
-    b("q", "quit"),
+    b("q", "quit TUI"),
 ];
 
 /// Any list pane.

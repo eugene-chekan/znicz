@@ -4,7 +4,7 @@ mod skills;
 use std::path::PathBuf;
 
 use rmcp::ServiceExt;
-use znicz_core::PlayerHandle;
+use znicz_core::IpcClient;
 use znicz_library::Library;
 
 pub use server::ZniczMcpServer;
@@ -15,7 +15,7 @@ pub use skills::SkillRegistry;
 /// `library` is optional: without it the player tools still work and the
 /// library tools explain that no library is configured.
 pub async fn run_stdio(
-    player: PlayerHandle,
+    player: IpcClient,
     skills_dirs: Vec<PathBuf>,
     library: Option<Library>,
 ) -> Result<(), Box<dyn std::error::Error>> {

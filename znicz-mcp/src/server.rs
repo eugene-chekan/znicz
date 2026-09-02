@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use znicz_core::{
     apply_to_player, copy_saved, list_saved, load_path, remove_saved, rename_saved, sanitize_stem,
-    saved_path, write_path, AudioOutput, Command, LoadResult, PlaybackStatus, PlayerHandle,
+    saved_path, write_path, AudioOutput, Command, IpcClient, LoadResult, PlaybackStatus,
     PlayerState,
 };
 use znicz_library::{Library, Track};
@@ -27,26 +27,25 @@ type SharedLibrary = Option<Arc<Mutex<Library>>>;
 
 #[derive(Clone)]
 pub struct ZniczMcpServer {
-    player: PlayerHandle,
+    player: IpcClient,
     skills: SkillRegistry,
     library: SharedLibrary,
     playlists_dir: PathBuf,
     stations_path: PathBuf,
-    session_path: PathBuf,
     tool_router: ToolRouter<Self>,
 }
 
 impl ZniczMcpServer {
     /// Server without a music library. Library tools report that it is off.
-    pub fn new(player: PlayerHandle, skills_dirs: Vec<PathBuf>) -> Self {
+    pub fn new(player: IpcClient, skills_dirs: Vec<PathBuf>) -> Self {
         Self::build(player, skills_dirs, None)
     }
 
-    pub fn with_library(player: PlayerHandle, skills_dirs: Vec<PathBuf>, library: Library) -> Self {
+    pub fn with_library(player: IpcClient, skills_dirs: Vec<PathBuf>, library: Library) -> Self {
         Self::build(player, skills_dirs, Some(Arc::new(Mutex::new(library))))
     }
 
-    fn build(player: PlayerHandle, skills_dirs: Vec<PathBuf>, library: SharedLibrary) -> Self {
+    fn build(player: IpcClient, skills_dirs: Vec<PathBuf>, library: SharedLibrary) -> Self {
         let bundled = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skills");
         let mut dirs = vec![bundled];
         dirs.extend(skills_dirs);
@@ -60,10 +59,14 @@ impl ZniczMcpServer {
                 .unwrap_or_else(|| std::env::temp_dir().join("znicz-playlists")),
             stations_path: znicz_library::default_stations_path()
                 .unwrap_or_else(|| std::env::temp_dir().join("znicz-stations.toml")),
-            session_path: znicz_library::default_session_path()
-                .unwrap_or_else(|| std::env::temp_dir().join("znicz-session.toml")),
             tool_router: Self::tool_router(),
         }
+    }
+
+    fn live_state(&self) -> Result<PlayerState, McpError> {
+        self.player
+            .state()
+            .map_err(|e| McpError::internal_error(e.to_string(), None))
     }
 
     /// Run something against the library, or explain that there is none.
@@ -94,7 +97,7 @@ impl ZniczMcpServer {
     }
 
     fn state_json(&self) -> Result<String, McpError> {
-        serde_json::to_string_pretty(&self.player.state())
+        serde_json::to_string_pretty(&self.live_state()?)
             .map_err(|e| McpError::internal_error(e.to_string(), None))
     }
 
@@ -110,15 +113,10 @@ impl ZniczMcpServer {
     /// command returns the previous snapshot, so callers cannot tell whether
     /// the command worked.
     fn apply(&self, command: Command) -> Result<rmcp::model::CallToolResult, McpError> {
-        map_player_err(self.player.send_blocking(command))?;
-        self.persist_session();
+        self.player
+            .send_blocking(command)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         self.ok_state()
-    }
-
-    fn persist_session(&self) {
-        if let Err(e) = znicz_core::save_session_from_player(&self.player, &self.session_path) {
-            tracing::warn!("session.toml: {e}");
-        }
     }
 
     fn apply_playlist(
@@ -126,12 +124,12 @@ impl ZniczMcpServer {
         result: LoadResult,
         append: bool,
     ) -> Result<rmcp::model::CallToolResult, McpError> {
-        map_player_err(apply_to_player(&self.player, &result, append))?;
-        self.persist_session();
+        apply_to_player(&self.player, &result, append)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         Self::json_result(&serde_json::json!({
             "loaded": result.items.len(),
             "skipped": result.skipped,
-            "state": self.player.state(),
+            "state": self.live_state()?,
         }))
     }
 
@@ -624,7 +622,7 @@ impl ZniczMcpServer {
         &self,
         Parameters(params): Parameters<SavePlaylistParams>,
     ) -> Result<rmcp::model::CallToolResult, McpError> {
-        let queue = self.player.state().queue;
+        let queue = self.live_state()?.queue;
         if queue.is_empty() {
             return Err(McpError::invalid_params("queue is empty", None));
         }
@@ -703,9 +701,8 @@ impl ZniczMcpServer {
             .ok_or_else(|| {
                 McpError::invalid_params(format!("no station named {:?}", params.name), None)
             })?;
-        let result = znicz_core::play_station(&self.player, &station, params.append);
-        self.persist_session();
-        map_player_err(result)?;
+        znicz_core::play_station(&self.player, &station, params.append)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         self.ok_state()
     }
 
@@ -808,7 +805,7 @@ impl ServerHandler for ZniczMcpServer {
         _context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> impl std::future::Future<Output = Result<ReadResourceResult, McpError>> + Send + '_ {
         let uri = request.uri.clone();
-        let state = self.player.state();
+        let state = self.live_state();
         let skills = self.skills.clone();
         let stations_path = self.stations_path.clone();
 
@@ -836,12 +833,12 @@ impl ServerHandler for ZniczMcpServer {
             }
 
             let json = match uri.as_str() {
-                "znicz://now-playing" => serde_json::to_string_pretty(&state.current_track)
+                "znicz://now-playing" => serde_json::to_string_pretty(&state?.current_track)
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?,
-                "znicz://queue" => serde_json::to_string_pretty(&state.queue)
+                "znicz://queue" => serde_json::to_string_pretty(&state?.queue)
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?,
                 "znicz://player/status" => {
-                    serde_json::to_string_pretty(&PlayerStatusView::from(&state))
+                    serde_json::to_string_pretty(&PlayerStatusView::from(&state?))
                         .map_err(|e| McpError::internal_error(e.to_string(), None))?
                 }
                 "znicz://devices" => {
@@ -899,7 +896,7 @@ impl ServerHandler for ZniczMcpServer {
         _context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> impl std::future::Future<Output = Result<GetPromptResult, McpError>> + Send + '_ {
         let name = request.name.clone();
-        let state = self.player.state();
+        let state = self.live_state();
 
         async move {
             let text = match name.as_str() {
@@ -912,7 +909,7 @@ impl ServerHandler for ZniczMcpServer {
                         .to_string()
                 }
                 "explain-format" => {
-                    if let Some(track) = &state.current_track {
+                    if let Some(track) = &state?.current_track {
                         format!(
                             "Current track: {} — {}",
                             track.title,
@@ -986,16 +983,13 @@ fn prompt_meta(name: &str, description: &str) -> Prompt {
     }
 }
 
-fn map_player_err(result: znicz_core::Result<()>) -> Result<(), McpError> {
-    result.map_err(|e| McpError::internal_error(e.to_string(), None))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use znicz_core::{spawn_player, AudioConfig, PlaybackStatus};
+    use std::ops::{Deref, DerefMut};
+    use znicz_core::{spawn_player, AudioConfig, ClientRole, IpcServer, PlaybackStatus};
 
-    /// Serialises `ZNICZ_STATIONS_PATH` / `ZNICZ_SESSION_PATH` writes against
+    /// Serialises `ZNICZ_STATIONS_PATH` writes against
     /// other tests that read env while constructing a server.
     static STATIONS_ENV: Mutex<()> = Mutex::new(());
 
@@ -1016,35 +1010,53 @@ mod tests {
         ))
     }
 
-    fn server() -> ZniczMcpServer {
-        let (player, _thread) = spawn_player(AudioConfig::default());
-        std::mem::forget(_thread);
-        let _lock = env_lock();
-        let session = unique_temp("znicz-mcp-session");
-        unsafe {
-            std::env::set_var("ZNICZ_SESSION_PATH", &session);
-        }
-        let server = ZniczMcpServer::new(player, Vec::new());
-        unsafe {
-            std::env::remove_var("ZNICZ_SESSION_PATH");
-        }
-        server
+    struct Harness {
+        server: ZniczMcpServer,
+        host: znicz_core::PlayerHandle,
+        _ipc: IpcServer,
     }
 
-    fn server_with_library() -> ZniczMcpServer {
-        let (player, _thread) = spawn_player(AudioConfig::default());
-        std::mem::forget(_thread);
+    impl Deref for Harness {
+        type Target = ZniczMcpServer;
+        fn deref(&self) -> &ZniczMcpServer {
+            &self.server
+        }
+    }
+
+    impl DerefMut for Harness {
+        fn deref_mut(&mut self) -> &mut ZniczMcpServer {
+            &mut self.server
+        }
+    }
+
+    fn hosted_player() -> (znicz_core::PlayerHandle, IpcServer, IpcClient) {
+        let path = unique_temp("znicz-mcp-ipc");
+        let (host, thread) = spawn_player(AudioConfig::default());
+        std::mem::forget(thread);
+        let ipc = IpcServer::start(host.clone(), &path).expect("start ipc");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect agent");
+        (host, ipc, client)
+    }
+
+    fn server() -> Harness {
+        let _lock = env_lock();
+        let (host, ipc, client) = hosted_player();
+        Harness {
+            server: ZniczMcpServer::new(client, Vec::new()),
+            host,
+            _ipc: ipc,
+        }
+    }
+
+    fn server_with_library() -> Harness {
         let library = Library::open_in_memory().expect("in-memory library");
         let _lock = env_lock();
-        let session = unique_temp("znicz-mcp-session");
-        unsafe {
-            std::env::set_var("ZNICZ_SESSION_PATH", &session);
+        let (host, ipc, client) = hosted_player();
+        Harness {
+            server: ZniczMcpServer::with_library(client, Vec::new(), library),
+            host,
+            _ipc: ipc,
         }
-        let server = ZniczMcpServer::with_library(player, Vec::new(), library);
-        unsafe {
-            std::env::remove_var("ZNICZ_SESSION_PATH");
-        }
-        server
     }
 
     fn result_text(result: &rmcp::model::CallToolResult) -> String {
@@ -1075,18 +1087,33 @@ mod tests {
     }
 
     #[test]
-    fn set_volume_writes_session_toml() {
+    fn set_volume_changes_the_host_engine() {
         let server = server();
         server
             .set_volume(Parameters(VolumeParams { volume: 0.3 }))
             .expect("set_volume");
-        let loaded = znicz_core::load_session(&server.session_path).expect("load session");
         assert!(
-            (loaded.volume - 0.3).abs() < 1e-6,
-            "session volume {}",
-            loaded.volume
+            (server.host.state().volume - 0.3).abs() < 1e-6,
+            "host volume {}",
+            server.host.state().volume
         );
-        let _ = std::fs::remove_file(&server.session_path);
+    }
+
+    #[test]
+    fn get_player_state_reads_the_host() {
+        let server = server();
+        server
+            .host
+            .send_blocking(Command::SetVolume(0.4))
+            .expect("host volume");
+        let result = server.get_player_state().expect("state");
+        let state: serde_json::Value =
+            serde_json::from_str(&result_text(&result)).expect("state json");
+        let volume = state["volume"].as_f64().expect("volume field");
+        assert!(
+            (volume - 0.4).abs() < 1e-6,
+            "MCP reported volume {volume}, expected the host 0.4"
+        );
     }
 
     #[test]
@@ -1325,7 +1352,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    fn playlist_server() -> (ZniczMcpServer, PathBuf) {
+    fn playlist_server() -> (Harness, PathBuf) {
         let dir = std::env::temp_dir().join(format!(
             "znicz-mcp-playlists-{}-{}",
             std::process::id(),
@@ -1440,7 +1467,7 @@ mod tests {
             append: false,
         }));
         assert!(result.is_err(), "expected an error, got {result:?}");
-        assert!(server.player.state().queue.is_empty());
+        assert!(server.player.state().expect("state").queue.is_empty());
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1461,13 +1488,16 @@ mod tests {
             serde_json::from_str(&result_text(&result)).expect("import json");
         assert_eq!(payload["loaded"], 1);
         assert_eq!(payload["skipped"], 0);
-        let queue = server.player.state().queue;
+        let queue = server.player.state().expect("state").queue;
         assert_eq!(queue.len(), 1);
         assert_eq!(
             queue[0],
             znicz_core::QueueItem::stream("Live", "http://127.0.0.1:1/s")
         );
-        assert_eq!(server.player.state().status, PlaybackStatus::Stopped);
+        assert_eq!(
+            server.player.state().expect("state").status,
+            PlaybackStatus::Stopped
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1551,7 +1581,7 @@ mod tests {
     }
 
     /// Path is captured at `ZniczMcpServer::new`; set `ZNICZ_STATIONS_PATH` first.
-    fn station_server() -> (ZniczMcpServer, PathBuf) {
+    fn station_server() -> (Harness, PathBuf) {
         let path = std::env::temp_dir().join(format!(
             "znicz-mcp-stations-{}-{}.toml",
             std::process::id(),
@@ -1560,23 +1590,24 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let (player, _thread) = spawn_player(AudioConfig::default());
-        std::mem::forget(_thread);
         let _lock = env_lock();
         // SAFETY: `STATIONS_ENV` serialises env mutation against other server constructors.
         unsafe {
             std::env::set_var("ZNICZ_STATIONS_PATH", &path);
         }
-        let session = unique_temp("znicz-mcp-session");
-        unsafe {
-            std::env::set_var("ZNICZ_SESSION_PATH", &session);
-        }
-        let server = ZniczMcpServer::new(player, Vec::new());
+        let (host, ipc, client) = hosted_player();
+        let server = ZniczMcpServer::new(client, Vec::new());
         unsafe {
             std::env::remove_var("ZNICZ_STATIONS_PATH");
-            std::env::remove_var("ZNICZ_SESSION_PATH");
         }
-        (server, path)
+        (
+            Harness {
+                server,
+                host,
+                _ipc: ipc,
+            },
+            path,
+        )
     }
 
     #[test]
@@ -1611,7 +1642,7 @@ mod tests {
             }))
             .unwrap_err();
         assert!(!err.to_string().contains("not implemented"));
-        let queue = server.player.state().queue;
+        let queue = server.player.state().expect("state").queue;
         assert_eq!(queue.len(), 1);
         assert!(queue[0].is_stream());
         let _ = std::fs::remove_file(path);
@@ -1637,11 +1668,14 @@ mod tests {
                 append: true,
             }))
             .expect("append");
-        let queue = server.player.state().queue;
+        let queue = server.player.state().expect("state").queue;
         assert_eq!(queue.len(), 2);
         assert_eq!(queue[0], znicz_core::QueueItem::file("/music/a.flac"));
         assert!(queue[1].is_stream());
-        assert_eq!(server.player.state().status, PlaybackStatus::Stopped);
+        assert_eq!(
+            server.player.state().expect("state").status,
+            PlaybackStatus::Stopped
+        );
         let _ = std::fs::remove_file(path);
     }
 

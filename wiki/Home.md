@@ -19,7 +19,7 @@ Read in this order if you are new:
 
 Znicz is a **music player that lives in the terminal**. You start it from the command line. It shows a text screen (a TUI) and plays local files and HTTP radio streams on your speakers or DAC.
 
-It also has an **MCP server**. MCP lets an AI assistant (Cursor, Claude, and others) control the player with tools like “play this file” or “what is playing now”.
+It also has an **MCP server**. MCP lets an AI assistant (Cursor, Claude, and others) control the player with tools like “play this file” or “what is playing now”. TUI and MCP both talk to one `znicz player` process.
 
 Goals:
 
@@ -35,7 +35,7 @@ Goals:
 | `znicz-library` | The index: scan folders, store tags in SQLite, search |
 | `znicz-tui` | The screen: library home, queue drawer, transport, overlays |
 | `znicz-mcp` | The AI interface: tools, resources, prompts, skills |
-| `znicz` | The program you run (`znicz`, `znicz mcp`, `znicz station`) |
+| `znicz` | The program you run (`znicz`, `znicz player`, `znicz mcp`, `znicz station`) |
 | `wiki/` | This documentation |
 
 ## Wiki index

@@ -13,10 +13,10 @@ Znicz uses [Ratatui](https://ratatui.rs/) to draw, and [crossterm](https://githu
 
 The TUI **does not decode audio**. It only:
 
-1. Sends **commands** (`Play`, `Pause`, `Seek`) to `znicz-core`
+1. Sends **commands** (`Play`, `Pause`, `Seek`) to `znicz player`
 2. Reads **state** (title, position, volume) and paints it
 
-That split means we can run the same engine from MCP with no screen. It also
+That split means MCP can drive the same engine with no screen. It also
 means the interface never has its own copy of the truth to get out of date: each
 frame reads the state fresh.
 

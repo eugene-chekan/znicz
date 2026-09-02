@@ -1,11 +1,14 @@
-use std::path::PathBuf;
+use std::fs::{self, File, OpenOptions};
+use std::io;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
 use znicz_core::{
     apply_to_player, copy_saved, list_saved, load_path, remove_saved, rename_saved,
     restore_session, save_session_from_player, saved_path, skipped_notice, spawn_player,
-    AudioConfig, AudioOutput, Command,
+    AudioConfig, AudioOutput, ClientRole, Command, IpcClient, IpcServer, SESSION_SAVE_DEBOUNCE,
 };
 use znicz_library::Library;
 use znicz_mcp::run_stdio;
@@ -33,10 +36,16 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Run MCP server on stdio (headless player)
+    /// Run MCP server on stdio (attaches to `znicz player`)
     Mcp {
         #[arg(long, help = "Additional skills directory")]
         skills_dir: Vec<PathBuf>,
+    },
+
+    /// Shared playback engine (autostarted by TUI and MCP)
+    Player {
+        #[command(subcommand)]
+        command: Option<PlayerCmd>,
     },
 
     /// Scan folders into the music library
@@ -71,6 +80,12 @@ enum Commands {
         #[command(subcommand)]
         command: StationCmd,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum PlayerCmd {
+    /// Stop the player process
+    Stop,
 }
 
 #[derive(Debug, Subcommand)]
@@ -126,10 +141,12 @@ enum StationCmd {
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(default)]
 struct Config {
     audio: AudioSection,
     mcp: McpSection,
     library: LibrarySection,
+    player: PlayerSection,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -156,6 +173,12 @@ impl Default for AudioSection {
 }
 
 #[derive(Debug, Deserialize, Default)]
+struct PlayerSection {
+    /// Seconds to stay up while Stopped with no UI. `0` never exits on idle.
+    idle_secs: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 struct McpSection {
     skills_dirs: Vec<String>,
 }
@@ -175,6 +198,7 @@ fn main() -> color_eyre::Result<()> {
     }
 
     let library_path = library_path(&config);
+    let config_file = cli.config.clone();
 
     let audio_config = AudioConfig {
         device_id: cli.device.or(config.audio.device),
@@ -191,8 +215,17 @@ fn main() -> color_eyre::Result<()> {
                 .map(expand_path)
                 .collect();
             dirs.extend(skills_dir);
-            run_mcp(audio_config, dirs, library_path)?;
+            run_mcp(
+                dirs,
+                library_path,
+                audio_config.device_id.as_deref(),
+                config_file.as_deref(),
+            )?;
         }
+        Some(Commands::Player { command }) => match command {
+            Some(PlayerCmd::Stop) => stop_player()?,
+            None => run_player_daemon(audio_config, config.player.idle_secs.unwrap_or(900))?,
+        },
         Some(Commands::Scan { dirs, prune }) => {
             scan_library(library_path, &dirs, prune)?;
         }
@@ -210,13 +243,25 @@ fn main() -> color_eyre::Result<()> {
                 );
             }
             PlaylistCmd::Import { file, append } => {
-                load_playlist_and_run(file, append, audio_config, library_path)?;
+                load_playlist_and_run(
+                    file,
+                    append,
+                    library_path,
+                    audio_config.device_id.as_deref(),
+                    config_file.as_deref(),
+                )?;
             }
             PlaylistCmd::Play { name, append } => {
                 let dir = playlists_dir()?;
                 let path = saved_path(&dir, &name)
                     .ok_or_else(|| color_eyre::eyre::eyre!("no playlist named {name}"))?;
-                load_playlist_and_run(path, append, audio_config, library_path)?;
+                load_playlist_and_run(
+                    path,
+                    append,
+                    library_path,
+                    audio_config.device_id.as_deref(),
+                    config_file.as_deref(),
+                )?;
             }
             PlaylistCmd::Rename { name, new_name } => {
                 let dir = playlists_dir()?;
@@ -239,7 +284,13 @@ fn main() -> color_eyre::Result<()> {
                 mutate_stations(|s| znicz_core::add_station(s, &name, &url))?
             }
             StationCmd::Play { name, append } => {
-                play_station_and_run(&name, append, audio_config, library_path)?;
+                play_station_and_run(
+                    &name,
+                    append,
+                    library_path,
+                    audio_config.device_id.as_deref(),
+                    config_file.as_deref(),
+                )?;
             }
             StationCmd::Remove { name } => {
                 mutate_stations(|s| znicz_core::remove_station(s, &name))?
@@ -255,7 +306,12 @@ fn main() -> color_eyre::Result<()> {
             }
         },
         None => {
-            run_tui(audio_config, &cli.files, library_path)?;
+            run_tui(
+                &cli.files,
+                library_path,
+                audio_config.device_id.as_deref(),
+                config_file.as_deref(),
+            )?;
         }
     }
 
@@ -315,28 +371,212 @@ fn list_devices() -> color_eyre::Result<()> {
     Ok(())
 }
 
+fn ipc_path() -> color_eyre::Result<PathBuf> {
+    znicz_library::default_ipc_path().ok_or_else(|| {
+        color_eyre::eyre::eyre!("cannot work out where to keep ipc.toml; set ZNICZ_IPC_PATH")
+    })
+}
+
+fn player_lock_path() -> color_eyre::Result<PathBuf> {
+    znicz_library::default_player_lock_path().ok_or_else(|| {
+        color_eyre::eyre::eyre!("cannot work out where to keep player.lock; set ZNICZ_IPC_PATH")
+    })
+}
+
+fn player_is_up(ipc: &Path) -> bool {
+    IpcClient::connect(ipc, ClientRole::Agent).is_ok()
+}
+
+struct PlayerLock {
+    path: PathBuf,
+    _file: File,
+}
+
+impl Drop for PlayerLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn acquire_player_lock(lock_path: &Path, ipc: &Path) -> color_eyre::Result<Option<PlayerLock>> {
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    for _ in 0..2 {
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(lock_path)
+        {
+            Ok(file) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = fs::set_permissions(lock_path, fs::Permissions::from_mode(0o600));
+                }
+                return Ok(Some(PlayerLock {
+                    path: lock_path.to_path_buf(),
+                    _file: file,
+                }));
+            }
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                let start = Instant::now();
+                while start.elapsed() < Duration::from_secs(3) {
+                    if player_is_up(ipc) {
+                        return Ok(None);
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                let _ = fs::remove_file(lock_path);
+                let _ = fs::remove_file(ipc);
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Err(color_eyre::eyre::eyre!(
+        "could not take player.lock at {}",
+        lock_path.display()
+    ))
+}
+
+fn spawn_detached_player(device: Option<&str>, config: Option<&Path>) -> color_eyre::Result<()> {
+    let exe = std::env::current_exe()?;
+    let mut cmd = std::process::Command::new(exe);
+    if let Some(config) = config {
+        cmd.arg("--config").arg(config);
+    }
+    if let Some(device) = device {
+        cmd.arg("--device").arg(device);
+    }
+    cmd.arg("player")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    Ok(())
+}
+
+fn ensure_player(device: Option<&str>, config: Option<&Path>) -> color_eyre::Result<PathBuf> {
+    let ipc = ipc_path()?;
+    if player_is_up(&ipc) {
+        return Ok(ipc);
+    }
+    spawn_detached_player(device, config)?;
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(3) {
+        if player_is_up(&ipc) {
+            return Ok(ipc);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Err(color_eyre::eyre::eyre!(
+        "could not start znicz player (no advertise at {})",
+        ipc.display()
+    ))
+}
+
+fn connect_ui(device: Option<&str>, config: Option<&Path>) -> color_eyre::Result<IpcClient> {
+    connect_client(ClientRole::Ui, device, config)
+}
+
+fn connect_agent(device: Option<&str>, config: Option<&Path>) -> color_eyre::Result<IpcClient> {
+    connect_client(ClientRole::Agent, device, config)
+}
+
+fn connect_client(
+    role: ClientRole,
+    device: Option<&str>,
+    config: Option<&Path>,
+) -> color_eyre::Result<IpcClient> {
+    let ipc = ensure_player(device, config)?;
+    let device = device.map(str::to_owned);
+    let config = config.map(Path::to_path_buf);
+    IpcClient::connect_with_ensure(ipc, role, move || {
+        ensure_player(device.as_deref(), config.as_deref())
+            .map(|_| ())
+            .map_err(|e| znicz_core::ZniczError::Player(e.to_string()))
+    })
+    .map_err(|e| color_eyre::eyre::eyre!("{e}"))
+}
+
+fn stop_player() -> color_eyre::Result<()> {
+    let ipc = ipc_path()?;
+    if let Ok(client) = IpcClient::connect(&ipc, ClientRole::Agent) {
+        client
+            .shutdown()
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
+    }
+    Ok(())
+}
+
+fn run_player_daemon(audio_config: AudioConfig, idle_secs: u64) -> color_eyre::Result<()> {
+    let ipc = ipc_path()?;
+    let lock_path = player_lock_path()?;
+    let Some(_lock) = acquire_player_lock(&lock_path, &ipc)? else {
+        return Ok(());
+    };
+    if player_is_up(&ipc) {
+        return Ok(());
+    }
+
+    let (player, _thread) = spawn_player(audio_config);
+    if let Err(e) = restore_session(&player, &session_path()?, true) {
+        tracing::warn!("session restore: {e}");
+    }
+    let idle = if idle_secs == 0 {
+        Duration::ZERO
+    } else {
+        Duration::from_secs(idle_secs)
+    };
+    let mut server = IpcServer::start_with_session(
+        player.clone(),
+        ipc,
+        idle,
+        session_path()?,
+        SESSION_SAVE_DEBOUNCE,
+    )
+    .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
+    server.wait();
+    if let Err(e) = save_session_from_player(&player, &session_path()?) {
+        tracing::warn!("session.toml: {e}");
+    }
+    Ok(())
+}
+
 fn run_tui(
-    audio_config: AudioConfig,
     files: &[PathBuf],
     library_path: Option<PathBuf>,
+    device: Option<&str>,
+    config: Option<&Path>,
 ) -> color_eyre::Result<()> {
-    let (player, _thread) = spawn_player(audio_config);
-    let session_notice = restore_player(&player, files.is_empty())?;
+    let player = connect_ui(device, config)?;
 
     if !files.is_empty() {
         let items: Vec<znicz_core::QueueItem> = files
             .iter()
             .map(|p| znicz_core::QueueItem::file(p.clone()))
             .collect();
+        player
+            .send_blocking(Command::QueueClear)
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         if items.len() == 1 {
-            player.send(Command::Play(items[0].clone()))?;
+            player
+                .send_blocking(Command::Play(items[0].clone()))
+                .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         } else {
-            player.send(Command::QueueAdd(items.clone()))?;
-            player.send(Command::Play(items[0].clone()))?;
+            player
+                .send_blocking(Command::ReplaceQueue {
+                    items: items.clone(),
+                    position: 0,
+                })
+                .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
+            player
+                .send_blocking(Command::QueuePlayIndex(0))
+                .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         }
     }
 
-    run_tui_with_player(player, library_path, session_notice)
+    run_tui_with_client(player, library_path, None)
 }
 
 fn playlists_dir() -> color_eyre::Result<PathBuf> {
@@ -357,26 +597,22 @@ fn session_path() -> color_eyre::Result<PathBuf> {
     })
 }
 
-fn restore_player(
-    player: &znicz_core::PlayerHandle,
-    restore_queue: bool,
-) -> color_eyre::Result<Option<String>> {
-    let skipped = restore_session(player, &session_path()?, restore_queue)?;
-    Ok(if skipped > 0 {
-        Some(format!(
-            "skipped {skipped} missing file(s) from last session"
-        ))
-    } else {
-        None
-    })
-}
-
-fn merge_notices(a: Option<String>, b: Option<String>) -> Option<String> {
-    match (a, b) {
-        (Some(a), Some(b)) => Some(format!("{a}; {b}")),
-        (Some(a), None) | (None, Some(a)) => Some(a),
-        (None, None) => None,
-    }
+fn play_station_and_run(
+    name: &str,
+    append: bool,
+    library_path: Option<PathBuf>,
+    device: Option<&str>,
+    config: Option<&Path>,
+) -> color_eyre::Result<()> {
+    let path = stations_path()?;
+    let stations = znicz_core::load_stations(&path)?;
+    let station = znicz_core::find_station(&stations, name)
+        .ok_or_else(|| color_eyre::eyre::eyre!("no station named {name}"))?
+        .clone();
+    let player = connect_ui(device, config)?;
+    znicz_core::play_station(&player, &station, append)
+        .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
+    run_tui_with_client(player, library_path, None)
 }
 
 fn list_stations() -> color_eyre::Result<()> {
@@ -397,23 +633,6 @@ fn mutate_stations(
     Ok(())
 }
 
-fn play_station_and_run(
-    name: &str,
-    append: bool,
-    audio_config: AudioConfig,
-    library_path: Option<PathBuf>,
-) -> color_eyre::Result<()> {
-    let path = stations_path()?;
-    let stations = znicz_core::load_stations(&path)?;
-    let station = znicz_core::find_station(&stations, name)
-        .ok_or_else(|| color_eyre::eyre::eyre!("no station named {name}"))?
-        .clone();
-    let (player, _thread) = spawn_player(audio_config);
-    let session_notice = restore_player(&player, append)?;
-    znicz_core::play_station(&player, &station, append)?;
-    run_tui_with_player(player, library_path, session_notice)
-}
-
 fn list_playlists() -> color_eyre::Result<()> {
     let dir = playlists_dir()?;
     for name in list_saved(&dir) {
@@ -425,22 +644,18 @@ fn list_playlists() -> color_eyre::Result<()> {
 fn load_playlist_and_run(
     path: PathBuf,
     append: bool,
-    audio_config: AudioConfig,
     library_path: Option<PathBuf>,
+    device: Option<&str>,
+    config: Option<&Path>,
 ) -> color_eyre::Result<()> {
     let result = load_path(&path)?;
-    let (player, _thread) = spawn_player(audio_config);
-    let session_notice = restore_player(&player, append)?;
-    apply_to_player(&player, &result, append)?;
-    run_tui_with_player(
-        player,
-        library_path,
-        merge_notices(session_notice, skipped_notice(&result)),
-    )
+    let player = connect_ui(device, config)?;
+    apply_to_player(&player, &result, append).map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
+    run_tui_with_client(player, library_path, skipped_notice(&result))
 }
 
-fn run_tui_with_player(
-    player: znicz_core::PlayerHandle,
+fn run_tui_with_client(
+    player: IpcClient,
     library_path: Option<PathBuf>,
     skip_notice: Option<String>,
 ) -> color_eyre::Result<()> {
@@ -457,7 +672,7 @@ fn run_tui_with_player(
     // full-screen interface means drawing over it. Send stderr to a file for as
     // long as the TUI owns the terminal; nothing is lost, it just moves.
     let log = stderr::redirect_to_log();
-    let mut app = App::with_library(player, library);
+    let mut app = App::with_remote(player, library);
     if let Some(message) = skip_notice {
         app.toasts.warn(message);
     }
@@ -540,14 +755,12 @@ mod stderr {
 }
 
 fn run_mcp(
-    audio_config: AudioConfig,
     skills_dirs: Vec<PathBuf>,
     library_path: Option<PathBuf>,
+    device: Option<&str>,
+    config: Option<&Path>,
 ) -> color_eyre::Result<()> {
-    let (player, _thread) = spawn_player(audio_config);
-    if let Err(e) = restore_player(&player, true) {
-        tracing::warn!("session restore: {e}");
-    }
+    let player = connect_agent(device, config)?;
 
     // A broken library must not stop the player tools from working.
     let library = library_path.and_then(|path| match Library::open(&path) {
@@ -561,13 +774,8 @@ fn run_mcp(
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
-        .block_on(run_stdio(player.clone(), skills_dirs, library))
+        .block_on(run_stdio(player, skills_dirs, library))
         .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-    if let Ok(path) = session_path() {
-        if let Err(e) = save_session_from_player(&player, &path) {
-            tracing::warn!("session.toml: {e}");
-        }
-    }
     Ok(())
 }
 

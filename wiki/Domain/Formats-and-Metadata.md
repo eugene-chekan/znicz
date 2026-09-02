@@ -136,11 +136,15 @@ Override with `ZNICZ_SESSION_PATH`. It holds file and stream rows, the queue
 index, volume, mute, repeat, and shuffle. Not seek, not whether you were
 playing, not the output device.
 
-Bare `znicz` and `znicz mcp` restore it **Stopped** (Space starts the current
-row). Missing local files are skipped; streams stay. `znicz file.flac`,
-playlist play, and station play without `--append` do not load the old queue.
-`--append` restores first, then appends. Clearing the queue writes an empty
-session.
+Bare `znicz` and `znicz mcp` autostart `znicz player`, which restores the
+session **Stopped** (Space starts the current row). Missing local files are
+skipped; streams stay. `znicz file.flac`, playlist play, and station play
+without `--append` replace the live queue. `--append` keeps what is already
+there, then appends. The player process writes the file shortly after those
+fields change (about 500 ms of no further change) and again when it exits.
+
+TUI and MCP read live state from the player process, not from this file.
+See [MCP](../Architecture/MCP.md).
 
 This is not `~/.cache/znicz/znicz-session.log` (TUI stderr). A later app-state
 database may replace this file; see the [roadmap](../Plans/Roadmap.md).

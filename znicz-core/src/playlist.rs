@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Result, ZniczError};
 use crate::player::commands::Command;
-use crate::player::engine::PlayerHandle;
+use crate::player::engine::PlayerOps;
 use crate::player::state::{is_http_url, QueueItem};
 
 /// What a playlist file turned into.
@@ -272,7 +272,7 @@ pub fn saved_path(dir: &Path, name: &str) -> Option<PathBuf> {
 }
 
 /// Clear and play (`append == false`) or only append.
-pub fn apply_to_player(player: &PlayerHandle, result: &LoadResult, append: bool) -> Result<()> {
+pub fn apply_to_player(player: &dyn PlayerOps, result: &LoadResult, append: bool) -> Result<()> {
     if result.items.is_empty() {
         return Err(ZniczError::Player("playlist had no playable files".into()));
     }

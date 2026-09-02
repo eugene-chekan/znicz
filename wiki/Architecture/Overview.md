@@ -3,17 +3,21 @@
 Znicz is one workspace with five crates. Each crate has one job.
 
 ```
-AI host (Cursor) --stdio--> znicz-mcp --commands--> znicz-core --> DAC
-Human keys ---------------> znicz-tui --commands--> znicz-core --> DAC
-                              │     │
-                              │     └──queries──> znicz-library (SQLite index)
-                              └──queries──────────────┘
+AI host (Cursor) --stdio--> znicz-mcp ──┐
+Human keys ---------------> znicz-tui ──┼── JSON TCP 127.0.0.1 ──> znicz player ──> znicz-core ──> DAC
+                                        │
+                          (later phone) ┘
+                              │
+                              └──queries──> znicz-library (SQLite index)
 ```
 
 Both front ends can browse the library: the MCP server for agents, and the TUI
 for its library pane.
 
-`znicz` (the binary) starts either the TUI or the MCP server. Both talk to the same player type: `PlayerHandle`.
+`znicz` (the binary) starts the TUI, MCP, library CLI, or **`znicz player`**.
+The first TUI or MCP start **autostarts** the player process if it is not
+running. Only that process calls `spawn_player` and opens the DAC.
+[#27](https://github.com/eugene-chekan/znicz/issues/27).
 
 ## Why split crates?
 
@@ -66,6 +70,9 @@ bit_perfect = true
 [mcp]
 skills_dirs = []
 
+[player]
+idle_secs = 900
+
 [library]
 # Defaults to ~/.local/share/znicz/library.db on Linux
 path = "~/.local/share/znicz/library.db"
@@ -73,7 +80,9 @@ path = "~/.local/share/znicz/library.db"
 
 `bit_perfect` is a flag for later policy (skip software volume, refuse resampling). Phase 1 still has a software volume control.
 
-The last queue lives in `session.toml` in the data dir (see [Formats and metadata](../Domain/Formats-and-Metadata.md#session)). Device pick stays in `config.toml`. A later app-state database may hold both.
+The last queue lives in `session.toml` in the data dir (see [Formats and metadata](../Domain/Formats-and-Metadata.md#session)). The **player process** writes it after queue or transport extras settle, and on idle exit / `znicz player stop`. Device pick stays in `config.toml`. A later app-state database may hold both.
+
+`idle_secs` is how long a **Stopped** player stays up with no TUI (or later phone) connected. Default **900**. **0** means never exit on that timer. Playing or paused keeps the process up after you quit the TUI. Agents do not block the timer. If the player process then exits, the next TUI key or MCP tool re-reads `ipc.toml` and autostarts if needed.
 
 ## Pages
 
