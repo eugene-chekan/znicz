@@ -12,8 +12,9 @@ experience lives. The interface is an **immediate-mode** loop:
 `s` (stop), `znicz player stop`, or the player is already Stopped and idle
 with no UI connected.
 
-The **player process** writes `session.toml` when it exits (idle or
-`znicz player stop`). Bare start restores that session **Stopped**.
+The **player process** writes `session.toml` shortly after queue or transport
+extras change, and again when it exits (idle or `znicz player stop`). Bare
+start restores that session **Stopped**.
 See [Formats and metadata](../Domain/Formats-and-Metadata.md#session).
 
 The TUI is a **UI client**. It does not host the engine or write `ipc.toml`.

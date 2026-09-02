@@ -15,6 +15,7 @@ use crate::error::{Result, ZniczError};
 use crate::player::commands::Command;
 use crate::player::engine::{PlayerHandle, PlayerOps};
 use crate::player::state::{PlaybackStatus, PlayerState};
+use crate::session::SessionPersister;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(400);
 
@@ -54,6 +55,7 @@ struct Shared {
     stop: Arc<AtomicBool>,
     idle: Duration,
     advertise: PathBuf,
+    persist: Mutex<Option<SessionPersister>>,
 }
 
 fn random_token() -> String {
@@ -136,6 +138,27 @@ impl IpcServer {
         advertise: impl Into<PathBuf>,
         idle: Duration,
     ) -> Result<Self> {
+        Self::start_inner(player, advertise, idle, None)
+    }
+
+    pub fn start_with_session(
+        player: PlayerHandle,
+        advertise: impl Into<PathBuf>,
+        idle: Duration,
+        session_path: impl Into<PathBuf>,
+        debounce: Duration,
+    ) -> Result<Self> {
+        let mut persister = SessionPersister::new(session_path, debounce);
+        persister.sync_from_player(&player);
+        Self::start_inner(player, advertise, idle, Some(persister))
+    }
+
+    fn start_inner(
+        player: PlayerHandle,
+        advertise: impl Into<PathBuf>,
+        idle: Duration,
+        persist: Option<SessionPersister>,
+    ) -> Result<Self> {
         let advertise = advertise.into();
         let listener = TcpListener::bind("127.0.0.1:0")
             .map_err(|e| ZniczError::Player(format!("ipc bind: {e}")))?;
@@ -159,6 +182,7 @@ impl IpcServer {
             stop: stop.clone(),
             idle,
             advertise: advertise.clone(),
+            persist: Mutex::new(persist),
         });
         let join = match thread::Builder::new()
             .name("znicz-ipc".into())
@@ -204,12 +228,40 @@ fn serve_loop(listener: TcpListener, shared: Arc<Shared>) {
             }
         }
 
+        persist_tick(&shared);
+
         if should_idle_exit(&shared, &mut idle_since) {
+            persist_flush(&shared);
             shared.stop.store(true, Ordering::SeqCst);
             let _ = fs::remove_file(&shared.advertise);
             break;
         }
         thread::sleep(Duration::from_millis(20));
+    }
+    persist_flush(&shared);
+}
+
+fn persist_tick(shared: &Shared) {
+    let Ok(mut guard) = shared.persist.lock() else {
+        return;
+    };
+    let Some(persister) = guard.as_mut() else {
+        return;
+    };
+    if let Err(e) = persister.tick(&shared.player) {
+        tracing::warn!(error = %e, "session.toml");
+    }
+}
+
+fn persist_flush(shared: &Shared) {
+    let Ok(mut guard) = shared.persist.lock() else {
+        return;
+    };
+    let Some(persister) = guard.as_mut() else {
+        return;
+    };
+    if let Err(e) = persister.flush(&shared.player) {
+        tracing::warn!(error = %e, "session.toml");
     }
 }
 
@@ -320,6 +372,7 @@ fn handle_session(stream: TcpStream, shared: Arc<Shared>) {
                 let _ = write_json_line(&mut writer, &response);
             }
             IpcRequest::Shutdown { .. } => {
+                persist_flush(&shared);
                 let _ = write_json_line(
                     &mut writer,
                     &IpcResponse::Ok {
@@ -571,5 +624,45 @@ mod tests {
         client.shutdown().expect("shutdown");
         thread::sleep(Duration::from_millis(150));
         assert!(IpcClient::connect(&path, ClientRole::Agent).is_err());
+    }
+
+    fn session_path() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "znicz-ipc-session-{}-{}.toml",
+            std::process::id(),
+            NEXT.fetch_add(1, AtomicOrdering::Relaxed)
+        ))
+    }
+
+    #[test]
+    fn host_writes_session_after_client_mutes() {
+        let path = advertise_path();
+        let session = session_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let _server = IpcServer::start_with_session(
+            player,
+            &path,
+            Duration::ZERO,
+            &session,
+            Duration::from_millis(30),
+        )
+        .expect("start");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        client.send_blocking(Command::SetMuted(true)).expect("mute");
+        thread::sleep(Duration::from_millis(20));
+        assert!(
+            !session.is_file() || !crate::session::load(&session).expect("load").muted,
+            "must not write before debounce"
+        );
+        let start = Instant::now();
+        loop {
+            if session.is_file() && crate::session::load(&session).expect("load").muted {
+                break;
+            }
+            if start.elapsed() > Duration::from_secs(2) {
+                panic!("session.toml should record mute after debounce");
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
     }
 }

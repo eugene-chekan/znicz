@@ -25,7 +25,7 @@ pub use playlist::{
 };
 pub use session::{
     apply as apply_session, load as load_session, restore as restore_session, save as save_session,
-    save_from_player as save_session_from_player, Session,
+    save_from_player as save_session_from_player, Session, SESSION_SAVE_DEBOUNCE,
 };
 pub use station::{
     add as add_station, copy as copy_station, find as find_station, load as load_stations,

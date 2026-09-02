@@ -37,6 +37,8 @@ description: Control znicz via MCP tools and resources. Use when driving playbac
 5. `stop` is playback. To exit the player process: `znicz player stop`
 
 The live queue is restored from `session.toml` when `znicz player` starts
-(Stopped). TUI and MCP attach to that process. `stop` is playback; it does
-not exit the player. `znicz player stop` does. Override `ZNICZ_SESSION_PATH`.
+(Stopped). The player process updates that file shortly after queue or
+transport extras change, and on exit. TUI and MCP attach to that process.
+`stop` is playback; it does not exit the player. `znicz player stop` does.
+Override `ZNICZ_SESSION_PATH`.
 Advertise file override: `ZNICZ_IPC_PATH`.
