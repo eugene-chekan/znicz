@@ -72,10 +72,7 @@ fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerStat
     let path = if use_logo_only {
         None
     } else {
-        state
-            .current_track
-            .as_ref()
-            .and_then(|t| t.path.as_deref())
+        state.current_track.as_ref().and_then(|t| t.path.as_deref())
     };
 
     let key = if use_logo_only {

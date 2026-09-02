@@ -13,12 +13,12 @@ use znicz_library::{Library, Track};
 
 use crate::cover::CoverCache;
 use crate::cursor::Cursor;
-use crate::tui_config::{CoverProtocol, TuiConfig};
 use crate::layout;
 use crate::library_pane::{Item, LibraryPane};
 use crate::line_edit::LineEdit;
 use crate::meta::{Entry, MetaCache};
 use crate::toast::Toasts;
+use crate::tui_config::{CoverProtocol, TuiConfig};
 use crate::views;
 
 /// GitHub Windows runners expose WASAPI, but enumerating devices from tests

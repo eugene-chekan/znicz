@@ -7,7 +7,6 @@
 
 pub mod app;
 pub mod cover;
-pub mod tui_config;
 pub mod cursor;
 pub mod format;
 pub mod keys;
@@ -17,6 +16,7 @@ pub mod line_edit;
 pub mod meta;
 pub mod theme;
 pub mod toast;
+pub mod tui_config;
 pub mod views;
 
 pub use app::{App, Focus, Modal, PlaylistPrompt, RadioPrompt, StationField};
