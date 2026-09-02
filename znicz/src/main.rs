@@ -138,6 +138,13 @@ enum StationCmd {
     Url { name: String, url: String },
     /// Copy a station to a new name (same URL)
     Copy { name: String, new_name: String },
+    /// Set or clear a station's local cover file
+    Art {
+        name: String,
+        path: Option<String>,
+        #[arg(long)]
+        clear: bool,
+    },
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -323,6 +330,18 @@ fn main() -> color_eyre::Result<()> {
             }
             StationCmd::Copy { name, new_name } => {
                 mutate_stations(|s| znicz_core::copy_station(s, &name, &new_name))?
+            }
+            StationCmd::Art { name, path, clear } => {
+                if clear {
+                    mutate_stations(|s| znicz_core::set_station_art(s, &name, None))?
+                } else {
+                    let Some(path) = path else {
+                        return Err(color_eyre::eyre::eyre!(
+                            "pass a path or --clear"
+                        ));
+                    };
+                    mutate_stations(|s| znicz_core::set_station_art(s, &name, Some(&path)))?
+                }
             }
         },
         None => {

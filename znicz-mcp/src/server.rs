@@ -372,6 +372,13 @@ struct StationUrlParams {
     url: String,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+struct StationArtParams {
+    name: String,
+    #[serde(default)]
+    path: Option<String>,
+}
+
 #[tool_router]
 impl ZniczMcpServer {
     #[tool(description = "Play a local audio file")]
@@ -731,6 +738,16 @@ impl ZniczMcpServer {
     ) -> Result<rmcp::model::CallToolResult, McpError> {
         self.mutate_stations(|stations| {
             znicz_core::set_station_url(stations, &params.name, &params.url)
+        })
+    }
+
+    #[tool(description = "Set a station's local cover image path; omit path to clear")]
+    fn set_station_art(
+        &self,
+        Parameters(params): Parameters<StationArtParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        self.mutate_stations(|stations| {
+            znicz_core::set_station_art(stations, &params.name, params.path.as_deref())
         })
     }
 
@@ -1624,6 +1641,37 @@ mod tests {
         assert!(text.contains("Example"));
         assert!(text.contains("https://example.com/stream"));
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn set_station_art_round_trip_and_clear() {
+        let (server, path) = station_server();
+        let img = path.parent().unwrap().join("cover.png");
+        std::fs::write(&img, b"png").unwrap();
+        server
+            .add_radio_station(Parameters(StationAddParams {
+                name: "Example".into(),
+                url: "https://example.com/stream".into(),
+            }))
+            .unwrap();
+        server
+            .set_station_art(Parameters(StationArtParams {
+                name: "Example".into(),
+                path: Some(img.to_string_lossy().into_owned()),
+            }))
+            .unwrap();
+        let listed = result_text(&server.list_stations().unwrap());
+        assert!(listed.contains("cover.png"), "{listed}");
+        server
+            .set_station_art(Parameters(StationArtParams {
+                name: "Example".into(),
+                path: None,
+            }))
+            .unwrap();
+        let listed = result_text(&server.list_stations().unwrap());
+        assert!(!listed.contains("cover.png"), "{listed}");
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(img);
     }
 
     #[test]
