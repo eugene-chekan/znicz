@@ -149,6 +149,61 @@ pub fn read_metadata(path: &Path) -> FileMetadata {
     FileMetadata { tags, properties }
 }
 
+/// Embedded picture bytes from a file. Empty / missing → `read_cover` returns `None`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoverArt {
+    pub mime: String,
+    pub bytes: Vec<u8>,
+}
+
+fn sniff_image_mime(bytes: &[u8]) -> String {
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        "image/png".into()
+    } else if bytes.len() >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF {
+        "image/jpeg".into()
+    } else {
+        "application/octet-stream".into()
+    }
+}
+
+/// Front cover if present, else the first picture with data. Never errors to the caller.
+pub fn read_cover(path: &Path) -> Option<CoverArt> {
+    use lofty::picture::PictureType;
+
+    let tagged = match Probe::open(path).and_then(|probe| probe.read()) {
+        Ok(tagged) => tagged,
+        Err(e) => {
+            tracing::debug!(path = %path.display(), error = %e, "no readable cover");
+            return None;
+        }
+    };
+
+    let mut first: Option<CoverArt> = None;
+    for tag in tagged.tags() {
+        for pic in tag.pictures() {
+            if pic.data().is_empty() {
+                continue;
+            }
+            let mime = pic
+                .mime_type()
+                .map(|m| m.as_str().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| sniff_image_mime(pic.data()));
+            let art = CoverArt {
+                mime,
+                bytes: pic.data().to_vec(),
+            };
+            if pic.pic_type() == PictureType::CoverFront {
+                return Some(art);
+            }
+            if first.is_none() {
+                first = Some(art);
+            }
+        }
+    }
+    first
+}
+
 /// Pull a four-digit year out of a date string such as "1979-10-05".
 fn parse_year(value: String) -> Option<u32> {
     let digits: String = value.chars().take_while(|c| c.is_ascii_digit()).collect();
@@ -205,5 +260,152 @@ mod tests {
         assert!(!is_audio_file(Path::new("/music/cover.jpg")));
         assert!(!is_audio_file(Path::new("/music/notes.txt")));
         assert!(!is_audio_file(Path::new("/music/no-extension")));
+    }
+
+    const TINY_PNG: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+        0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
+        0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08,
+        0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, 0x00, 0x03, 0x00, 0x01, 0x18, 0xDD, 0x8D,
+        0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+
+    fn ffmpeg_available() -> bool {
+        std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false)
+    }
+
+    fn write_silent_flac(path: &Path) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        let status = std::process::Command::new("ffmpeg")
+            .args(["-y", "-loglevel", "error"])
+            .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=1"])
+            .args(["-ac", "1", "-ar", "44100", "-c:a", "flac"])
+            .arg(path)
+            .status()
+            .expect("run ffmpeg");
+        assert!(status.success(), "ffmpeg failed for {}", path.display());
+    }
+
+    fn picture(pic_type: lofty::picture::PictureType) -> lofty::picture::Picture {
+        use lofty::picture::{MimeType, Picture};
+        Picture::unchecked(TINY_PNG.to_vec())
+            .pic_type(pic_type)
+            .mime_type(MimeType::Png)
+            .build()
+    }
+
+    fn save_pictures(path: &Path, pics: Vec<lofty::picture::Picture>) {
+        use lofty::config::WriteOptions;
+        use lofty::prelude::*;
+        use lofty::probe::Probe;
+        use lofty::tag::Tag;
+
+        let mut tagged = Probe::open(path).unwrap().read().unwrap();
+        if tagged.primary_tag().is_none() {
+            let tag_type = tagged.primary_tag_type();
+            tagged.insert_tag(Tag::new(tag_type));
+        }
+        let tag = tagged.primary_tag_mut().expect("tag");
+        for pic in pics {
+            tag.push_picture(pic);
+        }
+        tag.save_to_path(path, WriteOptions::default())
+            .expect("write pictures");
+    }
+
+    #[test]
+    fn missing_file_has_no_cover() {
+        assert!(read_cover(Path::new("/definitely/not/here.flac")).is_none());
+    }
+
+    #[test]
+    fn file_without_pictures_has_no_cover() {
+        if !ffmpeg_available() {
+            eprintln!("ffmpeg not available, skipping");
+            return;
+        }
+        let dir = std::env::temp_dir().join("znicz-cover-none");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("plain.flac");
+        write_silent_flac(&path);
+        assert!(read_cover(&path).is_none());
+    }
+
+    #[test]
+    fn front_cover_is_preferred() {
+        if !ffmpeg_available() {
+            eprintln!("ffmpeg not available, skipping");
+            return;
+        }
+        let dir = std::env::temp_dir().join("znicz-cover-front");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("two.flac");
+        write_silent_flac(&path);
+        save_pictures(
+            &path,
+            vec![
+                picture(lofty::picture::PictureType::CoverBack),
+                picture(lofty::picture::PictureType::CoverFront),
+            ],
+        );
+        let cover = read_cover(&path).expect("front cover");
+        assert_eq!(cover.bytes, TINY_PNG);
+        assert_eq!(cover.mime, "image/png");
+    }
+
+    #[test]
+    fn mp3_front_cover_is_read_when_ffmpeg_can_encode_mp3() {
+        if !ffmpeg_available() {
+            eprintln!("ffmpeg not available, skipping");
+            return;
+        }
+        let dir = std::env::temp_dir().join("znicz-cover-mp3");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("front.mp3");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        let status = std::process::Command::new("ffmpeg")
+            .args(["-y", "-loglevel", "error"])
+            .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=1"])
+            .args(["-ac", "1", "-ar", "44100", "-c:a", "libmp3lame"])
+            .arg(&path)
+            .status()
+            .expect("run ffmpeg");
+        if !status.success() {
+            eprintln!("ffmpeg cannot encode mp3, skipping");
+            return;
+        }
+        save_pictures(&path, vec![picture(lofty::picture::PictureType::CoverFront)]);
+        let cover = read_cover(&path).expect("mp3 cover");
+        assert_eq!(cover.bytes, TINY_PNG);
+    }
+
+    #[test]
+    fn first_picture_is_used_when_there_is_no_front() {
+        if !ffmpeg_available() {
+            eprintln!("ffmpeg not available, skipping");
+            return;
+        }
+        let dir = std::env::temp_dir().join("znicz-cover-first");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("back.flac");
+        write_silent_flac(&path);
+        save_pictures(
+            &path,
+            vec![picture(lofty::picture::PictureType::CoverBack)],
+        );
+        let cover = read_cover(&path).expect("back cover");
+        assert_eq!(cover.bytes, TINY_PNG);
     }
 }
