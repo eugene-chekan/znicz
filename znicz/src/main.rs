@@ -8,7 +8,7 @@ use serde::Deserialize;
 use znicz_core::{
     apply_to_player, copy_saved, list_saved, load_path, remove_saved, rename_saved,
     restore_session, save_session_from_player, saved_path, skipped_notice, spawn_player,
-    AudioConfig, AudioOutput, ClientRole, Command, IpcClient, IpcServer,
+    AudioConfig, AudioOutput, ClientRole, Command, IpcClient, IpcServer, SESSION_SAVE_DEBOUNCE,
 };
 use znicz_library::Library;
 use znicz_mcp::run_stdio;
@@ -476,13 +476,27 @@ fn ensure_player(device: Option<&str>, config: Option<&Path>) -> color_eyre::Res
 }
 
 fn connect_ui(device: Option<&str>, config: Option<&Path>) -> color_eyre::Result<IpcClient> {
-    let ipc = ensure_player(device, config)?;
-    IpcClient::connect(&ipc, ClientRole::Ui).map_err(|e| color_eyre::eyre::eyre!("{e}"))
+    connect_client(ClientRole::Ui, device, config)
 }
 
 fn connect_agent(device: Option<&str>, config: Option<&Path>) -> color_eyre::Result<IpcClient> {
+    connect_client(ClientRole::Agent, device, config)
+}
+
+fn connect_client(
+    role: ClientRole,
+    device: Option<&str>,
+    config: Option<&Path>,
+) -> color_eyre::Result<IpcClient> {
     let ipc = ensure_player(device, config)?;
-    IpcClient::connect(&ipc, ClientRole::Agent).map_err(|e| color_eyre::eyre::eyre!("{e}"))
+    let device = device.map(str::to_owned);
+    let config = config.map(Path::to_path_buf);
+    IpcClient::connect_with_ensure(ipc, role, move || {
+        ensure_player(device.as_deref(), config.as_deref())
+            .map(|_| ())
+            .map_err(|e| znicz_core::ZniczError::Player(e.to_string()))
+    })
+    .map_err(|e| color_eyre::eyre::eyre!("{e}"))
 }
 
 fn stop_player() -> color_eyre::Result<()> {
@@ -514,8 +528,14 @@ fn run_player_daemon(audio_config: AudioConfig, idle_secs: u64) -> color_eyre::R
     } else {
         Duration::from_secs(idle_secs)
     };
-    let mut server = IpcServer::start_with_idle(player.clone(), ipc, idle)
-        .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
+    let mut server = IpcServer::start_with_session(
+        player.clone(),
+        ipc,
+        idle,
+        session_path()?,
+        SESSION_SAVE_DEBOUNCE,
+    )
+    .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
     server.wait();
     if let Err(e) = save_session_from_player(&player, &session_path()?) {
         tracing::warn!("session.toml: {e}");

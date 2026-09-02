@@ -69,7 +69,10 @@ impl PlayerOps for Engine {
     fn state(&self) -> PlayerState {
         match self {
             Self::Local(player) => player.state(),
-            Self::Remote(player) => player.state(),
+            Self::Remote(player) => player.state().unwrap_or_else(|e| {
+                tracing::warn!("ipc state: {e}");
+                PlayerState::default()
+            }),
         }
     }
 

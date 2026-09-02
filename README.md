@@ -175,6 +175,7 @@ path = "~/.local/share/znicz/library.db"
 
 The last queue (and volume, mute, repeat, shuffle) is
 `~/.local/share/znicz/session.toml`. Override with `ZNICZ_SESSION_PATH`.
+The player process writes it after those fields settle, and on exit.
 Opening the player restores it **Stopped**; it does not auto-play.
 `znicz file.flac` / playlist or station play without `--append` does not load
 the old queue. This is not the stderr log above.

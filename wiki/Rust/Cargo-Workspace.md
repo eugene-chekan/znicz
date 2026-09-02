@@ -7,7 +7,7 @@ This repo is a **workspace**. One `Cargo.toml` at the root lists members:
 members = ["znicz-core", "znicz-library", "znicz-tui", "znicz-mcp", "znicz"]
 ```
 
-Shared crate versions live in `[workspace.dependencies]`. Each member says `serde.workspace = true` instead of repeating version numbers. The app version is `[workspace.package] version` (currently **0.3.8**); every crate inherits it.
+Shared crate versions live in `[workspace.dependencies]`. Each member says `serde.workspace = true` instead of repeating version numbers. The app version is `[workspace.package] version` (currently **0.3.10**); every crate inherits it.
 
 ## Useful commands
 

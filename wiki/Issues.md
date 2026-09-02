@@ -26,6 +26,36 @@ streams, including ICY now playing) is done.
 
 ## Closed
 
+### [#32 IPC clients hold one connection forever](https://github.com/eugene-chekan/znicz/issues/32)
+
+- **Fixed:** 2026-09-02
+- **Component:** `znicz-core`, `znicz-mcp`, `znicz-tui`, `znicz`
+- **Status:** **Fixed** in 0.3.10
+
+TUI and MCP kept one TCP session for their lifetime. After the player process
+restarted (idle, crash, rebuild), `state()` swallowed the dead socket and
+returned a fake Stopped / empty queue / volume 1.0. That was the remaining
+root of [#27](https://github.com/eugene-chekan/znicz/issues/27).
+
+The client now re-reads `ipc.toml` on a transport error, Hellos to the new
+host, and retries once. If nothing is advertised, TUI and MCP autostart
+`znicz player` the same way they do at first connect. A still-dead socket is
+an error, not a default snapshot. `znicz player stop` does not reconnect.
+
+### [#30 session.toml only written on player-daemon exit](https://github.com/eugene-chekan/znicz/issues/30)
+
+- **Fixed:** 2026-09-02
+- **Component:** `znicz-core`, `znicz`
+- **Status:** **Fixed** in 0.3.9
+
+Mute, volume, queue, repeat, and shuffle were only written to `session.toml`
+when the player process exited. A crash or `SIGKILL` dropped the last changes,
+and anything reading the file mid-session saw stale values.
+
+The player process now writes after those fields have been stable for about
+500 ms, and still flushes on idle exit and `znicz player stop`. Live state
+stays on the engine; the file is the restart snapshot.
+
 ### [#27 MCP and TUI live player](https://github.com/eugene-chekan/znicz/issues/27)
 
 - **Fixed:** 2026-09-01

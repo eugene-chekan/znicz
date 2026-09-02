@@ -1,7 +1,8 @@
 //! Live session: queue and transport extras across restarts.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -138,6 +139,83 @@ pub fn save_from_player(player: &PlayerHandle, path: &Path) -> Result<()> {
     save(path, &Session::from_state(&player.state()))
 }
 
+/// How long persistable state must stay still before `session.toml` is written
+/// while the player process is running. Clean exit still flushes immediately.
+pub const SESSION_SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
+
+/// Writes `session.toml` when queue/transport extras have been stable.
+pub(crate) struct SessionPersister {
+    path: PathBuf,
+    debounce: Duration,
+    last_written: Session,
+    pending: Option<Session>,
+    pending_since: Option<Instant>,
+}
+
+impl SessionPersister {
+    pub(crate) fn new(path: impl Into<PathBuf>, debounce: Duration) -> Self {
+        Self {
+            path: path.into(),
+            debounce,
+            last_written: Session::default(),
+            pending: None,
+            pending_since: None,
+        }
+    }
+
+    /// Treat the current engine snapshot as already on disk (after restore).
+    pub(crate) fn sync_from_player(&mut self, player: &PlayerHandle) {
+        self.last_written = Session::from_state(&player.state());
+        self.pending = None;
+        self.pending_since = None;
+    }
+
+    /// Returns true if a write happened.
+    pub(crate) fn tick(&mut self, player: &PlayerHandle) -> Result<bool> {
+        let current = Session::from_state(&player.state());
+        if current == self.last_written {
+            self.pending = None;
+            self.pending_since = None;
+            return Ok(false);
+        }
+        if self.pending.as_ref() != Some(&current) {
+            self.pending = Some(current.clone());
+            self.pending_since = Some(Instant::now());
+            if self.debounce.is_zero() {
+                return self.write(current);
+            }
+            return Ok(false);
+        }
+        let since = self
+            .pending_since
+            .expect("pending snapshot always has a start time");
+        if since.elapsed() >= self.debounce {
+            self.write(current)
+        } else {
+            Ok(false)
+        }
+    }
+
+    pub(crate) fn flush(&mut self, player: &PlayerHandle) -> Result<()> {
+        let current = Session::from_state(&player.state());
+        if current != self.last_written {
+            save(&self.path, &current)?;
+            self.last_written = current;
+        }
+        self.pending = None;
+        self.pending_since = None;
+        Ok(())
+    }
+
+    fn write(&mut self, current: Session) -> Result<bool> {
+        save(&self.path, &current)?;
+        self.last_written = current;
+        self.pending = None;
+        self.pending_since = None;
+        Ok(true)
+    }
+}
+
 pub fn restore(player: &PlayerHandle, path: &Path, restore_queue: bool) -> Result<usize> {
     apply(player, &load(path)?, restore_queue)
 }
@@ -218,5 +296,60 @@ mod tests {
         assert!(state.queue[0].is_stream());
         assert_eq!(state.status, crate::PlaybackStatus::Stopped);
         assert!(state.current_track.is_none());
+    }
+
+    fn temp_session_path() -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "znicz-session-persist-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("session.toml")
+    }
+
+    #[test]
+    fn mute_is_not_written_before_debounce() {
+        let path = temp_session_path();
+        let (player, _thread) = crate::spawn_player(crate::AudioConfig::default());
+        let mut persister = SessionPersister::new(&path, std::time::Duration::from_millis(200));
+        persister.sync_from_player(&player);
+        player.send_blocking(Command::SetMuted(true)).expect("mute");
+        persister.tick(&player).expect("tick");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        persister.tick(&player).expect("tick");
+        assert!(
+            !path.is_file(),
+            "session.toml must wait until the snapshot is stable"
+        );
+    }
+
+    #[test]
+    fn mute_is_written_after_the_snapshot_is_stable() {
+        let path = temp_session_path();
+        let (player, _thread) = crate::spawn_player(crate::AudioConfig::default());
+        let mut persister = SessionPersister::new(&path, std::time::Duration::from_millis(30));
+        persister.sync_from_player(&player);
+        player.send_blocking(Command::SetMuted(true)).expect("mute");
+        persister.tick(&player).expect("tick");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        persister.tick(&player).expect("tick");
+        let loaded = load(&path).expect("load");
+        assert!(loaded.muted);
+    }
+
+    #[test]
+    fn flush_writes_a_pending_mute_without_waiting() {
+        let path = temp_session_path();
+        let (player, _thread) = crate::spawn_player(crate::AudioConfig::default());
+        let mut persister = SessionPersister::new(&path, std::time::Duration::from_millis(5_000));
+        persister.sync_from_player(&player);
+        player.send_blocking(Command::SetMuted(true)).expect("mute");
+        persister.tick(&player).expect("tick");
+        persister.flush(&player).expect("flush");
+        let loaded = load(&path).expect("load");
+        assert!(loaded.muted);
     }
 }
