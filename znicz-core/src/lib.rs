@@ -10,7 +10,9 @@ pub mod station;
 
 pub use audio::output::AudioOutput;
 pub use audio::source::probe_track;
-pub use audioaddict::{parse_audioaddict_channel, AudioAddictNetwork};
+pub use audioaddict::{
+    audioaddict_cache_fresh, audioaddict_cover_url, parse_audioaddict_channel, AudioAddictNetwork,
+};
 pub use cover_fetch::fetch_cover;
 pub use error::{Result, ZniczError};
 pub use metadata::{
