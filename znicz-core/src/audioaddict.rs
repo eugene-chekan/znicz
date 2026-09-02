@@ -164,8 +164,12 @@ fn rebuild_channel_map(currently_playing: &str, track_history: &str) -> Option<C
     let history: HashMap<String, Value> = serde_json::from_str(track_history).ok()?;
     let mut map = ChannelCoverMap::new();
     for entry in playing {
-        let channel_key = entry.get("channel_key").and_then(Value::as_str)?;
-        let channel_id = channel_id_string(entry.get("channel_id")?)?;
+        let Some(channel_key) = entry.get("channel_key").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(channel_id) = entry.get("channel_id").and_then(channel_id_string) else {
+            continue;
+        };
         let art = history
             .get(&channel_id)
             .and_then(|v| v.get("art_url"))
@@ -210,12 +214,24 @@ pub fn audioaddict_cover_url_at(
                     channel_key,
                     "audioaddict cover refresh failed"
                 );
+                return None;
             }
         }
     }
     cache
         .get(&cache_key)
         .and_then(|(_, map)| map.get(channel_key).cloned().flatten())
+}
+
+#[cfg(test)]
+fn expire_audioaddict_cache_at(network: AudioAddictNetwork, origin: &str) {
+    let Ok(mut cache) = CACHE.lock() else {
+        return;
+    };
+    let cache_key = (origin.trim_end_matches('/').to_string(), network);
+    if let Some((fetched_at, _)) = cache.get_mut(&cache_key) {
+        *fetched_at = Instant::now() - CACHE_TTL - Duration::from_secs(1);
+    }
 }
 
 pub fn audioaddict_cache_fresh(network: AudioAddictNetwork) -> bool {
@@ -237,8 +253,8 @@ mod tests {
     use std::thread;
 
     use super::{
-        audioaddict_cover_url_at, join_audioaddict_art_url, parse_audioaddict_channel,
-        AudioAddictNetwork,
+        audioaddict_cover_url_at, expire_audioaddict_cache_at, join_audioaddict_art_url,
+        parse_audioaddict_channel, AudioAddictNetwork,
     };
 
     const PLAYING: &str =
@@ -345,6 +361,36 @@ mod tests {
     fn loopback_404_is_none() {
         let (origin, _hits) = serve_audioaddict_status(404);
         assert!(audioaddict_cover_url_at(AudioAddictNetwork::Di, "trance", &origin).is_none());
+    }
+
+    #[test]
+    fn stale_refresh_failure_returns_none() {
+        let playing = PLAYING.as_bytes().to_vec();
+        let history = HISTORY.as_bytes().to_vec();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let requests_clone = requests.clone();
+        let (origin, _hits) = serve_audioaddict(move |path: &str| {
+            let n = requests_clone.fetch_add(1, Ordering::SeqCst);
+            if n < 2 {
+                if path.contains("currently_playing") {
+                    (200, playing.clone())
+                } else if path.contains("track_history") {
+                    (200, history.clone())
+                } else {
+                    (404, b"{}".to_vec())
+                }
+            } else {
+                (404, b"{}".to_vec())
+            }
+        });
+        let url =
+            audioaddict_cover_url_at(AudioAddictNetwork::RadioTunes, "datempolounge", &origin);
+        assert!(url.is_some());
+        expire_audioaddict_cache_at(AudioAddictNetwork::RadioTunes, &origin);
+        assert!(
+            audioaddict_cover_url_at(AudioAddictNetwork::RadioTunes, "datempolounge", &origin)
+                .is_none()
+        );
     }
 
     #[test]
