@@ -148,16 +148,25 @@ fn resolve_cover(key: &CoverKey) -> (CoverReady, Option<String>) {
             match std::fs::read(path) {
                 Ok(bytes) => match decode_capped(&bytes) {
                     Some(img) => CoverReady::Embedded(Arc::new(img)),
-                    None => CoverReady::Logo,
+                    None => {
+                        tracing::debug!(path = %path.display(), "station art did not decode");
+                        CoverReady::Logo
+                    }
                 },
-                Err(_) => CoverReady::Logo,
+                Err(e) => {
+                    tracing::debug!(path = %path.display(), error = %e, "station art unreadable");
+                    CoverReady::Logo
+                }
             },
             None,
         ),
         CoverKey::Url(url) => match znicz_core::fetch_cover(url) {
             Some(art) => match decode_capped(&art.bytes) {
                 Some(img) => (CoverReady::Embedded(Arc::new(img)), None),
-                None => (CoverReady::Logo, Some(url.clone())),
+                None => {
+                    tracing::debug!(url, "ICY cover URL did not decode as an image");
+                    (CoverReady::Logo, Some(url.clone()))
+                }
             },
             None => (CoverReady::Logo, Some(url.clone())),
         },

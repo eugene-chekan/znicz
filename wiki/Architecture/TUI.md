@@ -175,14 +175,14 @@ playback stops so the previous file does not keep playing.
 | `a` | Add the highlighted station to the queue (does not start or stop playback) |
 | `n` | New station: empty three-field form (name, URL, and art) |
 | `e` | Edit: the same form, filled from the highlighted station |
-| `c` | Copy name+URL+art path, then prompt for a new name |
+| `c` | Copy URL and art; prompt asks for a new name only |
 | `d` | Delete (immediate, no confirm) |
 | `r` | Reload `stations.toml` |
 | Esc | Close the overlay, or cancel a prompt |
 
 Tab (or Down) cycles name → URL → art; BackTab (or Up) goes back. Enter
-saves all three fields. Copy is name-only; the same name as the original is an
-error. While typing, letters (including keys that mean something else globally)
+saves all three fields. Copy keeps URL and art; the prompt is name-only. The
+same name as the original is an error. While typing, letters (including keys that mean something else globally)
 are part of the text. Every prompt uses the same one-line editor
 (`line_edit.rs`): Left and Right move the caret, Home and End jump to the
 ends, Backspace and Delete edit at the caret. A typo at the start of a name

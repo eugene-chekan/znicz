@@ -37,7 +37,8 @@ pub fn fetch_cover(url: &str) -> Option<CoverArt> {
         .filter(|s| s.starts_with("image/"));
     let mut body = Vec::new();
     let mut limited = response.into_body().into_reader().take(MAX_BYTES + 1);
-    if limited.read_to_end(&mut body).is_err() {
+    if let Err(e) = limited.read_to_end(&mut body) {
+        tracing::debug!(url, error = %e, "cover fetch body read failed");
         return None;
     }
     if body.is_empty() || body.len() as u64 > MAX_BYTES {
