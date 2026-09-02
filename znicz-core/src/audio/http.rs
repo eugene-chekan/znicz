@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use symphonia::core::io::MediaSource;
 
-use crate::audio::icy::{IcyStripRead, IcyTitle};
+use crate::audio::icy::{IcyStripRead, IcyTitle, IcyUrl};
 use crate::audio::source::AudioSource;
 use crate::error::{Result, ZniczError};
 use crate::player::state::TrackInfo;
@@ -14,6 +14,7 @@ pub struct HttpStreamSource {
     name: String,
     url: String,
     icy_title: Arc<Mutex<IcyTitle>>,
+    icy_url: Arc<Mutex<IcyUrl>>,
 }
 
 impl HttpStreamSource {
@@ -22,6 +23,7 @@ impl HttpStreamSource {
             name: name.into(),
             url: url.into(),
             icy_title: Arc::new(Mutex::new(IcyTitle::Unset)),
+            icy_url: Arc::new(Mutex::new(IcyUrl::Unset)),
         }
     }
 }
@@ -56,6 +58,7 @@ impl AudioSource for HttpStreamSource {
         Ok(TrackInfo {
             path: None,
             url: Some(self.url.clone()),
+            icy_stream_url: None,
             title: self.name.clone(),
             codec: "Audio".into(),
             sample_rate: 0,
@@ -79,7 +82,12 @@ impl AudioSource for HttpStreamSource {
         let metaint = icy_metaint(response.headers());
         let reader = response.into_body().into_reader();
         let boxed: Box<dyn Read + Send> = match metaint {
-            Some(n) => Box::new(IcyStripRead::new(reader, n, self.icy_title.clone())),
+            Some(n) => Box::new(IcyStripRead::new(
+                reader,
+                n,
+                self.icy_title.clone(),
+                self.icy_url.clone(),
+            )),
             None => Box::new(reader),
         };
         Ok(Box::new(UnseekableRead(Mutex::new(boxed))))
@@ -87,6 +95,10 @@ impl AudioSource for HttpStreamSource {
 
     fn icy_title_slot(&self) -> Option<Arc<Mutex<IcyTitle>>> {
         Some(self.icy_title.clone())
+    }
+
+    fn icy_url_slot(&self) -> Option<Arc<Mutex<IcyUrl>>> {
+        Some(self.icy_url.clone())
     }
 }
 
@@ -246,6 +258,35 @@ mod tests {
             source.icy_title_slot().unwrap().lock().unwrap().clone(),
             IcyTitle::Text("Hi".into())
         );
+        assert_eq!(
+            source.icy_url_slot().unwrap().lock().unwrap().clone(),
+            crate::audio::icy::IcyUrl::Unset
+        );
+        let req = rx.recv().unwrap();
+        assert!(req.to_lowercase().contains("icy-metadata"));
+    }
+
+    #[test]
+    fn open_reader_strips_icy_title_and_url_from_the_body() {
+        use crate::audio::icy::{IcyTitle, IcyUrl};
+        let audio = b"ABCDEFGHIJKLMNOPQRSTUVWX";
+        let mut payload = audio[..16].to_vec();
+        payload.extend_from_slice(&icy_block("StreamTitle='Hi';StreamUrl='http://x';"));
+        payload.extend_from_slice(&audio[16..]);
+        let (url, rx) = serve_once_icy(payload, "application/octet-stream", 16);
+        let source = HttpStreamSource::new("Test", url);
+        let mut reader = source.open_reader().unwrap();
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf).unwrap();
+        assert_eq!(buf, audio);
+        assert_eq!(
+            source.icy_title_slot().unwrap().lock().unwrap().clone(),
+            IcyTitle::Text("Hi".into())
+        );
+        assert_eq!(
+            source.icy_url_slot().unwrap().lock().unwrap().clone(),
+            IcyUrl::Text("http://x".into())
+        );
         let req = rx.recv().unwrap();
         assert!(req.to_lowercase().contains("icy-metadata"));
     }
@@ -280,5 +321,24 @@ mod tests {
         assert_eq!(info.title, "Station");
         let _ = decoder.decode_next();
         assert_eq!(decoder.icy_title(), IcyTitle::Text("Song".into()));
+    }
+
+    #[test]
+    fn decoder_sees_stream_url_from_icy_blocks() {
+        use crate::audio::icy::IcyUrl;
+        use crate::audio::source::AudioDecoder;
+        let wav = silent_wav_bytes(44_100, 2, 256);
+        let mut body = wav[..44].to_vec();
+        body.extend_from_slice(&icy_block("StreamUrl='http://127.0.0.1/cover.png';"));
+        body.extend_from_slice(&wav[44..]);
+        let (url, _rx) = serve_once_icy(body, "audio/wav", 44);
+        let source = HttpStreamSource::new("Station", url);
+        let (mut decoder, info) = AudioDecoder::open(&source).unwrap();
+        assert!(info.icy_stream_url.is_none());
+        let _ = decoder.decode_next();
+        assert_eq!(
+            decoder.icy_url(),
+            IcyUrl::Text("http://127.0.0.1/cover.png".into())
+        );
     }
 }

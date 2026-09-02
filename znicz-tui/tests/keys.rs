@@ -823,6 +823,7 @@ fn enter_on_a_station_replaces_the_queue() {
         &[znicz_core::Station {
             name: "Example".into(),
             url: "http://127.0.0.1:1/stream".into(),
+            art: None,
         }],
     )
     .unwrap();
@@ -847,6 +848,7 @@ fn d_deletes_a_station_immediately() {
         &[znicz_core::Station {
             name: "Gone".into(),
             url: "https://example.com/g".into(),
+            art: None,
         }],
     )
     .unwrap();
@@ -980,6 +982,7 @@ fn a_on_radio_appends_the_station_without_starting() {
         &[znicz_core::Station {
             name: "Example".into(),
             url: "http://127.0.0.1:1/stream".into(),
+            art: None,
         }],
     )
     .unwrap();
@@ -1084,6 +1087,7 @@ fn e_on_radio_edits_name_and_url_together() {
         &[znicz_core::Station {
             name: "Example".into(),
             url: "http://127.0.0.1:1/stream".into(),
+            art: None,
         }],
     )
     .unwrap();
@@ -1127,6 +1131,7 @@ fn c_copies_the_highlighted_station() {
         &[znicz_core::Station {
             name: "Example".into(),
             url: "http://127.0.0.1:1/stream".into(),
+            art: None,
         }],
     )
     .unwrap();

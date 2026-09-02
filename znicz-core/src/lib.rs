@@ -1,4 +1,5 @@
 pub mod audio;
+mod cover_fetch;
 pub mod error;
 pub mod metadata;
 pub mod player;
@@ -8,6 +9,7 @@ pub mod station;
 
 pub use audio::output::AudioOutput;
 pub use audio::source::probe_track;
+pub use cover_fetch::fetch_cover;
 pub use error::{Result, ZniczError};
 pub use metadata::{
     is_audio_file, read_cover, read_metadata, read_tags, title_from_path, AudioProperties,
@@ -30,5 +32,6 @@ pub use session::{
 pub use station::{
     add as add_station, copy as copy_station, find as find_station, load as load_stations,
     play_station, remove as remove_station, rename as rename_station, save as save_stations,
-    set_url as set_station_url, update as update_station, validate_name, validate_url, Station,
+    set_art as set_station_art, set_url as set_station_url, update as update_station,
+    validate_name, validate_url, Station,
 };

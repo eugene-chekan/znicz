@@ -179,6 +179,7 @@ mod tests {
             current_track: Some(TrackInfo {
                 path: Some(PathBuf::from("/music/sour-times.flac")),
                 url: None,
+                icy_stream_url: None,
                 title: "Sour Times".into(),
                 codec: "FLAC".into(),
                 sample_rate: 96_000,
@@ -258,6 +259,7 @@ mod tests {
             current_track: Some(TrackInfo {
                 path: None,
                 url: Some("https://example.com/stream".into()),
+                icy_stream_url: None,
                 title: "Live".into(),
                 codec: "Audio".into(),
                 sample_rate: 44_100,

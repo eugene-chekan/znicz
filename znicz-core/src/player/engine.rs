@@ -7,7 +7,7 @@ use crossbeam_channel::{bounded, unbounded, Receiver, RecvTimeoutError, Sender};
 use crate::audio::convert::{adapt_channels, RateConverter};
 use crate::audio::feeder::{DecodeStep, Feeder, PumpOutcome};
 use crate::audio::http::HttpStreamSource;
-use crate::audio::icy::{apply_icy_to_track, IcyTitle};
+use crate::audio::icy::{apply_icy_to_track, apply_icy_url_to_track, IcyTitle, IcyUrl};
 use crate::audio::output::AudioOutput;
 use crate::audio::source::{AudioDecoder, AudioSource, LocalFileSource};
 use crate::error::{Result, ZniczError};
@@ -723,7 +723,8 @@ impl PlayerEngine {
 
     fn publish_stream_title(&self, decoder: &AudioDecoder) {
         let icy = decoder.icy_title();
-        if matches!(icy, IcyTitle::Unset) {
+        let icy_url = decoder.icy_url();
+        if matches!(icy, IcyTitle::Unset) && matches!(icy_url, IcyUrl::Unset) {
             return;
         }
         let station_name = {
@@ -737,7 +738,13 @@ impl PlayerEngine {
         let Some(track) = state.current_track.as_mut() else {
             return;
         };
-        if apply_icy_to_track(track, &icy, &station_name) {
+        let title_changed = if matches!(icy, IcyTitle::Unset) {
+            false
+        } else {
+            apply_icy_to_track(track, &icy, &station_name)
+        };
+        let url_changed = apply_icy_url_to_track(track, &icy_url);
+        if title_changed || url_changed {
             drop(state);
             self.emit_state_changed();
         }

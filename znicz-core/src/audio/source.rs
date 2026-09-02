@@ -10,7 +10,7 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use symphonia::core::units::Time;
 
-use crate::audio::icy::IcyTitle;
+use crate::audio::icy::{IcyTitle, IcyUrl};
 use crate::error::{Result, ZniczError};
 use crate::metadata::{read_metadata, title_from_path};
 use crate::player::state::TrackInfo;
@@ -51,6 +51,7 @@ fn track_info_from_params(codec_params: &CodecParameters, source: &dyn AudioSour
         TrackInfo {
             path: Some(path.to_path_buf()),
             url: None,
+            icy_stream_url: None,
             title,
             codec: codec_label(codec_params.codec, path),
             sample_rate,
@@ -75,6 +76,7 @@ fn track_info_from_params(codec_params: &CodecParameters, source: &dyn AudioSour
         TrackInfo {
             path: None,
             url: source.url().map(str::to_string),
+            icy_stream_url: None,
             title: source.title_hint().to_string(),
             codec: codec_label(codec_params.codec, Path::new("")),
             sample_rate,
@@ -232,6 +234,9 @@ pub trait AudioSource: Send {
     fn icy_title_slot(&self) -> Option<Arc<Mutex<IcyTitle>>> {
         None
     }
+    fn icy_url_slot(&self) -> Option<Arc<Mutex<IcyUrl>>> {
+        None
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -306,11 +311,13 @@ pub struct AudioDecoder {
     coded_bytes: u64,
     pcm_frames: u64,
     icy_title: Option<Arc<Mutex<IcyTitle>>>,
+    icy_url: Option<Arc<Mutex<IcyUrl>>>,
 }
 
 impl AudioDecoder {
     pub fn open(source: &dyn AudioSource) -> Result<(Self, TrackInfo)> {
         let icy_title = source.icy_title_slot();
+        let icy_url = source.icy_url_slot();
         let reader = source.open_reader()?;
         let mss = MediaSourceStream::new(reader, Default::default());
 
@@ -360,6 +367,7 @@ impl AudioDecoder {
                 coded_bytes: 0,
                 pcm_frames: 0,
                 icy_title,
+                icy_url,
             },
             track_info,
         ))
@@ -393,6 +401,13 @@ impl AudioDecoder {
             .as_ref()
             .map(|slot| slot.lock().unwrap().clone())
             .unwrap_or(IcyTitle::Unset)
+    }
+
+    pub fn icy_url(&self) -> IcyUrl {
+        self.icy_url
+            .as_ref()
+            .map(|slot| slot.lock().unwrap().clone())
+            .unwrap_or(IcyUrl::Unset)
     }
 
     pub fn seek(&mut self, position: std::time::Duration) -> Result<()> {

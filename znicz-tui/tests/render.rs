@@ -53,6 +53,7 @@ fn playing_state() -> znicz_core::PlayerState {
         current_track: Some(TrackInfo {
             path: Some(PathBuf::from("/music/sour-times.flac")),
             url: None,
+            icy_stream_url: None,
             title: "Sour Times".into(),
             codec: "FLAC".into(),
             sample_rate: 96_000,
@@ -212,6 +213,7 @@ fn every_view_draws_at_every_size() {
         app.stations = vec![znicz_core::Station {
             name: "Example FM".into(),
             url: "https://example.com/stream".into(),
+            art: None,
         }];
         let screen = draw(&mut app, width, height);
         assert_eq!(
@@ -498,6 +500,7 @@ fn the_focused_view_is_the_one_shown() {
     app.stations = vec![znicz_core::Station {
         name: "Example FM".into(),
         url: "https://example.com/stream".into(),
+        art: None,
     }];
     let screen = draw(&mut app, 90, 24);
     assert!(screen.contains("Radio"), "{screen}");
@@ -515,6 +518,7 @@ fn the_radio_add_prompt_draws_the_caret_in_the_middle() {
     app.radio_prompt = Some(RadioPrompt::Form {
         name: edit,
         url: LineEdit::new(),
+        art: LineEdit::new(),
         field: StationField::Name,
         original: None,
     });

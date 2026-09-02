@@ -103,6 +103,7 @@ fn main() {
     app.stations = vec![znicz_core::Station {
         name: "Example FM".into(),
         url: "https://example.com/stream".into(),
+        art: None,
     }];
     show(
         "Radio",
@@ -189,6 +190,7 @@ fn playing_state(queue: &[(PathBuf, Entry)], bit_perfect: bool) -> PlayerState {
         current_track: Some(TrackInfo {
             path: Some(path.clone()),
             url: None,
+            icy_stream_url: None,
             title: entry.title.clone(),
             codec: "FLAC".to_string(),
             sample_rate: 96_000,

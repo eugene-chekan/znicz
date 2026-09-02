@@ -23,11 +23,56 @@ impl IcyTitle {
 }
 
 /// First `StreamTitle='…';` in the block. `None` if that pattern is missing.
-pub fn parse_stream_title(block: &[u8]) -> Option<String> {
+fn parse_icy_quoted(block: &[u8], prefix: &str) -> Option<String> {
     let text = String::from_utf8_lossy(block);
-    let rest = text.split("StreamTitle='").nth(1)?;
-    let (title, _) = rest.split_once("';")?;
-    Some(title.to_string())
+    let rest = text.split(prefix).nth(1)?;
+    let (value, _) = rest.split_once("';")?;
+    Some(value.to_string())
+}
+
+pub fn parse_stream_title(block: &[u8]) -> Option<String> {
+    parse_icy_quoted(block, "StreamTitle='")
+}
+
+pub fn parse_stream_url(block: &[u8]) -> Option<String> {
+    parse_icy_quoted(block, "StreamUrl='")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IcyUrl {
+    Unset,
+    Empty,
+    Text(String),
+}
+
+impl IcyUrl {
+    pub fn from_parsed(url: &str) -> Self {
+        if url.is_empty() {
+            Self::Empty
+        } else {
+            Self::Text(url.to_string())
+        }
+    }
+}
+
+pub fn apply_icy_url_to_track(track: &mut TrackInfo, icy: &IcyUrl) -> bool {
+    match icy {
+        IcyUrl::Unset => false,
+        IcyUrl::Text(url) => {
+            let changed = track.icy_stream_url.as_deref() != Some(url.as_str());
+            if changed {
+                track.icy_stream_url = Some(url.clone());
+            }
+            changed
+        }
+        IcyUrl::Empty => {
+            let changed = track.icy_stream_url.is_some();
+            if changed {
+                track.icy_stream_url = None;
+            }
+            changed
+        }
+    }
 }
 
 /// Returns true when `track` was written.
@@ -59,15 +104,22 @@ pub struct IcyStripRead<R> {
     metaint: usize,
     audio_left: usize,
     title: Arc<Mutex<IcyTitle>>,
+    url: Arc<Mutex<IcyUrl>>,
 }
 
 impl<R: Read> IcyStripRead<R> {
-    pub fn new(inner: R, metaint: usize, title: Arc<Mutex<IcyTitle>>) -> Self {
+    pub fn new(
+        inner: R,
+        metaint: usize,
+        title: Arc<Mutex<IcyTitle>>,
+        url: Arc<Mutex<IcyUrl>>,
+    ) -> Self {
         Self {
             inner,
             metaint,
             audio_left: metaint,
             title,
+            url,
         }
     }
 
@@ -93,6 +145,9 @@ impl<R: Read> IcyStripRead<R> {
         if got == meta_len {
             if let Some(parsed) = parse_stream_title(&meta) {
                 *self.title.lock().unwrap() = IcyTitle::from_parsed(&parsed);
+            }
+            if let Some(parsed) = parse_stream_url(&meta) {
+                *self.url.lock().unwrap() = IcyUrl::from_parsed(&parsed);
             }
         }
         Ok(true)
@@ -146,6 +201,72 @@ mod tests {
         assert_eq!(parse_stream_title(b"junk"), None);
     }
 
+    #[test]
+    fn parse_stream_url_reads_the_first_quoted_value_even_without_title() {
+        assert_eq!(
+            parse_stream_url(b"StreamTitle='Song';StreamUrl='http://x/cover.jpg';"),
+            Some("http://x/cover.jpg".into())
+        );
+        assert_eq!(
+            parse_stream_url(b"StreamUrl='https://cdn.example/art';"),
+            Some("https://cdn.example/art".into())
+        );
+        assert_eq!(parse_stream_url(b"StreamUrl='';"), Some("".into()));
+        assert_eq!(parse_stream_url(b"StreamTitle='Song';"), None);
+        assert_eq!(parse_stream_url(b"StreamUrl='open"), None);
+    }
+
+    #[test]
+    fn strip_read_keeps_audio_when_the_block_has_title_and_url() {
+        let audio = b"ABCDEFGHIJKLMNOPQRSTUVWX".to_vec();
+        let block = icy_block("StreamTitle='Song';StreamUrl='http://x/a.png';");
+        let mut body = Vec::new();
+        body.extend_from_slice(&audio[..16]);
+        body.extend_from_slice(&block);
+        body.extend_from_slice(&audio[16..]);
+        let title = Arc::new(Mutex::new(IcyTitle::Unset));
+        let url = Arc::new(Mutex::new(IcyUrl::Unset));
+        let mut reader =
+            IcyStripRead::new(std::io::Cursor::new(body), 16, title.clone(), url.clone());
+        let mut out = Vec::new();
+        reader.read_to_end(&mut out).unwrap();
+        assert_eq!(out, audio);
+        assert_eq!(*title.lock().unwrap(), IcyTitle::Text("Song".into()));
+        assert_eq!(*url.lock().unwrap(), IcyUrl::Text("http://x/a.png".into()));
+    }
+
+    #[test]
+    fn apply_icy_url_to_track_text_empty_and_unset() {
+        let mut track = TrackInfo {
+            path: None,
+            url: Some("http://x".into()),
+            icy_stream_url: None,
+            title: "Station".into(),
+            codec: "MP3".into(),
+            sample_rate: 44100,
+            channels: 2,
+            bits_per_sample: None,
+            bitrate_kbps: None,
+            duration: None,
+            tags: Default::default(),
+        };
+        assert!(!apply_icy_url_to_track(&mut track, &IcyUrl::Unset));
+        assert!(track.icy_stream_url.is_none());
+
+        assert!(apply_icy_url_to_track(
+            &mut track,
+            &IcyUrl::Text("https://a/b.png".into())
+        ));
+        assert_eq!(track.icy_stream_url.as_deref(), Some("https://a/b.png"));
+        assert!(!apply_icy_url_to_track(
+            &mut track,
+            &IcyUrl::Text("https://a/b.png".into())
+        ));
+
+        assert!(apply_icy_url_to_track(&mut track, &IcyUrl::Empty));
+        assert!(track.icy_stream_url.is_none());
+    }
+
     fn icy_block(payload: &str) -> Vec<u8> {
         let mut bytes = payload.as_bytes().to_vec();
         let padded = bytes.len().div_ceil(16) * 16;
@@ -164,7 +285,8 @@ mod tests {
         body.extend_from_slice(&block);
         body.extend_from_slice(&audio[16..]);
         let title = Arc::new(Mutex::new(IcyTitle::Unset));
-        let mut reader = IcyStripRead::new(std::io::Cursor::new(body), 16, title.clone());
+        let url = Arc::new(Mutex::new(IcyUrl::Unset));
+        let mut reader = IcyStripRead::new(std::io::Cursor::new(body), 16, title.clone(), url);
         let mut out = Vec::new();
         reader.read_to_end(&mut out).unwrap();
         assert_eq!(out, audio);
@@ -178,7 +300,8 @@ mod tests {
         let mut body = audio.clone();
         body.extend_from_slice(&block);
         let title = Arc::new(Mutex::new(IcyTitle::Unset));
-        let mut reader = IcyStripRead::new(std::io::Cursor::new(body), 16, title.clone());
+        let url = Arc::new(Mutex::new(IcyUrl::Unset));
+        let mut reader = IcyStripRead::new(std::io::Cursor::new(body), 16, title.clone(), url);
         let mut out = Vec::new();
         reader.read_to_end(&mut out).unwrap();
         assert_eq!(out, audio);
@@ -192,7 +315,8 @@ mod tests {
         let mut body = audio.clone();
         body.extend_from_slice(&block);
         let title = Arc::new(Mutex::new(IcyTitle::Text("Keep".into())));
-        let mut reader = IcyStripRead::new(std::io::Cursor::new(body), 16, title.clone());
+        let url = Arc::new(Mutex::new(IcyUrl::Unset));
+        let mut reader = IcyStripRead::new(std::io::Cursor::new(body), 16, title.clone(), url);
         let mut out = Vec::new();
         reader.read_to_end(&mut out).unwrap();
         assert_eq!(out, audio);
@@ -204,6 +328,7 @@ mod tests {
         let mut track = TrackInfo {
             path: None,
             url: Some("http://x".into()),
+            icy_stream_url: None,
             title: "Station".into(),
             codec: "MP3".into(),
             sample_rate: 44100,

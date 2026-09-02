@@ -52,7 +52,7 @@ in the same `paths` list (a URL becomes a stream row; the name is the URL).
 
 Radio tools talk to `stations.toml`: `list_stations`, `add_radio_station`,
 `play_station` (clears the queue and starts the stream by default; `append: true` adds without starting), `rename_radio_station`,
-`set_station_url`, `copy_radio_station`, `remove_radio_station`. Resource
+`set_station_url`, `set_station_art`, `copy_radio_station`, `remove_radio_station`. Resource
 `znicz://stations` is the same list. Serialised player state marks each queue
 row with `kind`: `file` or `stream`.
 

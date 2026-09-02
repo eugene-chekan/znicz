@@ -94,8 +94,9 @@ Stations live in `stations.toml` beside the library database:
 - Windows: `%APPDATA%\znicz\stations.toml`
 
 Override with `ZNICZ_STATIONS_PATH`. Names must be unique. A URL must start
-with `http://` or `https://`. Playing a station **clears the queue** and starts
-that stream.
+with `http://` or `https://`. Optional `art` is a **local image file** path
+(not `http://` or `https://`); omit or leave empty for no station picture.
+Playing a station **clears the queue** and starts that stream.
 
 Open the list in the player with `R`. Same list from the CLI and MCP:
 
@@ -104,14 +105,16 @@ znicz station list
 znicz station add "Example" https://example.com/stream
 znicz station play Example
 znicz station play Example --append
+znicz station art "Example" ~/Pictures/example.png
+znicz station art "Example" --clear
 ```
 
-CLI also has `remove`, `rename`, `url`, and `copy`. MCP tools: `list_stations`, `add_radio_station`, `play_station`,
-`rename_radio_station`, `set_station_url`, `copy_radio_station`, `remove_radio_station`, plus
+CLI also has `remove`, `rename`, `url`, `art`, and `copy`. MCP tools: `list_stations`, `add_radio_station`, `play_station`,
+`rename_radio_station`, `set_station_url`, `set_station_art`, `copy_radio_station`, `remove_radio_station`, plus
 resource `znicz://stations`.
 
 The TUI overlay (`R`) uses the same saved-list keys as playlists: `n` new, `e`
-edit (name and URL on one form), `c` copy, `d` delete. Radio `a` appends the
+edit (name, URL, and art on one form), `c` copy, `d` delete. Radio `a` appends the
 station. Enter / `play_station` still replace the queue.
 
 M3U URL lines play as streams. While a stream plays, the signal path shows a
@@ -120,7 +123,8 @@ has decoded). That is the stream’s audio rate, not Icecast `icy-br` and not
 the decoded PCM rate (1411 kbps for CD-shape WAV). Icecast `StreamTitle`
 replaces the now-playing title (and `tags.title`) when the station sends it.
 An empty title falls back to the station name. Queue rows stay the station
-name.
+name. Icecast `StreamUrl` may point at a cover image; when it decodes, the TUI
+cover slot shows that picture instead of station `art` or the logo.
 
 **Later:** HLS, PLS, XSPF. See the
 [roadmap](../Plans/Roadmap.md#later-radio-after-phase-4).

@@ -46,10 +46,11 @@ stacked chrome on the right, with one empty cell between them. The cover
 widget starts on the same column as the library pane's left border and is
 pinned to the top of the slot so it meets the library's bottom edge. The
 bitmap is inset half a cell so its left edge matches the pane's `│` (box
-drawing does not sit on the cell's left edge). Missing art (and streams)
-keep the slot and draw the bundled logo. The picture is letterboxed onto an
-opaque canvas the size of the slot, so a stream cannot leave the previous
-cover on screen.
+drawing does not sit on the cell's left edge). For files, missing embedded art
+keeps the slot and draws the bundled logo. For streams, the cover slot uses an
+ICY `StreamUrl` image when one decodes, else the station `art` file, else the
+logo. The picture is letterboxed onto an opaque canvas the size of the slot, so
+a stream cannot leave the previous cover on screen.
 `show_cover = false` restores the old full-width one- or two-line transport.
 Hints stay on their own line and are never replaced by a toast. Config: `[tui]`
 in `config.toml` (`show_cover`, `cover_protocol`).
@@ -172,16 +173,16 @@ playback stops so the previous file does not keep playing.
 | --- | --- |
 | Enter | Clear the queue and play |
 | `a` | Add the highlighted station to the queue (does not start or stop playback) |
-| `n` | New station: empty two-field form (name and URL) |
+| `n` | New station: empty three-field form (name, URL, and art) |
 | `e` | Edit: the same form, filled from the highlighted station |
-| `c` | Copy name+URL, then prompt for a new name |
+| `c` | Copy URL and art; prompt asks for a new name only |
 | `d` | Delete (immediate, no confirm) |
 | `r` | Reload `stations.toml` |
 | Esc | Close the overlay, or cancel a prompt |
 
-Tab (or Down) moves between name and URL; BackTab (or Up) goes back. Enter
-saves both fields. Copy is name-only; the same name as the original is an
-error. While typing, letters (including keys that mean something else globally)
+Tab (or Down) cycles name → URL → art; BackTab (or Up) goes back. Enter
+saves all three fields. Copy keeps URL and art; the prompt is name-only. The
+same name as the original is an error. While typing, letters (including keys that mean something else globally)
 are part of the text. Every prompt uses the same one-line editor
 (`line_edit.rs`): Left and Right move the caret, Home and End jump to the
 ends, Backspace and Delete edit at the caret. A typo at the start of a name
