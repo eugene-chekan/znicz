@@ -86,6 +86,16 @@ fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerStat
                     }
                     _ => CoverReady::Logo,
                 };
+                let aa_ready = match track
+                    .url
+                    .as_deref()
+                    .and_then(znicz_core::parse_audioaddict_channel)
+                {
+                    Some((network, channel)) => {
+                        app.covers.get(CoverKey::AudioAddict { network, channel })
+                    }
+                    None => CoverReady::Logo,
+                };
                 let station_ready = app
                     .stations
                     .iter()
@@ -93,7 +103,7 @@ fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerStat
                     .and_then(|s| s.art.clone())
                     .map(|p| app.covers.get(CoverKey::ImageFile(p)))
                     .unwrap_or(CoverReady::Logo);
-                pick_stream_cover(icy_ready, station_ready)
+                pick_stream_cover(icy_ready, aa_ready, station_ready)
             }
         }
     };

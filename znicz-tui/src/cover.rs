@@ -17,6 +17,10 @@ pub enum CoverKey {
     File(PathBuf),
     ImageFile(PathBuf),
     Url(String),
+    AudioAddict {
+        network: znicz_core::AudioAddictNetwork,
+        channel: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +42,7 @@ impl PartialEq for CoverReady {
 
 struct Slot {
     ready: CoverReady,
+    refreshing: bool,
 }
 
 type Map = Arc<Mutex<(HashMap<CoverKey, Slot>, VecDeque<CoverKey>, HashSet<String>)>>;
@@ -48,9 +53,16 @@ pub struct CoverCache {
     logo: Arc<DynamicImage>,
 }
 
-pub fn pick_stream_cover(icy: CoverReady, station: CoverReady) -> CoverReady {
+pub fn pick_stream_cover(
+    icy: CoverReady,
+    audioaddict: CoverReady,
+    station: CoverReady,
+) -> CoverReady {
     if let CoverReady::Embedded(_) = &icy {
         return icy;
+    }
+    if let CoverReady::Embedded(_) = &audioaddict {
+        return audioaddict;
     }
     if let CoverReady::Embedded(_) = &station {
         return station;
@@ -86,7 +98,13 @@ impl CoverCache {
                     if let Some(url) = failed_url {
                         failed.insert(url);
                     }
-                    cache.insert(key.clone(), Slot { ready });
+                    cache.insert(
+                        key.clone(),
+                        Slot {
+                            ready,
+                            refreshing: false,
+                        },
+                    );
                     if !order.iter().any(|k| k == &key) {
                         order.push_back(key);
                     }
@@ -117,13 +135,24 @@ impl CoverCache {
                 return CoverReady::Logo;
             }
         }
-        if let Some(slot) = cache.get(&key) {
+        if let Some(slot) = cache.get_mut(&key) {
+            if let CoverKey::AudioAddict { network, .. } = &key {
+                if !znicz_core::audioaddict_cache_fresh(*network) && !slot.refreshing {
+                    slot.refreshing = true;
+                    let ready = slot.ready.clone();
+                    let key = key.clone();
+                    drop(guard);
+                    self.requests.send(key).ok();
+                    return ready;
+                }
+            }
             return slot.ready.clone();
         }
         cache.insert(
             key.clone(),
             Slot {
                 ready: CoverReady::Pending,
+                refreshing: false,
             },
         );
         drop(guard);
@@ -170,6 +199,21 @@ fn resolve_cover(key: &CoverKey) -> (CoverReady, Option<String>) {
             },
             None => (CoverReady::Logo, Some(url.clone())),
         },
+        CoverKey::AudioAddict { network, channel } => {
+            match znicz_core::audioaddict_cover_url(*network, channel) {
+                Some(url) => match znicz_core::fetch_cover(&url) {
+                    Some(art) => match decode_capped(&art.bytes) {
+                        Some(img) => (CoverReady::Embedded(Arc::new(img)), None),
+                        None => {
+                            tracing::debug!(url, "AudioAddict cover did not decode");
+                            (CoverReady::Logo, Some(url))
+                        }
+                    },
+                    None => (CoverReady::Logo, Some(url)),
+                },
+                None => (CoverReady::Logo, None),
+            }
+        }
     }
 }
 
@@ -259,35 +303,37 @@ mod tests {
     #[test]
     fn no_path_is_the_logo() {
         assert_eq!(
-            pick_stream_cover(CoverReady::Logo, CoverReady::Logo),
+            pick_stream_cover(CoverReady::Logo, CoverReady::Logo, CoverReady::Logo),
             CoverReady::Logo
         );
     }
 
     #[test]
-    fn pick_stream_cover_prefers_icy_then_station_then_logo() {
+    fn pick_stream_cover_prefers_icy_then_audioaddict_then_station() {
         let icy_img = Arc::new(DynamicImage::new_rgb8(2, 2));
+        let aa_img = Arc::new(DynamicImage::new_rgb8(4, 4));
         let station_img = Arc::new(DynamicImage::new_rgb8(3, 3));
         let icy = CoverReady::Embedded(icy_img.clone());
+        let aa = CoverReady::Embedded(aa_img.clone());
         let station = CoverReady::Embedded(station_img.clone());
         assert!(matches!(
-            pick_stream_cover(icy.clone(), station.clone()),
+            pick_stream_cover(icy.clone(), aa.clone(), station.clone()),
             CoverReady::Embedded(img) if Arc::ptr_eq(&img, &icy_img)
         ));
         assert!(matches!(
-            pick_stream_cover(CoverReady::Pending, station.clone()),
+            pick_stream_cover(CoverReady::Pending, aa.clone(), station.clone()),
+            CoverReady::Embedded(img) if Arc::ptr_eq(&img, &aa_img)
+        ));
+        assert!(matches!(
+            pick_stream_cover(CoverReady::Logo, CoverReady::Pending, station.clone()),
             CoverReady::Embedded(img) if Arc::ptr_eq(&img, &station_img)
         ));
         assert!(matches!(
-            pick_stream_cover(CoverReady::Logo, station),
+            pick_stream_cover(CoverReady::Logo, CoverReady::Logo, station),
             CoverReady::Embedded(img) if Arc::ptr_eq(&img, &station_img)
         ));
         assert_eq!(
-            pick_stream_cover(CoverReady::Logo, CoverReady::Logo),
-            CoverReady::Logo
-        );
-        assert_eq!(
-            pick_stream_cover(CoverReady::Pending, CoverReady::Logo),
+            pick_stream_cover(CoverReady::Pending, CoverReady::Pending, CoverReady::Logo),
             CoverReady::Logo
         );
     }
