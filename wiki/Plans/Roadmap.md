@@ -111,6 +111,7 @@ Inline album cover in the TUI. Spec:
 - TUI reads embedded art from `TrackInfo.path` (no cover bytes on IPC)
 - **No Kitty install** and no `icat`
 - Config: `[tui]` `show_cover`, `cover_protocol`
+- Station `art` (local path) and ICY `StreamUrl` image for stream covers (0.4.1)
 
 Details: [Phase 5 — Album art](Phase-5-Album-Art.md), [TUI architecture](../Architecture/TUI.md).
 

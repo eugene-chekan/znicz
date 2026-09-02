@@ -32,12 +32,12 @@ fn centered_modal(area: Rect) -> Rect {
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let focused = app.modal == Modal::Radio;
     let form_rows = match &app.radio_prompt {
-        Some(RadioPrompt::Form { .. }) => 2,
+        Some(RadioPrompt::Form { .. }) => 3,
         Some(RadioPrompt::Copy(_)) => 1,
         None => 0,
     };
     let hint = if form_rows > 0 {
-        if form_rows == 2 {
+        if form_rows == 3 {
             "Tab field · ← → move · Enter confirm · Esc cancel"
         } else {
             "← → move · Enter confirm · Esc cancel"
@@ -62,11 +62,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     if let (Some(rect), Some(prompt)) = (prompt_area, &app.radio_prompt) {
         match prompt {
             RadioPrompt::Form {
-                name, url, field, ..
+                name,
+                url,
+                art,
+                field,
+                ..
             } => {
                 let rows = Layout::default()
                     .direction(Direction::Vertical)
-                    .constraints([Constraint::Length(1), Constraint::Length(1)])
+                    .constraints([
+                        Constraint::Length(1),
+                        Constraint::Length(1),
+                        Constraint::Length(1),
+                    ])
                     .split(rect);
                 let name_line = if *field == StationField::Name {
                     views::prompt_line("name: ", name)
@@ -78,8 +86,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 } else {
                     views::prompt_line_idle("url: ", url.as_str())
                 };
+                let art_line = if *field == StationField::Art {
+                    views::prompt_line("art: ", art)
+                } else {
+                    views::prompt_line_idle("art: ", art.as_str())
+                };
                 frame.render_widget(Paragraph::new(name_line), rows[0]);
                 frame.render_widget(Paragraph::new(url_line), rows[1]);
+                frame.render_widget(Paragraph::new(art_line), rows[2]);
             }
             RadioPrompt::Copy(edit) => {
                 frame.render_widget(Paragraph::new(views::prompt_line("copy: ", edit)), rect);

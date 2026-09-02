@@ -518,6 +518,7 @@ fn the_radio_add_prompt_draws_the_caret_in_the_middle() {
     app.radio_prompt = Some(RadioPrompt::Form {
         name: edit,
         url: LineEdit::new(),
+        art: LineEdit::new(),
         field: StationField::Name,
         original: None,
     });

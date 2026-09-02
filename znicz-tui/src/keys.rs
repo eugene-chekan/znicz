@@ -81,7 +81,7 @@ pub const RADIO: &[Binding] = &[
     b("Enter", "clear the queue and play"),
     b("a", "add to the queue"),
     b("n", "new station"),
-    b("e", "edit name and URL"),
+    b("e", "edit name, URL, and art"),
     b("c", "copy"),
     b("d", "delete"),
     b("r", "reload stations.toml"),

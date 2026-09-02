@@ -74,27 +74,27 @@ fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerStat
     }
 
     let use_logo_only = app.tui.cover_protocol == CoverProtocol::Off;
-    let ready = if use_logo_only || state.current_track.is_none() {
-        CoverReady::Logo
-    } else {
-        let track = state.current_track.as_ref().expect("checked above");
-        if let Some(p) = track.path.as_deref() {
-            app.covers.get(CoverKey::File(p.to_path_buf()))
-        } else {
-            let icy_ready = match track.icy_stream_url.as_deref() {
-                Some(u) if u.starts_with("http://") || u.starts_with("https://") => {
-                    app.covers.get(CoverKey::Url(u.to_string()))
-                }
-                _ => CoverReady::Logo,
-            };
-            let station_ready = app
-                .stations
-                .iter()
-                .find(|s| Some(s.url.as_str()) == track.url.as_deref())
-                .and_then(|s| s.art.clone())
-                .map(|p| app.covers.get(CoverKey::ImageFile(p)))
-                .unwrap_or(CoverReady::Logo);
-            pick_stream_cover(icy_ready, station_ready)
+    let ready = match (use_logo_only, state.current_track.as_ref()) {
+        (true, _) | (_, None) => CoverReady::Logo,
+        (false, Some(track)) => {
+            if let Some(p) = track.path.as_deref() {
+                app.covers.get(CoverKey::File(p.to_path_buf()))
+            } else {
+                let icy_ready = match track.icy_stream_url.as_deref() {
+                    Some(u) if u.starts_with("http://") || u.starts_with("https://") => {
+                        app.covers.get(CoverKey::Url(u.to_string()))
+                    }
+                    _ => CoverReady::Logo,
+                };
+                let station_ready = app
+                    .stations
+                    .iter()
+                    .find(|s| Some(s.url.as_str()) == track.url.as_deref())
+                    .and_then(|s| s.art.clone())
+                    .map(|p| app.covers.get(CoverKey::ImageFile(p)))
+                    .unwrap_or(CoverReady::Logo);
+                pick_stream_cover(icy_ready, station_ready)
+            }
         }
     };
 

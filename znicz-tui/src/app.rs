@@ -126,6 +126,7 @@ pub enum Modal {
 pub enum StationField {
     Name,
     Url,
+    Art,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -134,6 +135,7 @@ pub enum RadioPrompt {
     Form {
         name: LineEdit,
         url: LineEdit,
+        art: LineEdit,
         field: StationField,
         original: Option<String>,
     },
@@ -145,6 +147,7 @@ impl RadioPrompt {
         Self::Form {
             name: LineEdit::new(),
             url: LineEdit::new(),
+            art: LineEdit::new(),
             field: StationField::Name,
             original: None,
         }
@@ -154,6 +157,13 @@ impl RadioPrompt {
         Self::Form {
             name: LineEdit::from_text(station.name.clone()),
             url: LineEdit::from_text(station.url.clone()),
+            art: LineEdit::from_text(
+                station
+                    .art
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default(),
+            ),
             field: StationField::Name,
             original: Some(station.name.clone()),
         }
@@ -162,21 +172,29 @@ impl RadioPrompt {
     fn buffer_mut(&mut self) -> &mut LineEdit {
         match self {
             Self::Form {
-                name, url, field, ..
+                name,
+                url,
+                art,
+                field,
+                ..
             } => match field {
                 StationField::Name => name,
                 StationField::Url => url,
+                StationField::Art => art,
             },
             Self::Copy(s) => s,
         }
     }
 
-    fn focus_url(&mut self, url: bool) {
+    fn cycle_field(&mut self, forward: bool) {
         if let Self::Form { field, .. } = self {
-            *field = if url {
-                StationField::Url
-            } else {
-                StationField::Name
+            *field = match (*field, forward) {
+                (StationField::Name, true) => StationField::Url,
+                (StationField::Url, true) => StationField::Art,
+                (StationField::Art, true) => StationField::Name,
+                (StationField::Name, false) => StationField::Art,
+                (StationField::Url, false) => StationField::Name,
+                (StationField::Art, false) => StationField::Url,
             };
         }
     }
@@ -672,12 +690,12 @@ impl App {
             KeyCode::Enter => self.confirm_radio_prompt(),
             KeyCode::Tab | KeyCode::Down => {
                 if let Some(prompt) = self.radio_prompt.as_mut() {
-                    prompt.focus_url(true);
+                    prompt.cycle_field(true);
                 }
             }
             KeyCode::BackTab | KeyCode::Up => {
                 if let Some(prompt) = self.radio_prompt.as_mut() {
-                    prompt.focus_url(false);
+                    prompt.cycle_field(false);
                 }
             }
             _ => {
@@ -760,6 +778,7 @@ impl App {
             Some(RadioPrompt::Form {
                 name,
                 url,
+                art,
                 field,
                 original,
             }) => {
@@ -772,8 +791,45 @@ impl App {
                     self.radio_prompt = Some(RadioPrompt::Form {
                         name,
                         url,
+                        art,
                         field,
                         original,
+                    });
+                    return;
+                }
+                let station_name = match znicz_core::validate_name(&name) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        self.toasts.error(e.to_string());
+                        self.radio_prompt = Some(RadioPrompt::Form {
+                            name,
+                            url,
+                            art,
+                            field,
+                            original,
+                        });
+                        return;
+                    }
+                };
+                let art_arg = {
+                    let trimmed = art.as_str().trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed)
+                    }
+                };
+                if let Err(e) =
+                    znicz_core::set_station_art(&mut self.stations, &station_name, art_arg)
+                {
+                    self.toasts.error(e.to_string());
+                    self.persist_stations();
+                    self.radio_prompt = Some(RadioPrompt::Form {
+                        name,
+                        url,
+                        art,
+                        field,
+                        original: Some(station_name),
                     });
                     return;
                 }
@@ -1414,6 +1470,42 @@ mod tests {
             bits_per_sample: None,
             duration_secs: Some(120.0),
         }
+    }
+
+    #[test]
+    fn radio_form_tab_cycles_name_url_art() {
+        let mut prompt = RadioPrompt::new_station();
+        assert!(matches!(
+            prompt,
+            RadioPrompt::Form {
+                field: StationField::Name,
+                ..
+            }
+        ));
+        prompt.cycle_field(true);
+        assert!(matches!(
+            prompt,
+            RadioPrompt::Form {
+                field: StationField::Url,
+                ..
+            }
+        ));
+        prompt.cycle_field(true);
+        assert!(matches!(
+            prompt,
+            RadioPrompt::Form {
+                field: StationField::Art,
+                ..
+            }
+        ));
+        prompt.cycle_field(true);
+        assert!(matches!(
+            prompt,
+            RadioPrompt::Form {
+                field: StationField::Name,
+                ..
+            }
+        ));
     }
 
     #[test]

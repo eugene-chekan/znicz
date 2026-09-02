@@ -13,7 +13,7 @@ Cross-platform audiophile TUI music player with a native MCP server for AI agent
 - Repeat, shuffle, mute, and errors reported on screen rather than only in the log
 - Radio stations: HTTP/Icecast byte streams from the TUI, CLI, and MCP
 - Session restore: queue, volume, mute, repeat, and shuffle survive a restart
-- Embedded album art in the TUI (Kitty / Sixel / half-blocks; logo when missing)
+- Embedded album art in the TUI (Kitty / Sixel / half-blocks; station art or ICY image for streams, else logo)
 - MCP server: tools, resources, prompts, and bundled Agent Skills (same live player as the TUI)
 
 ## Build
@@ -95,6 +95,8 @@ znicz station add "Example" https://example.com/stream
 znicz station play Example
 znicz station play Example --append
 znicz station copy Example Example2
+znicz station art "Example" ~/Pictures/example.png
+znicz station art "Example" --clear
 ```
 
 The index is a SQLite file, by default `~/.local/share/znicz/library.db`
@@ -111,7 +113,8 @@ the global keys back.
 with the full file → device path, including the device sample format that stays
 off the transport line.
 Transport sits at the bottom. With cover on (default), an eight-row slot on
-the left shows embedded album art (or the Znicz logo when there is none);
+the left shows embedded album art for files; streams use station art or an ICY
+image URL when one decodes, else the Znicz logo;
 chrome stacks to the right. With `show_cover = false`, transport is one or
 two full-width lines as before. Example signal path:
 `FLAC 96 kHz 24-bit 2882 kbps stereo → 96 kHz stereo  ● bit perfect`.
