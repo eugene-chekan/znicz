@@ -1,7 +1,7 @@
 //! Saved radio stations: a TOML file of name + URL.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +14,8 @@ use crate::player::state::QueueItem;
 pub struct Station {
     pub name: String,
     pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub art: Option<PathBuf>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -78,7 +80,11 @@ pub fn add(stations: &mut Vec<Station>, name: &str, url: &str) -> Result<()> {
             "station {name:?} already exists"
         )));
     }
-    stations.push(Station { name, url });
+    stations.push(Station {
+        name,
+        url,
+        art: None,
+    });
     Ok(())
 }
 
@@ -118,12 +124,51 @@ pub fn set_url(stations: &mut [Station], name: &str, url: &str) -> Result<()> {
     Ok(())
 }
 
+fn expand_tilde(path: &str) -> PathBuf {
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+            return PathBuf::from(home).join(rest);
+        }
+    }
+    PathBuf::from(path)
+}
+
+pub fn set_art(stations: &mut [Station], name: &str, art: Option<&str>) -> Result<()> {
+    let station = stations
+        .iter_mut()
+        .find(|s| s.name == name)
+        .ok_or_else(|| ZniczError::Player(format!("no station named {name}")))?;
+    let Some(raw) = art.map(str::trim).filter(|s| !s.is_empty()) else {
+        station.art = None;
+        return Ok(());
+    };
+    if raw.starts_with("http://") || raw.starts_with("https://") {
+        return Err(ZniczError::Player(
+            "station art must be a local image file".into(),
+        ));
+    }
+    let path = expand_tilde(raw);
+    if !path.is_file() {
+        return Err(ZniczError::Player(format!(
+            "station art not found: {}",
+            path.display()
+        )));
+    }
+    station.art = Some(path.canonicalize().map_err(|e| {
+        ZniczError::Player(format!("station art: {e}"))
+    })?);
+    Ok(())
+}
+
 pub fn copy(stations: &mut Vec<Station>, name: &str, new_name: &str) -> Result<()> {
-    let url = find(stations, name)
+    let src = find(stations, name)
         .ok_or_else(|| ZniczError::Player(format!("no station named {name}")))?
-        .url
         .clone();
-    add(stations, new_name, &url)
+    add(stations, new_name, &src.url)?;
+    if let Some(last) = stations.last_mut() {
+        last.art = src.art;
+    }
+    Ok(())
 }
 
 pub fn update(stations: &mut [Station], name: &str, new_name: &str, url: &str) -> Result<()> {
@@ -193,10 +238,12 @@ mod tests {
             Station {
                 name: "One".into(),
                 url: "https://example.com/one".into(),
+                art: None,
             },
             Station {
                 name: "Two".into(),
                 url: "http://example.com/two".into(),
+                art: None,
             },
         ];
         save(&path, &stations).unwrap();
@@ -242,10 +289,12 @@ mod tests {
             Station {
                 name: "A".into(),
                 url: "https://a".into(),
+                art: None,
             },
             Station {
                 name: "B".into(),
                 url: "https://b".into(),
+                art: None,
             },
         ];
         assert!(rename(&mut stations, "A", "B").is_err());
@@ -259,6 +308,7 @@ mod tests {
         let mut stations = vec![Station {
             name: "A".into(),
             url: "https://a".into(),
+            art: None,
         }];
         set_url(&mut stations, "A", "https://b").unwrap();
         assert_eq!(stations[0].url, "https://b");
@@ -272,6 +322,7 @@ mod tests {
         let mut stations = vec![Station {
             name: "A".into(),
             url: "https://a".into(),
+            art: None,
         }];
         copy(&mut stations, "A", "B").unwrap();
         assert_eq!(stations.len(), 2);
@@ -286,15 +337,51 @@ mod tests {
             Station {
                 name: "A".into(),
                 url: "https://a".into(),
+                art: None,
             },
             Station {
                 name: "B".into(),
                 url: "https://b".into(),
+                art: None,
             },
         ];
         update(&mut stations, "A", "C", "https://c").unwrap();
         assert_eq!(stations[0].name, "C");
         assert_eq!(stations[0].url, "https://c");
         assert!(update(&mut stations, "C", "B", "https://x").is_err());
+    }
+
+    #[test]
+    fn art_round_trips_and_copy_keeps_the_path() {
+        let png = tmp();
+        let img = png.parent().unwrap().join("logo.png");
+        fs::write(&img, b"not-a-real-decode-here").unwrap();
+        let mut stations = vec![Station {
+            name: "A".into(),
+            url: "https://a".into(),
+            art: None,
+        }];
+        set_art(&mut stations, "A", Some(img.to_str().unwrap())).unwrap();
+        assert_eq!(
+            stations[0].art.as_deref(),
+            Some(img.canonicalize().unwrap().as_path())
+        );
+        copy(&mut stations, "A", "B").unwrap();
+        assert_eq!(stations[1].art, stations[0].art);
+        set_art(&mut stations, "A", None).unwrap();
+        assert!(stations[0].art.is_none());
+        assert!(stations[1].art.is_some());
+    }
+
+    #[test]
+    fn art_rejects_http_and_missing_file() {
+        let mut stations = vec![Station {
+            name: "A".into(),
+            url: "https://a".into(),
+            art: None,
+        }];
+        assert!(set_art(&mut stations, "A", Some("https://x/a.png")).is_err());
+        assert!(set_art(&mut stations, "A", Some("/definitely/missing/cover.png")).is_err());
+        assert!(stations[0].art.is_none());
     }
 }

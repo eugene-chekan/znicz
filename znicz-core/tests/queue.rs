@@ -221,6 +221,7 @@ fn appending_a_station_does_not_clear_or_start() {
         &znicz_core::Station {
             name: "Live".into(),
             url: "http://127.0.0.1:1/s".into(),
+            art: None,
         },
         true,
     )

@@ -32,5 +32,6 @@ pub use session::{
 pub use station::{
     add as add_station, copy as copy_station, find as find_station, load as load_stations,
     play_station, remove as remove_station, rename as rename_station, save as save_stations,
-    set_url as set_station_url, update as update_station, validate_name, validate_url, Station,
+    set_art as set_station_art, set_url as set_station_url, update as update_station,
+    validate_name, validate_url, Station,
 };

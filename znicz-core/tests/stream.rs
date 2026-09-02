@@ -243,6 +243,7 @@ fn failed_station_play_does_not_keep_the_old_file() {
         &Station {
             name: "Bad".into(),
             url,
+            art: None,
         },
         false,
     );
