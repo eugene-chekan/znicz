@@ -11,7 +11,9 @@ use znicz_core::{
 };
 use znicz_library::{Library, Track};
 
+use crate::cover::CoverCache;
 use crate::cursor::Cursor;
+use crate::tui_config::TuiConfig;
 use crate::layout;
 use crate::library_pane::{Item, LibraryPane};
 use crate::line_edit::LineEdit;
@@ -213,6 +215,8 @@ pub struct App {
     pub radio_prompt: Option<RadioPrompt>,
     pub meta: MetaCache,
     pub toasts: Toasts,
+    pub tui: TuiConfig,
+    pub covers: CoverCache,
     pub should_quit: bool,
 }
 
@@ -255,6 +259,8 @@ impl App {
             radio_prompt: None,
             meta: MetaCache::new(),
             toasts: Toasts::new(),
+            tui: TuiConfig::default(),
+            covers: CoverCache::new(),
             should_quit: false,
         }
     }

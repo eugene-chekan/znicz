@@ -6,6 +6,8 @@
 //! `znicz player` over IPC in production), so the interface owns no copy of it.
 
 pub mod app;
+pub mod cover;
+pub mod tui_config;
 pub mod cursor;
 pub mod format;
 pub mod keys;
@@ -18,3 +20,4 @@ pub mod toast;
 pub mod views;
 
 pub use app::{App, Focus, Modal, PlaylistPrompt, RadioPrompt, StationField};
+pub use tui_config::{CoverProtocol, TuiConfig};

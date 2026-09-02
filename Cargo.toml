@@ -34,3 +34,5 @@ lofty = "0.25"
 # a system SQLite installed.
 rusqlite = { version = "0.40", features = ["bundled"] }
 walkdir = "2.5"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+ratatui-image = "11"
