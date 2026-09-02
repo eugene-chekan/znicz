@@ -188,24 +188,69 @@ fn refresh_cache(network: AudioAddictNetwork, origin: &str) -> Option<ChannelCov
     rebuild_channel_map(&playing, &history)
 }
 
-pub fn audioaddict_cover_url(network: AudioAddictNetwork, channel_key: &str) -> Option<String> {
-    audioaddict_cover_url_at(network, channel_key, DEFAULT_ORIGIN)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AudioAddictLookup {
+    Found(String),
+    NoArt,
+    RefreshFailed,
 }
 
+pub fn audioaddict_cover_url(network: AudioAddictNetwork, channel_key: &str) -> Option<String> {
+    match audioaddict_cover_lookup(network, channel_key) {
+        AudioAddictLookup::Found(url) => Some(url),
+        AudioAddictLookup::NoArt | AudioAddictLookup::RefreshFailed => None,
+    }
+}
+
+pub fn audioaddict_cover_lookup(
+    network: AudioAddictNetwork,
+    channel_key: &str,
+) -> AudioAddictLookup {
+    audioaddict_cover_lookup_at(network, channel_key, DEFAULT_ORIGIN)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn audioaddict_cover_url_at(
     network: AudioAddictNetwork,
     channel_key: &str,
     origin: &str,
 ) -> Option<String> {
+    match audioaddict_cover_lookup_at(network, channel_key, origin) {
+        AudioAddictLookup::Found(url) => Some(url),
+        AudioAddictLookup::NoArt | AudioAddictLookup::RefreshFailed => None,
+    }
+}
+
+fn lookup_channel(map: &ChannelCoverMap, channel_key: &str) -> AudioAddictLookup {
+    match map.get(channel_key) {
+        Some(Some(url)) => AudioAddictLookup::Found(url.clone()),
+        Some(None) | None => AudioAddictLookup::NoArt,
+    }
+}
+
+pub fn audioaddict_cover_lookup_at(
+    network: AudioAddictNetwork,
+    channel_key: &str,
+    origin: &str,
+) -> AudioAddictLookup {
     let origin = origin.trim_end_matches('/');
     let cache_key = (origin.to_string(), network);
-    let mut cache = CACHE.lock().ok()?;
-    let now = Instant::now();
-    let stale = cache
-        .get(&cache_key)
-        .is_none_or(|(fetched_at, _)| now.duration_since(*fetched_at) >= CACHE_TTL);
-    if stale {
-        match refresh_cache(network, origin) {
+    let needs_refresh = {
+        let Ok(cache) = CACHE.lock() else {
+            return AudioAddictLookup::RefreshFailed;
+        };
+        let now = Instant::now();
+        cache
+            .get(&cache_key)
+            .is_none_or(|(fetched_at, _)| now.duration_since(*fetched_at) >= CACHE_TTL)
+    };
+    if needs_refresh {
+        let refresh_result = refresh_cache(network, origin);
+        let now = Instant::now();
+        let Ok(mut cache) = CACHE.lock() else {
+            return AudioAddictLookup::RefreshFailed;
+        };
+        match refresh_result {
             Some(map) => {
                 cache.insert(cache_key.clone(), (now, map));
             }
@@ -215,13 +260,23 @@ pub fn audioaddict_cover_url_at(
                     channel_key,
                     "audioaddict cover refresh failed"
                 );
-                return None;
+                match cache.get_mut(&cache_key) {
+                    Some((fetched_at, _)) => *fetched_at = now,
+                    None => {
+                        cache.insert(cache_key.clone(), (now, ChannelCoverMap::new()));
+                    }
+                }
+                return AudioAddictLookup::RefreshFailed;
             }
         }
     }
+    let Ok(cache) = CACHE.lock() else {
+        return AudioAddictLookup::RefreshFailed;
+    };
     cache
         .get(&cache_key)
-        .and_then(|(_, map)| map.get(channel_key).cloned().flatten())
+        .map(|(_, map)| lookup_channel(map, channel_key))
+        .unwrap_or(AudioAddictLookup::NoArt)
 }
 
 #[cfg(test)]
@@ -380,6 +435,12 @@ mod tests {
                 } else {
                     (404, b"{}".to_vec())
                 }
+            } else if n < 4 {
+                if path.contains("currently_playing") {
+                    (200, playing.clone())
+                } else {
+                    (404, b"{}".to_vec())
+                }
             } else {
                 (404, b"{}".to_vec())
             }
@@ -388,10 +449,17 @@ mod tests {
             audioaddict_cover_url_at(AudioAddictNetwork::RadioTunes, "datempolounge", &origin);
         assert!(url.is_some());
         expire_audioaddict_cache_at(AudioAddictNetwork::RadioTunes, &origin);
+        let hits_before_stale = requests.load(Ordering::SeqCst);
         assert!(
             audioaddict_cover_url_at(AudioAddictNetwork::RadioTunes, "datempolounge", &origin)
                 .is_none()
         );
+        let hits_after_stale_fail = requests.load(Ordering::SeqCst);
+        assert_eq!(hits_after_stale_fail - hits_before_stale, 2);
+        let again =
+            audioaddict_cover_url_at(AudioAddictNetwork::RadioTunes, "datempolounge", &origin);
+        assert_eq!(again, url);
+        assert_eq!(requests.load(Ordering::SeqCst), hits_after_stale_fail);
     }
 
     #[test]

@@ -92,19 +92,28 @@ impl CoverCache {
             .name("znicz-cover".into())
             .spawn(move || {
                 while let Ok(key) = incoming.recv() {
-                    let (ready, failed_url) = resolve_cover(&key);
+                    let result = resolve_cover(&key);
                     let mut guard = worker_map.lock().unwrap();
                     let (cache, order, failed) = &mut *guard;
-                    if let Some(url) = failed_url {
-                        failed.insert(url);
+                    match result {
+                        ResolveResult::Update { ready, failed_url } => {
+                            if let Some(url) = failed_url {
+                                failed.insert(url);
+                            }
+                            cache.insert(
+                                key.clone(),
+                                Slot {
+                                    ready,
+                                    refreshing: false,
+                                },
+                            );
+                        }
+                        ResolveResult::KeepPrevious => {
+                            if let Some(slot) = cache.get_mut(&key) {
+                                slot.refreshing = false;
+                            }
+                        }
                     }
-                    cache.insert(
-                        key.clone(),
-                        Slot {
-                            ready,
-                            refreshing: false,
-                        },
-                    );
                     if !order.iter().any(|k| k == &key) {
                         order.push_back(key);
                     }
@@ -128,6 +137,7 @@ impl CoverCache {
     }
 
     pub fn get(&self, key: CoverKey) -> CoverReady {
+        let audioaddict_stale = matches!(&key, CoverKey::AudioAddict { network, .. } if !znicz_core::audioaddict_cache_fresh(*network));
         let mut guard = self.map.lock().unwrap();
         let (cache, _, failed) = &mut *guard;
         if let CoverKey::Url(url) = &key {
@@ -136,8 +146,8 @@ impl CoverCache {
             }
         }
         if let Some(slot) = cache.get_mut(&key) {
-            if let CoverKey::AudioAddict { network, .. } = &key {
-                if !znicz_core::audioaddict_cache_fresh(*network) && !slot.refreshing {
+            if let CoverKey::AudioAddict { .. } = &key {
+                if audioaddict_stale && !slot.refreshing {
                     slot.refreshing = true;
                     let ready = slot.ready.clone();
                     let key = key.clone();
@@ -161,20 +171,28 @@ impl CoverCache {
     }
 }
 
-fn resolve_cover(key: &CoverKey) -> (CoverReady, Option<String>) {
+enum ResolveResult {
+    Update {
+        ready: CoverReady,
+        failed_url: Option<String>,
+    },
+    KeepPrevious,
+}
+
+fn resolve_cover(key: &CoverKey) -> ResolveResult {
     match key {
-        CoverKey::File(path) => (
-            match znicz_core::read_cover(path) {
+        CoverKey::File(path) => ResolveResult::Update {
+            ready: match znicz_core::read_cover(path) {
                 Some(art) => match decode_capped(&art.bytes) {
                     Some(img) => CoverReady::Embedded(Arc::new(img)),
                     None => CoverReady::Logo,
                 },
                 None => CoverReady::Logo,
             },
-            None,
-        ),
-        CoverKey::ImageFile(path) => (
-            match std::fs::read(path) {
+            failed_url: None,
+        },
+        CoverKey::ImageFile(path) => ResolveResult::Update {
+            ready: match std::fs::read(path) {
                 Ok(bytes) => match decode_capped(&bytes) {
                     Some(img) => CoverReady::Embedded(Arc::new(img)),
                     None => {
@@ -187,31 +205,53 @@ fn resolve_cover(key: &CoverKey) -> (CoverReady, Option<String>) {
                     CoverReady::Logo
                 }
             },
-            None,
-        ),
+            failed_url: None,
+        },
         CoverKey::Url(url) => match znicz_core::fetch_cover(url) {
             Some(art) => match decode_capped(&art.bytes) {
-                Some(img) => (CoverReady::Embedded(Arc::new(img)), None),
+                Some(img) => ResolveResult::Update {
+                    ready: CoverReady::Embedded(Arc::new(img)),
+                    failed_url: None,
+                },
                 None => {
                     tracing::debug!(url, "ICY cover URL did not decode as an image");
-                    (CoverReady::Logo, Some(url.clone()))
+                    ResolveResult::Update {
+                        ready: CoverReady::Logo,
+                        failed_url: Some(url.clone()),
+                    }
                 }
             },
-            None => (CoverReady::Logo, Some(url.clone())),
+            None => ResolveResult::Update {
+                ready: CoverReady::Logo,
+                failed_url: Some(url.clone()),
+            },
         },
         CoverKey::AudioAddict { network, channel } => {
-            match znicz_core::audioaddict_cover_url(*network, channel) {
-                Some(url) => match znicz_core::fetch_cover(&url) {
+            match znicz_core::audioaddict_cover_lookup(*network, channel) {
+                znicz_core::AudioAddictLookup::Found(url) => match znicz_core::fetch_cover(&url) {
                     Some(art) => match decode_capped(&art.bytes) {
-                        Some(img) => (CoverReady::Embedded(Arc::new(img)), None),
+                        Some(img) => ResolveResult::Update {
+                            ready: CoverReady::Embedded(Arc::new(img)),
+                            failed_url: None,
+                        },
                         None => {
                             tracing::debug!(url, "AudioAddict cover did not decode");
-                            (CoverReady::Logo, Some(url))
+                            ResolveResult::Update {
+                                ready: CoverReady::Logo,
+                                failed_url: Some(url),
+                            }
                         }
                     },
-                    None => (CoverReady::Logo, Some(url)),
+                    None => ResolveResult::Update {
+                        ready: CoverReady::Logo,
+                        failed_url: Some(url),
+                    },
                 },
-                None => (CoverReady::Logo, None),
+                znicz_core::AudioAddictLookup::NoArt => ResolveResult::Update {
+                    ready: CoverReady::Logo,
+                    failed_url: None,
+                },
+                znicz_core::AudioAddictLookup::RefreshFailed => ResolveResult::KeepPrevious,
             }
         }
     }
