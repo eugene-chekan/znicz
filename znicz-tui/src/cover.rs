@@ -69,7 +69,11 @@ impl CoverCache {
         let logo = Arc::new(
             image::load_from_memory(LOGO_PNG).unwrap_or_else(|_| DynamicImage::new_rgb8(1, 1)),
         );
-        let map: Map = Arc::new(Mutex::new((HashMap::new(), VecDeque::new(), HashSet::new())));
+        let map: Map = Arc::new(Mutex::new((
+            HashMap::new(),
+            VecDeque::new(),
+            HashSet::new(),
+        )));
         let (requests, incoming) = unbounded::<CoverKey>();
         let worker_map = map.clone();
         std::thread::Builder::new()

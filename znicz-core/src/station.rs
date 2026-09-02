@@ -154,9 +154,10 @@ pub fn set_art(stations: &mut [Station], name: &str, art: Option<&str>) -> Resul
             path.display()
         )));
     }
-    station.art = Some(path.canonicalize().map_err(|e| {
-        ZniczError::Player(format!("station art: {e}"))
-    })?);
+    station.art = Some(
+        path.canonicalize()
+            .map_err(|e| ZniczError::Player(format!("station art: {e}")))?,
+    );
     Ok(())
 }
 

@@ -9,8 +9,8 @@ pub mod station;
 
 pub use audio::output::AudioOutput;
 pub use audio::source::probe_track;
-pub use error::{Result, ZniczError};
 pub use cover_fetch::fetch_cover;
+pub use error::{Result, ZniczError};
 pub use metadata::{
     is_audio_file, read_cover, read_metadata, read_tags, title_from_path, AudioProperties,
     CoverArt, FileMetadata, TrackTags,

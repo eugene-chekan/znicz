@@ -336,9 +336,7 @@ fn main() -> color_eyre::Result<()> {
                     mutate_stations(|s| znicz_core::set_station_art(s, &name, None))?
                 } else {
                     let Some(path) = path else {
-                        return Err(color_eyre::eyre::eyre!(
-                            "pass a path or --clear"
-                        ));
+                        return Err(color_eyre::eyre::eyre!("pass a path or --clear"));
                     };
                     mutate_stations(|s| znicz_core::set_station_art(s, &name, Some(&path)))?
                 }

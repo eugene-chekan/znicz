@@ -226,7 +226,8 @@ mod tests {
         body.extend_from_slice(&audio[16..]);
         let title = Arc::new(Mutex::new(IcyTitle::Unset));
         let url = Arc::new(Mutex::new(IcyUrl::Unset));
-        let mut reader = IcyStripRead::new(std::io::Cursor::new(body), 16, title.clone(), url.clone());
+        let mut reader =
+            IcyStripRead::new(std::io::Cursor::new(body), 16, title.clone(), url.clone());
         let mut out = Vec::new();
         reader.read_to_end(&mut out).unwrap();
         assert_eq!(out, audio);
