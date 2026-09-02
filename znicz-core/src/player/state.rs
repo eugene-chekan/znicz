@@ -64,6 +64,9 @@ pub struct TrackInfo {
     pub path: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Icecast `StreamUrl` when the station sent one. Not the audio stream URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icy_stream_url: Option<String>,
     /// Title tag when present, otherwise the file name.
     pub title: String,
     pub codec: String,
@@ -235,6 +238,7 @@ mod tests {
         TrackInfo {
             path: Some(PathBuf::from("/music/a.flac")),
             url: None,
+            icy_stream_url: None,
             title: "A".into(),
             codec: "FLAC".into(),
             sample_rate,
@@ -351,6 +355,7 @@ mod tests {
         let track = TrackInfo {
             path: None,
             url: Some("https://example.com/s".into()),
+            icy_stream_url: None,
             title: "Example".into(),
             codec: "MP3".into(),
             sample_rate: 44_100,

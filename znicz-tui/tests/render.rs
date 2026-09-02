@@ -53,6 +53,7 @@ fn playing_state() -> znicz_core::PlayerState {
         current_track: Some(TrackInfo {
             path: Some(PathBuf::from("/music/sour-times.flac")),
             url: None,
+            icy_stream_url: None,
             title: "Sour Times".into(),
             codec: "FLAC".into(),
             sample_rate: 96_000,

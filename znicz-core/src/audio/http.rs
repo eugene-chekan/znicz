@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use symphonia::core::io::MediaSource;
 
-use crate::audio::icy::{IcyStripRead, IcyTitle};
+use crate::audio::icy::{IcyStripRead, IcyTitle, IcyUrl};
 use crate::audio::source::AudioSource;
 use crate::error::{Result, ZniczError};
 use crate::player::state::TrackInfo;
@@ -56,6 +56,7 @@ impl AudioSource for HttpStreamSource {
         Ok(TrackInfo {
             path: None,
             url: Some(self.url.clone()),
+            icy_stream_url: None,
             title: self.name.clone(),
             codec: "Audio".into(),
             sample_rate: 0,
@@ -79,7 +80,12 @@ impl AudioSource for HttpStreamSource {
         let metaint = icy_metaint(response.headers());
         let reader = response.into_body().into_reader();
         let boxed: Box<dyn Read + Send> = match metaint {
-            Some(n) => Box::new(IcyStripRead::new(reader, n, self.icy_title.clone())),
+            Some(n) => Box::new(IcyStripRead::new(
+                reader,
+                n,
+                self.icy_title.clone(),
+                Arc::new(Mutex::new(IcyUrl::Unset)),
+            )),
             None => Box::new(reader),
         };
         Ok(Box::new(UnseekableRead(Mutex::new(boxed))))

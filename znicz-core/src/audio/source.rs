@@ -51,6 +51,7 @@ fn track_info_from_params(codec_params: &CodecParameters, source: &dyn AudioSour
         TrackInfo {
             path: Some(path.to_path_buf()),
             url: None,
+            icy_stream_url: None,
             title,
             codec: codec_label(codec_params.codec, path),
             sample_rate,
@@ -75,6 +76,7 @@ fn track_info_from_params(codec_params: &CodecParameters, source: &dyn AudioSour
         TrackInfo {
             path: None,
             url: source.url().map(str::to_string),
+            icy_stream_url: None,
             title: source.title_hint().to_string(),
             codec: codec_label(codec_params.codec, Path::new("")),
             sample_rate,

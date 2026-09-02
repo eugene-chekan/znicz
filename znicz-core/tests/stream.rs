@@ -188,6 +188,7 @@ fn file_track(path: &Path) -> TrackInfo {
     TrackInfo {
         path: Some(path.to_path_buf()),
         url: None,
+        icy_stream_url: None,
         title: "old-file".into(),
         codec: "WAV".into(),
         sample_rate: 44_100,
