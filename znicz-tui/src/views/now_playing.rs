@@ -3,7 +3,6 @@
 use std::path::Path;
 use std::time::Duration;
 
-use image::DynamicImage;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
@@ -79,26 +78,28 @@ fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerStat
             .and_then(|t| t.path.as_deref())
     };
 
-    let (key, image): (String, DynamicImage) = if use_logo_only {
-        ("logo".into(), app.covers.logo_image().clone())
+    let key = if use_logo_only {
+        "logo".into()
     } else {
         match app.covers.get(path) {
-            CoverReady::Pending | CoverReady::Logo => {
-                ("logo".into(), app.covers.logo_image().clone())
-            }
-            CoverReady::Embedded(img) => {
-                let key = path
-                    .map(Path::to_string_lossy)
-                    .unwrap_or_else(|| "logo".into())
-                    .into_owned();
-                (key, img.as_ref().clone())
-            }
+            CoverReady::Pending | CoverReady::Logo => "logo".into(),
+            CoverReady::Embedded(_) => path
+                .map(Path::to_string_lossy)
+                .unwrap_or_else(|| "logo".into())
+                .into_owned(),
         }
     };
 
     let draw_key = (key, area.width, area.height);
-    let needs_rebuild = app.cover_draw_key.as_ref() != Some(&draw_key);
-    if needs_rebuild {
+    if app.cover_draw_key.as_ref() != Some(&draw_key) {
+        let image = if use_logo_only {
+            app.covers.logo_image().clone()
+        } else {
+            match app.covers.get(path) {
+                CoverReady::Pending | CoverReady::Logo => app.covers.logo_image().clone(),
+                CoverReady::Embedded(img) => img.as_ref().clone(),
+            }
+        };
         let picker = app.picker.get_or_insert_with(Picker::halfblocks);
         app.cover_image = Some(picker.new_resize_protocol(image));
         app.cover_draw_key = Some(draw_key);
