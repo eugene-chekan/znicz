@@ -98,6 +98,9 @@ fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerStat
             }
         };
         let picker = app.picker.get_or_insert_with(Picker::halfblocks);
+        let font = picker.font_size();
+        let image =
+            crate::cover::fill_cover_slot(&image, area.width, area.height, font.width, font.height);
         app.cover_image = Some(picker.new_resize_protocol(image));
         app.cover_draw_key = Some(draw_key);
     }

@@ -44,9 +44,11 @@ overlay drawer on the right (`]` toggles it). Long titles pan horizontally with
 `Alt-←` and `Alt-→` on the highlighted row only. `<` and `>` are unbound.
 With cover on (default), transport is a square cover slot on the left and
 stacked chrome on the right. Missing art (and streams) keep the slot and draw
-the bundled logo. `show_cover = false` restores the old full-width one- or
-two-line transport. Hints stay on their own line and are never replaced by a
-toast. Config: `[tui]` in `config.toml` (`show_cover`, `cover_protocol`).
+the bundled logo. The picture is letterboxed onto an opaque canvas the size of
+the slot, so a stream cannot leave the previous cover on screen.
+`show_cover = false` restores the old full-width one- or two-line transport.
+Hints stay on their own line and are never replaced by a toast. Config: `[tui]`
+in `config.toml` (`show_cover`, `cover_protocol`).
 
 ### Responsive behaviour
 

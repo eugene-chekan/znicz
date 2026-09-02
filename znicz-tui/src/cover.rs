@@ -3,11 +3,14 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crossbeam_channel::{unbounded, Sender};
-use image::{imageops::FilterType, DynamicImage};
+use image::{imageops, imageops::FilterType, DynamicImage, ImageBuffer, Rgba};
 
 const MAX_EDGE: u32 = 512;
 const CACHE_CAP: usize = 16;
 const LOGO_PNG: &[u8] = include_bytes!("../assets/logo.png");
+/// Opaque fill for letterboxing. Transparent pad leaves the previous Kitty
+/// image in those cells.
+const SLOT_BG: Rgba<u8> = Rgba([0x28, 0x2c, 0x34, 0xff]);
 
 #[derive(Debug, Clone)]
 pub enum CoverReady {
@@ -110,6 +113,29 @@ impl CoverCache {
     }
 }
 
+/// Scale `image` (up or down) to fit inside the cover cells, then paint it
+/// onto an opaque canvas the size of the slot. Every cell gets a pixel so a
+/// previous graphics-protocol image cannot remain.
+pub fn fill_cover_slot(
+    image: &DynamicImage,
+    cols: u16,
+    rows: u16,
+    font_w: u16,
+    font_h: u16,
+) -> DynamicImage {
+    let width = (u32::from(cols) * u32::from(font_w.max(1))).max(1);
+    let height = (u32::from(rows) * u32::from(font_h.max(1))).max(1);
+    let mut canvas: DynamicImage = ImageBuffer::from_pixel(width, height, SLOT_BG).into();
+    if image.width() == 0 || image.height() == 0 {
+        return canvas;
+    }
+    let fitted = image.resize(width, height, FilterType::Triangle);
+    let x = i64::from(width.saturating_sub(fitted.width()) / 2);
+    let y = i64::from(height.saturating_sub(fitted.height()) / 2);
+    imageops::overlay(&mut canvas, &fitted, x, y);
+    canvas
+}
+
 fn decode_capped(bytes: &[u8]) -> Option<DynamicImage> {
     let img = image::load_from_memory(bytes).ok()?;
     Some(img.resize(MAX_EDGE, MAX_EDGE, FilterType::Triangle))
@@ -119,6 +145,26 @@ fn decode_capped(bytes: &[u8]) -> Option<DynamicImage> {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn bundled_logo_is_large_enough_to_fill_the_slot() {
+        let cache = CoverCache::new();
+        let logo = cache.logo_image();
+        assert!(
+            logo.width() >= 64 && logo.height() >= 64,
+            "a tiny placeholder cannot overwrite the previous cover, got {}x{}",
+            logo.width(),
+            logo.height()
+        );
+    }
+
+    #[test]
+    fn even_a_one_pixel_source_fills_the_cover_slot() {
+        let src = DynamicImage::new_rgb8(1, 1);
+        let out = fill_cover_slot(&src, 16, 8, 8, 16);
+        assert_eq!(out.width(), 16 * 8);
+        assert_eq!(out.height(), 8 * 16);
+    }
 
     #[test]
     fn no_path_is_the_logo() {

@@ -105,6 +105,36 @@ fn library_keeps_most_of_the_window_when_cover_is_on() {
 }
 
 #[test]
+fn the_cover_slot_is_fully_painted_when_nothing_is_playing() {
+    use ratatui::style::Color;
+
+    let mut app = App::with_library(player(), None);
+    app.tui.show_cover = true;
+    let mut terminal = ratatui::Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+    let state = app.state();
+    terminal
+        .draw(|frame| views::render(frame, &mut app, &state))
+        .expect("draw");
+    let buf = terminal.backend().buffer();
+    let cover_w = znicz_tui::layout::cover_width(8, 10, 20, 80);
+    let y0 = app.list_height;
+    let mut painted = 0u16;
+    for y in y0..y0 + 8 {
+        for x in 0..cover_w {
+            let cell = buf.cell((x, y)).expect("cell");
+            if cell.bg != Color::Reset || cell.symbol() != " " {
+                painted += 1;
+            }
+        }
+    }
+    assert_eq!(
+        painted,
+        cover_w * 8,
+        "every cover cell must be painted so a previous Kitty image cannot remain"
+    );
+}
+
+#[test]
 fn show_cover_false_keeps_two_transport_rows() {
     let mut app = App::with_library(player(), None);
     app.tui.show_cover = false;

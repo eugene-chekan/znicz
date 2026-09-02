@@ -70,7 +70,9 @@ CoverCache worker (TUI)
 CoverSource::Embedded or CoverSource::Logo
         │  decode + cap longest side at 512 px on the worker
         ▼
-ratatui-image StatefulImage in the cover rect
+ratatui-image StatefulImage in the cover rect. Before draw, the bitmap is
+letterboxed onto an opaque canvas the size of the slot so every cell is
+painted (a stream must not leave the previous cover).
 ```
 
 - **IPC and `PlayerState` do not change.** No `CoverArt` field on `TrackInfo`.
