@@ -401,98 +401,159 @@ impl Drop for IpcServer {
     }
 }
 
-/// Client for one advertise file. Holds the TCP session after Hello.
+/// Client for one advertise file. Re-reads that file if the host restarts.
 #[derive(Clone)]
 pub struct IpcClient {
     inner: Arc<IpcInner>,
 }
 
-struct IpcInner {
-    writer: Mutex<TcpStream>,
-    reader: Mutex<BufReader<TcpStream>>,
+struct Live {
+    writer: TcpStream,
+    reader: BufReader<TcpStream>,
     token: String,
 }
 
-impl IpcClient {
-    pub fn connect(path: &Path, role: ClientRole) -> Result<Self> {
-        let advertise = load_advertise(path)?;
-        let addr = SocketAddr::from(([127, 0, 0, 1], advertise.port));
-        let stream = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT)
-            .map_err(|e| ZniczError::Player(format!("ipc connect: {e}")))?;
-        stream.set_read_timeout(Some(Duration::from_secs(30))).ok();
-        stream.set_write_timeout(Some(Duration::from_secs(5))).ok();
-        let reader_stream = stream
-            .try_clone()
-            .map_err(|e| ZniczError::Player(format!("ipc connect: {e}")))?;
-        let mut writer = stream;
-        let mut reader = BufReader::new(reader_stream);
-        write_json_line(
-            &mut writer,
-            &IpcRequest::Hello {
-                token: advertise.token.clone(),
-                role,
-            },
-        )?;
-        match read_json_line::<IpcResponse>(&mut reader)? {
-            IpcResponse::Ok { .. } => {}
-            IpcResponse::Err { message } => return Err(ZniczError::Player(message)),
+type EnsureFn = Arc<dyn Fn() -> Result<()> + Send + Sync>;
+
+struct IpcInner {
+    advertise: PathBuf,
+    role: ClientRole,
+    live: Mutex<Live>,
+    ensure: Option<EnsureFn>,
+}
+
+fn open_stream(advertise_path: &Path, role: ClientRole) -> Result<Live> {
+    let advertise = load_advertise(advertise_path)?;
+    let addr = SocketAddr::from(([127, 0, 0, 1], advertise.port));
+    let stream = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT)
+        .map_err(|e| ZniczError::Player(format!("ipc connect: {e}")))?;
+    stream.set_read_timeout(Some(Duration::from_secs(30))).ok();
+    stream.set_write_timeout(Some(Duration::from_secs(5))).ok();
+    let reader_stream = stream
+        .try_clone()
+        .map_err(|e| ZniczError::Player(format!("ipc connect: {e}")))?;
+    let mut writer = stream;
+    let mut reader = BufReader::new(reader_stream);
+    write_json_line(
+        &mut writer,
+        &IpcRequest::Hello {
+            token: advertise.token.clone(),
+            role,
+        },
+    )?;
+    match read_json_line::<IpcResponse>(&mut reader)? {
+        IpcResponse::Ok { .. } => {}
+        IpcResponse::Err { message } => return Err(ZniczError::Player(message)),
+    }
+    Ok(Live {
+        writer,
+        reader,
+        token: advertise.token,
+    })
+}
+
+fn open_live(advertise_path: &Path, role: ClientRole, ensure: Option<&EnsureFn>) -> Result<Live> {
+    match open_stream(advertise_path, role) {
+        Ok(live) => Ok(live),
+        Err(first) => {
+            let Some(ensure) = ensure else {
+                return Err(first);
+            };
+            ensure()?;
+            open_stream(advertise_path, role)
         }
+    }
+}
+
+fn rpc_on(live: &mut Live, request: &IpcRequest) -> Result<IpcResponse> {
+    write_json_line(&mut live.writer, request)?;
+    read_json_line(&mut live.reader)
+}
+
+impl IpcClient {
+    pub fn connect(path: impl AsRef<Path>, role: ClientRole) -> Result<Self> {
+        Self::connect_inner(path.as_ref().to_path_buf(), role, None)
+    }
+
+    pub fn connect_with_ensure(
+        path: impl AsRef<Path>,
+        role: ClientRole,
+        ensure: impl Fn() -> Result<()> + Send + Sync + 'static,
+    ) -> Result<Self> {
+        Self::connect_inner(path.as_ref().to_path_buf(), role, Some(Arc::new(ensure)))
+    }
+
+    fn connect_inner(
+        advertise: PathBuf,
+        role: ClientRole,
+        ensure: Option<EnsureFn>,
+    ) -> Result<Self> {
+        let live = open_live(&advertise, role, ensure.as_ref())?;
         Ok(Self {
             inner: Arc::new(IpcInner {
-                writer: Mutex::new(writer),
-                reader: Mutex::new(reader),
-                token: advertise.token,
+                advertise,
+                role,
+                live: Mutex::new(live),
+                ensure,
             }),
         })
     }
 
-    fn rpc(&self, request: IpcRequest) -> Result<IpcResponse> {
-        let mut writer = self
-            .inner
-            .writer
+    fn lock_live(&self) -> Result<std::sync::MutexGuard<'_, Live>> {
+        self.inner
+            .live
             .lock()
-            .map_err(|_| ZniczError::Player("ipc lock".into()))?;
-        let mut reader = self
-            .inner
-            .reader
-            .lock()
-            .map_err(|_| ZniczError::Player("ipc lock".into()))?;
-        write_json_line(&mut *writer, &request)?;
-        read_json_line(&mut *reader)
+            .map_err(|_| ZniczError::Player("ipc lock".into()))
+    }
+
+    fn rpc(&self, make: impl Fn(&str) -> IpcRequest) -> Result<IpcResponse> {
+        let mut live = self.lock_live()?;
+        let request = make(&live.token);
+        match rpc_on(&mut live, &request) {
+            Ok(response) => Ok(response),
+            Err(_) => {
+                *live = open_live(
+                    &self.inner.advertise,
+                    self.inner.role,
+                    self.inner.ensure.as_ref(),
+                )?;
+                let request = make(&live.token);
+                rpc_on(&mut live, &request)
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn rpc_raw(&self, request: IpcRequest) -> Result<IpcResponse> {
+        let mut live = self.lock_live()?;
+        rpc_on(&mut live, &request)
     }
 
     pub fn shutdown(&self) -> Result<()> {
-        match self.rpc(IpcRequest::Shutdown {
-            token: self.inner.token.clone(),
-        })? {
+        let mut live = self.lock_live()?;
+        let token = live.token.clone();
+        match rpc_on(&mut live, &IpcRequest::Shutdown { token })? {
             IpcResponse::Ok { .. } => Ok(()),
             IpcResponse::Err { message } => Err(ZniczError::Player(message)),
         }
     }
 
     pub fn send_blocking(&self, command: Command) -> Result<()> {
-        match self.rpc(IpcRequest::Command {
-            token: self.inner.token.clone(),
-            command,
+        match self.rpc(|token| IpcRequest::Command {
+            token: token.to_string(),
+            command: command.clone(),
         })? {
             IpcResponse::Ok { .. } => Ok(()),
             IpcResponse::Err { message } => Err(ZniczError::Player(message)),
         }
     }
 
-    pub fn state(&self) -> PlayerState {
-        match self.rpc(IpcRequest::State {
-            token: self.inner.token.clone(),
-        }) {
-            Ok(IpcResponse::Ok { state }) => *state,
-            Ok(IpcResponse::Err { message }) => {
-                tracing::warn!("ipc state: {message}");
-                PlayerState::default()
-            }
-            Err(e) => {
-                tracing::warn!("ipc state: {e}");
-                PlayerState::default()
-            }
+    pub fn state(&self) -> Result<PlayerState> {
+        match self.rpc(|token| IpcRequest::State {
+            token: token.to_string(),
+        })? {
+            IpcResponse::Ok { state } => Ok(*state),
+            IpcResponse::Err { message } => Err(ZniczError::Player(message)),
         }
     }
 }
@@ -503,14 +564,16 @@ impl PlayerOps for IpcClient {
     }
 
     fn state(&self) -> PlayerState {
-        IpcClient::state(self)
+        IpcClient::state(self).unwrap_or_else(|e| {
+            tracing::warn!("ipc state: {e}");
+            PlayerState::default()
+        })
     }
 }
 
 /// Snapshot from the player host, if it is up.
 pub fn try_state(path: &Path) -> Result<PlayerState> {
-    let client = IpcClient::connect(path, ClientRole::Agent)?;
-    Ok(client.state())
+    IpcClient::connect(path, ClientRole::Agent)?.state()
 }
 
 #[cfg(test)]
@@ -538,7 +601,7 @@ mod tests {
         client
             .send_blocking(Command::SetVolume(0.4))
             .expect("set volume");
-        assert!((client.state().volume - 0.4).abs() < 0.001);
+        assert!((client.state().expect("state").volume - 0.4).abs() < 0.001);
         assert!((player.state().volume - 0.4).abs() < 0.001);
     }
 
@@ -559,7 +622,7 @@ mod tests {
         {
             let token = String::from("nope");
             let err = client
-                .rpc(IpcRequest::Command {
+                .rpc_raw(IpcRequest::Command {
                     token,
                     command: Command::SetVolume(0.2),
                 })
@@ -664,5 +727,79 @@ mod tests {
             }
             thread::sleep(Duration::from_millis(20));
         }
+    }
+
+    #[test]
+    fn state_after_host_exit_is_an_error_not_defaults() {
+        let path = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let _server = IpcServer::start(player, &path).expect("start");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        client.shutdown().expect("shutdown");
+        thread::sleep(Duration::from_millis(50));
+        let err = client
+            .state()
+            .expect_err("dead socket must not look like a Stopped player");
+        let message = err.to_string();
+        assert!(
+            message.contains("ipc") || message.contains("player"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn client_follows_a_new_host_on_the_same_advertise() {
+        let path = advertise_path();
+        let (player_a, _thread_a) = spawn_player(AudioConfig::default());
+        player_a
+            .send_blocking(Command::SetVolume(0.2))
+            .expect("vol a");
+        let _server_a = IpcServer::start(player_a, &path).expect("start a");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        client.shutdown().expect("stop a");
+        thread::sleep(Duration::from_millis(50));
+
+        let (player_b, _thread_b) = spawn_player(AudioConfig::default());
+        player_b
+            .send_blocking(Command::SetVolume(0.5))
+            .expect("vol b");
+        let _server_b = IpcServer::start(player_b, &path).expect("start b");
+        let state = client.state().expect("reconnect to the new host");
+        assert!((state.volume - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn ensure_callback_starts_a_host_after_idle_exit() {
+        let path = advertise_path();
+        let (player_a, _thread_a) = spawn_player(AudioConfig::default());
+        player_a
+            .send_blocking(Command::SetVolume(0.2))
+            .expect("vol a");
+        let _server_a = IpcServer::start(player_a, &path).expect("start a");
+
+        let holder: std::sync::Arc<Mutex<Option<IpcServer>>> =
+            std::sync::Arc::new(Mutex::new(None));
+        let (player_b, _thread_b) = spawn_player(AudioConfig::default());
+        player_b
+            .send_blocking(Command::SetVolume(0.7))
+            .expect("vol b");
+        let holder2 = holder.clone();
+        let player_b2 = player_b.clone();
+        let path2 = path.clone();
+        let client = IpcClient::connect_with_ensure(&path, ClientRole::Agent, move || {
+            let server = IpcServer::start(player_b2.clone(), &path2)
+                .map_err(|e| ZniczError::Player(e.to_string()))?;
+            *holder2
+                .lock()
+                .map_err(|_| ZniczError::Player("lock".into()))? = Some(server);
+            Ok(())
+        })
+        .expect("connect");
+        assert!((client.state().expect("state").volume - 0.2).abs() < 0.001);
+
+        client.shutdown().expect("stop a");
+        thread::sleep(Duration::from_millis(50));
+        let state = client.state().expect("ensure started host b");
+        assert!((state.volume - 0.7).abs() < 0.001);
     }
 }

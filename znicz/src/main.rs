@@ -476,13 +476,27 @@ fn ensure_player(device: Option<&str>, config: Option<&Path>) -> color_eyre::Res
 }
 
 fn connect_ui(device: Option<&str>, config: Option<&Path>) -> color_eyre::Result<IpcClient> {
-    let ipc = ensure_player(device, config)?;
-    IpcClient::connect(&ipc, ClientRole::Ui).map_err(|e| color_eyre::eyre::eyre!("{e}"))
+    connect_client(ClientRole::Ui, device, config)
 }
 
 fn connect_agent(device: Option<&str>, config: Option<&Path>) -> color_eyre::Result<IpcClient> {
+    connect_client(ClientRole::Agent, device, config)
+}
+
+fn connect_client(
+    role: ClientRole,
+    device: Option<&str>,
+    config: Option<&Path>,
+) -> color_eyre::Result<IpcClient> {
     let ipc = ensure_player(device, config)?;
-    IpcClient::connect(&ipc, ClientRole::Agent).map_err(|e| color_eyre::eyre::eyre!("{e}"))
+    let device = device.map(str::to_owned);
+    let config = config.map(Path::to_path_buf);
+    IpcClient::connect_with_ensure(ipc, role, move || {
+        ensure_player(device.as_deref(), config.as_deref())
+            .map(|_| ())
+            .map_err(|e| znicz_core::ZniczError::Player(e.to_string()))
+    })
+    .map_err(|e| color_eyre::eyre::eyre!("{e}"))
 }
 
 fn stop_player() -> color_eyre::Result<()> {

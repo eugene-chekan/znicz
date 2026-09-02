@@ -8,10 +8,14 @@ Znicz speaks MCP on **stdio** (stdin/stdout). The host starts:
 znicz mcp
 ```
 
-That command **autostarts** `znicz player` if needed, then keeps one TCP session
-(`role=agent`) for the life of the MCP host. It does not open the DAC itself
-and does not write `session.toml`. The player process owns the engine and
-writes the session file after queue or transport extras settle, and on exit.
+That command **autostarts** `znicz player` if needed, then keeps an IPC client
+(`role=agent`) for the life of the MCP host. The TCP session is not forever:
+if the player process exits (idle, crash, rebuild, `znicz player stop`), the
+next tool call re-reads `ipc.toml`, autostarts the player if needed, and
+Hellos again. A dead socket is an MCP error, not a fake Stopped snapshot.
+It does not open the DAC itself and does not write `session.toml`. The player
+process owns the engine and writes the session file after queue or transport
+extras settle, and on exit.
 
 Advertise file: `ipc.toml` (`port` and a token, Unix mode `0600`) at
 `$XDG_RUNTIME_DIR/znicz/ipc.toml` or `{temp}/znicz/ipc.toml`. Override with

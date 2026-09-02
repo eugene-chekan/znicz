@@ -18,8 +18,9 @@ start restores that session **Stopped**.
 See [Formats and metadata](../Domain/Formats-and-Metadata.md#session).
 
 The TUI is a **UI client**. It does not host the engine or write `ipc.toml`.
-`znicz` autostarts `znicz player` and connects with Hello `role=ui`. See
-[MCP](MCP.md).
+`znicz` autostarts `znicz player` and connects with Hello `role=ui`. If that
+process restarts, the next key or tick re-reads the advertise file and Hellos
+again. See [MCP](MCP.md).
 
 Ratatui does not keep widgets as a tree you mutate. You describe the layout
 **every frame**. That suits a player, where the position moves constantly.

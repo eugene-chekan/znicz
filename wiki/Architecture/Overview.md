@@ -82,7 +82,7 @@ path = "~/.local/share/znicz/library.db"
 
 The last queue lives in `session.toml` in the data dir (see [Formats and metadata](../Domain/Formats-and-Metadata.md#session)). The **player process** writes it after queue or transport extras settle, and on idle exit / `znicz player stop`. Device pick stays in `config.toml`. A later app-state database may hold both.
 
-`idle_secs` is how long a **Stopped** player stays up with no TUI (or later phone) connected. Default **900**. **0** means never exit on that timer. Playing or paused keeps the process up after you quit the TUI. Agents do not block the timer.
+`idle_secs` is how long a **Stopped** player stays up with no TUI (or later phone) connected. Default **900**. **0** means never exit on that timer. Playing or paused keeps the process up after you quit the TUI. Agents do not block the timer. If the player process then exits, the next TUI key or MCP tool re-reads `ipc.toml` and autostarts if needed.
 
 ## Pages
 
