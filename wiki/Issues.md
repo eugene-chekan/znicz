@@ -13,6 +13,7 @@ Parked TUI ideas (file, do not start unless asked):
 - [#8 Mouse support](https://github.com/eugene-chekan/znicz/issues/8)
 - [#9 Library tree view with expandable nodes](https://github.com/eugene-chekan/znicz/issues/9)
 - [#22 Show the app version](https://github.com/eugene-chekan/znicz/issues/22) (place and shape still open)
+- [#34 Auto-pan now-playing text](https://github.com/eugene-chekan/znicz/issues/34) (marquee when artist / title does not fit)
 
 Playlists (file, do not start unless asked):
 
