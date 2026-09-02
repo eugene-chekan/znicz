@@ -9,7 +9,7 @@ High-level phases for Znicz. Each phase builds on the previous ones.
 | **2.5** | TUI and UX | **Done** | [TUI architecture](../Architecture/TUI.md) |
 | **3** | Playlists | **Done** | [Spec](../../docs/superpowers/specs/2026-08-27-playlist-files-design.md), [Formats and metadata](../Domain/Formats-and-Metadata.md#playlists-phase-3) |
 | **4** | Radio streams | **Done** | [Spec](../../docs/superpowers/specs/2026-08-31-radio-streams-design.md), [Formats and metadata](../Domain/Formats-and-Metadata.md#radio-phase-4) |
-| **5** | Album art in the TUI | Planned | [Phase 5 plan](Phase-5-Album-Art.md) |
+| **5** | Album art in the TUI | **Done** | [Phase 5 plan](Phase-5-Album-Art.md), [spec](../../docs/superpowers/specs/2026-09-02-album-art-design.md), [TUI architecture](../Architecture/TUI.md) |
 | **6** | MusicBrainz enrichment | Planned | MCP stub `enrich_metadata` in `znicz-mcp` |
 
 ## Phase 1 (done)
@@ -101,13 +101,18 @@ TUI and MCP share one `znicz player` process ([#27](https://github.com/eugene-ch
 That is the live bus. A **separate database** for app state and configuration (not `library.db`) is
 later, with the settings overlay ([#6](https://github.com/eugene-chekan/znicz/issues/6)).
 
-## Phase 5
+## Phase 5 (done)
 
-- Inline album cover in the TUI
-- Graphics protocols (Kitty, Sixel, iTerm2) with universal half-block fallback
-- **No Kitty install required** — Rust emits protocol sequences directly
+Inline album cover in the TUI. Spec:
+**[Album art in the TUI](../../docs/superpowers/specs/2026-09-02-album-art-design.md)**
 
-Full plan: **[Phase 5 — Album art in the TUI](Phase-5-Album-Art.md)**
+- Eight-row cover slot beside stacked transport chrome (`show_cover` / height rules)
+- Kitty / Sixel / half-blocks via `ratatui-image`; logo when missing
+- TUI reads embedded art from `TrackInfo.path` (no cover bytes on IPC)
+- **No Kitty install** and no `icat`
+- Config: `[tui]` `show_cover`, `cover_protocol`
+
+Details: [Phase 5 — Album art](Phase-5-Album-Art.md), [TUI architecture](../Architecture/TUI.md).
 
 ## Phase 6
 

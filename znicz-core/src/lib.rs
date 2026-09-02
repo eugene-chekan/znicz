@@ -10,8 +10,8 @@ pub use audio::output::AudioOutput;
 pub use audio::source::probe_track;
 pub use error::{Result, ZniczError};
 pub use metadata::{
-    is_audio_file, read_metadata, read_tags, title_from_path, AudioProperties, FileMetadata,
-    TrackTags,
+    is_audio_file, read_cover, read_metadata, read_tags, title_from_path, AudioProperties,
+    CoverArt, FileMetadata, TrackTags,
 };
 pub use player::commands::{Command, PlayerEvent};
 pub use player::engine::{spawn_player, AudioConfig, PlayerHandle, PlayerOps};

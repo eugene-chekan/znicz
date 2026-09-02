@@ -20,9 +20,14 @@ That split means MCP can drive the same engine with no screen. It also
 means the interface never has its own copy of the truth to get out of date: each
 frame reads the state fresh.
 
-## Album art (Phase 5)
+## Album art
 
-The now-playing screen will gain a **cover panel** when Phase 5 ships: embedded JPEG/PNG from tags, rendered with Kitty/Sixel-style protocols where the terminal supports them, and a half-block fallback elsewhere. No Kitty install is required — Znicz emits the graphics protocol from Rust. See [Phase 5 plan](../Plans/Phase-5-Album-Art.md).
+The now-playing transport shows an **embedded cover** when the file has one:
+Kitty / Sixel / half-blocks via `ratatui-image`, with a bundled logo when the
+picture is missing (streams, no tags, read error). No Kitty install and no
+`icat`. Config: `[tui]` in `config.toml`. See
+[Phase 5](../Plans/Phase-5-Album-Art.md) and
+[TUI architecture](../Architecture/TUI.md).
 
 ## What a terminal player has to get right
 

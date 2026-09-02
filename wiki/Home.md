@@ -60,7 +60,7 @@ Goals:
 ### Plans
 
 - [Roadmap](Plans/Roadmap.md)
-- [Phase 5 — Album art in the TUI](Plans/Phase-5-Album-Art.md)
+- [Phase 5 — Album art in the TUI](Plans/Phase-5-Album-Art.md) (done)
 
 ### Rust (language theory used here)
 

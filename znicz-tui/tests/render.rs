@@ -95,6 +95,55 @@ fn dump(terminal: &Terminal<TestBackend>) -> String {
 }
 
 #[test]
+fn library_keeps_most_of_the_window_when_cover_is_on() {
+    let mut app = App::with_library(player(), None);
+    app.tui.show_cover = true;
+    let screen = draw(&mut app, 80, 24);
+    assert_eq!(screen.lines().count(), 24);
+    assert_eq!(app.list_height, 15);
+    assert!(screen.contains("Nothing playing"), "{screen}");
+}
+
+#[test]
+fn the_cover_slot_is_fully_painted_when_nothing_is_playing() {
+    use ratatui::style::Color;
+
+    let mut app = App::with_library(player(), None);
+    app.tui.show_cover = true;
+    let mut terminal = ratatui::Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+    let state = app.state();
+    terminal
+        .draw(|frame| views::render(frame, &mut app, &state))
+        .expect("draw");
+    let buf = terminal.backend().buffer();
+    let cover_w = znicz_tui::layout::cover_width(8, 10, 20, 80);
+    let y0 = app.list_height;
+    let mut painted = 0u16;
+    for y in y0..y0 + 8 {
+        for x in 0..cover_w {
+            let cell = buf.cell((x, y)).expect("cell");
+            if cell.bg != Color::Reset || cell.symbol() != " " {
+                painted += 1;
+            }
+        }
+    }
+    assert_eq!(
+        painted,
+        cover_w * 8,
+        "every cover cell must be painted so a previous Kitty image cannot remain"
+    );
+}
+
+#[test]
+fn show_cover_false_keeps_two_transport_rows() {
+    let mut app = App::with_library(player(), None);
+    app.tui.show_cover = false;
+    let screen = draw(&mut app, 90, 24);
+    assert!(screen.contains("Nothing playing"), "{screen}");
+    assert_eq!(app.list_height, 21);
+}
+
+#[test]
 fn every_view_draws_at_every_size() {
     for &(width, height) in SIZES {
         let mut app = App::with_library(player(), None);
@@ -307,7 +356,8 @@ fn hints_stay_when_a_toast_is_showing() {
         .iter()
         .position(|line| line.contains("could not open device"))
         .expect("toast text");
-    let last_list_row = lines.len().saturating_sub(4); // transport (2) + hints (1), 0-based
+    let transport = znicz_tui::layout::transport_height(24, app.tui.show_cover) as usize;
+    let last_list_row = lines.len().saturating_sub(transport + 1 + 1);
     assert!(
         toast_row < last_list_row,
         "toast must sit above the pane border, not on it:\n{screen}"
