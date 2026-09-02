@@ -129,6 +129,7 @@ fn channel_id_string(value: &Value) -> Option<String> {
     }
 }
 
+#[cfg(test)]
 pub fn join_audioaddict_art_url(
     channel_key: &str,
     currently_playing: &str,
