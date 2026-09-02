@@ -13,7 +13,7 @@ use znicz_library::{Library, Track};
 
 use crate::cover::CoverCache;
 use crate::cursor::Cursor;
-use crate::tui_config::TuiConfig;
+use crate::tui_config::{CoverProtocol, TuiConfig};
 use crate::layout;
 use crate::library_pane::{Item, LibraryPane};
 use crate::line_edit::LineEdit;
@@ -28,6 +28,26 @@ fn load_output_devices() -> Vec<AudioDeviceInfo> {
         return Vec::new();
     }
     AudioOutput::list_devices().unwrap_or_default()
+}
+
+fn make_picker(protocol: CoverProtocol) -> ratatui_image::picker::Picker {
+    use ratatui_image::picker::{Picker, ProtocolType};
+
+    let mut picker = match protocol {
+        CoverProtocol::Halfblocks | CoverProtocol::Off => Picker::halfblocks(),
+        CoverProtocol::Auto | CoverProtocol::Kitty | CoverProtocol::Sixel => {
+            Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks())
+        }
+    };
+    match protocol {
+        CoverProtocol::Kitty => picker.set_protocol_type(ProtocolType::Kitty),
+        CoverProtocol::Sixel => picker.set_protocol_type(ProtocolType::Sixel),
+        CoverProtocol::Halfblocks | CoverProtocol::Off => {
+            picker.set_protocol_type(ProtocolType::Halfblocks)
+        }
+        CoverProtocol::Auto => {}
+    }
+    picker
 }
 
 /// Longest wait between redraws while nothing happens. Fast enough for a
@@ -198,6 +218,7 @@ pub struct App {
     pub queue_open: bool,
     pub modal: Modal,
     pub list_width: u16,
+    pub list_height: u16,
     pub title_slot: usize,
     pub queue_h_offset: usize,
     pub queue_title_slot: usize,
@@ -217,6 +238,9 @@ pub struct App {
     pub toasts: Toasts,
     pub tui: TuiConfig,
     pub covers: CoverCache,
+    pub picker: Option<ratatui_image::picker::Picker>,
+    pub(crate) cover_image: Option<ratatui_image::protocol::StatefulProtocol>,
+    pub(crate) cover_draw_key: Option<(String, u16, u16)>,
     pub should_quit: bool,
 }
 
@@ -240,6 +264,7 @@ impl App {
             queue_open: false,
             modal: Modal::None,
             list_width: 100,
+            list_height: 0,
             title_slot: 0,
             queue_h_offset: 0,
             queue_title_slot: 0,
@@ -261,12 +286,20 @@ impl App {
             toasts: Toasts::new(),
             tui: TuiConfig::default(),
             covers: CoverCache::new(),
+            picker: Some(ratatui_image::picker::Picker::halfblocks()),
+            cover_image: None,
+            cover_draw_key: None,
             should_quit: false,
         }
     }
 
     pub fn run(&mut self) -> color_eyre::Result<()> {
         let mut terminal = ratatui::init();
+        self.picker = Some(make_picker(self.tui.cover_protocol));
+        tracing::info!(
+            protocol = ?self.picker.as_ref().map(|p| p.protocol_type()),
+            "cover renderer"
+        );
         let result = self.run_loop(&mut terminal);
         ratatui::restore();
         result

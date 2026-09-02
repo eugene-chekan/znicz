@@ -23,13 +23,11 @@ use crate::line_edit::LineEdit;
 use crate::theme;
 use crate::toast::Level;
 
-/// Below this height the signal-path line is dropped to keep the lists usable.
-const COMPACT_HEIGHT: u16 = 20;
-
 pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
     let area = frame.area();
-    let compact = area.height < COMPACT_HEIGHT;
-    let transport = if compact { 1 } else { 2 };
+    let show_cover = app.tui.show_cover;
+    let transport = crate::layout::transport_height(area.height, show_cover);
+    let compact = area.height < crate::layout::COMPACT_HEIGHT;
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -42,6 +40,7 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
 
     let list = chunks[0];
     app.list_width = list.width;
+    app.list_height = list.height;
     app.title_slot = library::title_slot(
         &app.library,
         crate::layout::strip_inner(list, app.queue_open),
@@ -60,7 +59,8 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
         crate::layout::Drawer::Closed => {}
     }
 
-    now_playing::render_transport(frame, chunks[1], state, !compact);
+    let with_cover = crate::layout::cover_enabled(area.height, show_cover);
+    now_playing::render_transport(frame, chunks[1], app, state, !compact, with_cover);
     status::render_footer(frame, chunks[2], app);
 
     match app.modal {

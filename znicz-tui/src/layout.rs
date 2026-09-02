@@ -5,6 +5,45 @@ use ratatui::layout::Rect;
 pub const DRAWER_WIDTH: u16 = 41;
 pub const MIN_STRIP: u16 = 40;
 
+const HINTS: u16 = 1;
+const MIN_LIST: u16 = 3;
+/// Below this height the signal-path line is dropped to keep the lists usable.
+pub const COMPACT_HEIGHT: u16 = 20;
+const COVER_TARGET: u16 = 8;
+const COVER_MIN: u16 = 4;
+
+pub fn text_transport_height(window: u16) -> u16 {
+    if window < COMPACT_HEIGHT {
+        1
+    } else {
+        2
+    }
+}
+
+pub fn cover_enabled(window: u16, show_cover: bool) -> bool {
+    show_cover && window.saturating_sub(MIN_LIST + HINTS) >= COVER_MIN
+}
+
+pub fn transport_height(window: u16, show_cover: bool) -> u16 {
+    if !cover_enabled(window, show_cover) {
+        return text_transport_height(window);
+    }
+    let available = window.saturating_sub(MIN_LIST + HINTS);
+    if available >= COVER_TARGET {
+        COVER_TARGET
+    } else {
+        available
+    }
+}
+
+pub fn cover_width(cover_rows: u16, font_w: u16, font_h: u16, area_width: u16) -> u16 {
+    if cover_rows == 0 || font_w == 0 || area_width == 0 {
+        return 0;
+    }
+    let cols = (u32::from(cover_rows) * u32::from(font_h) / u32::from(font_w)).max(1) as u16;
+    cols.min(area_width / 2).max(1)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Drawer {
     Closed,
@@ -198,5 +237,31 @@ mod tests {
             width > 42,
             "must be wider than the old 40% cap so the reason fits, got {width}"
         );
+    }
+
+    #[test]
+    fn cover_uses_eight_rows_on_a_normal_window() {
+        assert_eq!(transport_height(24, true), 8);
+        assert!(cover_enabled(24, true));
+    }
+
+    #[test]
+    fn cover_shrinks_then_drops() {
+        assert_eq!(transport_height(11, true), 7); // available = 11 - 4 = 7
+        assert_eq!(transport_height(7, true), 1); // available = 3 → cover off, compact
+        assert!(!cover_enabled(7, true));
+    }
+
+    #[test]
+    fn cover_off_keeps_today_s_chrome() {
+        assert_eq!(transport_height(24, false), 2);
+        assert_eq!(transport_height(16, false), 1);
+    }
+
+    #[test]
+    fn square_cover_columns_follow_cell_aspect() {
+        // 8×16 cells, 8 rows → 16 columns; never more than half the row.
+        assert_eq!(cover_width(8, 8, 16, 80), 16);
+        assert_eq!(cover_width(8, 8, 16, 20), 10);
     }
 }

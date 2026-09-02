@@ -95,6 +95,25 @@ fn dump(terminal: &Terminal<TestBackend>) -> String {
 }
 
 #[test]
+fn library_keeps_most_of_the_window_when_cover_is_on() {
+    let mut app = App::with_library(player(), None);
+    app.tui.show_cover = true;
+    let screen = draw(&mut app, 80, 24);
+    assert_eq!(screen.lines().count(), 24);
+    assert_eq!(app.list_height, 15);
+    assert!(screen.contains("Nothing playing"), "{screen}");
+}
+
+#[test]
+fn show_cover_false_keeps_two_transport_rows() {
+    let mut app = App::with_library(player(), None);
+    app.tui.show_cover = false;
+    let screen = draw(&mut app, 90, 24);
+    assert!(screen.contains("Nothing playing"), "{screen}");
+    assert_eq!(app.list_height, 21);
+}
+
+#[test]
 fn every_view_draws_at_every_size() {
     for &(width, height) in SIZES {
         let mut app = App::with_library(player(), None);
@@ -307,7 +326,8 @@ fn hints_stay_when_a_toast_is_showing() {
         .iter()
         .position(|line| line.contains("could not open device"))
         .expect("toast text");
-    let last_list_row = lines.len().saturating_sub(4); // transport (2) + hints (1), 0-based
+    let transport = znicz_tui::layout::transport_height(24, app.tui.show_cover) as usize;
+    let last_list_row = lines.len().saturating_sub(transport + 1 + 1);
     assert!(
         toast_row < last_list_row,
         "toast must sit above the pane border, not on it:\n{screen}"
