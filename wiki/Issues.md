@@ -14,10 +14,11 @@ Parked TUI ideas (file, do not start unless asked):
 - [#9 Library tree view with expandable nodes](https://github.com/eugene-chekan/znicz/issues/9)
 - [#22 Show the app version](https://github.com/eugene-chekan/znicz/issues/22) (place and shape still open)
 - [#34 Auto-pan now-playing text](https://github.com/eugene-chekan/znicz/issues/34) (marquee when artist / title does not fit)
+- [#36 Reorder list rows with Alt-↑ / Alt-↓](https://github.com/eugene-chekan/znicz/issues/36) (cursor stays on the moved item)
 
 Playlists (file, do not start unless asked):
 
-- [#18 Browse and edit saved playlist contents](https://github.com/eugene-chekan/znicz/issues/18) (view, delete rows, reorder)
+- [#18 Browse and edit saved playlist contents](https://github.com/eugene-chekan/znicz/issues/18) (view, delete rows, reorder; keys in [#36](https://github.com/eugene-chekan/znicz/issues/36))
 - [#19 Add a library item to a saved playlist](https://github.com/eugene-chekan/znicz/issues/19)
 
 Product phases 5–6 (album art, MusicBrainz) and **later radio** (HLS, PLS,

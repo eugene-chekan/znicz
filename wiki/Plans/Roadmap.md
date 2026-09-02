@@ -91,7 +91,7 @@ Settings stay [#6](https://github.com/eugene-chekan/znicz/issues/6). Playlist fo
 
 Not in this version. Tracked as GitHub issues; see [Issues](../Issues.md).
 
-- Browse and edit a saved playlist (view, delete rows, reorder) — [#18](https://github.com/eugene-chekan/znicz/issues/18)
+- Browse and edit a saved playlist (view, delete rows, reorder) — [#18](https://github.com/eugene-chekan/znicz/issues/18) (keys: [#36](https://github.com/eugene-chekan/znicz/issues/36))
 - Add a library item to a saved playlist — [#19](https://github.com/eugene-chekan/znicz/issues/19)
 
 ## Later app state
@@ -124,3 +124,4 @@ Not in phases 3–6. Tracked as GitHub issues; see [Issues](../Issues.md).
 - Library tree with expandable nodes — [#9](https://github.com/eugene-chekan/znicz/issues/9)
 - Show the app version — [#22](https://github.com/eugene-chekan/znicz/issues/22)
 - Auto-pan now-playing text when it does not fit — [#34](https://github.com/eugene-chekan/znicz/issues/34)
+- Reorder list rows with Alt-↑ / Alt-↓ — [#36](https://github.com/eugene-chekan/znicz/issues/36)
