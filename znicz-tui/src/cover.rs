@@ -1,5 +1,5 @@
-use std::collections::{HashMap, VecDeque};
-use std::path::{Path, PathBuf};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crossbeam_channel::{unbounded, Sender};
@@ -11,6 +11,13 @@ const LOGO_PNG: &[u8] = include_bytes!("../assets/logo.png");
 /// Opaque fill for letterboxing. Transparent pad leaves the previous Kitty
 /// image in those cells.
 const SLOT_BG: Rgba<u8> = Rgba([0x28, 0x2c, 0x34, 0xff]);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum CoverKey {
+    File(PathBuf),
+    ImageFile(PathBuf),
+    Url(String),
+}
 
 #[derive(Debug, Clone)]
 pub enum CoverReady {
@@ -33,12 +40,22 @@ struct Slot {
     ready: CoverReady,
 }
 
-type Map = Arc<Mutex<(HashMap<PathBuf, Slot>, VecDeque<PathBuf>)>>;
+type Map = Arc<Mutex<(HashMap<CoverKey, Slot>, VecDeque<CoverKey>, HashSet<String>)>>;
 
 pub struct CoverCache {
     map: Map,
-    requests: Sender<PathBuf>,
+    requests: Sender<CoverKey>,
     logo: Arc<DynamicImage>,
+}
+
+pub fn pick_stream_cover(icy: CoverReady, station: CoverReady) -> CoverReady {
+    if let CoverReady::Embedded(_) = &icy {
+        return icy;
+    }
+    if let CoverReady::Embedded(_) = &station {
+        return station;
+    }
+    CoverReady::Logo
 }
 
 impl Default for CoverCache {
@@ -52,25 +69,22 @@ impl CoverCache {
         let logo = Arc::new(
             image::load_from_memory(LOGO_PNG).unwrap_or_else(|_| DynamicImage::new_rgb8(1, 1)),
         );
-        let map: Map = Arc::new(Mutex::new((HashMap::new(), VecDeque::new())));
-        let (requests, incoming) = unbounded::<PathBuf>();
+        let map: Map = Arc::new(Mutex::new((HashMap::new(), VecDeque::new(), HashSet::new())));
+        let (requests, incoming) = unbounded::<CoverKey>();
         let worker_map = map.clone();
         std::thread::Builder::new()
             .name("znicz-cover".into())
             .spawn(move || {
-                while let Ok(path) = incoming.recv() {
-                    let ready = match znicz_core::read_cover(&path) {
-                        Some(art) => match decode_capped(&art.bytes) {
-                            Some(img) => CoverReady::Embedded(Arc::new(img)),
-                            None => CoverReady::Logo,
-                        },
-                        None => CoverReady::Logo,
-                    };
+                while let Ok(key) = incoming.recv() {
+                    let (ready, failed_url) = resolve_cover(&key);
                     let mut guard = worker_map.lock().unwrap();
-                    let (cache, order) = &mut *guard;
-                    cache.insert(path.clone(), Slot { ready });
-                    if !order.iter().any(|p| p == &path) {
-                        order.push_back(path);
+                    let (cache, order, failed) = &mut *guard;
+                    if let Some(url) = failed_url {
+                        failed.insert(url);
+                    }
+                    cache.insert(key.clone(), Slot { ready });
+                    if !order.iter().any(|k| k == &key) {
+                        order.push_back(key);
                     }
                     while order.len() > CACHE_CAP {
                         if let Some(old) = order.pop_front() {
@@ -91,25 +105,58 @@ impl CoverCache {
         self.logo.as_ref()
     }
 
-    /// `None` path (stream / nothing loaded) is the logo immediately.
-    pub fn get(&self, path: Option<&Path>) -> CoverReady {
-        let Some(path) = path else {
-            return CoverReady::Logo;
-        };
+    pub fn get(&self, key: CoverKey) -> CoverReady {
         let mut guard = self.map.lock().unwrap();
-        let (cache, _) = &mut *guard;
-        if let Some(slot) = cache.get(path) {
+        let (cache, _, failed) = &mut *guard;
+        if let CoverKey::Url(url) = &key {
+            if failed.contains(url) {
+                return CoverReady::Logo;
+            }
+        }
+        if let Some(slot) = cache.get(&key) {
             return slot.ready.clone();
         }
         cache.insert(
-            path.to_path_buf(),
+            key.clone(),
             Slot {
                 ready: CoverReady::Pending,
             },
         );
         drop(guard);
-        self.requests.send(path.to_path_buf()).ok();
+        self.requests.send(key).ok();
         CoverReady::Pending
+    }
+}
+
+fn resolve_cover(key: &CoverKey) -> (CoverReady, Option<String>) {
+    match key {
+        CoverKey::File(path) => (
+            match znicz_core::read_cover(path) {
+                Some(art) => match decode_capped(&art.bytes) {
+                    Some(img) => CoverReady::Embedded(Arc::new(img)),
+                    None => CoverReady::Logo,
+                },
+                None => CoverReady::Logo,
+            },
+            None,
+        ),
+        CoverKey::ImageFile(path) => (
+            match std::fs::read(path) {
+                Ok(bytes) => match decode_capped(&bytes) {
+                    Some(img) => CoverReady::Embedded(Arc::new(img)),
+                    None => CoverReady::Logo,
+                },
+                Err(_) => CoverReady::Logo,
+            },
+            None,
+        ),
+        CoverKey::Url(url) => match znicz_core::fetch_cover(url) {
+            Some(art) => match decode_capped(&art.bytes) {
+                Some(img) => (CoverReady::Embedded(Arc::new(img)), None),
+                None => (CoverReady::Logo, Some(url.clone())),
+            },
+            None => (CoverReady::Logo, Some(url.clone())),
+        },
     }
 }
 
@@ -147,6 +194,7 @@ fn decode_capped(bytes: &[u8]) -> Option<DynamicImage> {
 mod tests {
     use super::*;
     use image::GenericImageView;
+    use std::path::Path;
     use std::time::Duration;
 
     #[test]
@@ -197,19 +245,101 @@ mod tests {
 
     #[test]
     fn no_path_is_the_logo() {
+        assert_eq!(
+            pick_stream_cover(CoverReady::Logo, CoverReady::Logo),
+            CoverReady::Logo
+        );
+    }
+
+    #[test]
+    fn pick_stream_cover_prefers_icy_then_station_then_logo() {
+        let icy_img = Arc::new(DynamicImage::new_rgb8(2, 2));
+        let station_img = Arc::new(DynamicImage::new_rgb8(3, 3));
+        let icy = CoverReady::Embedded(icy_img.clone());
+        let station = CoverReady::Embedded(station_img.clone());
+        assert!(matches!(
+            pick_stream_cover(icy.clone(), station.clone()),
+            CoverReady::Embedded(img) if Arc::ptr_eq(&img, &icy_img)
+        ));
+        assert!(matches!(
+            pick_stream_cover(CoverReady::Pending, station.clone()),
+            CoverReady::Embedded(img) if Arc::ptr_eq(&img, &station_img)
+        ));
+        assert!(matches!(
+            pick_stream_cover(CoverReady::Logo, station),
+            CoverReady::Embedded(img) if Arc::ptr_eq(&img, &station_img)
+        ));
+        assert_eq!(
+            pick_stream_cover(CoverReady::Logo, CoverReady::Logo),
+            CoverReady::Logo
+        );
+        assert_eq!(
+            pick_stream_cover(CoverReady::Pending, CoverReady::Logo),
+            CoverReady::Logo
+        );
+    }
+
+    fn serve_counting_html(
+        hits: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::atomic::Ordering;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                hits.fetch_add(1, Ordering::SeqCst);
+                let mut stream = stream;
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf);
+                let body = b"<html>nope</html>";
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.write_all(body);
+            }
+        });
+        (format!("http://{addr}/"), handle)
+    }
+
+    #[test]
+    fn a_failed_url_is_not_fetched_again() {
+        use std::sync::atomic::Ordering;
+
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (url, _handle) = serve_counting_html(hits.clone());
         let cache = CoverCache::new();
-        assert_eq!(cache.get(None), CoverReady::Logo);
+        let key = CoverKey::Url(url);
+        let mut ready = CoverReady::Pending;
+        for _ in 0..100 {
+            std::thread::sleep(Duration::from_millis(10));
+            ready = cache.get(key.clone());
+            if ready != CoverReady::Pending {
+                break;
+            }
+        }
+        assert_eq!(ready, CoverReady::Logo);
+        let after_first = hits.load(Ordering::SeqCst);
+        assert!(after_first >= 1);
+        let _ = cache.get(key);
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(hits.load(Ordering::SeqCst), after_first);
     }
 
     #[test]
     fn missing_file_resolves_to_logo() {
         let cache = CoverCache::new();
         let path = PathBuf::from("/definitely/not/a/cover.flac");
-        assert_eq!(cache.get(Some(&path)), CoverReady::Pending);
+        assert_eq!(cache.get(CoverKey::File(path.clone())), CoverReady::Pending);
         let mut ready = CoverReady::Pending;
         for _ in 0..100 {
             std::thread::sleep(Duration::from_millis(10));
-            ready = cache.get(Some(&path));
+            ready = cache.get(CoverKey::File(path.clone()));
             if ready != CoverReady::Pending {
                 break;
             }
@@ -291,11 +421,11 @@ mod tests {
         );
 
         let cache = CoverCache::new();
-        assert_eq!(cache.get(Some(&path)), CoverReady::Pending);
+        assert_eq!(cache.get(CoverKey::File(path.clone())), CoverReady::Pending);
         let mut ready = CoverReady::Pending;
         for _ in 0..100 {
             std::thread::sleep(Duration::from_millis(10));
-            ready = cache.get(Some(&path));
+            ready = cache.get(CoverKey::File(path.clone()));
             if ready != CoverReady::Pending {
                 break;
             }

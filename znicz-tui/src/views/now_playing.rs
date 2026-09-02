@@ -1,6 +1,6 @@
 //! The transport: what is playing, how far in, and how it reaches the speakers.
 
-use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -12,7 +12,7 @@ use ratatui_image::{Resize, StatefulImage};
 use znicz_core::{PlaybackStatus, PlayerState, RepeatMode};
 
 use crate::app::{repeat_label, App};
-use crate::cover::CoverReady;
+use crate::cover::{pick_stream_cover, CoverKey, CoverReady};
 use crate::format;
 use crate::theme;
 use crate::tui_config::CoverProtocol;
@@ -60,39 +60,50 @@ pub fn render_transport(
     render_stacked_chrome(frame, chrome, state, show_signal);
 }
 
+fn cover_draw_label(ready: &CoverReady) -> String {
+    match ready {
+        CoverReady::Pending => "pending".into(),
+        CoverReady::Logo => "logo".into(),
+        CoverReady::Embedded(img) => format!("{:p}", Arc::as_ptr(img)),
+    }
+}
+
 fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState) {
     if area.width == 0 || area.height == 0 {
         return;
     }
 
     let use_logo_only = app.tui.cover_protocol == CoverProtocol::Off;
-    let path = if use_logo_only {
-        None
+    let ready = if use_logo_only || state.current_track.is_none() {
+        CoverReady::Logo
     } else {
-        state.current_track.as_ref().and_then(|t| t.path.as_deref())
-    };
-
-    let key = if use_logo_only {
-        "logo".into()
-    } else {
-        match app.covers.get(path) {
-            CoverReady::Pending | CoverReady::Logo => "logo".into(),
-            CoverReady::Embedded(_) => path
-                .map(Path::to_string_lossy)
-                .unwrap_or_else(|| "logo".into())
-                .into_owned(),
+        let track = state.current_track.as_ref().expect("checked above");
+        if let Some(p) = track.path.as_deref() {
+            app.covers.get(CoverKey::File(p.to_path_buf()))
+        } else {
+            let icy_ready = match track.icy_stream_url.as_deref() {
+                Some(u) if u.starts_with("http://") || u.starts_with("https://") => {
+                    app.covers.get(CoverKey::Url(u.to_string()))
+                }
+                _ => CoverReady::Logo,
+            };
+            let station_ready = app
+                .stations
+                .iter()
+                .find(|s| Some(s.url.as_str()) == track.url.as_deref())
+                .and_then(|s| s.art.clone())
+                .map(|p| app.covers.get(CoverKey::ImageFile(p)))
+                .unwrap_or(CoverReady::Logo);
+            pick_stream_cover(icy_ready, station_ready)
         }
     };
 
+    let key = cover_draw_label(&ready);
     let draw_key = (key, area.width, area.height);
     if app.cover_draw_key.as_ref() != Some(&draw_key) {
-        let image = if use_logo_only {
-            app.covers.logo_image().clone()
-        } else {
-            match app.covers.get(path) {
-                CoverReady::Pending | CoverReady::Logo => app.covers.logo_image().clone(),
-                CoverReady::Embedded(img) => img.as_ref().clone(),
-            }
+        let image = match ready {
+            CoverReady::Embedded(img) => img.as_ref().clone(),
+            CoverReady::Pending | CoverReady::Logo => app.covers.logo_image().clone(),
         };
         let picker = app.picker.get_or_insert_with(Picker::halfblocks);
         let font = picker.font_size();
