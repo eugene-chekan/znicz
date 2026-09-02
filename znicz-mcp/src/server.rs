@@ -63,8 +63,10 @@ impl ZniczMcpServer {
         }
     }
 
-    fn live_state(&self) -> PlayerState {
-        self.player.state()
+    fn live_state(&self) -> Result<PlayerState, McpError> {
+        self.player
+            .state()
+            .map_err(|e| McpError::internal_error(e.to_string(), None))
     }
 
     /// Run something against the library, or explain that there is none.
@@ -95,7 +97,7 @@ impl ZniczMcpServer {
     }
 
     fn state_json(&self) -> Result<String, McpError> {
-        serde_json::to_string_pretty(&self.live_state())
+        serde_json::to_string_pretty(&self.live_state()?)
             .map_err(|e| McpError::internal_error(e.to_string(), None))
     }
 
@@ -127,7 +129,7 @@ impl ZniczMcpServer {
         Self::json_result(&serde_json::json!({
             "loaded": result.items.len(),
             "skipped": result.skipped,
-            "state": self.live_state(),
+            "state": self.live_state()?,
         }))
     }
 
@@ -620,7 +622,7 @@ impl ZniczMcpServer {
         &self,
         Parameters(params): Parameters<SavePlaylistParams>,
     ) -> Result<rmcp::model::CallToolResult, McpError> {
-        let queue = self.live_state().queue;
+        let queue = self.live_state()?.queue;
         if queue.is_empty() {
             return Err(McpError::invalid_params("queue is empty", None));
         }
@@ -831,12 +833,12 @@ impl ServerHandler for ZniczMcpServer {
             }
 
             let json = match uri.as_str() {
-                "znicz://now-playing" => serde_json::to_string_pretty(&state.current_track)
+                "znicz://now-playing" => serde_json::to_string_pretty(&state?.current_track)
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?,
-                "znicz://queue" => serde_json::to_string_pretty(&state.queue)
+                "znicz://queue" => serde_json::to_string_pretty(&state?.queue)
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?,
                 "znicz://player/status" => {
-                    serde_json::to_string_pretty(&PlayerStatusView::from(&state))
+                    serde_json::to_string_pretty(&PlayerStatusView::from(&state?))
                         .map_err(|e| McpError::internal_error(e.to_string(), None))?
                 }
                 "znicz://devices" => {
@@ -907,7 +909,7 @@ impl ServerHandler for ZniczMcpServer {
                         .to_string()
                 }
                 "explain-format" => {
-                    if let Some(track) = &state.current_track {
+                    if let Some(track) = &state?.current_track {
                         format!(
                             "Current track: {} — {}",
                             track.title,
@@ -1465,7 +1467,7 @@ mod tests {
             append: false,
         }));
         assert!(result.is_err(), "expected an error, got {result:?}");
-        assert!(server.player.state().queue.is_empty());
+        assert!(server.player.state().expect("state").queue.is_empty());
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1486,13 +1488,16 @@ mod tests {
             serde_json::from_str(&result_text(&result)).expect("import json");
         assert_eq!(payload["loaded"], 1);
         assert_eq!(payload["skipped"], 0);
-        let queue = server.player.state().queue;
+        let queue = server.player.state().expect("state").queue;
         assert_eq!(queue.len(), 1);
         assert_eq!(
             queue[0],
             znicz_core::QueueItem::stream("Live", "http://127.0.0.1:1/s")
         );
-        assert_eq!(server.player.state().status, PlaybackStatus::Stopped);
+        assert_eq!(
+            server.player.state().expect("state").status,
+            PlaybackStatus::Stopped
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1637,7 +1642,7 @@ mod tests {
             }))
             .unwrap_err();
         assert!(!err.to_string().contains("not implemented"));
-        let queue = server.player.state().queue;
+        let queue = server.player.state().expect("state").queue;
         assert_eq!(queue.len(), 1);
         assert!(queue[0].is_stream());
         let _ = std::fs::remove_file(path);
@@ -1663,11 +1668,14 @@ mod tests {
                 append: true,
             }))
             .expect("append");
-        let queue = server.player.state().queue;
+        let queue = server.player.state().expect("state").queue;
         assert_eq!(queue.len(), 2);
         assert_eq!(queue[0], znicz_core::QueueItem::file("/music/a.flac"));
         assert!(queue[1].is_stream());
-        assert_eq!(server.player.state().status, PlaybackStatus::Stopped);
+        assert_eq!(
+            server.player.state().expect("state").status,
+            PlaybackStatus::Stopped
+        );
         let _ = std::fs::remove_file(path);
     }
 
