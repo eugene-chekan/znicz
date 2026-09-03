@@ -8,7 +8,7 @@ use znicz_core::{spawn_player, AudioConfig, PlaybackStatus, PlayerHandle};
 use znicz_library::AlbumSummary;
 use znicz_tui::hit::{HitMap, ListHit};
 use znicz_core::Command;
-use znicz_tui::{App, Focus, Modal};
+use znicz_tui::{App, Focus, Modal, PlaylistPrompt};
 
 fn player() -> PlayerHandle {
     let (player, _thread) = spawn_player(AudioConfig::default());
@@ -219,4 +219,42 @@ fn a_click_outside_devices_closes_the_overlay() {
     app.hits.overlay = Some(Rect::new(10, 4, 40, 12));
     app.on_mouse(left_click(0, 0));
     assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn a_click_outside_search_cancels_the_prompt() {
+    let mut app = new_app();
+    app.library.inject_albums_for_test(albums(3));
+    app.library.begin_search();
+    app.hits.search_prompt = Some(Rect::new(0, 0, 80, 1));
+    app.hits.library = Some(ListHit {
+        inner: Rect::new(1, 2, 40, 10),
+        offset: 0,
+        len: 3,
+    });
+    app.on_mouse(left_click(2, 5));
+    assert!(!app.library.is_typing());
+    assert_eq!(app.library.selected_index(), Some(0));
+}
+
+#[test]
+fn a_click_on_the_search_line_does_not_type_or_select() {
+    let mut app = new_app();
+    app.library.begin_search();
+    app.hits.search_prompt = Some(Rect::new(0, 0, 80, 1));
+    app.on_mouse(left_click(4, 0));
+    assert!(app.library.is_typing());
+}
+
+#[test]
+fn a_click_outside_a_playlist_form_cancels_the_form_and_keeps_the_overlay() {
+    let mut app = new_app();
+    app.modal = Modal::Playlists;
+    app.playlist_prompt = Some(PlaylistPrompt::Save(znicz_tui::line_edit::LineEdit::from_text(
+        "x",
+    )));
+    app.hits.overlay = Some(Rect::new(10, 4, 40, 12));
+    app.on_mouse(left_click(0, 0));
+    assert!(app.playlist_prompt.is_none());
+    assert_eq!(app.modal, Modal::Playlists);
 }

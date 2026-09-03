@@ -401,6 +401,28 @@ impl App {
     }
 
     fn on_left_click(&mut self, column: u16, row: u16) {
+        if self.library.is_typing() {
+            let on_prompt = self
+                .hits
+                .search_prompt
+                .is_some_and(|r| point_in(r, column, row));
+            if !on_prompt {
+                self.library.cancel_search();
+                self.toasts.info("search cancelled");
+            }
+            return;
+        }
+        if self.playlist_prompt.is_some() || self.radio_prompt.is_some() {
+            let inside = self
+                .hits
+                .overlay
+                .is_some_and(|r| point_in(r, column, row));
+            if !inside {
+                self.playlist_prompt = None;
+                self.radio_prompt = None;
+            }
+            return;
+        }
         if self.modal != Modal::None {
             self.on_overlay_click(column, row);
             return;
