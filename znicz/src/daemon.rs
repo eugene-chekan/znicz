@@ -216,60 +216,95 @@ mod tests {
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
 
-    fn temp_paths() -> (PathBuf, PathBuf) {
-        let n = NEXT.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("znicz-daemon-{}-{n}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        (dir.join("player.lock"), dir.join("ipc.toml"))
+    struct TempPaths {
+        dir: PathBuf,
+        lock: PathBuf,
+        ipc: PathBuf,
+    }
+
+    impl TempPaths {
+        fn new() -> Self {
+            let n = NEXT.fetch_add(1, Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!("znicz-daemon-{}-{n}", std::process::id()));
+            fs::create_dir_all(&dir).unwrap();
+            Self {
+                lock: dir.join("player.lock"),
+                ipc: dir.join("ipc.toml"),
+                dir,
+            }
+        }
+    }
+
+    impl Drop for TempPaths {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn temp_paths() -> TempPaths {
+        TempPaths::new()
     }
 
     #[test]
     fn dead_lock_holder_files_are_cleared() {
-        let (lock, ipc) = temp_paths();
-        fs::write(&lock, "999999999\n").unwrap();
-        fs::write(&ipc, "port = 1\ntoken = \"x\"\n").unwrap();
+        let tmp = temp_paths();
+        fs::write(&tmp.lock, "999999999\n").unwrap();
+        fs::write(&tmp.ipc, "port = 1\ntoken = \"x\"\n").unwrap();
 
-        clear_stale_player_files(&lock, &ipc);
+        clear_stale_player_files(&tmp.lock, &tmp.ipc);
 
-        assert!(!lock.exists());
-        assert!(!ipc.exists());
+        assert!(!tmp.lock.exists());
+        assert!(!tmp.ipc.exists());
     }
 
     #[test]
     fn lock_without_pid_is_treated_as_stale() {
-        let (lock, ipc) = temp_paths();
-        fs::write(&lock, "").unwrap();
-        fs::write(&ipc, "port = 1\ntoken = \"x\"\n").unwrap();
+        let tmp = temp_paths();
+        fs::write(&tmp.lock, "").unwrap();
+        fs::write(&tmp.ipc, "port = 1\ntoken = \"x\"\n").unwrap();
 
-        clear_stale_player_files(&lock, &ipc);
+        clear_stale_player_files(&tmp.lock, &tmp.ipc);
 
-        assert!(!lock.exists());
-        assert!(!ipc.exists());
+        assert!(!tmp.lock.exists());
+        assert!(!tmp.ipc.exists());
     }
 
     #[test]
     fn live_lock_holder_is_not_cleared() {
-        let (lock, ipc) = temp_paths();
-        fs::write(&lock, format!("{}\n", std::process::id())).unwrap();
-        fs::write(&ipc, "port = 1\ntoken = \"x\"\n").unwrap();
+        let tmp = temp_paths();
+        fs::write(&tmp.lock, format!("{}\n", std::process::id())).unwrap();
+        fs::write(&tmp.ipc, "port = 1\ntoken = \"x\"\n").unwrap();
 
-        clear_stale_player_files(&lock, &ipc);
+        clear_stale_player_files(&tmp.lock, &tmp.ipc);
 
-        assert!(lock.exists());
-        assert!(!ipc.exists());
+        assert!(tmp.lock.exists());
+        assert!(!tmp.ipc.exists());
     }
 
     #[test]
     fn acquire_lock_after_dead_holder() {
-        let (lock, ipc) = temp_paths();
-        fs::write(&lock, "999999999\n").unwrap();
+        let tmp = temp_paths();
+        fs::write(&tmp.lock, "999999999\n").unwrap();
 
-        let held = acquire_player_lock(&lock, &ipc).expect("acquire");
+        let held = acquire_player_lock(&tmp.lock, &tmp.ipc).expect("acquire");
         assert!(held.is_some());
-        assert!(lock.exists());
-        let text = fs::read_to_string(&lock).expect("pid");
+        assert!(tmp.lock.exists());
+        let text = fs::read_to_string(&tmp.lock).expect("pid");
         assert_eq!(text.trim(), std::process::id().to_string());
         drop(held);
-        assert!(!lock.exists());
+        assert!(!tmp.lock.exists());
+    }
+
+    #[test]
+    fn temp_paths_directory_does_not_leak() {
+        let dir = {
+            let tmp = temp_paths();
+            tmp.dir.clone()
+        };
+        assert!(
+            !dir.exists(),
+            "test runtime dir leaked at {}",
+            dir.display()
+        );
     }
 }
