@@ -42,8 +42,8 @@ problems specific to this kind of program:
   while running. Layouts need an order in which parts are dropped.
 - **Characters, not pixels.** Text has to be truncated to fit, and by character
   rather than byte, or a title like `Łódź nocą` breaks apart.
-- **No pointer.** Every action needs a key, and the keys have to be discoverable,
-  which is what the help overlay is for.
+- **Limited pointer.** Pointer is select-only (list rows, overlay dismiss, queue
+  drawer). Most actions still need keys, which is what the help overlay is for.
 
 Conventions worth borrowing from other players: `Space` for pause, `/` to search,
 `j`/`k` to move (from vim and `less`), `]` for the queue drawer, `i` for the
