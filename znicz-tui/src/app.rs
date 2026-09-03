@@ -277,6 +277,21 @@ fn point_in(rect: Rect, column: u16, row: u16) -> bool {
     rect.contains(ratatui::layout::Position { x: column, y: row })
 }
 
+struct MouseCapture;
+
+impl MouseCapture {
+    fn enable() -> Self {
+        let _ = crossterm::execute!(std::io::stdout(), EnableMouseCapture);
+        Self
+    }
+}
+
+impl Drop for MouseCapture {
+    fn drop(&mut self) {
+        let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
+    }
+}
+
 impl App {
     pub fn new(player: PlayerHandle) -> Self {
         Self::with_library(player, None)
@@ -334,14 +349,13 @@ impl App {
 
     pub fn run(&mut self) -> color_eyre::Result<()> {
         let mut terminal = ratatui::init();
-        let _ = crossterm::execute!(std::io::stdout(), EnableMouseCapture);
+        let _mouse = MouseCapture::enable();
         self.picker = Some(make_picker(self.tui.cover_protocol));
         tracing::info!(
             protocol = ?self.picker.as_ref().map(|p| p.protocol_type()),
             "cover renderer"
         );
         let result = self.run_loop(&mut terminal);
-        let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
         ratatui::restore();
         result
     }

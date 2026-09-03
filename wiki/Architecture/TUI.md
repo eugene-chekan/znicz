@@ -14,7 +14,7 @@ open). The wheel moves the focused list one row, like `j` / `k`. Click outside
 help, inspector, devices, playlists, radio, or a typing prompt closes or
 cancels it, like `Esc`. Click the library pane's right-border column to open
 the queue drawer; click the library (overlay) or that column (sheet) to close
-it. Clicks on the transport, cover, footer, and toasts do nothing. Terminals
+it. Clicks on the transport, cover, and footer do nothing. Terminals
 that never send mouse events keep working from the keyboard. `?` stays
 keyboard-only.
 

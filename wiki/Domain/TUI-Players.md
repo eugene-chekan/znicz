@@ -48,7 +48,8 @@ problems specific to this kind of program:
 Conventions worth borrowing from other players: `Space` for pause, `/` to search,
 `j`/`k` to move (from vim and `less`), `]` for the queue drawer, `i` for the
 signal path, `P` for playlists, `?` for help. Left click selects a list row;
-the wheel steps the focused list; clicks on transport and chrome are ignored.
+the wheel steps the focused list; clicks on the transport, cover, and footer
+do nothing.
 See [TUI architecture](../Architecture/TUI.md).
 
 ## Keys
