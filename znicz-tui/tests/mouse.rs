@@ -28,6 +28,19 @@ fn left_click(column: u16, row: u16) -> MouseEvent {
     }
 }
 
+fn wheel(up: bool) -> MouseEvent {
+    MouseEvent {
+        kind: if up {
+            MouseEventKind::ScrollUp
+        } else {
+            MouseEventKind::ScrollDown
+        },
+        column: 2,
+        row: 2,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
 fn albums(n: usize) -> Vec<AlbumSummary> {
     (0..n)
         .map(|i| AlbumSummary {
@@ -257,4 +270,49 @@ fn a_click_outside_a_playlist_form_cancels_the_form_and_keeps_the_overlay() {
     app.on_mouse(left_click(0, 0));
     assert!(app.playlist_prompt.is_none());
     assert_eq!(app.modal, Modal::Playlists);
+}
+
+#[test]
+fn wheel_down_steps_the_library() {
+    let mut app = new_app();
+    app.library.inject_albums_for_test(albums(5));
+    app.on_mouse(wheel(false));
+    assert_eq!(app.library.selected_index(), Some(1));
+}
+
+#[test]
+fn wheel_up_wraps_like_k() {
+    let mut app = new_app();
+    app.library.inject_albums_for_test(albums(5));
+    app.on_mouse(wheel(true));
+    assert_eq!(app.library.selected_index(), Some(4));
+}
+
+#[test]
+fn wheel_steps_a_list_overlay_not_the_library() {
+    let mut app = new_app();
+    app.library.inject_albums_for_test(albums(5));
+    app.modal = Modal::Playlists;
+    app.playlists = vec!["a".into(), "b".into(), "c".into()];
+    app.on_mouse(wheel(false));
+    assert_eq!(app.playlist_cursor.selected(3), Some(1));
+    assert_eq!(app.library.selected_index(), Some(0));
+}
+
+#[test]
+fn wheel_is_ignored_while_help_is_open() {
+    let mut app = new_app();
+    app.library.inject_albums_for_test(albums(5));
+    app.modal = Modal::Help;
+    app.on_mouse(wheel(false));
+    assert_eq!(app.library.selected_index(), Some(0));
+}
+
+#[test]
+fn wheel_is_ignored_while_searching() {
+    let mut app = new_app();
+    app.library.inject_albums_for_test(albums(5));
+    app.library.begin_search();
+    app.on_mouse(wheel(false));
+    assert_eq!(app.library.selected_index(), Some(0));
 }

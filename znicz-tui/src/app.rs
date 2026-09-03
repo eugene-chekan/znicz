@@ -396,7 +396,32 @@ impl App {
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => self.on_left_click(mouse.column, mouse.row),
+            MouseEventKind::ScrollUp => self.on_wheel(-1),
+            MouseEventKind::ScrollDown => self.on_wheel(1),
             _ => {}
+        }
+    }
+
+    fn on_wheel(&mut self, delta: isize) {
+        if self.library.is_typing()
+            || self.playlist_prompt.is_some()
+            || self.radio_prompt.is_some()
+        {
+            return;
+        }
+        match self.modal {
+            Modal::Devices => self.device_cursor.step(delta, self.devices.len()),
+            Modal::Playlists => self.playlist_cursor.step(delta, self.playlists.len()),
+            Modal::Radio => self.station_cursor.step(delta, self.stations.len()),
+            Modal::Help | Modal::Inspector => {}
+            Modal::None => match self.focus {
+                Focus::Library => self.library.step(delta),
+                Focus::Queue if self.queue_open => {
+                    let len = self.player.state().queue.len();
+                    self.queue_cursor.step(delta, len);
+                }
+                Focus::Queue => {}
+            },
         }
     }
 
