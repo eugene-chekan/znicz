@@ -28,6 +28,23 @@ streams, including ICY now playing) is done.
 
 ## Closed
 
+### [#40 MCP agent calls fail ENOENT when player daemon is down](https://github.com/eugene-chekan/znicz/issues/40)
+
+- **Fixed:** 2026-09-03
+- **Component:** `znicz`, `znicz-core`
+- **Status:** **Fixed** in 0.4.3
+
+After an ungraceful daemon death (`kill -9` / SIGTERM with no handler),
+`player.lock` and `ipc.toml` stayed behind. `ensure_player` then waited on the
+stale lock, raced a 3 s advertise poll, and returned
+`No such file or directory`. The same ENOENT showed up when MCP spawned the
+daemon into an empty runtime dir and the advertise file was not ready in time.
+
+`player.lock` now stores the daemon PID. A lock whose process is gone is
+dropped immediately; a live holder is not stolen. Clients wait up to 10 s and
+retry spawn once. The player process handles SIGTERM/SIGINT so Drop still
+removes the lock and advertise files.
+
 ### [#32 IPC clients hold one connection forever](https://github.com/eugene-chekan/znicz/issues/32)
 
 - **Fixed:** 2026-09-02

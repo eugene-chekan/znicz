@@ -1,7 +1,6 @@
-use std::fs::{self, File, OpenOptions};
-use std::io;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
@@ -13,6 +12,10 @@ use znicz_core::{
 use znicz_library::Library;
 use znicz_mcp::run_stdio;
 use znicz_tui::{App, TuiConfig};
+
+mod daemon;
+
+use daemon::{acquire_player_lock, clear_stale_player_files, ensure_player, player_is_up};
 
 #[derive(Debug, Parser)]
 #[command(name = "znicz", about = "Audiophile TUI music player")]
@@ -421,98 +424,6 @@ fn player_lock_path() -> color_eyre::Result<PathBuf> {
     })
 }
 
-fn player_is_up(ipc: &Path) -> bool {
-    IpcClient::connect(ipc, ClientRole::Agent).is_ok()
-}
-
-struct PlayerLock {
-    path: PathBuf,
-    _file: File,
-}
-
-impl Drop for PlayerLock {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
-    }
-}
-
-fn acquire_player_lock(lock_path: &Path, ipc: &Path) -> color_eyre::Result<Option<PlayerLock>> {
-    if let Some(parent) = lock_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    for _ in 0..2 {
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(lock_path)
-        {
-            Ok(file) => {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = fs::set_permissions(lock_path, fs::Permissions::from_mode(0o600));
-                }
-                return Ok(Some(PlayerLock {
-                    path: lock_path.to_path_buf(),
-                    _file: file,
-                }));
-            }
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                let start = Instant::now();
-                while start.elapsed() < Duration::from_secs(3) {
-                    if player_is_up(ipc) {
-                        return Ok(None);
-                    }
-                    std::thread::sleep(Duration::from_millis(50));
-                }
-                let _ = fs::remove_file(lock_path);
-                let _ = fs::remove_file(ipc);
-            }
-            Err(e) => return Err(e.into()),
-        }
-    }
-    Err(color_eyre::eyre::eyre!(
-        "could not take player.lock at {}",
-        lock_path.display()
-    ))
-}
-
-fn spawn_detached_player(device: Option<&str>, config: Option<&Path>) -> color_eyre::Result<()> {
-    let exe = std::env::current_exe()?;
-    let mut cmd = std::process::Command::new(exe);
-    if let Some(config) = config {
-        cmd.arg("--config").arg(config);
-    }
-    if let Some(device) = device {
-        cmd.arg("--device").arg(device);
-    }
-    cmd.arg("player")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()?;
-    Ok(())
-}
-
-fn ensure_player(device: Option<&str>, config: Option<&Path>) -> color_eyre::Result<PathBuf> {
-    let ipc = ipc_path()?;
-    if player_is_up(&ipc) {
-        return Ok(ipc);
-    }
-    spawn_detached_player(device, config)?;
-    let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(3) {
-        if player_is_up(&ipc) {
-            return Ok(ipc);
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    Err(color_eyre::eyre::eyre!(
-        "could not start znicz player (no advertise at {})",
-        ipc.display()
-    ))
-}
-
 fn connect_ui(device: Option<&str>, config: Option<&Path>) -> color_eyre::Result<IpcClient> {
     connect_client(ClientRole::Ui, device, config)
 }
@@ -526,12 +437,14 @@ fn connect_client(
     device: Option<&str>,
     config: Option<&Path>,
 ) -> color_eyre::Result<IpcClient> {
-    let ipc = ensure_player(device, config)?;
+    let ipc = ipc_path()?;
+    let lock = player_lock_path()?;
+    ensure_player(&ipc, &lock, device, config)?;
     let device = device.map(str::to_owned);
     let config = config.map(Path::to_path_buf);
+    let ipc_for_ensure = ipc.clone();
     IpcClient::connect_with_ensure(ipc, role, move || {
-        ensure_player(device.as_deref(), config.as_deref())
-            .map(|_| ())
+        ensure_player(&ipc_for_ensure, &lock, device.as_deref(), config.as_deref())
             .map_err(|e| znicz_core::ZniczError::Player(e.to_string()))
     })
     .map_err(|e| color_eyre::eyre::eyre!("{e}"))
@@ -550,6 +463,7 @@ fn stop_player() -> color_eyre::Result<()> {
 fn run_player_daemon(audio_config: AudioConfig, idle_secs: u64) -> color_eyre::Result<()> {
     let ipc = ipc_path()?;
     let lock_path = player_lock_path()?;
+    clear_stale_player_files(&lock_path, &ipc);
     let Some(_lock) = acquire_player_lock(&lock_path, &ipc)? else {
         return Ok(());
     };
@@ -562,9 +476,9 @@ fn run_player_daemon(audio_config: AudioConfig, idle_secs: u64) -> color_eyre::R
         tracing::warn!("session restore: {e}");
     }
     let idle = if idle_secs == 0 {
-        Duration::ZERO
+        std::time::Duration::ZERO
     } else {
-        Duration::from_secs(idle_secs)
+        std::time::Duration::from_secs(idle_secs)
     };
     let mut server = IpcServer::start_with_session(
         player.clone(),
@@ -574,12 +488,33 @@ fn run_player_daemon(audio_config: AudioConfig, idle_secs: u64) -> color_eyre::R
         SESSION_SAVE_DEBOUNCE,
     )
     .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
+    install_player_signals(server.stop_flag());
     server.wait();
     if let Err(e) = save_session_from_player(&player, &session_path()?) {
         tracing::warn!("session.toml: {e}");
     }
     Ok(())
 }
+
+#[cfg(unix)]
+fn install_player_signals(stop: Arc<AtomicBool>) {
+    static STOP: std::sync::OnceLock<Arc<AtomicBool>> = std::sync::OnceLock::new();
+    let _ = STOP.set(stop);
+
+    unsafe extern "C" fn on_signal(_: libc::c_int) {
+        if let Some(stop) = STOP.get() {
+            stop.store(true, Ordering::SeqCst);
+        }
+    }
+
+    unsafe {
+        libc::signal(libc::SIGTERM, on_signal as *const () as usize);
+        libc::signal(libc::SIGINT, on_signal as *const () as usize);
+    }
+}
+
+#[cfg(not(unix))]
+fn install_player_signals(_stop: Arc<AtomicBool>) {}
 
 fn run_tui(
     files: &[PathBuf],
