@@ -136,6 +136,11 @@ impl LibraryPane {
         self.h_offset = 0;
     }
 
+    pub fn set_index(&mut self, index: usize) {
+        self.cursor.set(index, self.len());
+        self.h_offset = 0;
+    }
+
     pub fn page(&mut self, delta: isize) {
         self.cursor.page(delta, self.len());
         self.h_offset = 0;
@@ -366,16 +371,17 @@ impl LibraryPane {
     }
 }
 
-#[cfg(test)]
 impl LibraryPane {
-    pub(crate) fn inject_albums_for_test(&mut self, albums: Vec<AlbumSummary>) {
+    /// Seed album rows for integration tests.
+    pub fn inject_albums_for_test(&mut self, albums: Vec<AlbumSummary>) {
         self.albums = albums;
         self.mode = Mode::Albums;
         self.notice = None;
         self.cursor.clamp(self.albums.len());
     }
 
-    pub(crate) fn inject_tracks_for_test(&mut self, tracks: Vec<Track>) {
+    /// Seed track rows for integration tests.
+    pub fn inject_tracks_for_test(&mut self, tracks: Vec<Track>) {
         self.tracks = tracks;
         self.mode = Mode::Album("test".into());
         self.notice = None;

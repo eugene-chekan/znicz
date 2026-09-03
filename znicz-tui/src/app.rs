@@ -3,7 +3,10 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
+    MouseEventKind,
+};
 use znicz_core::{
     apply_to_player, list_saved, load_path, sanitize_stem, saved_path, skipped_notice, write_path,
     AudioDeviceInfo, AudioOutput, Command, IpcClient, PlaybackStatus, PlayerEvent, PlayerHandle,
@@ -13,6 +16,7 @@ use znicz_library::{Library, Track};
 
 use crate::cover::CoverCache;
 use crate::cursor::Cursor;
+use crate::hit::HitMap;
 use crate::layout;
 use crate::library_pane::{Item, LibraryPane};
 use crate::line_edit::LineEdit;
@@ -242,6 +246,7 @@ pub struct App {
     pub queue_title_slot: usize,
     pub queue_cursor: Cursor,
     pub library: LibraryPane,
+    pub hits: HitMap,
     pub devices: Vec<AudioDeviceInfo>,
     pub device_cursor: Cursor,
     pub playlists_dir: PathBuf,
@@ -288,6 +293,7 @@ impl App {
             queue_title_slot: 0,
             queue_cursor: Cursor::new(),
             library: LibraryPane::new(library),
+            hits: HitMap::default(),
             devices: load_output_devices(),
             device_cursor: Cursor::new(),
             playlists_dir: znicz_library::default_playlists_dir()
@@ -376,6 +382,27 @@ impl App {
                     }
                 }
                 _ => {}
+            }
+        }
+    }
+
+    // --- mouse handling ---
+
+    pub fn on_mouse(&mut self, mouse: MouseEvent) {
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => self.on_left_click(mouse.column, mouse.row),
+            _ => {}
+        }
+    }
+
+    fn on_left_click(&mut self, column: u16, row: u16) {
+        if self.modal != Modal::None {
+            return;
+        }
+        if let Some(hit) = self.hits.library {
+            if let Some(index) = hit.row_at(column, row) {
+                self.library.set_index(index);
+                self.focus = Focus::Library;
             }
         }
     }
