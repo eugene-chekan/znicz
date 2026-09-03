@@ -4,17 +4,18 @@ use std::time::Duration;
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{List, ListItem, Paragraph};
 use ratatui::Frame;
 use znicz_library::{AlbumSummary, Track};
 
 use crate::app::{App, Focus};
 use crate::format;
+use crate::hit::ListHit;
 use crate::library_pane::{LibraryPane, Mode};
 use crate::theme;
 use crate::views;
 
-pub fn render(frame: &mut Frame, area: Rect, app: &App) {
+pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // The search prompt takes a line off the top of the pane when open.
     let (prompt_area, list_area) = match app.library.is_typing() {
         true => {
@@ -33,6 +34,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 Paragraph::new(views::prompt_line("search: ", edit)),
                 prompt_area,
             );
+            app.hits.search_prompt = Some(prompt_area);
         }
     }
 
@@ -81,17 +83,23 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         _ => format!("{count} tracks"),
     };
 
+    let block = views::pane_block(&title, focused, Some(summary));
+    let inner = block.inner(list_area);
     let list = List::new(items)
-        .block(views::pane_block(&title, focused, Some(summary)))
+        .block(block)
         .highlight_style(if focused {
             theme::selected()
         } else {
             views::no_style()
         });
 
-    let mut state = ListState::default();
-    state.select(app.library.selected_index());
-    frame.render_stateful_widget(list, list_area, &mut state);
+    app.library_list_state.select(app.library.selected_index());
+    frame.render_stateful_widget(list, list_area, &mut app.library_list_state);
+    app.hits.library = Some(ListHit {
+        inner,
+        offset: app.library_list_state.offset(),
+        len: count,
+    });
 }
 
 fn album_row(album: &AlbumSummary, strip: usize, offset: usize) -> ListItem<'static> {

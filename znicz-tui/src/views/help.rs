@@ -5,11 +5,13 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
+use crate::app::App;
 use crate::keys::{self, Binding};
 use crate::theme;
 
-pub fn render(frame: &mut Frame, area: Rect) {
+pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let popup = centered(86, 100, area);
+    app.hits.overlay = Some(popup);
 
     let block = Block::default()
         .borders(Borders::ALL)

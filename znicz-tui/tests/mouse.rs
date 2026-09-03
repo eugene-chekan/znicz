@@ -3,12 +3,15 @@
 use crossterm::event::{
     KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
+use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
+use ratatui::Terminal;
 use znicz_core::{spawn_player, AudioConfig, PlaybackStatus, PlayerHandle};
 use znicz_library::AlbumSummary;
 use znicz_tui::hit::{HitMap, ListHit};
 use znicz_core::Command;
 use znicz_tui::{App, Focus, Modal, PlaylistPrompt};
+use znicz_tui::views;
 
 fn player() -> PlayerHandle {
     let (player, _thread) = spawn_player(AudioConfig::default());
@@ -77,6 +80,22 @@ fn library_hits(len: usize) -> HitMap {
         queue_toggle: Some(Rect::new(79, 0, 1, 20)),
         ..HitMap::default()
     }
+}
+
+#[test]
+fn a_drawn_library_row_is_clickable() {
+    let mut app = new_app();
+    app.library.inject_albums_for_test(albums(5));
+    let state = app.player.state();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("backend");
+    terminal
+        .draw(|frame| views::render(frame, &mut app, &state))
+        .expect("draw");
+    let inner = app.hits.library.expect("library hit after draw");
+    let col = inner.inner.x + 1;
+    let row = inner.inner.y + 2;
+    app.on_mouse(left_click(col, row));
+    assert_eq!(app.library.selected_index(), Some(2));
 }
 
 #[test]

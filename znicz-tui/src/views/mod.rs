@@ -19,11 +19,13 @@ use znicz_core::PlayerState;
 
 use crate::app::{App, Modal};
 use crate::format;
+use crate::hit::HitMap;
 use crate::line_edit::LineEdit;
 use crate::theme;
 use crate::toast::Level;
 
 pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
+    app.hits = HitMap::default();
     let area = frame.area();
     let show_cover = app.tui.show_cover;
     let transport = crate::layout::transport_height(area.height, show_cover);
@@ -41,6 +43,19 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
     let list = chunks[0];
     app.list_width = list.width;
     app.list_height = list.height;
+    app.hits.queue_toggle = list.width.checked_sub(1).map(|w| Rect {
+        x: list.x + w,
+        y: list.y,
+        width: 1,
+        height: list.height,
+    });
+    let lib_w = crate::layout::strip_width(list, app.queue_open);
+    app.hits.library_pane = Some(Rect {
+        x: list.x,
+        y: list.y,
+        width: lib_w,
+        height: list.height,
+    });
     app.title_slot = library::title_slot(
         &app.library,
         crate::layout::strip_inner(list, app.queue_open),
@@ -64,9 +79,9 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
     status::render_footer(frame, chunks[2], app);
 
     match app.modal {
-        Modal::Help => help::render(frame, area),
+        Modal::Help => help::render(frame, area, app),
         Modal::Devices => devices::render_modal(frame, area, app, state),
-        Modal::Inspector => inspector::render(frame, area, state),
+        Modal::Inspector => inspector::render(frame, area, app, state),
         Modal::Playlists => playlists::render_modal(frame, area, app),
         Modal::Radio => radio::render_modal(frame, area, app),
         Modal::None => {}

@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
-    MouseEventKind,
+    MouseEventKind, DisableMouseCapture, EnableMouseCapture,
 };
 use ratatui::layout::Rect;
 use znicz_core::{
@@ -265,6 +265,11 @@ pub struct App {
     pub picker: Option<ratatui_image::picker::Picker>,
     pub(crate) cover_image: Option<ratatui_image::protocol::StatefulProtocol>,
     pub(crate) cover_draw_key: Option<(String, u16, u16)>,
+    pub(crate) library_list_state: ratatui::widgets::ListState,
+    pub(crate) queue_list_state: ratatui::widgets::ListState,
+    pub(crate) device_list_state: ratatui::widgets::ListState,
+    pub(crate) playlist_list_state: ratatui::widgets::ListState,
+    pub(crate) station_list_state: ratatui::widgets::ListState,
     pub should_quit: bool,
 }
 
@@ -318,18 +323,25 @@ impl App {
             picker: Some(ratatui_image::picker::Picker::halfblocks()),
             cover_image: None,
             cover_draw_key: None,
+            library_list_state: ratatui::widgets::ListState::default(),
+            queue_list_state: ratatui::widgets::ListState::default(),
+            device_list_state: ratatui::widgets::ListState::default(),
+            playlist_list_state: ratatui::widgets::ListState::default(),
+            station_list_state: ratatui::widgets::ListState::default(),
             should_quit: false,
         }
     }
 
     pub fn run(&mut self) -> color_eyre::Result<()> {
         let mut terminal = ratatui::init();
+        let _ = crossterm::execute!(std::io::stdout(), EnableMouseCapture);
         self.picker = Some(make_picker(self.tui.cover_protocol));
         tracing::info!(
             protocol = ?self.picker.as_ref().map(|p| p.protocol_type()),
             "cover renderer"
         );
         let result = self.run_loop(&mut terminal);
+        let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
         ratatui::restore();
         result
     }
@@ -349,6 +361,7 @@ impl App {
                 loop {
                     match event::read()? {
                         Event::Key(key) if key.kind == KeyEventKind::Press => self.on_key(key),
+                        Event::Mouse(mouse) => self.on_mouse(mouse),
                         _ => {}
                     }
                     if !event::poll(Duration::ZERO)? {

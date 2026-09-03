@@ -2,16 +2,18 @@
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Clear, List, ListItem, Paragraph};
 use ratatui::Frame;
 
 use crate::app::{App, Modal, PlaylistPrompt};
 use crate::format;
+use crate::hit::ListHit;
 use crate::theme;
 use crate::views;
 
-pub fn render_modal(frame: &mut Frame, area: Rect, app: &App) {
+pub fn render_modal(frame: &mut Frame, area: Rect, app: &mut App) {
     let popup = centered_modal(area);
+    app.hits.overlay = Some(popup);
     frame.render_widget(Clear, popup);
     render(frame, popup, app);
 }
@@ -29,7 +31,7 @@ fn centered_modal(area: Rect) -> Rect {
     }
 }
 
-pub fn render(frame: &mut Frame, area: Rect, app: &App) {
+pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let focused = app.modal == Modal::Playlists;
     let prompting = app.playlist_prompt.is_some();
     let hint = if prompting {
@@ -82,7 +84,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         views::no_style()
     });
 
-    let mut list_state = ListState::default();
-    list_state.select(app.playlist_cursor.selected(app.playlists.len()));
-    frame.render_stateful_widget(list, list_area, &mut list_state);
+    app.playlist_list_state.select(app.playlist_cursor.selected(app.playlists.len()));
+    frame.render_stateful_widget(list, list_area, &mut app.playlist_list_state);
+    app.hits.overlay_list = Some(ListHit {
+        inner: list_area,
+        offset: app.playlist_list_state.offset(),
+        len: app.playlists.len(),
+    });
 }

@@ -9,10 +9,11 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 use znicz_core::{OutputInfo, PlayerState, TrackInfo};
 
+use crate::app::App;
 use crate::format;
 use crate::theme;
 
-pub fn render(frame: &mut Frame, area: Rect, state: &PlayerState) {
+pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState) {
     let content = lines(state);
     let height = (content.len() as u16)
         .saturating_add(2)
@@ -21,6 +22,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &PlayerState) {
         .min(area.width)
         .max(1);
     let popup = centered(area, width, height);
+    app.hits.overlay = Some(popup);
 
     let block = Block::default()
         .borders(Borders::ALL)
