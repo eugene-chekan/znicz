@@ -7,6 +7,7 @@ use crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
     MouseEventKind,
 };
+use ratatui::layout::Rect;
 use znicz_core::{
     apply_to_player, list_saved, load_path, sanitize_stem, saved_path, skipped_notice, write_path,
     AudioDeviceInfo, AudioOutput, Command, IpcClient, PlaybackStatus, PlayerEvent, PlayerHandle,
@@ -267,6 +268,10 @@ pub struct App {
     pub should_quit: bool,
 }
 
+fn point_in(rect: Rect, column: u16, row: u16) -> bool {
+    rect.contains(ratatui::layout::Position { x: column, y: row })
+}
+
 impl App {
     pub fn new(player: PlayerHandle) -> Self {
         Self::with_library(player, None)
@@ -399,6 +404,50 @@ impl App {
         if self.modal != Modal::None {
             return;
         }
+
+        if self.queue_open {
+            if let Some(hit) = self.hits.queue {
+                if let Some(index) = hit.row_at(column, row) {
+                    let len = self.player.state().queue.len();
+                    self.queue_cursor.set(index, len);
+                    self.focus = Focus::Queue;
+                    return;
+                }
+            }
+            let sheet = layout::is_sheet(self.list_width, true);
+            if sheet {
+                if self
+                    .hits
+                    .queue_toggle
+                    .is_some_and(|r| point_in(r, column, row))
+                {
+                    self.close_queue();
+                }
+                return;
+            }
+            if self
+                .hits
+                .library_pane
+                .is_some_and(|r| point_in(r, column, row))
+                || self
+                    .hits
+                    .queue_toggle
+                    .is_some_and(|r| point_in(r, column, row))
+            {
+                self.close_queue();
+            }
+            return;
+        }
+
+        if self
+            .hits
+            .queue_toggle
+            .is_some_and(|r| point_in(r, column, row))
+        {
+            self.open_queue();
+            return;
+        }
+
         if let Some(hit) = self.hits.library {
             if let Some(index) = hit.row_at(column, row) {
                 self.library.set_index(index);

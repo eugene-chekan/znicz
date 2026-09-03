@@ -7,6 +7,7 @@ use ratatui::layout::Rect;
 use znicz_core::{spawn_player, AudioConfig, PlaybackStatus, PlayerHandle};
 use znicz_library::AlbumSummary;
 use znicz_tui::hit::{HitMap, ListHit};
+use znicz_core::Command;
 use znicz_tui::{App, Focus, Modal};
 
 fn player() -> PlayerHandle {
@@ -37,6 +38,19 @@ fn albums(n: usize) -> Vec<AlbumSummary> {
             total_secs: None,
         })
         .collect()
+}
+
+fn queue(app: &mut App, count: usize) {
+    let items: Vec<znicz_core::QueueItem> = (0..count)
+        .map(|i| znicz_core::QueueItem::file(format!("/music/track-{i}.flac")))
+        .collect();
+    app.player
+        .send_blocking(Command::QueueAdd(items))
+        .expect("queue add");
+}
+
+fn contains(rect: Rect, column: u16, row: u16) -> bool {
+    rect.contains(ratatui::layout::Position { x: column, y: row })
 }
 
 fn library_hits(len: usize) -> HitMap {
@@ -78,4 +92,66 @@ fn a_click_below_the_last_library_row_does_nothing() {
     app.hits = library_hits(2);
     app.on_mouse(left_click(2, 5));
     assert_eq!(app.library.selected_index(), Some(0));
+}
+
+#[test]
+fn a_queue_click_selects_the_row_and_focuses_the_queue() {
+    let mut app = new_app();
+    queue(&mut app, 4);
+    app.queue_open = true;
+    app.focus = Focus::Library;
+    app.hits.queue = Some(ListHit {
+        inner: Rect::new(60, 1, 38, 10),
+        offset: 0,
+        len: 4,
+    });
+    app.on_mouse(left_click(62, 3));
+    assert_eq!(app.queue_cursor.selected(4), Some(2));
+    assert_eq!(app.focus, Focus::Queue);
+    assert_eq!(app.player.state().queue_position, 0);
+}
+
+#[test]
+fn the_right_border_opens_the_queue_when_it_is_closed() {
+    let mut app = new_app();
+    app.list_width = 100;
+    app.hits.queue_toggle = Some(Rect::new(79, 0, 1, 20));
+    assert!(!app.queue_open);
+    app.on_mouse(left_click(79, 4));
+    assert!(app.queue_open);
+    assert_eq!(app.focus, Focus::Queue);
+}
+
+#[test]
+fn a_click_on_the_library_closes_an_overlay_queue() {
+    let mut app = new_app();
+    app.list_width = 100;
+    app.queue_open = true;
+    app.focus = Focus::Queue;
+    app.hits.library_pane = Some(Rect::new(0, 0, 59, 20));
+    app.hits.queue = Some(ListHit {
+        inner: Rect::new(60, 1, 38, 18),
+        offset: 0,
+        len: 0,
+    });
+    app.on_mouse(left_click(10, 5));
+    assert!(!app.queue_open);
+    assert_eq!(app.focus, Focus::Library);
+}
+
+#[test]
+fn the_right_border_closes_a_queue_sheet() {
+    let mut app = new_app();
+    app.list_width = 81;
+    app.queue_open = true;
+    app.focus = Focus::Queue;
+    app.hits.queue_toggle = Some(Rect::new(80, 0, 1, 20));
+    app.hits.queue = Some(ListHit {
+        inner: Rect::new(1, 1, 79, 18),
+        offset: 0,
+        len: 0,
+    });
+    app.on_mouse(left_click(80, 2));
+    assert!(!app.queue_open);
+    assert_eq!(app.focus, Focus::Library);
 }
