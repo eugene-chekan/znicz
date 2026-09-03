@@ -19,8 +19,11 @@ extras settle, and on exit.
 
 Advertise file: `ipc.toml` (`port` and a token, Unix mode `0600`) at
 `$XDG_RUNTIME_DIR/znicz/ipc.toml` or `{temp}/znicz/ipc.toml`. Override with
-`ZNICZ_IPC_PATH`. `player.lock` sits beside it so two autostarts cannot spawn
-two engines.
+`ZNICZ_IPC_PATH`. `player.lock` sits beside it (it stores the daemon PID) so two
+autostarts cannot spawn two engines. If the daemon dies without cleaning up,
+the next TUI or MCP start treats a lock whose PID is gone as stale, removes
+`ipc.toml` when nothing is listening, and spawns a new player. SIGTERM/SIGINT
+on the daemon take the same cleanup path as a graceful IPC shutdown.
 
 The host then sends JSON-RPC messages.
 

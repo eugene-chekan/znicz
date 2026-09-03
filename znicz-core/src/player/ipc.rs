@@ -208,6 +208,10 @@ impl IpcServer {
             let _ = join.join();
         }
     }
+
+    pub fn stop_flag(&self) -> Arc<AtomicBool> {
+        self.stop.clone()
+    }
 }
 
 fn serve_loop(listener: TcpListener, shared: Arc<Shared>) {
