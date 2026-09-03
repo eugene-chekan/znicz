@@ -10,7 +10,6 @@ Parked TUI ideas (file, do not start unless asked):
 - [#5 Command palette](https://github.com/eugene-chekan/znicz/issues/5)
 - [#6 Settings screen overlay](https://github.com/eugene-chekan/znicz/issues/6)
 - [#7 Three-column artist / album / tracks library](https://github.com/eugene-chekan/znicz/issues/7)
-- [#8 Mouse support](https://github.com/eugene-chekan/znicz/issues/8)
 - [#9 Library tree view with expandable nodes](https://github.com/eugene-chekan/znicz/issues/9)
 - [#22 Show the app version](https://github.com/eugene-chekan/znicz/issues/22) (place and shape still open)
 - [#34 Auto-pan now-playing text](https://github.com/eugene-chekan/znicz/issues/34) (marquee when artist / title does not fit)
@@ -27,6 +26,17 @@ radio** (HLS, PLS, XSPF) are on the
 streams, including ICY now playing) is done.
 
 ## Closed
+
+### [#8 Mouse support in the TUI](https://github.com/eugene-chekan/znicz/issues/8)
+
+- **Fixed:** 2026-09-03
+- **Component:** `znicz-tui`
+- **Status:** **Fixed** in 0.4.4
+
+Left click selects a visible list row. Wheel steps the focused list. Click
+outside closes overlays and cancels prompts. The library right-border column
+toggles the queue drawer. Capture is on for the life of the TUI. Drag-to-reorder
+and seek-bar clicks stay out.
 
 ### [#40 MCP agent calls fail ENOENT when player daemon is down](https://github.com/eugene-chekan/znicz/issues/40)
 

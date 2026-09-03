@@ -47,7 +47,9 @@ problems specific to this kind of program:
 
 Conventions worth borrowing from other players: `Space` for pause, `/` to search,
 `j`/`k` to move (from vim and `less`), `]` for the queue drawer, `i` for the
-signal path, `P` for playlists, `?` for help. Mouse is [not wired yet](https://github.com/eugene-chekan/znicz/issues/8).
+signal path, `P` for playlists, `?` for help. Left click selects a list row;
+the wheel steps the focused list; clicks on transport and chrome are ignored.
+See [TUI architecture](../Architecture/TUI.md).
 
 ## Keys
 

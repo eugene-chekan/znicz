@@ -5,8 +5,18 @@ experience lives. The interface is an **immediate-mode** loop:
 
 1. Drain player events (turning failures into on-screen messages)
 2. Draw the whole screen from a fresh `PlayerState`
-3. Wait for a key, or for the tick that advances the seek bar
+3. Wait for a key, a mouse event, or for the tick that advances the seek bar
 4. Repeat until `q`
+
+While the TUI is up it also **captures the mouse**. A left click on a visible
+library, queue, or overlay list row **selects** that row (it does not play or
+open). The wheel moves the focused list one row, like `j` / `k`. Click outside
+help, inspector, devices, playlists, radio, or a typing prompt closes or
+cancels it, like `Esc`. Click the library pane's right-border column to open
+the queue drawer; click the library (overlay) or that column (sheet) to close
+it. Clicks on the transport, cover, footer, and toasts do nothing. Terminals
+that never send mouse events keep working from the keyboard. `?` stays
+keyboard-only.
 
 `q` closes the TUI only. Playback keeps going in `znicz player` until you
 `s` (stop), `znicz player stop`, or the player is already Stopped and idle

@@ -65,10 +65,6 @@ fn queue(app: &mut App, count: usize) {
         .expect("queue add");
 }
 
-fn contains(rect: Rect, column: u16, row: u16) -> bool {
-    rect.contains(ratatui::layout::Position { x: column, y: row })
-}
-
 fn library_hits(len: usize) -> HitMap {
     HitMap {
         library: Some(ListHit {
@@ -334,4 +330,15 @@ fn wheel_is_ignored_while_searching() {
     app.library.begin_search();
     app.on_mouse(wheel(false));
     assert_eq!(app.library.selected_index(), Some(0));
+}
+
+#[test]
+fn a_click_on_the_transport_does_nothing() {
+    let mut app = new_app();
+    app.library.inject_albums_for_test(albums(3));
+    app.hits = library_hits(3);
+    app.on_mouse(left_click(10, 22));
+    assert_eq!(app.library.selected_index(), Some(0));
+    assert!(!app.queue_open);
+    assert_eq!(app.modal, Modal::None);
 }
