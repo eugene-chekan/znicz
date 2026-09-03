@@ -1,6 +1,6 @@
 # Phase 5 — Album art in the TUI
 
-**Status:** Done (0.4.1)  
+**Status:** Done (0.4.2)  
 **Depends on:** [Phase 2](../Domain/Formats-and-Metadata.md#library-phase-2) (tag and picture extraction)  
 **Primary crates:** `znicz-core` (`read_cover`), `znicz-tui` (cache + draw), `znicz` (`[tui]` config)  
 **Spec:** [Album art in the TUI](../../docs/superpowers/specs/2026-09-02-album-art-design.md)
@@ -19,7 +19,8 @@ This does not change audio quality. It is a display feature only.
 - Eight-row cover slot; one empty cell; stacked chrome to the right; `show_cover = false` keeps the old one-/two-line transport
 - Kitty / Sixel / half-blocks through `ratatui-image` (picker after alternate screen). `cover_protocol = "off"` keeps the slot and draws the logo
 - Bundled Znicz logo when the path is missing, there is no picture, or decode fails. The picture is letterboxed onto an opaque canvas that fills the slot, so the previous cover cannot remain. The bitmap is inset half a cell so its left edge matches the library pane's `│`.
-- **Radio / stream covers (0.4.1):** optional station `art` (local image path in `stations.toml`); ICY `StreamUrl` may be a cover image URL. Cover choice: ICY image, then station file, then logo. Radio add/edit form has an `art:` field.
+- **Radio / stream covers (0.4.1):** optional station `art` (local image path in `stations.toml`); ICY `StreamUrl` may be a cover image URL. Radio add/edit form has an `art:` field.
+- **AudioAddict song covers (0.4.2):** RadioTunes, DI.FM, RockRadio, JazzRadio, ClassicalRadio, and ZenRadio show the current song cover from JSON `art_url`. Cover choice: ICY image, then AudioAddict, then station file, then logo.
 - In-memory cover cache (cap 16), decode off the UI thread, longest side capped at 512 px
 - Config under `[tui]`: `show_cover`, `cover_protocol` (`auto` | `kitty` | `sixel` | `halfblocks` | `off`)
 
@@ -69,6 +70,10 @@ The TUI reads the file from `TrackInfo.path`. Library scan and the player thread
 - [ ] Disk cache for decoded/resized bitmaps
 - [ ] MCP resource for current cover (optional)
 - [x] Radio / stream covers — station `art` + ICY `StreamUrl` image (0.4.1)
+
+### 5.5 — AudioAddict song covers
+
+- [x] AudioAddict song covers (0.4.2)
 
 ## Out of scope (still)
 

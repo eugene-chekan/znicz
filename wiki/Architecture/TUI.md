@@ -47,8 +47,9 @@ widget starts on the same column as the library pane's left border and is
 pinned to the top of the slot so it meets the library's bottom edge. The
 bitmap is inset half a cell so its left edge matches the pane's `│` (box
 drawing does not sit on the cell's left edge). For files, missing embedded art
-keeps the slot and draws the bundled logo. For streams, the cover slot uses an
-ICY `StreamUrl` image when one decodes, else the station `art` file, else the
+keeps the slot and draws the bundled logo. For streams, the cover slot uses an ICY `StreamUrl` image when one decodes,
+else the AudioAddict current-song `art_url` (RadioTunes / DI.FM / RockRadio /
+JazzRadio / ClassicalRadio / ZenRadio), else the station `art` file, else the
 logo. The picture is letterboxed onto an opaque canvas the size of the slot, so
 a stream cannot leave the previous cover on screen.
 `show_cover = false` restores the old full-width one- or two-line transport.

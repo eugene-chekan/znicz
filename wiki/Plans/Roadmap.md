@@ -112,6 +112,7 @@ Inline album cover in the TUI. Spec:
 - **No Kitty install** and no `icat`
 - Config: `[tui]` `show_cover`, `cover_protocol`
 - Station `art` (local path) and ICY `StreamUrl` image for stream covers (0.4.1)
+- AudioAddict song covers for RadioTunes / DI.FM / RockRadio (0.4.2)
 
 Details: [Phase 5 — Album art](Phase-5-Album-Art.md), [TUI architecture](../Architecture/TUI.md).
 
