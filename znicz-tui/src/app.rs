@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crossterm::event::{
-    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
-    MouseEventKind, DisableMouseCapture, EnableMouseCapture,
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::Rect;
 use znicz_core::{
@@ -430,9 +430,7 @@ impl App {
     }
 
     fn on_wheel(&mut self, delta: isize) {
-        if self.library.is_typing()
-            || self.playlist_prompt.is_some()
-            || self.radio_prompt.is_some()
+        if self.library.is_typing() || self.playlist_prompt.is_some() || self.radio_prompt.is_some()
         {
             return;
         }
@@ -465,10 +463,7 @@ impl App {
             return;
         }
         if self.playlist_prompt.is_some() || self.radio_prompt.is_some() {
-            let inside = self
-                .hits
-                .overlay
-                .is_some_and(|r| point_in(r, column, row));
+            let inside = self.hits.overlay.is_some_and(|r| point_in(r, column, row));
             if !inside {
                 self.playlist_prompt = None;
                 self.radio_prompt = None;
@@ -543,11 +538,7 @@ impl App {
                 return;
             }
         }
-        if self
-            .hits
-            .overlay
-            .is_some_and(|r| point_in(r, column, row))
-        {
+        if self.hits.overlay.is_some_and(|r| point_in(r, column, row)) {
             return;
         }
         self.modal = Modal::None;

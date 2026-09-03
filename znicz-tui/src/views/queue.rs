@@ -109,7 +109,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState)
         views::no_style()
     });
 
-    app.queue_list_state.select(app.queue_cursor.selected(state.queue.len()));
+    app.queue_list_state
+        .select(app.queue_cursor.selected(state.queue.len()));
     frame.render_stateful_widget(list, area, &mut app.queue_list_state);
     app.hits.queue = Some(ListHit {
         inner,

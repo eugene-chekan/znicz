@@ -9,10 +9,7 @@ pub struct ListHit {
 
 impl ListHit {
     pub fn row_at(self, column: u16, row: u16) -> Option<usize> {
-        if !self.inner.contains(Position {
-            x: column,
-            y: row,
-        }) {
+        if !self.inner.contains(Position { x: column, y: row }) {
             return None;
         }
         let index = self.offset + usize::from(row.saturating_sub(self.inner.y));

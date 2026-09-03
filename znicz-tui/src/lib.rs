@@ -8,8 +8,8 @@
 pub mod app;
 pub mod cover;
 pub mod cursor;
-pub mod hit;
 pub mod format;
+pub mod hit;
 pub mod keys;
 pub mod layout;
 pub mod library_pane;

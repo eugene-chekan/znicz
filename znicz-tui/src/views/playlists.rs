@@ -84,7 +84,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         views::no_style()
     });
 
-    app.playlist_list_state.select(app.playlist_cursor.selected(app.playlists.len()));
+    app.playlist_list_state
+        .select(app.playlist_cursor.selected(app.playlists.len()));
     frame.render_stateful_widget(list, list_area, &mut app.playlist_list_state);
     app.hits.overlay_list = Some(ListHit {
         inner: list_area,

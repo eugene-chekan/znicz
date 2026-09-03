@@ -85,13 +85,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let block = views::pane_block(&title, focused, Some(summary));
     let inner = block.inner(list_area);
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(if focused {
-            theme::selected()
-        } else {
-            views::no_style()
-        });
+    let list = List::new(items).block(block).highlight_style(if focused {
+        theme::selected()
+    } else {
+        views::no_style()
+    });
 
     app.library_list_state.select(app.library.selected_index());
     frame.render_stateful_widget(list, list_area, &mut app.library_list_state);

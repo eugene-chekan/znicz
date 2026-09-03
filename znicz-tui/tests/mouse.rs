@@ -1,17 +1,15 @@
 //! Mouse: select-only clicks, wheel, click-outside, queue toggle.
 
-use crossterm::event::{
-    KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-};
+use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::Terminal;
+use znicz_core::Command;
 use znicz_core::{spawn_player, AudioConfig, PlaybackStatus, PlayerHandle};
 use znicz_library::AlbumSummary;
 use znicz_tui::hit::{HitMap, ListHit};
-use znicz_core::Command;
-use znicz_tui::{App, Focus, Modal, PlaylistPrompt};
 use znicz_tui::views;
+use znicz_tui::{App, Focus, Modal, PlaylistPrompt};
 
 fn player() -> PlayerHandle {
     let (player, _thread) = spawn_player(AudioConfig::default());
@@ -278,9 +276,9 @@ fn a_click_on_the_search_line_does_not_type_or_select() {
 fn a_click_outside_a_playlist_form_cancels_the_form_and_keeps_the_overlay() {
     let mut app = new_app();
     app.modal = Modal::Playlists;
-    app.playlist_prompt = Some(PlaylistPrompt::Save(znicz_tui::line_edit::LineEdit::from_text(
-        "x",
-    )));
+    app.playlist_prompt = Some(PlaylistPrompt::Save(
+        znicz_tui::line_edit::LineEdit::from_text("x"),
+    ));
     app.hits.overlay = Some(Rect::new(10, 4, 40, 12));
     app.on_mouse(left_click(0, 0));
     assert!(app.playlist_prompt.is_none());
