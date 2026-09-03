@@ -402,6 +402,7 @@ impl App {
 
     fn on_left_click(&mut self, column: u16, row: u16) {
         if self.modal != Modal::None {
+            self.on_overlay_click(column, row);
             return;
         }
 
@@ -454,6 +455,30 @@ impl App {
                 self.focus = Focus::Library;
             }
         }
+    }
+
+    fn on_overlay_click(&mut self, column: u16, row: u16) {
+        if let Some(hit) = self.hits.overlay_list {
+            if let Some(index) = hit.row_at(column, row) {
+                match self.modal {
+                    Modal::Devices => self.device_cursor.set(index, self.devices.len()),
+                    Modal::Playlists => self.playlist_cursor.set(index, self.playlists.len()),
+                    Modal::Radio => self.station_cursor.set(index, self.stations.len()),
+                    _ => {}
+                }
+                return;
+            }
+        }
+        if self
+            .hits
+            .overlay
+            .is_some_and(|r| point_in(r, column, row))
+        {
+            return;
+        }
+        self.modal = Modal::None;
+        self.playlist_prompt = None;
+        self.radio_prompt = None;
     }
 
     // --- key handling ---

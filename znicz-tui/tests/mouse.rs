@@ -155,3 +155,68 @@ fn the_right_border_closes_a_queue_sheet() {
     assert!(!app.queue_open);
     assert_eq!(app.focus, Focus::Library);
 }
+
+#[test]
+fn a_click_outside_help_closes_it() {
+    let mut app = new_app();
+    app.modal = Modal::Help;
+    app.hits.overlay = Some(Rect::new(10, 4, 60, 16));
+    app.on_mouse(left_click(0, 0));
+    assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn a_click_inside_help_does_not_close_it() {
+    let mut app = new_app();
+    app.modal = Modal::Help;
+    app.hits.overlay = Some(Rect::new(10, 4, 60, 16));
+    app.on_mouse(left_click(12, 6));
+    assert_eq!(app.modal, Modal::Help);
+}
+
+#[test]
+fn a_click_outside_inspector_closes_it() {
+    let mut app = new_app();
+    app.modal = Modal::Inspector;
+    app.hits.overlay = Some(Rect::new(20, 4, 40, 12));
+    app.on_mouse(left_click(0, 0));
+    assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn a_devices_row_click_moves_the_cursor_without_applying() {
+    let mut app = new_app();
+    app.modal = Modal::Devices;
+    app.devices = vec![
+        znicz_core::AudioDeviceInfo {
+            id: "a".into(),
+            name: "A".into(),
+            is_default: true,
+        },
+        znicz_core::AudioDeviceInfo {
+            id: "b".into(),
+            name: "B".into(),
+            is_default: false,
+        },
+    ];
+    app.hits.overlay = Some(Rect::new(10, 4, 40, 12));
+    app.hits.overlay_list = Some(ListHit {
+        inner: Rect::new(11, 5, 38, 10),
+        offset: 0,
+        len: 2,
+    });
+    let before = app.player.state().device_id.clone();
+    app.on_mouse(left_click(12, 6));
+    assert_eq!(app.device_cursor.selected(2), Some(1));
+    assert_eq!(app.modal, Modal::Devices);
+    assert_eq!(app.player.state().device_id, before);
+}
+
+#[test]
+fn a_click_outside_devices_closes_the_overlay() {
+    let mut app = new_app();
+    app.modal = Modal::Devices;
+    app.hits.overlay = Some(Rect::new(10, 4, 40, 12));
+    app.on_mouse(left_click(0, 0));
+    assert_eq!(app.modal, Modal::None);
+}
