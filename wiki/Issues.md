@@ -31,11 +31,13 @@ streams, including ICY now playing) is done.
 
 - **Fixed:** 2026-09-03
 - **Component:** `znicz-tui`
-- **Status:** **Fixed** in 0.4.4
+- **Status:** **Fixed** in 0.4.5
 
-Left click selects a visible list row. Wheel steps the focused list. Click
-outside closes overlays and cancels prompts. The library right-border column
-toggles the queue drawer. Capture is on for the life of the TUI. Drag-to-reorder
+Left click selects a visible list row. Wheel steps the focused list. Overlays
+and the queue drawer close with the top-right **X**, `Esc`, `]`, or a clickable
+footer hint — not outside click. The library right-border column opens the
+queue drawer only. Typing prompts still cancel on outside click. Footer hint
+segments are clickable. Capture is on for the life of the TUI. Drag-to-reorder
 and seek-bar clicks stay out.
 
 ### [#40 MCP agent calls fail ENOENT when player daemon is down](https://github.com/eugene-chekan/znicz/issues/40)
