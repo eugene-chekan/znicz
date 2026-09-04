@@ -6,7 +6,8 @@ use ratatui::layout::Rect;
 use ratatui::Terminal;
 use znicz_core::Command;
 use znicz_core::{spawn_player, AudioConfig, PlaybackStatus, PlayerHandle};
-use znicz_library::AlbumSummary;
+use std::path::PathBuf;
+use znicz_library::{AlbumSummary, Track};
 use znicz_tui::hit::{FooterHit, HitMap, ListHit};
 use znicz_tui::views;
 use znicz_tui::{App, Focus, Modal, PlaylistPrompt};
@@ -174,6 +175,62 @@ fn a_library_click_under_an_open_queue_does_not_close_it() {
 }
 
 #[test]
+fn a_library_row_click_under_an_open_overlay_queue_selects_and_keeps_it_open() {
+    let mut app = new_app();
+    app.library.inject_albums_for_test(albums(5));
+    queue(&mut app, 2);
+    app.list_width = 100;
+    app.queue_open = true;
+    app.focus = Focus::Queue;
+    app.hits = HitMap {
+        library: Some(ListHit {
+            inner: Rect::new(1, 1, 40, 10),
+            offset: 0,
+            len: 5,
+        }),
+        library_pane: Some(Rect::new(0, 0, 59, 20)),
+        queue: Some(ListHit {
+            inner: Rect::new(60, 1, 39, 10),
+            offset: 0,
+            len: 2,
+        }),
+        queue_toggle: Some(Rect::new(59, 0, 1, 20)),
+        ..HitMap::default()
+    };
+    app.on_mouse(left_click(2, 3));
+    assert_eq!(app.library.selected_index(), Some(2));
+    assert_eq!(app.focus, Focus::Library);
+    assert!(app.queue_open);
+}
+
+#[test]
+fn a_library_click_under_an_open_sheet_queue_does_not_select() {
+    let mut app = new_app();
+    app.library.inject_albums_for_test(albums(5));
+    queue(&mut app, 2);
+    app.list_width = 81;
+    app.queue_open = true;
+    app.focus = Focus::Queue;
+    app.hits = HitMap {
+        library: Some(ListHit {
+            inner: Rect::new(1, 1, 40, 10),
+            offset: 0,
+            len: 5,
+        }),
+        queue: Some(ListHit {
+            inner: Rect::new(1, 1, 79, 10),
+            offset: 0,
+            len: 2,
+        }),
+        ..HitMap::default()
+    };
+    app.on_mouse(left_click(2, 3));
+    assert_eq!(app.library.selected_index(), Some(0));
+    assert_eq!(app.focus, Focus::Queue);
+    assert!(app.queue_open);
+}
+
+#[test]
 fn a_toggle_column_click_does_not_close_an_open_queue() {
     let mut app = new_app();
     app.queue_open = true;
@@ -325,6 +382,37 @@ fn a_click_on_the_search_line_does_not_type_or_select() {
 }
 
 #[test]
+fn a_click_on_close_dismisses_a_playlist_prompt_and_modal() {
+    let mut app = new_app();
+    app.modal = Modal::Playlists;
+    app.playlist_prompt = Some(PlaylistPrompt::Save(
+        znicz_tui::line_edit::LineEdit::from_text("x"),
+    ));
+    app.hits.overlay = Some(Rect::new(10, 4, 40, 12));
+    app.hits.close = Some(Rect::new(48, 4, 1, 1));
+    app.on_mouse(left_click(48, 4));
+    assert!(app.playlist_prompt.is_none());
+    assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn a_footer_esc_hit_dismisses_a_playlist_prompt() {
+    let mut app = new_app();
+    app.modal = Modal::Playlists;
+    app.playlist_prompt = Some(PlaylistPrompt::Save(
+        znicz_tui::line_edit::LineEdit::from_text("x"),
+    ));
+    app.hits.overlay = Some(Rect::new(10, 4, 40, 12));
+    app.hits.footer_hints = vec![FooterHit {
+        rect: Rect::new(10, 23, 9, 1),
+        key: KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+    }];
+    app.on_mouse(left_click(12, 23));
+    assert!(app.playlist_prompt.is_none());
+    assert_eq!(app.modal, Modal::Playlists);
+}
+
+#[test]
 fn a_click_outside_a_playlist_form_cancels_the_form_and_keeps_the_overlay() {
     let mut app = new_app();
     app.modal = Modal::Playlists;
@@ -434,6 +522,43 @@ fn a_footer_esc_hit_closes_devices() {
     }];
     app.on_mouse(left_click(12, 23));
     assert_eq!(app.modal, Modal::None);
+}
+
+fn test_track(title: &str) -> Track {
+    Track {
+        id: 1,
+        path: PathBuf::from("/music/dummy.flac"),
+        title: title.into(),
+        artist: Some("Artist".into()),
+        album: Some("Album".into()),
+        album_artist: None,
+        genre: None,
+        year: None,
+        track_number: Some(1),
+        disc_number: None,
+        codec: None,
+        sample_rate: None,
+        channels: None,
+        bits_per_sample: None,
+        duration_secs: Some(120.0),
+    }
+}
+
+#[test]
+fn a_footer_add_hit_queues_the_selected_track() {
+    let mut app = new_app();
+    app.library
+        .inject_tracks_for_test(vec![test_track("Quiet Add")]);
+    app.hits.footer_hints = vec![FooterHit {
+        rect: Rect::new(11, 23, 5, 1),
+        key: KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+    }];
+    app.on_mouse(left_click(12, 23));
+    assert_eq!(app.player.state().queue.len(), 1);
+    assert_eq!(
+        app.player.state().status,
+        znicz_core::PlaybackStatus::Stopped
+    );
 }
 
 #[test]

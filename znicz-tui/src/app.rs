@@ -462,14 +462,6 @@ impl App {
             }
             return;
         }
-        if self.playlist_prompt.is_some() || self.radio_prompt.is_some() {
-            let inside = self.hits.overlay.is_some_and(|r| point_in(r, column, row));
-            if !inside {
-                self.playlist_prompt = None;
-                self.radio_prompt = None;
-            }
-            return;
-        }
         if let Some(hit) = self
             .hits
             .footer_hints
@@ -490,6 +482,14 @@ impl App {
             }
             return;
         }
+        if self.playlist_prompt.is_some() || self.radio_prompt.is_some() {
+            let inside = self.hits.overlay.is_some_and(|r| point_in(r, column, row));
+            if !inside {
+                self.playlist_prompt = None;
+                self.radio_prompt = None;
+            }
+            return;
+        }
         if self.modal != Modal::None {
             self.on_overlay_click(column, row);
             return;
@@ -502,6 +502,18 @@ impl App {
                     self.queue_cursor.set(index, len);
                     self.focus = Focus::Queue;
                     return;
+                }
+            }
+            let list = Rect::new(0, 0, self.list_width, self.list_height);
+            if matches!(
+                layout::drawer(list, true),
+                layout::Drawer::Overlay(_)
+            ) {
+                if let Some(hit) = self.hits.library {
+                    if let Some(index) = hit.row_at(column, row) {
+                        self.library.set_index(index);
+                        self.focus = Focus::Library;
+                    }
                 }
             }
             return;
