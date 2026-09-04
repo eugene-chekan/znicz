@@ -30,7 +30,8 @@ pub const GLOBAL: &[Binding] = &[
     b("r", "reload list"),
     b("z", "shuffle"),
     b("]", "open / close queue"),
-    b("Tab", "library ↔ queue"),
+    b("Tab", "library ↔ queue (or next column)"),
+    b("Shift-Tab", "previous column / queue focus"),
     b("Alt-← / Alt-→", "pan titles"),
     b("i", "signal inspector"),
     b(",", "devices"),
@@ -55,10 +56,12 @@ pub const QUEUE: &[Binding] = &[
 
 pub const LIBRARY: &[Binding] = &[
     b("/", "search the library"),
-    b("Enter", "open album, or play track"),
+    b("Enter", "open / expand, or play track"),
+    b("Space / o", "expand or collapse (tree)"),
+    b("Tab / Shift-Tab", "next / previous column"),
     b("a", "add selection to the queue"),
     b("A", "add everything listed"),
-    b("Esc", "back to the album list"),
+    b("Esc", "back one browse level"),
 ];
 
 pub const DEVICES: &[Binding] = &[

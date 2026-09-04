@@ -60,7 +60,10 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
         &app.library,
         crate::layout::strip_inner(list, app.queue_open),
     );
-    app.library.clamp_pan(app.title_slot);
+    app.library.clamp_pan(
+        app.title_slot,
+        crate::layout::strip_inner(list, app.queue_open),
+    );
 
     library::render(frame, list, app);
 

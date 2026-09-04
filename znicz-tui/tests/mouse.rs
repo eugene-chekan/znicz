@@ -81,8 +81,9 @@ fn library_hits(len: usize) -> HitMap {
 fn a_drawn_library_row_is_clickable() {
     let mut app = new_app();
     app.library.inject_albums_for_test(albums(5));
+    // Narrow enough that columns fall back to paging (single library hit rect).
     let state = app.player.state();
-    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("backend");
+    let mut terminal = Terminal::new(TestBackend::new(50, 24)).expect("backend");
     terminal
         .draw(|frame| views::render(frame, &mut app, &state))
         .expect("draw");
@@ -90,7 +91,7 @@ fn a_drawn_library_row_is_clickable() {
     let col = inner.inner.x + 1;
     let row = inner.inner.y + 2;
     app.on_mouse(left_click(col, row));
-    assert_eq!(app.library.selected_index(), Some(2));
+    assert_eq!(app.library.selected_index(40), Some(2));
 }
 
 #[test]
@@ -98,16 +99,16 @@ fn a_library_click_moves_the_cursor_and_does_not_play() {
     let mut app = new_app();
     app.library.inject_albums_for_test(albums(5));
     app.hits = library_hits(5);
-    assert_eq!(app.library.selected_index(), Some(0));
+    assert_eq!(app.library.selected_index(40), Some(0));
 
     app.on_mouse(left_click(2, 3));
 
-    assert_eq!(app.library.selected_index(), Some(2));
+    assert_eq!(app.library.selected_index(40), Some(2));
     assert_eq!(app.focus, Focus::Library);
     assert_eq!(app.player.state().status, PlaybackStatus::Stopped);
-    assert!(!app.library.is_empty());
+    assert!(!app.library.is_empty(40));
     match app.library.mode() {
-        znicz_tui::library_pane::Mode::Albums => {}
+        znicz_tui::library_pane::Mode::Browse => {}
         other => panic!("must not open an album, got {other:?}"),
     }
 }
@@ -118,7 +119,7 @@ fn a_click_below_the_last_library_row_does_nothing() {
     app.library.inject_albums_for_test(albums(2));
     app.hits = library_hits(2);
     app.on_mouse(left_click(2, 5));
-    assert_eq!(app.library.selected_index(), Some(0));
+    assert_eq!(app.library.selected_index(40), Some(0));
 }
 
 #[test]
@@ -198,7 +199,7 @@ fn a_library_row_click_under_an_open_overlay_queue_selects_and_keeps_it_open() {
         ..HitMap::default()
     };
     app.on_mouse(left_click(2, 3));
-    assert_eq!(app.library.selected_index(), Some(2));
+    assert_eq!(app.library.selected_index(40), Some(2));
     assert_eq!(app.focus, Focus::Library);
     assert!(app.queue_open);
 }
@@ -225,7 +226,7 @@ fn a_library_click_under_an_open_sheet_queue_does_not_select() {
         ..HitMap::default()
     };
     app.on_mouse(left_click(2, 3));
-    assert_eq!(app.library.selected_index(), Some(0));
+    assert_eq!(app.library.selected_index(40), Some(0));
     assert_eq!(app.focus, Focus::Queue);
     assert!(app.queue_open);
 }
@@ -398,7 +399,7 @@ fn a_click_outside_search_cancels_the_prompt() {
     });
     app.on_mouse(left_click(2, 5));
     assert!(!app.library.is_typing());
-    assert_eq!(app.library.selected_index(), Some(0));
+    assert_eq!(app.library.selected_index(40), Some(0));
 }
 
 #[test]
@@ -459,7 +460,7 @@ fn wheel_down_steps_the_library() {
     let mut app = new_app();
     app.library.inject_albums_for_test(albums(5));
     app.on_mouse(wheel(false));
-    assert_eq!(app.library.selected_index(), Some(1));
+    assert_eq!(app.library.selected_index(40), Some(1));
 }
 
 #[test]
@@ -467,7 +468,7 @@ fn wheel_up_wraps_like_k() {
     let mut app = new_app();
     app.library.inject_albums_for_test(albums(5));
     app.on_mouse(wheel(true));
-    assert_eq!(app.library.selected_index(), Some(4));
+    assert_eq!(app.library.selected_index(40), Some(4));
 }
 
 #[test]
@@ -478,7 +479,7 @@ fn wheel_steps_a_list_overlay_not_the_library() {
     app.playlists = vec!["a".into(), "b".into(), "c".into()];
     app.on_mouse(wheel(false));
     assert_eq!(app.playlist_cursor.selected(3), Some(1));
-    assert_eq!(app.library.selected_index(), Some(0));
+    assert_eq!(app.library.selected_index(40), Some(0));
 }
 
 #[test]
@@ -487,7 +488,7 @@ fn wheel_is_ignored_while_help_is_open() {
     app.library.inject_albums_for_test(albums(5));
     app.modal = Modal::Help;
     app.on_mouse(wheel(false));
-    assert_eq!(app.library.selected_index(), Some(0));
+    assert_eq!(app.library.selected_index(40), Some(0));
 }
 
 #[test]
@@ -496,7 +497,7 @@ fn wheel_is_ignored_while_searching() {
     app.library.inject_albums_for_test(albums(5));
     app.library.begin_search();
     app.on_mouse(wheel(false));
-    assert_eq!(app.library.selected_index(), Some(0));
+    assert_eq!(app.library.selected_index(40), Some(0));
 }
 
 #[test]
@@ -505,7 +506,7 @@ fn a_click_on_the_transport_does_nothing() {
     app.library.inject_albums_for_test(albums(3));
     app.hits = library_hits(3);
     app.on_mouse(left_click(10, 22));
-    assert_eq!(app.library.selected_index(), Some(0));
+    assert_eq!(app.library.selected_index(40), Some(0));
     assert!(!app.queue_open);
     assert_eq!(app.modal, Modal::None);
 }

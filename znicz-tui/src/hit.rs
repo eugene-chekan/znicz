@@ -27,6 +27,9 @@ pub struct FooterHit {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct HitMap {
     pub library: Option<ListHit>,
+    pub library_artists: Option<ListHit>,
+    pub library_albums: Option<ListHit>,
+    pub library_tracks: Option<ListHit>,
     pub queue: Option<ListHit>,
     pub overlay: Option<Rect>,
     pub overlay_list: Option<ListHit>,

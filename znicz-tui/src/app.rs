@@ -19,7 +19,7 @@ use crate::cover::CoverCache;
 use crate::cursor::Cursor;
 use crate::hit::HitMap;
 use crate::layout;
-use crate::library_pane::{Item, LibraryPane, Mode};
+use crate::library_pane::{ColumnFocus, EffectiveLayout, Item, LibraryPane, Mode};
 use crate::line_edit::LineEdit;
 use crate::meta::{Entry, MetaCache};
 use crate::toast::Toasts;
@@ -421,6 +421,7 @@ impl App {
     // --- mouse handling ---
 
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
+        self.library.set_preferred_layout(self.tui.library_layout);
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => self.on_left_click(mouse.column, mouse.row),
             MouseEventKind::ScrollUp => self.on_wheel(-1),
@@ -440,7 +441,7 @@ impl App {
             Modal::Radio => self.station_cursor.step(delta, self.stations.len()),
             Modal::Help | Modal::Inspector => {}
             Modal::None => match self.focus {
-                Focus::Library => self.library.step(delta),
+                Focus::Library => self.library.step(delta, self.library_strip()),
                 Focus::Queue if self.queue_open => {
                     let len = self.player.state().queue.len();
                     self.queue_cursor.step(delta, len);
@@ -506,12 +507,7 @@ impl App {
             }
             let list = Rect::new(0, 0, self.list_width, self.list_height);
             if matches!(layout::drawer(list, true), layout::Drawer::Overlay(_)) {
-                if let Some(hit) = self.hits.library {
-                    if let Some(index) = hit.row_at(column, row) {
-                        self.library.set_index(index);
-                        self.focus = Focus::Library;
-                    }
-                }
+                self.library_click_at(column, row);
             }
             return;
         }
@@ -525,12 +521,32 @@ impl App {
             return;
         }
 
-        if let Some(hit) = self.hits.library {
-            if let Some(index) = hit.row_at(column, row) {
-                self.library.set_index(index);
-                self.focus = Focus::Library;
+        self.library_click_at(column, row);
+    }
+
+    fn library_click_at(&mut self, column: u16, row: u16) -> bool {
+        let strip = self.library_strip();
+        for (col, hit) in [
+            (ColumnFocus::Artists, self.hits.library_artists),
+            (ColumnFocus::Albums, self.hits.library_albums),
+            (ColumnFocus::Tracks, self.hits.library_tracks),
+        ] {
+            if let Some(hit) = hit {
+                if let Some(index) = hit.row_at(column, row) {
+                    self.library.set_column_index(col, index);
+                    self.focus = Focus::Library;
+                    return true;
+                }
             }
         }
+        if let Some(hit) = self.hits.library {
+            if let Some(index) = hit.row_at(column, row) {
+                self.library.set_index(index, strip);
+                self.focus = Focus::Library;
+                return true;
+            }
+        }
+        false
     }
 
     fn on_overlay_click(&mut self, column: u16, row: u16) {
@@ -552,6 +568,7 @@ impl App {
     ///
     /// Public so the bindings can be driven from tests without a real terminal.
     pub fn on_key(&mut self, key: KeyEvent) {
+        self.library.set_preferred_layout(self.tui.library_layout);
         if self.modal == Modal::Help {
             self.modal = Modal::None;
             return;
@@ -677,7 +694,16 @@ impl App {
             }
 
             KeyCode::Tab => {
-                if !self.queue_open {
+                let strip = self.library_strip();
+                if self.focus == Focus::Library
+                    && matches!(self.library.mode(), Mode::Browse)
+                    && self.library.effective_layout(strip) == EffectiveLayout::Columns
+                    && !self.library.artists().is_empty()
+                    && self.modal == Modal::None
+                    && !self.library.is_typing()
+                {
+                    self.library.cycle_column(true);
+                } else if !self.queue_open {
                     self.open_queue();
                     self.focus = Focus::Queue;
                 } else if layout::is_sheet(self.list_width, true) {
@@ -687,7 +713,16 @@ impl App {
                 }
             }
             KeyCode::BackTab => {
-                if !self.queue_open {
+                let strip = self.library_strip();
+                if self.focus == Focus::Library
+                    && matches!(self.library.mode(), Mode::Browse)
+                    && self.library.effective_layout(strip) == EffectiveLayout::Columns
+                    && !self.library.artists().is_empty()
+                    && self.modal == Modal::None
+                    && !self.library.is_typing()
+                {
+                    self.library.cycle_column(false);
+                } else if !self.queue_open {
                     // no-op while drawer is closed
                 } else if layout::is_sheet(self.list_width, true) {
                     // no-op in sheet mode
@@ -696,7 +731,11 @@ impl App {
                 }
             }
 
-            KeyCode::Char(' ') => self.toggle_pause(),
+            KeyCode::Char(' ') => {
+                if !self.library_toggle_tree_expand() {
+                    self.toggle_pause();
+                }
+            }
             KeyCode::Char('s') => self.apply(Command::Stop, None),
             KeyCode::Char('n') => self.skip_track(false),
             KeyCode::Char('p') => self.skip_track(true),
@@ -739,7 +778,13 @@ impl App {
     fn close_queue(&mut self) {
         self.queue_open = false;
         self.focus = Focus::Library;
-        self.library.clamp_pan(self.title_slot());
+        self.library
+            .clamp_pan(self.title_slot(), self.library_strip());
+    }
+
+    fn library_strip(&self) -> usize {
+        let list = Rect::new(0, 0, self.list_width.max(2), self.list_height.max(3));
+        layout::strip_inner(list, self.queue_open)
     }
 
     fn title_slot(&self) -> usize {
@@ -1208,18 +1253,40 @@ impl App {
     }
 
     fn on_library_key(&mut self, key: KeyEvent) {
+        let strip = self.library_strip();
         match key.code {
             KeyCode::Char('/') => self.library.begin_search(),
             KeyCode::Enter => self.library_enter(),
             KeyCode::Char('a') => {
-                let tracks = self.library.selected_tracks();
+                let tracks = self.library.selected_tracks(strip);
                 self.enqueue(tracks);
             }
             KeyCode::Char('A') => {
-                let tracks = self.library.listed_tracks();
+                let tracks = self.library.listed_tracks(strip);
                 self.enqueue(tracks);
             }
+            KeyCode::Char('o') => {
+                let _ = self.library_toggle_tree_expand();
+            }
             _ => {}
+        }
+    }
+
+    /// Space (global) and `o` (library): expand/collapse tree parents.
+    fn library_toggle_tree_expand(&mut self) -> bool {
+        let strip = self.library_strip();
+        if self.focus != Focus::Library || !matches!(self.library.mode(), Mode::Browse) {
+            return false;
+        }
+        if self.library.effective_layout(strip) != EffectiveLayout::Tree {
+            return false;
+        }
+        match self.library.selected(strip) {
+            Some(Item::Artist(_) | Item::Album(_)) => {
+                self.library.toggle_expand_at_cursor();
+                true
+            }
+            _ => false,
         }
     }
 
@@ -1237,26 +1304,58 @@ impl App {
         }
     }
 
-    /// Enter in the library: open an album, or play a track right away.
-    /// Artist/album rows in search results are stubs until browse ships.
+    /// Enter in the library: land from search, drill browse, or play a track.
     fn library_enter(&mut self) {
-        match self.library.selected() {
-            Some(Item::Artist(_)) => {
-                self.toasts.info("artist browse from search comes later");
+        let strip = self.library_strip();
+        enum Action {
+            FocusArtist(String),
+            FocusAlbum {
+                album: String,
+                album_artist: Option<String>,
+            },
+            BrowseEnter,
+            Play(Track),
+        }
+        let action = match self.library.selected(strip) {
+            Some(Item::Artist(artist)) => {
+                if matches!(self.library.mode(), Mode::Search(_)) {
+                    Action::FocusArtist(artist.name.clone())
+                } else {
+                    Action::BrowseEnter
+                }
             }
-            Some(Item::Album(_)) if matches!(self.library.mode(), Mode::Search(_)) => {
-                self.toasts.info("album browse from search comes later");
+            Some(Item::Album(album)) => {
+                if matches!(self.library.mode(), Mode::Search(_)) {
+                    Action::FocusAlbum {
+                        album: album.album.clone(),
+                        album_artist: album.album_artist.clone(),
+                    }
+                } else {
+                    Action::BrowseEnter
+                }
             }
-            Some(Item::Album(_)) => {
-                self.library.enter();
+            Some(Item::Track(track)) => Action::Play(track.clone()),
+            None => return,
+        };
+        match action {
+            Action::FocusArtist(name) => {
+                self.library.focus_artist(&name);
             }
-            Some(Item::Track(track)) => {
+            Action::FocusAlbum {
+                album,
+                album_artist,
+            } => {
+                self.library.focus_album(&album, album_artist.as_deref());
+            }
+            Action::BrowseEnter => {
+                let _ = self.library.enter(strip);
+            }
+            Action::Play(track) => {
                 let path = track.path.clone();
-                let entry = entry_from_track(track);
+                let entry = entry_from_track(&track);
                 self.meta.insert(path.clone(), entry);
                 self.apply(Command::Play(znicz_core::QueueItem::file(path)), None);
             }
-            None => {}
         }
     }
 
@@ -1298,7 +1397,7 @@ impl App {
         } else if self.focus == Focus::Queue && self.queue_open {
             self.player.state().queue.len()
         } else {
-            self.library.len()
+            self.library.len(self.library_strip())
         }
     }
 
@@ -1317,7 +1416,7 @@ impl App {
             self.queue_cursor.step(delta, len);
             self.queue_h_offset = 0;
         } else {
-            self.library.step(delta);
+            self.library.step(delta, self.library_strip());
         }
     }
 
@@ -1336,7 +1435,7 @@ impl App {
             self.queue_cursor.page(delta, len);
             self.queue_h_offset = 0;
         } else {
-            self.library.page(delta);
+            self.library.page(delta, self.library_strip());
         }
     }
 
@@ -1354,7 +1453,7 @@ impl App {
             self.queue_cursor.first();
             self.queue_h_offset = 0;
         } else {
-            self.library.first();
+            self.library.first(self.library_strip());
         }
     }
 
@@ -1373,7 +1472,7 @@ impl App {
             self.queue_cursor.last(len);
             self.queue_h_offset = 0;
         } else {
-            self.library.last();
+            self.library.last(self.library_strip());
         }
     }
 
@@ -1453,7 +1552,8 @@ impl App {
         if self.focus == Focus::Queue && self.queue_open {
             self.pan_queue(dir);
         } else {
-            self.library.pan(dir, self.title_slot);
+            self.library
+                .pan(dir, self.title_slot(), self.library_strip());
         }
     }
 

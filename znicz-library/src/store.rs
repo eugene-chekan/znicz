@@ -410,9 +410,7 @@ impl Library {
         let mut by_artist: std::collections::BTreeMap<String, u32> =
             std::collections::BTreeMap::new();
         for album in &attributed {
-            *by_artist
-                .entry(album.browse_artist.clone())
-                .or_insert(0) += album.summary.track_count;
+            *by_artist.entry(album.browse_artist.clone()).or_insert(0) += album.summary.track_count;
         }
         let mut artists: Vec<ArtistSummary> = by_artist
             .into_iter()
@@ -664,7 +662,11 @@ fn is_various_artists_tag(value: &str) -> bool {
 
 fn classify_browse_artist(group: &AlbumGroup) -> String {
     // Tagged VA: any track has album_artist = "Various Artists".
-    if group.album_artists.iter().any(|aa| is_various_artists_tag(aa)) {
+    if group
+        .album_artists
+        .iter()
+        .any(|aa| is_various_artists_tag(aa))
+    {
         return VARIOUS_ARTISTS_NAME.to_string();
     }
 
@@ -1127,11 +1129,8 @@ mod tests {
 
         let artists = library.browse_artists().unwrap();
         let names: Vec<_> = artists.iter().map(|a| a.name.as_str()).collect();
-        assert!(
-            names.iter().any(|n| *n == VARIOUS_ARTISTS_NAME),
-            "got {names:?}"
-        );
-        assert!(names.iter().any(|n| *n == "Miles"));
+        assert!(names.contains(&VARIOUS_ARTISTS_NAME), "got {names:?}");
+        assert!(names.contains(&"Miles"));
         assert!(!names.iter().any(|n| *n == "A" || *n == "B"));
 
         let comps = library

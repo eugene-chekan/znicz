@@ -1,11 +1,11 @@
 # Library browse views: three-column + expandable tree
 
 **Date:** 2026-09-04  
-**Status:** Design locked — awaiting user approval before implementation plan  
+**Status:** Approved and implemented (0.5.0)  
 **Issues:** [#7](https://github.com/eugene-chekan/znicz/issues/7), [#9](https://github.com/eugene-chekan/znicz/issues/9)  
-**Related:** Entity search (#51 / [grouped-search design](2026-09-04-grouped-search-results-design.md)) — Enter on artist/album is still a stub toast  
+**Related:** Entity search (#51 / [grouped-search design](2026-09-04-grouped-search-results-design.md)) — Enter on artist/album lands in browse  
 **Crates (expected):** `znicz-tui` primarily; `znicz-library` for artist listing / albums-by-artist queries if missing  
-**Version:** bump `z` when this work merges (compatible addition)
+**Version:** **0.5.0** (product-phase browse layouts)
 
 ## Decisions (locked)
 

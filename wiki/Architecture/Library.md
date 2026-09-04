@@ -64,8 +64,15 @@ There are two search APIs:
 2. **`search_entities`** (TUI `/` search) — mixed **entity hits**: distinct
    artists, distinct albums, then tracks whose **title** matched. An artist-name
    query returns one artist row (not every track by that artist). Enter on an
-   artist or album row in the TUI is still a stub toast; browse from search is
-   later. `a` queues that entity; `A` queues title-matched tracks only.
+   artist or album leaves search and focuses that entity in the artist-first
+   browse view. `a` queues that entity; `A` queues title-matched tracks only.
+
+Browse APIs for the TUI (not MCP/CLI):
+
+- **`browse_artists`** — distinct browse artists, including a synthetic
+  **Various Artists** root when compilation albums exist (tagged
+  `album_artist = "Various Artists"`, or untagged multi-artist albums).
+- **`albums_for_browse_artist`** — albums attributed to one browse artist.
 
 Both use the same Unicode fold. Matching uses **Unicode-lowercased** copies of
 the tag fields (`title_folded`, and the same for artist / album / album artist).
