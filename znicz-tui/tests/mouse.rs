@@ -1,13 +1,13 @@
 //! Mouse: select-only clicks, wheel, click-outside, queue toggle.
 
-use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 use znicz_core::Command;
 use znicz_core::{spawn_player, AudioConfig, PlaybackStatus, PlayerHandle};
 use znicz_library::AlbumSummary;
-use znicz_tui::hit::{HitMap, ListHit};
+use znicz_tui::hit::{FooterHit, HitMap, ListHit};
 use znicz_tui::views;
 use znicz_tui::{App, Focus, Modal, PlaylistPrompt};
 
@@ -362,4 +362,41 @@ fn a_click_on_the_transport_does_nothing() {
     assert_eq!(app.library.selected_index(), Some(0));
     assert!(!app.queue_open);
     assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn a_footer_help_hit_opens_help() {
+    let mut app = new_app();
+    app.hits.footer_hints = vec![FooterHit {
+        rect: Rect::new(70, 23, 7, 1),
+        key: KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+    }];
+    app.on_mouse(left_click(72, 23));
+    assert_eq!(app.modal, Modal::Help);
+}
+
+#[test]
+fn a_footer_esc_hit_closes_devices() {
+    let mut app = new_app();
+    app.modal = Modal::Devices;
+    app.hits.overlay = Some(Rect::new(10, 4, 40, 12));
+    app.hits.footer_hints = vec![FooterHit {
+        rect: Rect::new(10, 23, 9, 1),
+        key: KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+    }];
+    app.on_mouse(left_click(12, 23));
+    assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn a_footer_hit_runs_while_an_overlay_is_open() {
+    let mut app = new_app();
+    app.modal = Modal::Inspector;
+    app.hits.overlay = Some(Rect::new(20, 4, 40, 12));
+    app.hits.footer_hints = vec![FooterHit {
+        rect: Rect::new(0, 23, 7, 1),
+        key: KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+    }];
+    app.on_mouse(left_click(2, 23));
+    assert_eq!(app.modal, Modal::Help);
 }

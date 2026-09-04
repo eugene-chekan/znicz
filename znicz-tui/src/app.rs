@@ -470,6 +470,16 @@ impl App {
             }
             return;
         }
+        if let Some(hit) = self
+            .hits
+            .footer_hints
+            .iter()
+            .find(|h| point_in(h.rect, column, row))
+        {
+            let key = hit.key;
+            self.on_key(key);
+            return;
+        }
         if self.hits.close.is_some_and(|r| point_in(r, column, row)) {
             if self.modal != Modal::None {
                 self.modal = Modal::None;
