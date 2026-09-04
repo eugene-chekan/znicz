@@ -42,12 +42,16 @@ problems specific to this kind of program:
   while running. Layouts need an order in which parts are dropped.
 - **Characters, not pixels.** Text has to be truncated to fit, and by character
   rather than byte, or a title like `Łódź nocą` breaks apart.
-- **No pointer.** Every action needs a key, and the keys have to be discoverable,
-  which is what the help overlay is for.
+- **Limited pointer.** Pointer is select-only (list rows, top-right **X** to
+  close overlays and the queue drawer, clickable footer hints). Most actions
+  still need keys, which is what the help overlay is for.
 
 Conventions worth borrowing from other players: `Space` for pause, `/` to search,
 `j`/`k` to move (from vim and `less`), `]` for the queue drawer, `i` for the
-signal path, `P` for playlists, `?` for help. Mouse is [not wired yet](https://github.com/eugene-chekan/znicz/issues/8).
+signal path, `P` for playlists, `?` for help. Left click selects a list row;
+the wheel steps the focused list; footer hint segments run that key action;
+clicks on the transport and cover do nothing.
+See [TUI architecture](../Architecture/TUI.md).
 
 ## Keys
 

@@ -5,17 +5,19 @@
 
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Clear, List, ListItem, Paragraph};
 use ratatui::Frame;
 use znicz_core::PlayerState;
 
 use crate::app::{App, Modal};
 use crate::format;
+use crate::hit::ListHit;
 use crate::theme;
 use crate::views;
 
-pub fn render_modal(frame: &mut Frame, area: Rect, app: &App, state: &PlayerState) {
+pub fn render_modal(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState) {
     let popup = centered_modal(area);
+    app.hits.overlay = Some(popup);
     frame.render_widget(Clear, popup);
     render(frame, popup, app, state);
 }
@@ -33,12 +35,13 @@ fn centered_modal(area: Rect) -> Rect {
     }
 }
 
-pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &PlayerState) {
+pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState) {
+    app.hits.close = views::close_button_rect(area);
     let focused = app.modal == Modal::Devices;
     let width = views::inner_width(area);
 
     if app.devices.is_empty() {
-        let block = views::pane_block("Devices", focused, None);
+        let block = views::pane_block("Devices", focused, None).title(views::close_title());
         let hint = views::placeholder("No output devices found. Press R to look again.");
         frame.render_widget(Paragraph::new(hint).block(block), area);
         return;
@@ -80,15 +83,20 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &PlayerState) {
         None => "no stream open".to_string(),
     };
 
-    let list = List::new(items)
-        .block(views::pane_block("Devices", focused, Some(summary)))
-        .highlight_style(if focused {
-            theme::selected()
-        } else {
-            views::no_style()
-        });
+    let block = views::pane_block("Devices", focused, Some(summary)).title(views::close_title());
+    let inner = block.inner(area);
+    let list = List::new(items).block(block).highlight_style(if focused {
+        theme::selected()
+    } else {
+        views::no_style()
+    });
 
-    let mut list_state = ListState::default();
-    list_state.select(app.device_cursor.selected(app.devices.len()));
-    frame.render_stateful_widget(list, area, &mut list_state);
+    app.device_list_state
+        .select(app.device_cursor.selected(app.devices.len()));
+    frame.render_stateful_widget(list, area, &mut app.device_list_state);
+    app.hits.overlay_list = Some(ListHit {
+        inner,
+        offset: app.device_list_state.offset(),
+        len: app.devices.len(),
+    });
 }

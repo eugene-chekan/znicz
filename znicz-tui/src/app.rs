@@ -3,7 +3,11 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
+use ratatui::layout::Rect;
 use znicz_core::{
     apply_to_player, list_saved, load_path, sanitize_stem, saved_path, skipped_notice, write_path,
     AudioDeviceInfo, AudioOutput, Command, IpcClient, PlaybackStatus, PlayerEvent, PlayerHandle,
@@ -13,6 +17,7 @@ use znicz_library::{Library, Track};
 
 use crate::cover::CoverCache;
 use crate::cursor::Cursor;
+use crate::hit::HitMap;
 use crate::layout;
 use crate::library_pane::{Item, LibraryPane};
 use crate::line_edit::LineEdit;
@@ -242,6 +247,7 @@ pub struct App {
     pub queue_title_slot: usize,
     pub queue_cursor: Cursor,
     pub library: LibraryPane,
+    pub hits: HitMap,
     pub devices: Vec<AudioDeviceInfo>,
     pub device_cursor: Cursor,
     pub playlists_dir: PathBuf,
@@ -259,7 +265,31 @@ pub struct App {
     pub picker: Option<ratatui_image::picker::Picker>,
     pub(crate) cover_image: Option<ratatui_image::protocol::StatefulProtocol>,
     pub(crate) cover_draw_key: Option<(String, u16, u16)>,
+    pub(crate) library_list_state: ratatui::widgets::ListState,
+    pub(crate) queue_list_state: ratatui::widgets::ListState,
+    pub(crate) device_list_state: ratatui::widgets::ListState,
+    pub(crate) playlist_list_state: ratatui::widgets::ListState,
+    pub(crate) station_list_state: ratatui::widgets::ListState,
     pub should_quit: bool,
+}
+
+fn point_in(rect: Rect, column: u16, row: u16) -> bool {
+    rect.contains(ratatui::layout::Position { x: column, y: row })
+}
+
+struct MouseCapture;
+
+impl MouseCapture {
+    fn enable() -> Self {
+        let _ = crossterm::execute!(std::io::stdout(), EnableMouseCapture);
+        Self
+    }
+}
+
+impl Drop for MouseCapture {
+    fn drop(&mut self) {
+        let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
+    }
 }
 
 impl App {
@@ -288,6 +318,7 @@ impl App {
             queue_title_slot: 0,
             queue_cursor: Cursor::new(),
             library: LibraryPane::new(library),
+            hits: HitMap::default(),
             devices: load_output_devices(),
             device_cursor: Cursor::new(),
             playlists_dir: znicz_library::default_playlists_dir()
@@ -307,12 +338,18 @@ impl App {
             picker: Some(ratatui_image::picker::Picker::halfblocks()),
             cover_image: None,
             cover_draw_key: None,
+            library_list_state: ratatui::widgets::ListState::default(),
+            queue_list_state: ratatui::widgets::ListState::default(),
+            device_list_state: ratatui::widgets::ListState::default(),
+            playlist_list_state: ratatui::widgets::ListState::default(),
+            station_list_state: ratatui::widgets::ListState::default(),
             should_quit: false,
         }
     }
 
     pub fn run(&mut self) -> color_eyre::Result<()> {
         let mut terminal = ratatui::init();
+        let _mouse = MouseCapture::enable();
         self.picker = Some(make_picker(self.tui.cover_protocol));
         tracing::info!(
             protocol = ?self.picker.as_ref().map(|p| p.protocol_type()),
@@ -338,6 +375,7 @@ impl App {
                 loop {
                     match event::read()? {
                         Event::Key(key) if key.kind == KeyEventKind::Press => self.on_key(key),
+                        Event::Mouse(mouse) => self.on_mouse(mouse),
                         _ => {}
                     }
                     if !event::poll(Duration::ZERO)? {
@@ -376,6 +414,134 @@ impl App {
                     }
                 }
                 _ => {}
+            }
+        }
+    }
+
+    // --- mouse handling ---
+
+    pub fn on_mouse(&mut self, mouse: MouseEvent) {
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => self.on_left_click(mouse.column, mouse.row),
+            MouseEventKind::ScrollUp => self.on_wheel(-1),
+            MouseEventKind::ScrollDown => self.on_wheel(1),
+            _ => {}
+        }
+    }
+
+    fn on_wheel(&mut self, delta: isize) {
+        if self.library.is_typing() || self.playlist_prompt.is_some() || self.radio_prompt.is_some()
+        {
+            return;
+        }
+        match self.modal {
+            Modal::Devices => self.device_cursor.step(delta, self.devices.len()),
+            Modal::Playlists => self.playlist_cursor.step(delta, self.playlists.len()),
+            Modal::Radio => self.station_cursor.step(delta, self.stations.len()),
+            Modal::Help | Modal::Inspector => {}
+            Modal::None => match self.focus {
+                Focus::Library => self.library.step(delta),
+                Focus::Queue if self.queue_open => {
+                    let len = self.player.state().queue.len();
+                    self.queue_cursor.step(delta, len);
+                }
+                Focus::Queue => {}
+            },
+        }
+    }
+
+    fn on_left_click(&mut self, column: u16, row: u16) {
+        if self.library.is_typing() {
+            let on_prompt = self
+                .hits
+                .search_prompt
+                .is_some_and(|r| point_in(r, column, row));
+            if !on_prompt {
+                self.library.cancel_search();
+                self.toasts.info("search cancelled");
+            }
+            return;
+        }
+        if let Some(hit) = self
+            .hits
+            .footer_hints
+            .iter()
+            .find(|h| point_in(h.rect, column, row))
+        {
+            let key = hit.key;
+            self.on_key(key);
+            return;
+        }
+        if self.hits.close.is_some_and(|r| point_in(r, column, row)) {
+            if self.modal != Modal::None {
+                self.modal = Modal::None;
+                self.playlist_prompt = None;
+                self.radio_prompt = None;
+            } else if self.queue_open {
+                self.close_queue();
+            }
+            return;
+        }
+        if self.playlist_prompt.is_some() || self.radio_prompt.is_some() {
+            let inside = self.hits.overlay.is_some_and(|r| point_in(r, column, row));
+            if !inside {
+                self.playlist_prompt = None;
+                self.radio_prompt = None;
+            }
+            return;
+        }
+        if self.modal != Modal::None {
+            self.on_overlay_click(column, row);
+            return;
+        }
+
+        if self.queue_open {
+            if let Some(hit) = self.hits.queue {
+                if let Some(index) = hit.row_at(column, row) {
+                    let len = self.player.state().queue.len();
+                    self.queue_cursor.set(index, len);
+                    self.focus = Focus::Queue;
+                    return;
+                }
+            }
+            let list = Rect::new(0, 0, self.list_width, self.list_height);
+            if matches!(layout::drawer(list, true), layout::Drawer::Overlay(_)) {
+                if let Some(hit) = self.hits.library {
+                    if let Some(index) = hit.row_at(column, row) {
+                        self.library.set_index(index);
+                        self.focus = Focus::Library;
+                    }
+                }
+            }
+            return;
+        }
+
+        if self
+            .hits
+            .queue_toggle
+            .is_some_and(|r| point_in(r, column, row))
+        {
+            self.open_queue();
+            return;
+        }
+
+        if let Some(hit) = self.hits.library {
+            if let Some(index) = hit.row_at(column, row) {
+                self.library.set_index(index);
+                self.focus = Focus::Library;
+            }
+        }
+    }
+
+    fn on_overlay_click(&mut self, column: u16, row: u16) {
+        if let Some(hit) = self.hits.overlay_list {
+            if let Some(index) = hit.row_at(column, row) {
+                match self.modal {
+                    Modal::Devices => self.device_cursor.set(index, self.devices.len()),
+                    Modal::Playlists => self.playlist_cursor.set(index, self.playlists.len()),
+                    Modal::Radio => self.station_cursor.set(index, self.stations.len()),
+                    _ => {}
+                }
             }
         }
     }

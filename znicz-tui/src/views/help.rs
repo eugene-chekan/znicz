@@ -5,16 +5,20 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
+use crate::app::App;
 use crate::keys::{self, Binding};
 use crate::theme;
 
-pub fn render(frame: &mut Frame, area: Rect) {
+pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let popup = centered(86, 100, area);
+    app.hits.overlay = Some(popup);
+    app.hits.close = crate::views::close_button_rect(popup);
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme::border_active())
         .title(Span::styled(" Keys ", theme::title()))
+        .title(crate::views::close_title())
         .title_bottom(Line::from(Span::styled(" any key closes ", theme::dim())).right_aligned());
     let inner = block.inner(popup);
 

@@ -19,11 +19,13 @@ use znicz_core::PlayerState;
 
 use crate::app::{App, Modal};
 use crate::format;
+use crate::hit::HitMap;
 use crate::line_edit::LineEdit;
 use crate::theme;
 use crate::toast::Level;
 
 pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
+    app.hits = HitMap::default();
     let area = frame.area();
     let show_cover = app.tui.show_cover;
     let transport = crate::layout::transport_height(area.height, show_cover);
@@ -41,6 +43,19 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
     let list = chunks[0];
     app.list_width = list.width;
     app.list_height = list.height;
+    app.hits.queue_toggle = list.width.checked_sub(1).map(|w| Rect {
+        x: list.x + w,
+        y: list.y,
+        width: 1,
+        height: list.height,
+    });
+    let lib_w = crate::layout::strip_width(list, app.queue_open);
+    app.hits.library_pane = Some(Rect {
+        x: list.x,
+        y: list.y,
+        width: lib_w,
+        height: list.height,
+    });
     app.title_slot = library::title_slot(
         &app.library,
         crate::layout::strip_inner(list, app.queue_open),
@@ -64,9 +79,9 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
     status::render_footer(frame, chunks[2], app);
 
     match app.modal {
-        Modal::Help => help::render(frame, area),
+        Modal::Help => help::render(frame, area, app),
         Modal::Devices => devices::render_modal(frame, area, app, state),
-        Modal::Inspector => inspector::render(frame, area, state),
+        Modal::Inspector => inspector::render(frame, area, app, state),
         Modal::Playlists => playlists::render_modal(frame, area, app),
         Modal::Radio => radio::render_modal(frame, area, app),
         Modal::None => {}
@@ -117,6 +132,26 @@ fn toast_mark(level: Level) -> (&'static str, Style) {
         Level::Warn => ("▲", theme::warn()),
         Level::Error => ("x", theme::bad()),
     }
+}
+
+/// Top-right cell for the close control (`X`), inside the border row.
+pub(crate) fn close_button_rect(area: Rect) -> Option<Rect> {
+    if area.width < 3 || area.height < 1 {
+        return None;
+    }
+    Some(Rect {
+        x: area.x + area.width - 2,
+        y: area.y,
+        width: 1,
+        height: 1,
+    })
+}
+
+pub(crate) fn close_title() -> Line<'static> {
+    // Single "X", right-aligned into the titles strip (inside the borders). That
+    // lands on `area.x + width - 2`, matching `close_button_rect`. A padded
+    // " X " put the glyph one cell left of the hit.
+    Line::from(Span::styled("X", theme::key())).right_aligned()
 }
 
 /// Border for a pane, highlighted when it has focus.

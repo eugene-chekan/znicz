@@ -2,22 +2,24 @@
 
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{List, ListItem, Paragraph};
 use ratatui::Frame;
 use znicz_core::PlayerState;
 
 use crate::app::{App, Focus};
 use crate::format;
+use crate::hit::ListHit;
 use crate::theme;
 use crate::views;
 use crate::views::now_playing;
 
-pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &PlayerState) {
+pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState) {
+    app.hits.close = views::close_button_rect(area);
     let focused = app.focus == Focus::Queue && !app.modal.blocks_list_focus();
     let width = views::inner_width(area);
 
     if state.queue.is_empty() {
-        let block = views::pane_block("Queue", focused, None);
+        let block = views::pane_block("Queue", focused, None).title(views::close_title());
         let hint = views::placeholder("Queue is empty. Add tracks from the library with a or A.");
         frame.render_widget(Paragraph::new(hint).block(block), area);
         return;
@@ -100,16 +102,22 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &PlayerState) {
         None => format!("{} tracks", state.queue.len()),
     };
 
-    let block = views::pane_block("Queue", focused, Some(summary));
+    let block = views::pane_block("Queue", focused, Some(summary)).title(views::close_title());
+    let inner = block.inner(area);
     let list = List::new(items).block(block).highlight_style(if focused {
         theme::selected()
     } else {
         views::no_style()
     });
 
-    let mut list_state = ListState::default();
-    list_state.select(app.queue_cursor.selected(state.queue.len()));
-    frame.render_stateful_widget(list, area, &mut list_state);
+    app.queue_list_state
+        .select(app.queue_cursor.selected(state.queue.len()));
+    frame.render_stateful_widget(list, area, &mut app.queue_list_state);
+    app.hits.queue = Some(ListHit {
+        inner,
+        offset: app.queue_list_state.offset(),
+        len: state.queue.len(),
+    });
 }
 
 /// Width left for the title after pinning index, marker, and duration.
