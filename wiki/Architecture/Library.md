@@ -27,6 +27,7 @@ One row per audio file, in a table called `tracks`:
 | `track_number`, `disc_number` | Tags, used for album ordering |
 | `sample_rate`, `channels`, `bits_per_sample`, `duration_secs` | File header |
 | `modified_secs` | File modification time, used to skip unchanged files |
+| `title_folded`, `artist_folded`, `album_folded`, `album_artist_folded` | Unicode-lowercased copies of the tag fields, used only by search |
 
 Files with no tags still get a row: the title falls back to the file name.
 
@@ -56,11 +57,19 @@ the header and the tag block only. Playback still uses Symphonia.
 
 ## Searching
 
-Search is a `LIKE` match across title, artist, album, and album artist:
+Search is a `LIKE` match across title, artist, album, and album artist. Matching
+uses **Unicode-lowercased** copies of those fields (`title_folded`, and the same
+for artist / album / album artist). SQLite's own `LIKE` only folds ASCII `A–Z`,
+so a lowercase Cyrillic query would otherwise miss capitalized tags.
 
 ```sql
-WHERE title LIKE '%query%' OR artist LIKE '%query%' ...
+WHERE title_folded LIKE '%query%' OR artist_folded LIKE '%query%' ...
 ```
+
+The query is lowercased in Rust the same way (`str::to_lowercase`) before it is
+escaped and bound. Display columns stay as tagged; only the folded copies are
+for search. Opening an older database adds the folded columns and fills them
+from the existing tags — no rescan required.
 
 `%` and `_` are wildcards in SQL, so a query containing them is escaped first —
 searching for "100%" looks for the literal text.

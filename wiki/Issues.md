@@ -29,6 +29,17 @@ streams, including ICY now playing) is done.
 
 ## Closed
 
+### [#44 search_library: Cyrillic queries are case-sensitive](https://github.com/eugene-chekan/znicz/issues/44)
+
+- **Fixed:** 2026-09-04
+- **Component:** `znicz-library`
+- **Status:** **Fixed** in 0.4.7
+
+SQLite `LIKE` only folds ASCII, so a lowercase Cyrillic query missed capitalized
+tags even when the row was indexed. Search now matches Unicode-lowercased copies
+of title / artist / album / album artist (filled on scan and backfilled when an
+older database is opened). Callers still pass the query as typed.
+
 ### [#8 Mouse support in the TUI](https://github.com/eugene-chekan/znicz/issues/8)
 
 - **Fixed:** 2026-09-03
