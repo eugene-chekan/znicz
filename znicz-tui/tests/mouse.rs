@@ -212,6 +212,35 @@ fn a_click_outside_inspector_does_not_close_it() {
 }
 
 #[test]
+fn a_drawn_overlay_exposes_a_close_hit() {
+    let mut app = new_app();
+    app.modal = Modal::Help;
+    let state = app.player.state();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("backend");
+    terminal
+        .draw(|frame| views::render(frame, &mut app, &state))
+        .expect("draw");
+    let close = app.hits.close.expect("close hit after draw");
+    app.on_mouse(left_click(close.x, close.y));
+    assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn a_drawn_queue_exposes_a_close_hit() {
+    let mut app = new_app();
+    queue(&mut app, 1);
+    app.queue_open = true;
+    let state = app.player.state();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("backend");
+    terminal
+        .draw(|frame| views::render(frame, &mut app, &state))
+        .expect("draw");
+    let close = app.hits.close.expect("queue close hit");
+    app.on_mouse(left_click(close.x, close.y));
+    assert!(!app.queue_open);
+}
+
+#[test]
 fn a_click_on_close_dismisses_help() {
     let mut app = new_app();
     app.modal = Modal::Help;

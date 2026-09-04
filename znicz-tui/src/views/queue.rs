@@ -14,11 +14,12 @@ use crate::views;
 use crate::views::now_playing;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState) {
+    app.hits.close = views::close_button_rect(area);
     let focused = app.focus == Focus::Queue && !app.modal.blocks_list_focus();
     let width = views::inner_width(area);
 
     if state.queue.is_empty() {
-        let block = views::pane_block("Queue", focused, None);
+        let block = views::pane_block("Queue", focused, None).title(views::close_title());
         let hint = views::placeholder("Queue is empty. Add tracks from the library with a or A.");
         frame.render_widget(Paragraph::new(hint).block(block), area);
         return;
@@ -101,7 +102,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState)
         None => format!("{} tracks", state.queue.len()),
     };
 
-    let block = views::pane_block("Queue", focused, Some(summary));
+    let block = views::pane_block("Queue", focused, Some(summary)).title(views::close_title());
     let inner = block.inner(area);
     let list = List::new(items).block(block).highlight_style(if focused {
         theme::selected()

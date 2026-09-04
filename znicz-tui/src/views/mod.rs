@@ -134,6 +134,23 @@ fn toast_mark(level: Level) -> (&'static str, Style) {
     }
 }
 
+/// Top-right cell for the close control (`X`), inside the border row.
+pub(crate) fn close_button_rect(area: Rect) -> Option<Rect> {
+    if area.width < 3 || area.height < 1 {
+        return None;
+    }
+    Some(Rect {
+        x: area.x + area.width - 2,
+        y: area.y,
+        width: 1,
+        height: 1,
+    })
+}
+
+pub(crate) fn close_title() -> Line<'static> {
+    Line::from(Span::styled(" X ", theme::key())).right_aligned()
+}
+
 /// Border for a pane, highlighted when it has focus.
 pub(crate) fn pane_block(title: &str, focused: bool, right: Option<String>) -> Block<'static> {
     let style = if focused {
