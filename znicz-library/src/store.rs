@@ -22,12 +22,24 @@ CREATE TABLE IF NOT EXISTS tracks (
     channels       INTEGER,
     bits_per_sample INTEGER,
     duration_secs  REAL,
-    modified_secs  INTEGER
+    modified_secs  INTEGER,
+    -- Unicode-lowercased copies for search. SQLite LIKE only folds ASCII.
+    title_folded        TEXT,
+    artist_folded       TEXT,
+    album_folded        TEXT,
+    album_artist_folded TEXT
 );
 CREATE INDEX IF NOT EXISTS tracks_album_idx  ON tracks(album);
 CREATE INDEX IF NOT EXISTS tracks_artist_idx ON tracks(artist);
 CREATE INDEX IF NOT EXISTS tracks_title_idx  ON tracks(title);
 ";
+
+const FOLDED_COLUMNS: &[&str] = &[
+    "title_folded",
+    "artist_folded",
+    "album_folded",
+    "album_artist_folded",
+];
 
 /// Columns in the order `row_to_track` expects them.
 const COLUMNS: &str = "id, path, title, artist, album, album_artist, genre, year, \
@@ -57,11 +69,89 @@ impl Library {
         conn.pragma_update(None, "journal_mode", "WAL").ok();
         conn.pragma_update(None, "synchronous", "NORMAL").ok();
         conn.execute_batch(SCHEMA)?;
-        Ok(Self { conn })
+        ensure_folded_columns(&conn)?;
+        let library = Self { conn };
+        library.backfill_folded_columns()?;
+        Ok(library)
     }
 
-    pub(crate) fn connection(&mut self) -> &mut Connection {
-        &mut self.conn
+    /// Insert or refresh one indexed file, including Unicode-folded search text.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn upsert_track(
+        &mut self,
+        path: &Path,
+        title: &str,
+        artist: Option<String>,
+        album: Option<String>,
+        album_artist: Option<String>,
+        genre: Option<String>,
+        year: Option<u32>,
+        track_number: Option<u32>,
+        disc_number: Option<u32>,
+        codec: Option<String>,
+        sample_rate: Option<u32>,
+        channels: Option<u16>,
+        bits_per_sample: Option<u32>,
+        duration_secs: Option<f64>,
+        modified_secs: Option<i64>,
+    ) -> Result<()> {
+        let title_folded = fold_text(title);
+        let artist_folded = artist.as_deref().map(fold_text);
+        let album_folded = album.as_deref().map(fold_text);
+        let album_artist_folded = album_artist.as_deref().map(fold_text);
+
+        self.conn.execute(
+            "INSERT INTO tracks (
+                path, title, artist, album, album_artist, genre, year,
+                track_number, disc_number, codec, sample_rate, channels,
+                bits_per_sample, duration_secs, modified_secs,
+                title_folded, artist_folded, album_folded, album_artist_folded
+             ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                ?16, ?17, ?18, ?19
+             )
+             ON CONFLICT(path) DO UPDATE SET
+                title = excluded.title,
+                artist = excluded.artist,
+                album = excluded.album,
+                album_artist = excluded.album_artist,
+                genre = excluded.genre,
+                year = excluded.year,
+                track_number = excluded.track_number,
+                disc_number = excluded.disc_number,
+                codec = excluded.codec,
+                sample_rate = excluded.sample_rate,
+                channels = excluded.channels,
+                bits_per_sample = excluded.bits_per_sample,
+                duration_secs = excluded.duration_secs,
+                modified_secs = excluded.modified_secs,
+                title_folded = excluded.title_folded,
+                artist_folded = excluded.artist_folded,
+                album_folded = excluded.album_folded,
+                album_artist_folded = excluded.album_artist_folded",
+            params![
+                path_str(path),
+                title,
+                artist,
+                album,
+                album_artist,
+                genre,
+                year,
+                track_number,
+                disc_number,
+                codec,
+                sample_rate,
+                channels,
+                bits_per_sample,
+                duration_secs,
+                modified_secs,
+                title_folded,
+                artist_folded,
+                album_folded,
+                album_artist_folded,
+            ],
+        )?;
+        Ok(())
     }
 
     pub fn track_count(&self) -> Result<u64> {
@@ -85,14 +175,18 @@ impl Library {
     }
 
     /// Free text search across title, artist and album.
+    ///
+    /// Matching uses Unicode-lowercased copies of the tags. SQLite's own `LIKE`
+    /// only folds ASCII, so a lowercase Cyrillic query would otherwise miss
+    /// capitalized tags.
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<Track>> {
-        let pattern = format!("%{}%", escape_like(query));
+        let pattern = format!("%{}%", escape_like(&fold_text(query)));
         let sql = format!(
             "SELECT {COLUMNS} FROM tracks
-             WHERE title LIKE ?1 ESCAPE '\\'
-                OR artist LIKE ?1 ESCAPE '\\'
-                OR album LIKE ?1 ESCAPE '\\'
-                OR album_artist LIKE ?1 ESCAPE '\\'
+             WHERE title_folded LIKE ?1 ESCAPE '\\'
+                OR artist_folded LIKE ?1 ESCAPE '\\'
+                OR album_folded LIKE ?1 ESCAPE '\\'
+                OR album_artist_folded LIKE ?1 ESCAPE '\\'
              ORDER BY artist, album, disc_number, track_number, title
              LIMIT ?2"
         );
@@ -204,6 +298,43 @@ impl Library {
         self.conn.execute("DELETE FROM tracks", [])?;
         Ok(())
     }
+
+    /// Fill folded search columns for rows written before Unicode search existed.
+    fn backfill_folded_columns(&self) -> Result<()> {
+        let mut statement = self.conn.prepare(
+            "SELECT id, title, artist, album, album_artist FROM tracks
+             WHERE title_folded IS NULL",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+            ))
+        })?;
+        let pending: Vec<_> = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+
+        for (id, title, artist, album, album_artist) in pending {
+            self.conn.execute(
+                "UPDATE tracks SET
+                    title_folded = ?1,
+                    artist_folded = ?2,
+                    album_folded = ?3,
+                    album_artist_folded = ?4
+                 WHERE id = ?5",
+                params![
+                    fold_text(&title),
+                    artist.as_deref().map(fold_text),
+                    album.as_deref().map(fold_text),
+                    album_artist.as_deref().map(fold_text),
+                    id,
+                ],
+            )?;
+        }
+        Ok(())
+    }
 }
 
 /// Path as text. Lossy only for non-UTF-8 paths, which we cannot store anyway.
@@ -217,6 +348,29 @@ fn escape_like(query: &str) -> String {
         .replace('\\', "\\\\")
         .replace('%', "\\%")
         .replace('_', "\\_")
+}
+
+/// Unicode-aware lowercase for search. Unlike SQLite's `lower()`, this folds
+/// Cyrillic and other non-ASCII letters.
+fn fold_text(value: &str) -> String {
+    value.to_lowercase()
+}
+
+fn ensure_folded_columns(conn: &Connection) -> Result<()> {
+    let existing = table_columns(conn)?;
+    for column in FOLDED_COLUMNS {
+        if !existing.iter().any(|name| name == *column) {
+            conn.execute(&format!("ALTER TABLE tracks ADD COLUMN {column} TEXT"), [])?;
+        }
+    }
+    Ok(())
+}
+
+fn table_columns(conn: &Connection) -> Result<Vec<String>> {
+    let mut statement = conn.prepare("PRAGMA table_info(tracks)")?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
 }
 
 fn row_to_track(row: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
@@ -256,5 +410,117 @@ mod tests {
         assert_eq!(library.track_count().unwrap(), 0);
         assert!(library.search("anything", 10).unwrap().is_empty());
         assert!(library.albums().unwrap().is_empty());
+    }
+
+    /// SQLite LIKE only folds ASCII. Cyrillic must still match case-insensitively
+    /// (see GitHub #44).
+    #[test]
+    fn search_matches_cyrillic_case_insensitively() {
+        let mut library = Library::open_in_memory().expect("open");
+        library
+            .upsert_track(
+                Path::new("/music/lyapis.flac"),
+                "Ау",
+                Some("Ляпис Трубецкой".into()),
+                Some("Веселые Картинки".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(0),
+            )
+            .expect("upsert");
+
+        let lower = library.search("веселые", 10).expect("lower");
+        assert_eq!(
+            lower.len(),
+            1,
+            "lowercase Cyrillic query should match capitalized album, got {lower:?}"
+        );
+        assert_eq!(lower[0].album.as_deref(), Some("Веселые Картинки"));
+
+        let upper = library.search("ВЕСЕЛЫЕ", 10).expect("upper");
+        assert_eq!(upper.len(), 1);
+
+        let artist = library.search("ляпис", 10).expect("artist");
+        assert_eq!(artist.len(), 1);
+
+        library
+            .upsert_track(
+                Path::new("/music/dummy.flac"),
+                "Mysterons",
+                Some("Portishead".into()),
+                Some("Dummy".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(0),
+            )
+            .expect("upsert ascii");
+        assert_eq!(library.search("portishead", 10).expect("ascii").len(), 1);
+    }
+
+    #[test]
+    fn opening_backfills_folded_columns_for_legacy_rows() {
+        let dir = std::env::temp_dir().join("znicz-library-fold-migrate");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("library.db");
+
+        {
+            let conn = Connection::open(&path).expect("create legacy db");
+            conn.execute_batch(
+                "CREATE TABLE tracks (
+                    id INTEGER PRIMARY KEY,
+                    path TEXT NOT NULL UNIQUE,
+                    title TEXT NOT NULL,
+                    artist TEXT,
+                    album TEXT,
+                    album_artist TEXT,
+                    genre TEXT,
+                    year INTEGER,
+                    track_number INTEGER,
+                    disc_number INTEGER,
+                    codec TEXT,
+                    sample_rate INTEGER,
+                    channels INTEGER,
+                    bits_per_sample INTEGER,
+                    duration_secs REAL,
+                    modified_secs INTEGER
+                );",
+            )
+            .expect("legacy schema");
+            conn.execute(
+                "INSERT INTO tracks (path, title, artist, album, modified_secs)
+                 VALUES (?1, ?2, ?3, ?4, 0)",
+                params![
+                    "/music/lyapis.flac",
+                    "Ау",
+                    "Ляпис Трубецкой",
+                    "Веселые Картинки",
+                ],
+            )
+            .expect("legacy insert");
+        }
+
+        let library = Library::open(&path).expect("open migrates");
+        let found = library.search("веселые", 10).expect("search");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].album.as_deref(), Some("Веселые Картинки"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

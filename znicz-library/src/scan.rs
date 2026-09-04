@@ -1,13 +1,12 @@
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
-use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 use znicz_core::{is_audio_file, read_metadata, title_from_path};
 
 use crate::error::{LibraryError, Result};
-use crate::store::{path_str, Library};
+use crate::store::Library;
 
 /// What a scan did.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,44 +99,22 @@ impl Library {
             .and_then(|ext| ext.to_str())
             .map(|ext| ext.to_ascii_lowercase());
 
-        self.connection().execute(
-            "INSERT INTO tracks (
-                path, title, artist, album, album_artist, genre, year,
-                track_number, disc_number, codec, sample_rate, channels,
-                bits_per_sample, duration_secs, modified_secs
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
-             ON CONFLICT(path) DO UPDATE SET
-                title = excluded.title,
-                artist = excluded.artist,
-                album = excluded.album,
-                album_artist = excluded.album_artist,
-                genre = excluded.genre,
-                year = excluded.year,
-                track_number = excluded.track_number,
-                disc_number = excluded.disc_number,
-                codec = excluded.codec,
-                sample_rate = excluded.sample_rate,
-                channels = excluded.channels,
-                bits_per_sample = excluded.bits_per_sample,
-                duration_secs = excluded.duration_secs,
-                modified_secs = excluded.modified_secs",
-            params![
-                path_str(path),
-                title,
-                tags.artist,
-                tags.album,
-                tags.album_artist,
-                tags.genre,
-                tags.year,
-                tags.track_number,
-                tags.disc_number,
-                codec,
-                properties.sample_rate,
-                properties.channels,
-                properties.bits_per_sample,
-                properties.duration.map(|d| d.as_secs_f64()),
-                modified,
-            ],
+        self.upsert_track(
+            path,
+            &title,
+            tags.artist,
+            tags.album,
+            tags.album_artist,
+            tags.genre,
+            tags.year,
+            tags.track_number,
+            tags.disc_number,
+            codec,
+            properties.sample_rate,
+            properties.channels,
+            properties.bits_per_sample,
+            properties.duration.map(|d| d.as_secs_f64()),
+            modified,
         )?;
 
         Ok(if existed {
