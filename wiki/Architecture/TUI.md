@@ -10,12 +10,16 @@ experience lives. The interface is an **immediate-mode** loop:
 
 While the TUI is up it also **captures the mouse**. A left click on a visible
 library, queue, or overlay list row **selects** that row (it does not play or
-open). The wheel moves the focused list one row, like `j` / `k`. Click outside
-help, inspector, devices, playlists, radio, or a typing prompt closes or
-cancels it, like `Esc`. Click the library pane's right-border column to open
-the queue drawer; click the library (overlay) or that column (sheet) to close
-it. Clicks on the transport, cover, and footer do nothing. Terminals
-that never send mouse events keep working from the keyboard. `?` stays
+open). The wheel moves the focused list one row, like `j` / `k`. Help,
+inspector, devices, playlists, and radio close with the top-right **X**, or
+with `Esc`, or a clickable footer hint — not by clicking outside. The queue
+drawer closes with the **X**, global `]`, or a clickable footer `] close` /
+`] queue` hint; `Esc` closes it only when the drawer has queue focus (with
+library focus, `Esc` goes back in the library). Footer hint segments are
+clickable and run that key action. Click the library pane's right-border column
+to open the queue drawer only. Library search and playlist/radio typing prompts
+still cancel on an outside click. Clicks on the transport and cover do nothing.
+Terminals that never send mouse events keep working from the keyboard. `?` stays
 keyboard-only.
 
 `q` closes the TUI only. Playback keeps going in `znicz player` until you

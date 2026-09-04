@@ -8,6 +8,7 @@
 pub mod app;
 pub mod cover;
 pub mod cursor;
+pub mod footer_hits;
 pub mod format;
 pub mod hit;
 pub mod keys;

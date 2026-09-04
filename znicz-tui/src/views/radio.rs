@@ -32,6 +32,7 @@ fn centered_modal(area: Rect) -> Rect {
 }
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
+    app.hits.close = views::close_button_rect(area);
     let focused = app.modal == Modal::Radio;
     let form_rows = match &app.radio_prompt {
         Some(RadioPrompt::Form { .. }) => 3,
@@ -47,7 +48,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     } else {
         "Enter play · a add · n new · e edit · c copy · d delete · Esc close"
     };
-    let block = views::pane_block("Radio", focused, Some(hint.to_string()));
+    let block =
+        views::pane_block("Radio", focused, Some(hint.to_string())).title(views::close_title());
     let inner = block.inner(area);
     frame.render_widget(block, area);
 

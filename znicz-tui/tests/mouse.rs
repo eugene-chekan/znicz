@@ -1,13 +1,14 @@
 //! Mouse: select-only clicks, wheel, click-outside, queue toggle.
 
-use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::Terminal;
+use std::path::PathBuf;
 use znicz_core::Command;
 use znicz_core::{spawn_player, AudioConfig, PlaybackStatus, PlayerHandle};
-use znicz_library::AlbumSummary;
-use znicz_tui::hit::{HitMap, ListHit};
+use znicz_library::{AlbumSummary, Track};
+use znicz_tui::hit::{FooterHit, HitMap, ListHit};
 use znicz_tui::views;
 use znicz_tui::{App, Focus, Modal, PlaylistPrompt};
 
@@ -149,46 +150,104 @@ fn the_right_border_opens_the_queue_when_it_is_closed() {
 }
 
 #[test]
-fn a_click_on_the_library_closes_an_overlay_queue() {
+fn a_library_click_under_an_open_queue_does_not_close_it() {
     let mut app = new_app();
+    queue(&mut app, 2);
+    app.queue_open = true;
+    app.focus = Focus::Queue;
+    app.hits = HitMap {
+        library: Some(ListHit {
+            inner: Rect::new(1, 1, 40, 10),
+            offset: 0,
+            len: 0,
+        }),
+        library_pane: Some(Rect::new(0, 0, 50, 20)),
+        queue: Some(ListHit {
+            inner: Rect::new(51, 1, 28, 10),
+            offset: 0,
+            len: 2,
+        }),
+        queue_toggle: Some(Rect::new(49, 0, 1, 20)),
+        ..HitMap::default()
+    };
+    app.on_mouse(left_click(2, 5));
+    assert!(app.queue_open);
+}
+
+#[test]
+fn a_library_row_click_under_an_open_overlay_queue_selects_and_keeps_it_open() {
+    let mut app = new_app();
+    app.library.inject_albums_for_test(albums(5));
+    queue(&mut app, 2);
     app.list_width = 100;
     app.queue_open = true;
     app.focus = Focus::Queue;
-    app.hits.library_pane = Some(Rect::new(0, 0, 59, 20));
-    app.hits.queue = Some(ListHit {
-        inner: Rect::new(60, 1, 38, 18),
-        offset: 0,
-        len: 0,
-    });
-    app.on_mouse(left_click(10, 5));
-    assert!(!app.queue_open);
+    app.hits = HitMap {
+        library: Some(ListHit {
+            inner: Rect::new(1, 1, 40, 10),
+            offset: 0,
+            len: 5,
+        }),
+        library_pane: Some(Rect::new(0, 0, 59, 20)),
+        queue: Some(ListHit {
+            inner: Rect::new(60, 1, 39, 10),
+            offset: 0,
+            len: 2,
+        }),
+        queue_toggle: Some(Rect::new(59, 0, 1, 20)),
+        ..HitMap::default()
+    };
+    app.on_mouse(left_click(2, 3));
+    assert_eq!(app.library.selected_index(), Some(2));
     assert_eq!(app.focus, Focus::Library);
+    assert!(app.queue_open);
 }
 
 #[test]
-fn the_right_border_closes_a_queue_sheet() {
+fn a_library_click_under_an_open_sheet_queue_does_not_select() {
     let mut app = new_app();
+    app.library.inject_albums_for_test(albums(5));
+    queue(&mut app, 2);
     app.list_width = 81;
     app.queue_open = true;
     app.focus = Focus::Queue;
-    app.hits.queue_toggle = Some(Rect::new(80, 0, 1, 20));
-    app.hits.queue = Some(ListHit {
-        inner: Rect::new(1, 1, 79, 18),
-        offset: 0,
-        len: 0,
-    });
-    app.on_mouse(left_click(80, 2));
-    assert!(!app.queue_open);
-    assert_eq!(app.focus, Focus::Library);
+    app.hits = HitMap {
+        library: Some(ListHit {
+            inner: Rect::new(1, 1, 40, 10),
+            offset: 0,
+            len: 5,
+        }),
+        queue: Some(ListHit {
+            inner: Rect::new(1, 1, 79, 10),
+            offset: 0,
+            len: 2,
+        }),
+        ..HitMap::default()
+    };
+    app.on_mouse(left_click(2, 3));
+    assert_eq!(app.library.selected_index(), Some(0));
+    assert_eq!(app.focus, Focus::Queue);
+    assert!(app.queue_open);
 }
 
 #[test]
-fn a_click_outside_help_closes_it() {
+fn a_toggle_column_click_does_not_close_an_open_queue() {
+    let mut app = new_app();
+    app.queue_open = true;
+    app.focus = Focus::Queue;
+    app.hits.queue_toggle = Some(Rect::new(79, 0, 1, 20));
+    app.hits.library_pane = Some(Rect::new(0, 0, 80, 20));
+    app.on_mouse(left_click(79, 4));
+    assert!(app.queue_open);
+}
+
+#[test]
+fn a_click_outside_help_does_not_close_it() {
     let mut app = new_app();
     app.modal = Modal::Help;
     app.hits.overlay = Some(Rect::new(10, 4, 60, 16));
     app.on_mouse(left_click(0, 0));
-    assert_eq!(app.modal, Modal::None);
+    assert_eq!(app.modal, Modal::Help);
 }
 
 #[test]
@@ -201,12 +260,91 @@ fn a_click_inside_help_does_not_close_it() {
 }
 
 #[test]
-fn a_click_outside_inspector_closes_it() {
+fn a_click_outside_inspector_does_not_close_it() {
     let mut app = new_app();
     app.modal = Modal::Inspector;
     app.hits.overlay = Some(Rect::new(20, 4, 40, 12));
     app.on_mouse(left_click(0, 0));
+    assert_eq!(app.modal, Modal::Inspector);
+}
+
+#[test]
+fn the_close_hit_covers_the_drawn_x_glyph() {
+    let mut app = new_app();
+    app.modal = Modal::Help;
+    let state = app.player.state();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("backend");
+    terminal
+        .draw(|frame| views::render(frame, &mut app, &state))
+        .expect("draw");
+    let overlay = app.hits.overlay.expect("overlay after draw");
+    let close = app.hits.close.expect("close hit after draw");
+    let buf = terminal.backend().buffer();
+    let y = overlay.y;
+    let mut x_cell = None;
+    for x in overlay.x..overlay.x + overlay.width {
+        if buf[(x, y)].symbol() == "X" {
+            x_cell = Some(x);
+            break;
+        }
+    }
+    let x_cell = x_cell.expect("drawn X on overlay top border");
+    assert!(
+        close.contains(ratatui::layout::Position { x: x_cell, y }),
+        "close hit {close:?} should cover drawn X at ({x_cell}, {y})"
+    );
+    app.on_mouse(left_click(x_cell, y));
     assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn a_drawn_overlay_exposes_a_close_hit() {
+    let mut app = new_app();
+    app.modal = Modal::Help;
+    let state = app.player.state();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("backend");
+    terminal
+        .draw(|frame| views::render(frame, &mut app, &state))
+        .expect("draw");
+    let close = app.hits.close.expect("close hit after draw");
+    app.on_mouse(left_click(close.x, close.y));
+    assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn a_drawn_queue_exposes_a_close_hit() {
+    let mut app = new_app();
+    queue(&mut app, 1);
+    app.queue_open = true;
+    let state = app.player.state();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("backend");
+    terminal
+        .draw(|frame| views::render(frame, &mut app, &state))
+        .expect("draw");
+    let close = app.hits.close.expect("queue close hit");
+    app.on_mouse(left_click(close.x, close.y));
+    assert!(!app.queue_open);
+}
+
+#[test]
+fn a_click_on_close_dismisses_help() {
+    let mut app = new_app();
+    app.modal = Modal::Help;
+    app.hits.overlay = Some(Rect::new(10, 4, 60, 16));
+    app.hits.close = Some(Rect::new(68, 4, 1, 1));
+    app.on_mouse(left_click(68, 4));
+    assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn a_click_on_close_closes_the_queue_drawer() {
+    let mut app = new_app();
+    app.queue_open = true;
+    app.focus = Focus::Queue;
+    app.hits.close = Some(Rect::new(78, 0, 1, 1));
+    app.on_mouse(left_click(78, 0));
+    assert!(!app.queue_open);
+    assert_eq!(app.focus, Focus::Library);
 }
 
 #[test]
@@ -239,12 +377,12 @@ fn a_devices_row_click_moves_the_cursor_without_applying() {
 }
 
 #[test]
-fn a_click_outside_devices_closes_the_overlay() {
+fn a_click_outside_devices_does_not_close_the_overlay() {
     let mut app = new_app();
     app.modal = Modal::Devices;
     app.hits.overlay = Some(Rect::new(10, 4, 40, 12));
     app.on_mouse(left_click(0, 0));
-    assert_eq!(app.modal, Modal::None);
+    assert_eq!(app.modal, Modal::Devices);
 }
 
 #[test]
@@ -270,6 +408,37 @@ fn a_click_on_the_search_line_does_not_type_or_select() {
     app.hits.search_prompt = Some(Rect::new(0, 0, 80, 1));
     app.on_mouse(left_click(4, 0));
     assert!(app.library.is_typing());
+}
+
+#[test]
+fn a_click_on_close_dismisses_a_playlist_prompt_and_modal() {
+    let mut app = new_app();
+    app.modal = Modal::Playlists;
+    app.playlist_prompt = Some(PlaylistPrompt::Save(
+        znicz_tui::line_edit::LineEdit::from_text("x"),
+    ));
+    app.hits.overlay = Some(Rect::new(10, 4, 40, 12));
+    app.hits.close = Some(Rect::new(48, 4, 1, 1));
+    app.on_mouse(left_click(48, 4));
+    assert!(app.playlist_prompt.is_none());
+    assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn a_footer_esc_hit_dismisses_a_playlist_prompt() {
+    let mut app = new_app();
+    app.modal = Modal::Playlists;
+    app.playlist_prompt = Some(PlaylistPrompt::Save(
+        znicz_tui::line_edit::LineEdit::from_text("x"),
+    ));
+    app.hits.overlay = Some(Rect::new(10, 4, 40, 12));
+    app.hits.footer_hints = vec![FooterHit {
+        rect: Rect::new(10, 23, 9, 1),
+        key: KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+    }];
+    app.on_mouse(left_click(12, 23));
+    assert!(app.playlist_prompt.is_none());
+    assert_eq!(app.modal, Modal::Playlists);
 }
 
 #[test]
@@ -339,4 +508,97 @@ fn a_click_on_the_transport_does_nothing() {
     assert_eq!(app.library.selected_index(), Some(0));
     assert!(!app.queue_open);
     assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn a_drawn_footer_help_hint_is_clickable() {
+    let mut app = new_app();
+    let state = app.player.state();
+    let mut terminal = Terminal::new(TestBackend::new(100, 24)).expect("backend");
+    terminal
+        .draw(|frame| views::render(frame, &mut app, &state))
+        .expect("draw");
+    let help = app
+        .hits
+        .footer_hints
+        .iter()
+        .find(|h| h.key.code == KeyCode::Char('?'))
+        .expect("? help footer hit")
+        .rect;
+    app.on_mouse(left_click(help.x, help.y));
+    assert_eq!(app.modal, Modal::Help);
+}
+
+#[test]
+fn a_footer_help_hit_opens_help() {
+    let mut app = new_app();
+    app.hits.footer_hints = vec![FooterHit {
+        rect: Rect::new(70, 23, 7, 1),
+        key: KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+    }];
+    app.on_mouse(left_click(72, 23));
+    assert_eq!(app.modal, Modal::Help);
+}
+
+#[test]
+fn a_footer_esc_hit_closes_devices() {
+    let mut app = new_app();
+    app.modal = Modal::Devices;
+    app.hits.overlay = Some(Rect::new(10, 4, 40, 12));
+    app.hits.footer_hints = vec![FooterHit {
+        rect: Rect::new(10, 23, 9, 1),
+        key: KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+    }];
+    app.on_mouse(left_click(12, 23));
+    assert_eq!(app.modal, Modal::None);
+}
+
+fn test_track(title: &str) -> Track {
+    Track {
+        id: 1,
+        path: PathBuf::from("/music/dummy.flac"),
+        title: title.into(),
+        artist: Some("Artist".into()),
+        album: Some("Album".into()),
+        album_artist: None,
+        genre: None,
+        year: None,
+        track_number: Some(1),
+        disc_number: None,
+        codec: None,
+        sample_rate: None,
+        channels: None,
+        bits_per_sample: None,
+        duration_secs: Some(120.0),
+    }
+}
+
+#[test]
+fn a_footer_add_hit_queues_the_selected_track() {
+    let mut app = new_app();
+    app.library
+        .inject_tracks_for_test(vec![test_track("Quiet Add")]);
+    app.hits.footer_hints = vec![FooterHit {
+        rect: Rect::new(11, 23, 5, 1),
+        key: KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+    }];
+    app.on_mouse(left_click(12, 23));
+    assert_eq!(app.player.state().queue.len(), 1);
+    assert_eq!(
+        app.player.state().status,
+        znicz_core::PlaybackStatus::Stopped
+    );
+}
+
+#[test]
+fn a_footer_hit_runs_while_an_overlay_is_open() {
+    let mut app = new_app();
+    app.modal = Modal::Inspector;
+    app.hits.overlay = Some(Rect::new(20, 4, 40, 12));
+    app.hits.footer_hints = vec![FooterHit {
+        rect: Rect::new(0, 23, 7, 1),
+        key: KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+    }];
+    app.on_mouse(left_click(2, 23));
+    assert_eq!(app.modal, Modal::Help);
 }

@@ -462,6 +462,26 @@ impl App {
             }
             return;
         }
+        if let Some(hit) = self
+            .hits
+            .footer_hints
+            .iter()
+            .find(|h| point_in(h.rect, column, row))
+        {
+            let key = hit.key;
+            self.on_key(key);
+            return;
+        }
+        if self.hits.close.is_some_and(|r| point_in(r, column, row)) {
+            if self.modal != Modal::None {
+                self.modal = Modal::None;
+                self.playlist_prompt = None;
+                self.radio_prompt = None;
+            } else if self.queue_open {
+                self.close_queue();
+            }
+            return;
+        }
         if self.playlist_prompt.is_some() || self.radio_prompt.is_some() {
             let inside = self.hits.overlay.is_some_and(|r| point_in(r, column, row));
             if !inside {
@@ -484,27 +504,14 @@ impl App {
                     return;
                 }
             }
-            let sheet = layout::is_sheet(self.list_width, true);
-            if sheet {
-                if self
-                    .hits
-                    .queue_toggle
-                    .is_some_and(|r| point_in(r, column, row))
-                {
-                    self.close_queue();
+            let list = Rect::new(0, 0, self.list_width, self.list_height);
+            if matches!(layout::drawer(list, true), layout::Drawer::Overlay(_)) {
+                if let Some(hit) = self.hits.library {
+                    if let Some(index) = hit.row_at(column, row) {
+                        self.library.set_index(index);
+                        self.focus = Focus::Library;
+                    }
                 }
-                return;
-            }
-            if self
-                .hits
-                .library_pane
-                .is_some_and(|r| point_in(r, column, row))
-                || self
-                    .hits
-                    .queue_toggle
-                    .is_some_and(|r| point_in(r, column, row))
-            {
-                self.close_queue();
             }
             return;
         }
@@ -535,15 +542,8 @@ impl App {
                     Modal::Radio => self.station_cursor.set(index, self.stations.len()),
                     _ => {}
                 }
-                return;
             }
         }
-        if self.hits.overlay.is_some_and(|r| point_in(r, column, row)) {
-            return;
-        }
-        self.modal = Modal::None;
-        self.playlist_prompt = None;
-        self.radio_prompt = None;
     }
 
     // --- key handling ---

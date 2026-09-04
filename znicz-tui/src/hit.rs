@@ -1,3 +1,4 @@
+use crossterm::event::KeyEvent;
 use ratatui::layout::{Position, Rect};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,7 +18,13 @@ impl ListHit {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FooterHit {
+    pub rect: Rect,
+    pub key: KeyEvent,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct HitMap {
     pub library: Option<ListHit>,
     pub queue: Option<ListHit>,
@@ -26,6 +33,8 @@ pub struct HitMap {
     pub queue_toggle: Option<Rect>,
     pub library_pane: Option<Rect>,
     pub search_prompt: Option<Rect>,
+    pub close: Option<Rect>,
+    pub footer_hints: Vec<FooterHit>,
 }
 
 #[cfg(test)]
@@ -69,5 +78,23 @@ mod tests {
         let rect = Rect::new(10, 5, 4, 3);
         assert!(rect.contains(Position { x: 10, y: 5 }));
         assert!(!rect.contains(Position { x: 14, y: 5 }));
+    }
+
+    #[test]
+    fn hit_map_default_has_no_close_or_footer_hints() {
+        let hits = HitMap::default();
+        assert!(hits.close.is_none());
+        assert!(hits.footer_hints.is_empty());
+    }
+
+    #[test]
+    fn footer_hit_stores_rect_and_key() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let hit = FooterHit {
+            rect: Rect::new(0, 23, 7, 1),
+            key: KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+        };
+        assert_eq!(hit.rect.width, 7);
+        assert_eq!(hit.key.code, KeyCode::Char('?'));
     }
 }

@@ -36,11 +36,12 @@ fn centered_modal(area: Rect) -> Rect {
 }
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState) {
+    app.hits.close = views::close_button_rect(area);
     let focused = app.modal == Modal::Devices;
     let width = views::inner_width(area);
 
     if app.devices.is_empty() {
-        let block = views::pane_block("Devices", focused, None);
+        let block = views::pane_block("Devices", focused, None).title(views::close_title());
         let hint = views::placeholder("No output devices found. Press R to look again.");
         frame.render_widget(Paragraph::new(hint).block(block), area);
         return;
@@ -82,7 +83,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState)
         None => "no stream open".to_string(),
     };
 
-    let block = views::pane_block("Devices", focused, Some(summary));
+    let block = views::pane_block("Devices", focused, Some(summary)).title(views::close_title());
     let inner = block.inner(area);
     let list = List::new(items).block(block).highlight_style(if focused {
         theme::selected()
