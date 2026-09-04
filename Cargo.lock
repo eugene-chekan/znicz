@@ -4579,7 +4579,7 @@ checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
 name = "znicz"
-version = "0.4.5"
+version = "0.4.6"
 dependencies = [
  "clap",
  "color-eyre",
@@ -4598,7 +4598,7 @@ dependencies = [
 
 [[package]]
 name = "znicz-core"
-version = "0.4.5"
+version = "0.4.6"
 dependencies = [
  "cpal",
  "crossbeam-channel",
@@ -4616,7 +4616,7 @@ dependencies = [
 
 [[package]]
 name = "znicz-library"
-version = "0.4.5"
+version = "0.4.6"
 dependencies = [
  "rusqlite",
  "serde",
@@ -4629,7 +4629,7 @@ dependencies = [
 
 [[package]]
 name = "znicz-mcp"
-version = "0.4.5"
+version = "0.4.6"
 dependencies = [
  "rmcp",
  "schemars",
@@ -4645,7 +4645,7 @@ dependencies = [
 
 [[package]]
 name = "znicz-tui"
-version = "0.4.5"
+version = "0.4.6"
 dependencies = [
  "color-eyre",
  "crossbeam-channel",
