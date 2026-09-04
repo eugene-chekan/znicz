@@ -9,8 +9,6 @@ Parked TUI ideas (file, do not start unless asked):
 
 - [#5 Command palette](https://github.com/eugene-chekan/znicz/issues/5)
 - [#6 Settings screen overlay](https://github.com/eugene-chekan/znicz/issues/6)
-- [#7 Three-column artist / album / tracks library](https://github.com/eugene-chekan/znicz/issues/7)
-- [#9 Library tree view with expandable nodes](https://github.com/eugene-chekan/znicz/issues/9)
 - [#22 Show the app version](https://github.com/eugene-chekan/znicz/issues/22) (place and shape still open)
 - [#34 Auto-pan now-playing text](https://github.com/eugene-chekan/znicz/issues/34) (marquee when artist / title does not fit)
 - [#36 Reorder list rows with Alt-↑ / Alt-↓](https://github.com/eugene-chekan/znicz/issues/36) (cursor stays on the moved item)
@@ -28,6 +26,17 @@ radio** (HLS, PLS, XSPF) are on the
 streams, including ICY now playing) is done.
 
 ## Closed
+
+### [#7 Three-column artist / album / tracks library](https://github.com/eugene-chekan/znicz/issues/7) and [#9 Library tree view with expandable nodes](https://github.com/eugene-chekan/znicz/issues/9)
+
+- **Fixed:** 2026-09-04
+- **Component:** `znicz-tui`, `znicz-library`
+- **Status:** **Fixed** in 0.5.0
+
+Artist-first browse with one shared model: three columns when the strip is wide
+enough, an expandable tree when preferred, and single-column paging when columns
+are preferred but the terminal is narrow. Search Enter lands on the entity in
+browse. Tree expand state lasts for the session only.
 
 ### [#44 search_library: Cyrillic queries are case-sensitive](https://github.com/eugene-chekan/znicz/issues/44)
 

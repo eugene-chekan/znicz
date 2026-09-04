@@ -68,7 +68,7 @@ logo. The picture is letterboxed onto an opaque canvas the size of the slot, so
 a stream cannot leave the previous cover on screen.
 `show_cover = false` restores the old full-width one- or two-line transport.
 Hints stay on their own line and are never replaced by a toast. Config: `[tui]`
-in `config.toml` (`show_cover`, `cover_protocol`).
+in `config.toml` (`show_cover`, `cover_protocol`, `library_layout`).
 
 ### Responsive behaviour
 
@@ -114,19 +114,30 @@ details, filled in when the stream opens. See
 
 ### Library
 
-The home screen. Albums by default; `Enter` opens one, `Esc` goes back, `/`
-opens a search prompt, `a` queues the selection (a whole album or artist if the
-cursor is on one) and `A` queues everything listed (`A` in search queues
-title-matched tracks only). Search results are entity hits — artists, albums,
-then title-matched tracks — not every track that shares an artist or album name.
-`Enter` on a track plays it; `Enter` on an artist or album in search shows a
-short toast for now (browse from search is later). While the prompt is open,
-Left and Right move the caret the same way they do when naming a playlist or a
-station. Queries go straight to SQLite, which is fast enough to run while
-handling the keypress. See [Library](Library.md).
+The home screen is **artist-first browse**: artists → albums → tracks. How that
+is drawn depends on config and width:
+
+- **`library_layout = "columns"`** (default) and a wide enough library strip:
+  three columns side by side. **Tab** / **Shift-Tab** move focus between
+  columns. Seek stays on **h** / **l**.
+- Same preference but a **narrow** strip: single-column paging (Enter drills
+  in, Esc steps back). Still artist-first, not albums-as-home.
+- **`library_layout = "tree"`**: expandable tree at any width. Enter or
+  **Space** / **o** expands or collapses; open nodes are remembered for the
+  session only.
+
+`/` opens search. Results are entity hits — artists, albums, then
+title-matched tracks. **Enter** on an artist or album leaves search and focuses
+that entity in browse; **Enter** on a track plays it. `a` queues the selection;
+`A` queues everything listed (`A` in search queues title-matched tracks only).
+While the prompt is open, Left and Right move the caret. Queries go straight to
+SQLite. See [Library](Library.md).
 
 A library whose files carry **no album tags** cannot be grouped, so the pane
 falls back to a flat track list rather than looking empty.
+
+The queue drawer still overlays on the right; columns and the tree shrink under
+it the same way the old single list did.
 
 ### Queue
 
@@ -263,7 +274,7 @@ top of the player.
 | `line_edit.rs` | one-line prompt caret (search, playlist save, radio) |
 | `meta.rs` | background tag cache |
 | `cover.rs` | background cover cache + logo |
-| `tui_config.rs` | `show_cover` / `cover_protocol` |
+| `tui_config.rs` | `show_cover` / `cover_protocol` / `library_layout` |
 | `toast.rs` | boxed, level-coloured messages |
 | `format.rs` | durations, rates, bars, truncation |
 | `library_pane.rs` | browsing state |

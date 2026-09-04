@@ -138,12 +138,14 @@ Press `?` in the player for the full keymap. The essentials:
 | e / z | Repeat (off, all, one) / shuffle |
 | r | Reload the list in front |
 | j k, g G, Ctrl-d Ctrl-u | Move in the list |
-| Enter | Play the selection, or open an album |
+| Enter | Open / expand browse, or play a track |
 | a / A | Add the selection / everything listed to the queue |
 | d / C | Remove from the queue / clear it |
 | / | Search the library |
+| Space / o | Expand or collapse a tree node |
 | ] | Open / close the queue |
-| Tab | Library ↔ queue (opens the drawer if needed) |
+| Tab | Next column when three-column browse is active; otherwise library ↔ queue |
+| Shift-Tab | Previous column (or queue focus when the drawer is open) |
 | Alt-← / Alt-→ | Pan a long title |
 | i | Signal inspector |
 | , | Devices |
@@ -182,6 +184,7 @@ path = "~/.local/share/znicz/library.db"
 [tui]
 show_cover = true
 cover_protocol = "auto"   # auto | kitty | sixel | halfblocks | off
+library_layout = "columns"  # columns | tree
 ```
 
 The last queue (and volume, mute, repeat, shuffle) is

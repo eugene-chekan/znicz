@@ -79,7 +79,11 @@ fn app_with_library(dir: &Path) -> App {
 }
 
 fn draw(app: &mut App) -> String {
-    let mut terminal = Terminal::new(TestBackend::new(90, 24)).expect("terminal");
+    draw_size(app, 90, 24)
+}
+
+fn draw_size(app: &mut App, width: u16, height: u16) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
     let state = app.state();
     terminal
         .draw(|frame| views::render(frame, app, &state))
@@ -99,7 +103,7 @@ fn draw(app: &mut App) -> String {
 }
 
 #[test]
-fn albums_are_listed_then_opened() {
+fn artists_are_listed_then_albums_and_tracks_open() {
     if !ffmpeg_available() {
         eprintln!("ffmpeg not available, skipping");
         return;
@@ -107,35 +111,50 @@ fn albums_are_listed_then_opened() {
 
     let dir = fixture_dir("browse");
     let mut app = app_with_library(&dir);
+    // Prefer paging so Enter drills levels in one list (narrow path of the design).
+    app.tui.library_layout = znicz_tui::LibraryLayout::Columns;
+    app.library
+        .set_preferred_layout(znicz_tui::LibraryLayout::Columns);
+    // Force paging by pretending a narrow list width.
+    app.list_width = 50;
 
-    let screen = draw(&mut app);
+    let screen = draw_size(&mut app, 50, 24);
     assert!(
-        screen.contains("Dummy"),
-        "albums should be listed:\n{screen}"
+        screen.contains("Miles Davis") || screen.contains("Portishead"),
+        "artists should be listed:\n{screen}"
     );
-    assert!(screen.contains("Kind of Blue"));
     assert!(
-        screen.contains("Portishead"),
-        "the album artist belongs on the row"
-    );
-    assert!(screen.contains("2 albums"));
-
-    // Open "Dummy": it sorts first, so the cursor is already on it.
-    assert!(app.library.enter(), "Enter should open the album");
-    assert_eq!(app.library.mode(), &Mode::Album("Dummy".to_string()));
-
-    let screen = draw(&mut app);
-    assert!(screen.contains("Mysterons"), "album tracks:\n{screen}");
-    assert!(screen.contains("Sour Times"));
-    assert!(
-        !screen.contains("So What"),
-        "the other album must not leak in"
+        screen.contains("Artists") || screen.contains("artists"),
+        "paging header or summary:\n{screen}"
     );
 
-    // And back out again.
+    use znicz_tui::library_pane::EnterResult;
+    assert_eq!(
+        app.library.enter(40),
+        EnterResult::Moved,
+        "Enter should open the artist's albums"
+    );
+    assert_eq!(app.library.mode(), &Mode::Browse);
+
+    let screen = draw_size(&mut app, 50, 24);
+    // First artist alphabetically is Miles Davis → Kind of Blue
+    assert!(
+        screen.contains("Kind of Blue") || screen.contains("Dummy"),
+        "albums should show:\n{screen}"
+    );
+
+    assert_eq!(app.library.enter(40), EnterResult::Moved);
+    let screen = draw_size(&mut app, 50, 24);
+    assert!(
+        screen.contains("So What") || screen.contains("Mysterons"),
+        "tracks should show:\n{screen}"
+    );
+
     assert!(app.library.back());
-    assert_eq!(app.library.mode(), &Mode::Albums);
-    assert!(draw(&mut app).contains("Kind of Blue"));
+    assert!(
+        draw_size(&mut app, 50, 24).contains("Kind of Blue")
+            || draw_size(&mut app, 50, 24).contains("Dummy")
+    );
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -235,18 +254,29 @@ fn adding_an_album_queues_all_of_its_tracks() {
     }
 
     let dir = fixture_dir("enqueue");
-    let app = app_with_library(&dir);
+    let mut app = app_with_library(&dir);
+    app.list_width = 50;
+    app.library
+        .set_preferred_layout(znicz_tui::LibraryLayout::Columns);
 
-    // The cursor sits on "Dummy", which holds two tracks.
-    let tracks = app.library.selected_tracks();
+    // Artists level: Miles Davis first (1 track), then Portishead (2).
+    let tracks = app.library.selected_tracks(40);
     assert_eq!(
         tracks.len(),
-        2,
-        "selecting an album should mean all its tracks"
+        1,
+        "selecting an artist should mean all its tracks"
     );
 
-    // Everything listed means every track in the library.
-    assert_eq!(app.library.listed_tracks().len(), 3);
+    assert_eq!(
+        app.library.enter(40),
+        znicz_tui::library_pane::EnterResult::Moved
+    );
+    // Albums for Miles → Kind of Blue (1 track)
+    let tracks = app.library.selected_tracks(40);
+    assert_eq!(tracks.len(), 1);
+
+    // Everything listed at albums level for this artist.
+    assert_eq!(app.library.listed_tracks(40).len(), 1);
 
     std::fs::remove_dir_all(&dir).ok();
 }

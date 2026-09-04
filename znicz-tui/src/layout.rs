@@ -4,6 +4,13 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 pub const DRAWER_WIDTH: u16 = 41;
 pub const MIN_STRIP: u16 = 40;
+/// Minimum library strip inner width (characters) for three-column browse.
+pub const MIN_COLUMNS_STRIP: usize = 60;
+
+/// Whether the library strip is wide enough for three columns.
+pub fn columns_usable(strip_inner: usize) -> bool {
+    strip_inner >= MIN_COLUMNS_STRIP
+}
 
 const HINTS: u16 = 1;
 const MIN_LIST: u16 = 3;

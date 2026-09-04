@@ -170,6 +170,7 @@ struct LibrarySection {
 struct TuiSection {
     show_cover: Option<bool>,
     cover_protocol: Option<String>,
+    library_layout: Option<String>,
 }
 
 fn tui_config(config: &Config) -> TuiConfig {
@@ -177,6 +178,9 @@ fn tui_config(config: &Config) -> TuiConfig {
         show_cover: config.tui.show_cover.unwrap_or(true),
         cover_protocol: znicz_tui::CoverProtocol::parse(
             config.tui.cover_protocol.as_deref().unwrap_or("auto"),
+        ),
+        library_layout: znicz_tui::LibraryLayout::parse(
+            config.tui.library_layout.as_deref().unwrap_or("columns"),
         ),
     }
 }
@@ -651,6 +655,7 @@ fn run_tui_with_client(
     let log = stderr::redirect_to_log();
     let mut app = App::with_remote(player, library);
     app.tui = tui;
+    app.library.set_preferred_layout(app.tui.library_layout);
     if let Some(message) = skip_notice {
         app.toasts.warn(message);
     }
