@@ -57,13 +57,27 @@ the header and the tag block only. Playback still uses Symphonia.
 
 ## Searching
 
-Search is a `LIKE` match across title, artist, album, and album artist. Matching
-uses **Unicode-lowercased** copies of those fields (`title_folded`, and the same
-for artist / album / album artist). SQLite's own `LIKE` only folds ASCII `A–Z`,
-so a lowercase Cyrillic query would otherwise miss capitalized tags.
+There are two search APIs:
+
+1. **`search`** (CLI `znicz search`, MCP `search_library`) — a flat list of
+   **tracks** where the query matches title, artist, album, or album artist.
+2. **`search_entities`** (TUI `/` search) — mixed **entity hits**: distinct
+   artists, distinct albums, then tracks whose **title** matched. An artist-name
+   query returns one artist row (not every track by that artist). Enter on an
+   artist or album row in the TUI is still a stub toast; browse from search is
+   later. `a` queues that entity; `A` queues title-matched tracks only.
+
+Both use the same Unicode fold. Matching uses **Unicode-lowercased** copies of
+the tag fields (`title_folded`, and the same for artist / album / album artist).
+SQLite's own `LIKE` only folds ASCII `A–Z`, so a lowercase Cyrillic query would
+otherwise miss capitalized tags.
 
 ```sql
+-- flat search
 WHERE title_folded LIKE '%query%' OR artist_folded LIKE '%query%' ...
+
+-- entity tracks (title only)
+WHERE title_folded LIKE '%query%'
 ```
 
 The query is lowercased in Rust the same way (`str::to_lowercase`) before it is
@@ -74,8 +88,9 @@ from the existing tags — no rescan required.
 `%` and `_` are wildcards in SQL, so a query containing them is escaped first —
 searching for "100%" looks for the literal text.
 
-Results are ordered by artist, album, disc, track number, then title, which is
-the order a person expects to see an album in.
+Flat track results are ordered by artist, album, disc, track number, then title.
+Entity results are artists (by name), then albums (by name), then title hits in
+the same track order.
 
 Full-text search (SQLite FTS5) would rank results better and is a sensible later
 upgrade. `LIKE` with an index is enough for a personal library.

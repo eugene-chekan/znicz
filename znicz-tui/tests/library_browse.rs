@@ -141,7 +141,7 @@ fn albums_are_listed_then_opened() {
 }
 
 #[test]
-fn a_search_narrows_the_list_to_matches() {
+fn a_search_shows_entity_hits_not_every_artist_track() {
     if !ffmpeg_available() {
         eprintln!("ffmpeg not available, skipping");
         return;
@@ -159,8 +159,43 @@ fn a_search_narrows_the_list_to_matches() {
 
     let screen = draw(&mut app);
     assert!(
+        screen.contains("Miles Davis"),
+        "artist hit should be shown:\n{screen}"
+    );
+    assert!(
+        screen.contains("artist"),
+        "artist cue on the row:\n{screen}"
+    );
+    assert!(
+        !screen.contains("So What"),
+        "artist match must not expand to every track:\n{screen}"
+    );
+    assert!(!screen.contains("Mysterons"), "non-matches should be gone");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_title_search_still_lists_the_matching_track() {
+    if !ffmpeg_available() {
+        eprintln!("ffmpeg not available, skipping");
+        return;
+    }
+
+    let dir = fixture_dir("search-title");
+    let mut app = app_with_library(&dir);
+
+    app.library.begin_search();
+    for c in "So What".chars() {
+        app.library.push_char(c);
+    }
+    let message = app.library.submit_search();
+    assert!(message.contains("1 match"), "got: {message}");
+
+    let screen = draw(&mut app);
+    assert!(
         screen.contains("So What"),
-        "the match should be shown:\n{screen}"
+        "title hit should be shown:\n{screen}"
     );
     assert!(!screen.contains("Mysterons"), "non-matches should be gone");
 

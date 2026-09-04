@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::Result;
-use crate::track::{AlbumSummary, Track};
+use crate::track::{AlbumSummary, ArtistSummary, SearchHit, SearchLimits, Track};
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS tracks (
@@ -154,6 +154,35 @@ impl Library {
         Ok(())
     }
 
+    /// Insert one track for cross-crate tests. Prefer `scan` in real use.
+    #[doc(hidden)]
+    pub fn upsert_track_for_test(
+        &mut self,
+        path: &Path,
+        title: &str,
+        artist: Option<String>,
+        album: Option<String>,
+        album_artist: Option<String>,
+    ) -> Result<()> {
+        self.upsert_track(
+            path,
+            title,
+            artist,
+            album,
+            album_artist,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(0),
+        )
+    }
+
     pub fn track_count(&self) -> Result<u64> {
         let count: i64 = self
             .conn
@@ -193,6 +222,103 @@ impl Library {
 
         let mut statement = self.conn.prepare(&sql)?;
         let rows = statement.query_map(params![pattern, limit as i64], row_to_track)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    /// Entity search for the TUI: distinct artists, distinct albums, then
+    /// title-only track hits. Flat [`Self::search`] stays for MCP/CLI.
+    pub fn search_entities(&self, query: &str, limits: SearchLimits) -> Result<Vec<SearchHit>> {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let pattern = format!("%{}%", escape_like(&fold_text(trimmed)));
+        let mut hits = Vec::new();
+
+        if limits.artists > 0 {
+            let mut statement = self.conn.prepare(
+                "SELECT MAX(name), COUNT(*)
+                 FROM (
+                     SELECT path, artist AS name FROM tracks
+                     WHERE artist IS NOT NULL AND artist <> ''
+                       AND artist_folded LIKE ?1 ESCAPE '\\'
+                     UNION
+                     SELECT path, album_artist AS name FROM tracks
+                     WHERE album_artist IS NOT NULL AND album_artist <> ''
+                       AND album_artist_folded LIKE ?1 ESCAPE '\\'
+                 )
+                 GROUP BY name COLLATE NOCASE
+                 ORDER BY MAX(name) COLLATE NOCASE
+                 LIMIT ?2",
+            )?;
+            let rows = statement.query_map(params![pattern, limits.artists as i64], |row| {
+                Ok(SearchHit::Artist(ArtistSummary {
+                    name: row.get(0)?,
+                    track_count: row.get::<_, i64>(1)? as u32,
+                }))
+            })?;
+            for row in rows {
+                hits.push(row?);
+            }
+        }
+
+        if limits.albums > 0 {
+            let mut statement = self.conn.prepare(
+                "SELECT album,
+                        MAX(COALESCE(album_artist, artist)),
+                        MAX(year),
+                        COUNT(*),
+                        SUM(duration_secs)
+                 FROM tracks
+                 WHERE album IS NOT NULL AND album <> ''
+                   AND album_folded LIKE ?1 ESCAPE '\\'
+                 GROUP BY album COLLATE NOCASE
+                 ORDER BY album COLLATE NOCASE
+                 LIMIT ?2",
+            )?;
+            let rows = statement.query_map(params![pattern, limits.albums as i64], |row| {
+                Ok(SearchHit::Album(AlbumSummary {
+                    album: row.get(0)?,
+                    album_artist: row.get(1)?,
+                    year: row.get::<_, Option<i64>>(2)?.map(|y| y as u32),
+                    track_count: row.get::<_, i64>(3)? as u32,
+                    total_secs: row.get(4)?,
+                }))
+            })?;
+            for row in rows {
+                hits.push(row?);
+            }
+        }
+
+        if limits.tracks > 0 {
+            let sql = format!(
+                "SELECT {COLUMNS} FROM tracks
+                 WHERE title_folded LIKE ?1 ESCAPE '\\'
+                 ORDER BY artist, album, disc_number, track_number, title
+                 LIMIT ?2"
+            );
+            let mut statement = self.conn.prepare(&sql)?;
+            let rows = statement.query_map(params![pattern, limits.tracks as i64], row_to_track)?;
+            for row in rows {
+                hits.push(SearchHit::Track(row?));
+            }
+        }
+
+        Ok(hits)
+    }
+
+    /// Tracks attributed to an artist name via `artist` or `album_artist`.
+    pub fn tracks_for_artist(&self, name: &str) -> Result<Vec<Track>> {
+        let sql = format!(
+            "SELECT {COLUMNS} FROM tracks
+             WHERE artist = ?1 COLLATE NOCASE
+                OR album_artist = ?1 COLLATE NOCASE
+             ORDER BY artist, album, disc_number, track_number, title"
+        );
+        let mut statement = self.conn.prepare(&sql)?;
+        let rows = statement.query_map(params![name], row_to_track)?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
     }
@@ -522,5 +648,231 @@ mod tests {
         assert_eq!(found[0].album.as_deref(), Some("Веселые Картинки"));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn seed_entity_fixture(library: &mut Library) {
+        library
+            .upsert_track(
+                Path::new("/music/love1.flac"),
+                "Alone",
+                Some("Love".into()),
+                Some("Forever".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(0),
+            )
+            .unwrap();
+        library
+            .upsert_track(
+                Path::new("/music/love2.flac"),
+                "Together",
+                Some("Love".into()),
+                Some("Forever".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(0),
+            )
+            .unwrap();
+        library
+            .upsert_track(
+                Path::new("/music/album-love.flac"),
+                "Opening",
+                Some("Other".into()),
+                Some("Love".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(0),
+            )
+            .unwrap();
+        library
+            .upsert_track(
+                Path::new("/music/title-love.flac"),
+                "Love Song",
+                Some("Singer".into()),
+                Some("Hits".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(0),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn search_entities_artist_query_returns_artist_not_every_track() {
+        let mut library = Library::open_in_memory().unwrap();
+        seed_entity_fixture(&mut library);
+        let hits = library
+            .search_entities("Love", SearchLimits::default())
+            .unwrap();
+
+        let artists: Vec<_> = hits
+            .iter()
+            .filter_map(|h| match h {
+                SearchHit::Artist(a) => Some(a.name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(artists.iter().any(|n| n.eq_ignore_ascii_case("Love")));
+
+        let albums: Vec<_> = hits
+            .iter()
+            .filter_map(|h| match h {
+                SearchHit::Album(a) => Some(a.album.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(albums.iter().any(|n| n.eq_ignore_ascii_case("Love")));
+
+        let track_titles: Vec<_> = hits
+            .iter()
+            .filter_map(|h| match h {
+                SearchHit::Track(t) => Some(t.title.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(track_titles, vec!["Love Song"]);
+        assert!(!track_titles
+            .iter()
+            .any(|t| *t == "Alone" || *t == "Together"));
+    }
+
+    #[test]
+    fn search_entities_orders_artists_then_albums_then_tracks() {
+        let mut library = Library::open_in_memory().unwrap();
+        seed_entity_fixture(&mut library);
+        let hits = library
+            .search_entities("Love", SearchLimits::default())
+            .unwrap();
+        let mut seen_album = false;
+        let mut seen_track = false;
+        for hit in &hits {
+            match hit {
+                SearchHit::Artist(_) => assert!(!seen_album && !seen_track),
+                SearchHit::Album(_) => {
+                    seen_album = true;
+                    assert!(!seen_track);
+                }
+                SearchHit::Track(_) => seen_track = true,
+            }
+        }
+        assert!(seen_album && seen_track);
+    }
+
+    #[test]
+    fn search_entities_cyrillic_fold_matches_artist() {
+        let mut library = Library::open_in_memory().unwrap();
+        library
+            .upsert_track(
+                Path::new("/music/lyapis.flac"),
+                "Ау",
+                Some("Ляпис Трубецкой".into()),
+                Some("Веселые Картинки".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(0),
+            )
+            .unwrap();
+        let hits = library
+            .search_entities("ляпис", SearchLimits::default())
+            .unwrap();
+        assert!(
+            matches!(&hits[..], [SearchHit::Artist(a), ..] if a.name.contains("Ляпис")),
+            "got {hits:?}"
+        );
+        assert!(hits.iter().all(|h| !matches!(h, SearchHit::Track(_))));
+    }
+
+    #[test]
+    fn tracks_for_artist_matches_artist_or_album_artist() {
+        let mut library = Library::open_in_memory().unwrap();
+        library
+            .upsert_track(
+                Path::new("/music/a.flac"),
+                "One",
+                Some("Band".into()),
+                Some("LP".into()),
+                Some("Various".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(0),
+            )
+            .unwrap();
+        library
+            .upsert_track(
+                Path::new("/music/b.flac"),
+                "Two",
+                Some("Other".into()),
+                Some("Comp".into()),
+                Some("Band".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(0),
+            )
+            .unwrap();
+        let tracks = library.tracks_for_artist("band").unwrap();
+        assert_eq!(tracks.len(), 2);
+    }
+
+    #[test]
+    fn empty_entity_query_returns_no_hits() {
+        let library = Library::open_in_memory().unwrap();
+        assert!(library
+            .search_entities("  ", SearchLimits::default())
+            .unwrap()
+            .is_empty());
     }
 }
