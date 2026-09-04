@@ -542,11 +542,7 @@ impl App {
                     Modal::Radio => self.station_cursor.set(index, self.stations.len()),
                     _ => {}
                 }
-                return;
             }
-        }
-        if self.hits.overlay.is_some_and(|r| point_in(r, column, row)) {
-            return;
         }
     }
 
