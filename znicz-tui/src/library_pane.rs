@@ -4,13 +4,10 @@
 //! fast enough to run while handling a keypress, so this pane queries directly
 //! and keeps the results until the next navigation step.
 
-use znicz_library::{AlbumSummary, Library, Track};
+use znicz_library::{AlbumSummary, ArtistSummary, Library, SearchHit, SearchLimits, Track};
 
 use crate::cursor::Cursor;
 use crate::line_edit::LineEdit;
-
-/// How many search hits to keep. Enough to scroll, small enough to stay quick.
-const SEARCH_LIMIT: usize = 500;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mode {
@@ -27,6 +24,7 @@ pub enum Mode {
 /// What the cursor is sitting on, so the caller knows what a key should do.
 #[derive(Debug, Clone)]
 pub enum Item<'a> {
+    Artist(&'a ArtistSummary),
     Album(&'a AlbumSummary),
     Track(&'a Track),
 }
@@ -36,6 +34,7 @@ pub struct LibraryPane {
     mode: Mode,
     albums: Vec<AlbumSummary>,
     tracks: Vec<Track>,
+    search_hits: Vec<SearchHit>,
     cursor: Cursor,
     /// Text being typed while the search prompt is open.
     input: Option<LineEdit>,
@@ -53,6 +52,7 @@ impl LibraryPane {
             mode: Mode::Albums,
             albums: Vec::new(),
             tracks: Vec::new(),
+            search_hits: Vec::new(),
             cursor: Cursor::new(),
             input: None,
             notice: None,
@@ -82,6 +82,10 @@ impl LibraryPane {
         &self.tracks
     }
 
+    pub fn search_hits(&self) -> &[SearchHit] {
+        &self.search_hits
+    }
+
     pub fn cursor(&self) -> &Cursor {
         &self.cursor
     }
@@ -90,7 +94,8 @@ impl LibraryPane {
     pub fn len(&self) -> usize {
         match self.mode {
             Mode::Albums => self.albums.len(),
-            _ => self.tracks.len(),
+            Mode::Search(_) => self.search_hits.len(),
+            Mode::Album(_) | Mode::AllTracks => self.tracks.len(),
         }
     }
 
@@ -106,20 +111,29 @@ impl LibraryPane {
         let index = self.selected_index()?;
         match self.mode {
             Mode::Albums => self.albums.get(index).map(Item::Album),
-            _ => self.tracks.get(index).map(Item::Track),
+            Mode::Search(_) => self.search_hits.get(index).map(|hit| match hit {
+                SearchHit::Artist(artist) => Item::Artist(artist),
+                SearchHit::Album(album) => Item::Album(album),
+                SearchHit::Track(track) => Item::Track(track),
+            }),
+            Mode::Album(_) | Mode::AllTracks => self.tracks.get(index).map(Item::Track),
         }
     }
 
-    /// Every track the selection stands for: one track, or a whole album.
+    /// Every track the selection stands for: one track, an album, or an artist.
     pub fn selected_tracks(&self) -> Vec<Track> {
         match self.selected() {
             Some(Item::Track(track)) => vec![track.clone()],
             Some(Item::Album(album)) => self.album_tracks(&album.album),
+            Some(Item::Artist(artist)) => self.artist_tracks(&artist.name),
             None => Vec::new(),
         }
     }
 
     /// All rows currently listed, for "add everything".
+    ///
+    /// In search mode this is title-matched tracks only — not every track under
+    /// matched artists or albums.
     pub fn listed_tracks(&self) -> Vec<Track> {
         match self.mode {
             Mode::Albums => self
@@ -127,7 +141,15 @@ impl LibraryPane {
                 .iter()
                 .flat_map(|album| self.album_tracks(&album.album))
                 .collect(),
-            _ => self.tracks.clone(),
+            Mode::Search(_) => self
+                .search_hits
+                .iter()
+                .filter_map(|hit| match hit {
+                    SearchHit::Track(track) => Some(track.clone()),
+                    _ => None,
+                })
+                .collect(),
+            Mode::Album(_) | Mode::AllTracks => self.tracks.clone(),
         }
     }
 
@@ -157,7 +179,12 @@ impl LibraryPane {
     }
 
     /// Open the album under the cursor. Returns false when there is nothing to open.
+    ///
+    /// Search hits do not open browse views yet — the app shows a toast instead.
     pub fn enter(&mut self) -> bool {
+        if matches!(self.mode, Mode::Search(_)) {
+            return false;
+        }
         let Some(Item::Album(album)) = self.selected() else {
             return false;
         };
@@ -175,6 +202,7 @@ impl LibraryPane {
             return false;
         }
         self.tracks.clear();
+        self.search_hits.clear();
         self.cursor.first();
         self.h_offset = 0;
         // Goes back to albums, or to the flat track list when nothing is tagged.
@@ -208,6 +236,7 @@ impl LibraryPane {
 
     fn selected_middle_len(&self) -> usize {
         match self.selected() {
+            Some(Item::Artist(artist)) => Self::artist_middle(artist).chars().count(),
             Some(Item::Album(album)) => Self::album_middle(album).chars().count(),
             Some(Item::Track(track)) => Self::track_middle(track).chars().count(),
             None => 0,
@@ -223,7 +252,18 @@ impl LibraryPane {
                 .map(|s| s.chars().count())
                 .max()
                 .unwrap_or(0),
-            _ => self
+            Mode::Search(_) => self
+                .search_hits
+                .iter()
+                .map(|hit| match hit {
+                    SearchHit::Artist(artist) => Self::artist_middle(artist),
+                    SearchHit::Album(album) => Self::album_middle(album),
+                    SearchHit::Track(track) => Self::track_middle(track),
+                })
+                .map(|s| s.chars().count())
+                .max()
+                .unwrap_or(0),
+            Mode::Album(_) | Mode::AllTracks => self
                 .tracks
                 .iter()
                 .map(Self::track_middle)
@@ -231,6 +271,10 @@ impl LibraryPane {
                 .max()
                 .unwrap_or(0),
         }
+    }
+
+    pub fn artist_middle(artist: &ArtistSummary) -> String {
+        artist.name.clone()
     }
 
     pub fn album_middle(album: &AlbumSummary) -> String {
@@ -298,10 +342,11 @@ impl LibraryPane {
             return "no library: run `znicz scan <dir>` first".to_string();
         };
 
-        match library.search(&query, SEARCH_LIMIT) {
-            Ok(tracks) => {
-                let count = tracks.len();
-                self.tracks = tracks;
+        match library.search_entities(&query, SearchLimits::default()) {
+            Ok(hits) => {
+                let count = hits.len();
+                self.search_hits = hits;
+                self.tracks.clear();
                 self.mode = Mode::Search(query.clone());
                 self.cursor.first();
                 self.notice = if count == 0 {
@@ -339,6 +384,7 @@ impl LibraryPane {
 
         if !albums.is_empty() {
             self.albums = albums;
+            self.search_hits.clear();
             self.mode = Mode::Albums;
             self.notice = None;
             self.cursor.clamp(self.albums.len());
@@ -348,7 +394,8 @@ impl LibraryPane {
         // No albums. Either the library really is empty, or the files carry no
         // album tag; in the second case list the tracks so they are reachable.
         self.albums.clear();
-        match library.all_tracks(SEARCH_LIMIT) {
+        self.search_hits.clear();
+        match library.all_tracks(500) {
             Ok(tracks) if !tracks.is_empty() => {
                 self.notice = None;
                 self.tracks = tracks;
@@ -369,6 +416,13 @@ impl LibraryPane {
             .and_then(|library| library.browse_album(album).ok())
             .unwrap_or_default()
     }
+
+    fn artist_tracks(&self, artist: &str) -> Vec<Track> {
+        self.library
+            .as_ref()
+            .and_then(|library| library.tracks_for_artist(artist).ok())
+            .unwrap_or_default()
+    }
 }
 
 impl LibraryPane {
@@ -386,6 +440,15 @@ impl LibraryPane {
         self.mode = Mode::Album("test".into());
         self.notice = None;
         self.cursor.clamp(self.tracks.len());
+    }
+
+    /// Seed search hits for integration tests.
+    pub fn inject_search_hits_for_test(&mut self, query: &str, hits: Vec<SearchHit>) {
+        self.search_hits = hits;
+        self.tracks.clear();
+        self.mode = Mode::Search(query.into());
+        self.notice = None;
+        self.cursor.clamp(self.search_hits.len());
     }
 }
 
@@ -549,5 +612,101 @@ mod tests {
 
         pane.cancel_search();
         assert!(!pane.is_typing());
+    }
+
+    #[test]
+    fn enter_does_not_open_album_from_search_hits() {
+        let mut pane = LibraryPane::new(None);
+        pane.inject_search_hits_for_test(
+            "love",
+            vec![SearchHit::Album(AlbumSummary {
+                album: "Love".into(),
+                album_artist: Some("Other".into()),
+                year: None,
+                track_count: 1,
+                total_secs: None,
+            })],
+        );
+        assert!(!pane.enter(), "search album hits must not open browse");
+        assert!(matches!(pane.mode(), Mode::Search(_)));
+    }
+
+    #[test]
+    fn search_listed_tracks_are_title_hits_only() {
+        use std::path::PathBuf;
+
+        let mut pane = LibraryPane::new(None);
+        pane.inject_search_hits_for_test(
+            "Love",
+            vec![
+                SearchHit::Artist(ArtistSummary {
+                    name: "Love".into(),
+                    track_count: 2,
+                }),
+                SearchHit::Album(AlbumSummary {
+                    album: "Love".into(),
+                    album_artist: Some("Other".into()),
+                    year: None,
+                    track_count: 1,
+                    total_secs: None,
+                }),
+                SearchHit::Track(Track {
+                    id: 1,
+                    path: PathBuf::from("/music/title-love.flac"),
+                    title: "Love Song".into(),
+                    artist: Some("Singer".into()),
+                    album: Some("Hits".into()),
+                    album_artist: None,
+                    genre: None,
+                    year: None,
+                    track_number: None,
+                    disc_number: None,
+                    codec: None,
+                    sample_rate: None,
+                    channels: None,
+                    bits_per_sample: None,
+                    duration_secs: None,
+                }),
+            ],
+        );
+        let listed = pane.listed_tracks();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].title, "Love Song");
+    }
+
+    #[test]
+    fn search_selected_artist_queues_artist_tracks() {
+        use std::path::Path;
+
+        let mut library = Library::open_in_memory().expect("open");
+        library
+            .upsert_track_for_test(
+                Path::new("/music/a.flac"),
+                "Alone",
+                Some("Love".into()),
+                Some("Forever".into()),
+                None,
+            )
+            .unwrap();
+        library
+            .upsert_track_for_test(
+                Path::new("/music/b.flac"),
+                "Together",
+                Some("Love".into()),
+                Some("Forever".into()),
+                None,
+            )
+            .unwrap();
+
+        let mut pane = LibraryPane::new(Some(library));
+        pane.begin_search();
+        for c in "Love".chars() {
+            pane.push_char(c);
+        }
+        let message = pane.submit_search();
+        assert!(message.contains("match"), "got: {message}");
+        assert!(matches!(pane.selected(), Some(Item::Artist(_))));
+        assert_eq!(pane.selected_tracks().len(), 2);
+        assert_eq!(pane.listed_tracks().len(), 0, "no title hits for Love");
     }
 }

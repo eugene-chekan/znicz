@@ -19,7 +19,7 @@ use crate::cover::CoverCache;
 use crate::cursor::Cursor;
 use crate::hit::HitMap;
 use crate::layout;
-use crate::library_pane::{Item, LibraryPane};
+use crate::library_pane::{Item, LibraryPane, Mode};
 use crate::line_edit::LineEdit;
 use crate::meta::{Entry, MetaCache};
 use crate::toast::Toasts;
@@ -1238,8 +1238,15 @@ impl App {
     }
 
     /// Enter in the library: open an album, or play a track right away.
+    /// Artist/album rows in search results are stubs until browse ships.
     fn library_enter(&mut self) {
         match self.library.selected() {
+            Some(Item::Artist(_)) => {
+                self.toasts.info("artist browse from search comes later");
+            }
+            Some(Item::Album(_)) if matches!(self.library.mode(), Mode::Search(_)) => {
+                self.toasts.info("album browse from search comes later");
+            }
             Some(Item::Album(_)) => {
                 self.library.enter();
             }

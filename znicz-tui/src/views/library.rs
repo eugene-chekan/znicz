@@ -6,7 +6,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, Paragraph};
 use ratatui::Frame;
-use znicz_library::{AlbumSummary, Track};
+use znicz_library::{AlbumSummary, ArtistSummary, SearchHit, Track};
 
 use crate::app::{App, Focus};
 use crate::format;
@@ -66,9 +66,16 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             .albums()
             .iter()
             .enumerate()
-            .map(|(i, album)| album_row(album, strip, app.library.offset_for(i)))
+            .map(|(i, album)| album_row(album, strip, app.library.offset_for(i), false))
             .collect(),
-        _ => app
+        Mode::Search(_) => app
+            .library
+            .search_hits()
+            .iter()
+            .enumerate()
+            .map(|(i, hit)| hit_row(hit, strip, app.library.offset_for(i)))
+            .collect(),
+        Mode::Album(_) | Mode::AllTracks => app
             .library
             .tracks()
             .iter()
@@ -80,7 +87,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let count = app.library.len();
     let summary = match app.library.mode() {
         Mode::Albums => format!("{count} albums"),
-        _ => format!("{count} tracks"),
+        Mode::Search(_) => search_summary(app.library.search_hits()),
+        Mode::Album(_) | Mode::AllTracks => format!("{count} tracks"),
     };
 
     let block = views::pane_block(&title, focused, Some(summary));
@@ -100,9 +108,57 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     });
 }
 
-fn album_row(album: &AlbumSummary, strip: usize, offset: usize) -> ListItem<'static> {
-    let right = album_right(album);
-    let fixed = album_fixed(album);
+fn search_summary(hits: &[SearchHit]) -> String {
+    let mut artists = 0usize;
+    let mut albums = 0usize;
+    let mut tracks = 0usize;
+    for hit in hits {
+        match hit {
+            SearchHit::Artist(_) => artists += 1,
+            SearchHit::Album(_) => albums += 1,
+            SearchHit::Track(_) => tracks += 1,
+        }
+    }
+    format!("{artists} artists · {albums} albums · {tracks} tracks")
+}
+
+fn hit_row(hit: &SearchHit, strip: usize, offset: usize) -> ListItem<'static> {
+    match hit {
+        SearchHit::Artist(artist) => artist_row(artist, strip, offset),
+        SearchHit::Album(album) => album_row(album, strip, offset, true),
+        SearchHit::Track(track) => track_row(track, strip, offset),
+    }
+}
+
+fn artist_row(artist: &ArtistSummary, strip: usize, offset: usize) -> ListItem<'static> {
+    let right = format!("{} · artist", tracks_label(artist.track_count));
+    let fixed = right.chars().count() + 2;
+    let middle = format::pan(
+        &LibraryPane::artist_middle(artist),
+        offset,
+        strip.saturating_sub(fixed),
+    );
+    let pad = strip.saturating_sub(middle.chars().count() + right.chars().count());
+
+    ListItem::new(Line::from(vec![
+        Span::styled(middle, theme::text()),
+        Span::raw(" ".repeat(pad)),
+        Span::styled(right, theme::dim()),
+    ]))
+}
+
+fn album_row(
+    album: &AlbumSummary,
+    strip: usize,
+    offset: usize,
+    search_cue: bool,
+) -> ListItem<'static> {
+    let right = if search_cue {
+        format!("{} · album", album_right(album))
+    } else {
+        album_right(album)
+    };
+    let fixed = right.chars().count() + 2;
     let middle = format::pan(
         &LibraryPane::album_middle(album),
         offset,
@@ -153,6 +209,17 @@ fn album_fixed(album: &AlbumSummary) -> usize {
     album_right(album).chars().count() + 2
 }
 
+fn artist_fixed(artist: &ArtistSummary) -> usize {
+    format!("{} · artist", tracks_label(artist.track_count))
+        .chars()
+        .count()
+        + 2
+}
+
+fn search_album_fixed(album: &AlbumSummary) -> usize {
+    format!("{} · album", album_right(album)).chars().count() + 2
+}
+
 fn track_number(track: &Track) -> String {
     track
         .track_number
@@ -169,7 +236,19 @@ fn track_fixed(track: &Track) -> usize {
 pub(crate) fn title_slot(pane: &LibraryPane, strip: usize) -> usize {
     let fixed = match pane.mode() {
         Mode::Albums => pane.albums().iter().map(album_fixed).max().unwrap_or(0),
-        _ => pane.tracks().iter().map(track_fixed).max().unwrap_or(0),
+        Mode::Search(_) => pane
+            .search_hits()
+            .iter()
+            .map(|hit| match hit {
+                SearchHit::Artist(artist) => artist_fixed(artist),
+                SearchHit::Album(album) => search_album_fixed(album),
+                SearchHit::Track(track) => track_fixed(track),
+            })
+            .max()
+            .unwrap_or(0),
+        Mode::Album(_) | Mode::AllTracks => {
+            pane.tracks().iter().map(track_fixed).max().unwrap_or(0)
+        }
     };
     strip.saturating_sub(fixed)
 }
@@ -191,6 +270,41 @@ mod tests {
         assert_eq!(tracks_label(1), "1 track");
         assert_eq!(tracks_label(0), "0 tracks");
         assert_eq!(tracks_label(12), "12 tracks");
+    }
+
+    #[test]
+    fn search_summary_counts_each_kind() {
+        let hits = vec![
+            SearchHit::Artist(ArtistSummary {
+                name: "A".into(),
+                track_count: 1,
+            }),
+            SearchHit::Album(AlbumSummary {
+                album: "B".into(),
+                album_artist: None,
+                year: None,
+                track_count: 2,
+                total_secs: None,
+            }),
+            SearchHit::Track(Track {
+                id: 1,
+                path: std::path::PathBuf::from("/t.flac"),
+                title: "T".into(),
+                artist: None,
+                album: None,
+                album_artist: None,
+                genre: None,
+                year: None,
+                track_number: None,
+                disc_number: None,
+                codec: None,
+                sample_rate: None,
+                channels: None,
+                bits_per_sample: None,
+                duration_secs: None,
+            }),
+        ];
+        assert_eq!(search_summary(&hits), "1 artists · 1 albums · 1 tracks");
     }
 
     #[test]

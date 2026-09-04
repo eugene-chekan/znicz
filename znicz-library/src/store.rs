@@ -154,6 +154,35 @@ impl Library {
         Ok(())
     }
 
+    /// Insert one track for cross-crate tests. Prefer `scan` in real use.
+    #[doc(hidden)]
+    pub fn upsert_track_for_test(
+        &mut self,
+        path: &Path,
+        title: &str,
+        artist: Option<String>,
+        album: Option<String>,
+        album_artist: Option<String>,
+    ) -> Result<()> {
+        self.upsert_track(
+            path,
+            title,
+            artist,
+            album,
+            album_artist,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(0),
+        )
+    }
+
     pub fn track_count(&self) -> Result<u64> {
         let count: i64 = self
             .conn
@@ -199,11 +228,7 @@ impl Library {
 
     /// Entity search for the TUI: distinct artists, distinct albums, then
     /// title-only track hits. Flat [`Self::search`] stays for MCP/CLI.
-    pub fn search_entities(
-        &self,
-        query: &str,
-        limits: SearchLimits,
-    ) -> Result<Vec<SearchHit>> {
+    pub fn search_entities(&self, query: &str, limits: SearchLimits) -> Result<Vec<SearchHit>> {
         let trimmed = query.trim();
         if trimmed.is_empty() {
             return Ok(Vec::new());
@@ -275,8 +300,7 @@ impl Library {
                  LIMIT ?2"
             );
             let mut statement = self.conn.prepare(&sql)?;
-            let rows =
-                statement.query_map(params![pattern, limits.tracks as i64], row_to_track)?;
+            let rows = statement.query_map(params![pattern, limits.tracks as i64], row_to_track)?;
             for row in rows {
                 hits.push(SearchHit::Track(row?));
             }
@@ -739,7 +763,9 @@ mod tests {
             })
             .collect();
         assert_eq!(track_titles, vec!["Love Song"]);
-        assert!(!track_titles.iter().any(|t| *t == "Alone" || *t == "Together"));
+        assert!(!track_titles
+            .iter()
+            .any(|t| *t == "Alone" || *t == "Together"));
     }
 
     #[test]

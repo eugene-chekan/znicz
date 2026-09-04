@@ -44,6 +44,7 @@ Znicz is a terminal player first, so the interface caught up with the engine:
 - Signal inspector (`i`) for the full file → device path, including sample format
 - Horizontal pan of long titles with `Alt-←` and `Alt-→`
 - Library browsing and search from inside the player, not just the CLI
+  (TUI search returns artist / album / title entity hits; MCP/CLI stay flat)
 - Queue shows track titles, resolved on a background thread, and can be
   played from, reordered by removal, or cleared
 - Signal-path line with a **bit perfect** or **resampled** badge

@@ -115,11 +115,15 @@ details, filled in when the stream opens. See
 ### Library
 
 The home screen. Albums by default; `Enter` opens one, `Esc` goes back, `/`
-opens a search prompt, `a` queues the selection (a whole album if the cursor is
-on one) and `A` queues everything listed. While the prompt is open, Left and
-Right move the caret the same way they do when naming a playlist or a station.
-Queries go straight to SQLite, which is fast enough to run while handling the
-keypress. See [Library](Library.md).
+opens a search prompt, `a` queues the selection (a whole album or artist if the
+cursor is on one) and `A` queues everything listed (`A` in search queues
+title-matched tracks only). Search results are entity hits — artists, albums,
+then title-matched tracks — not every track that shares an artist or album name.
+`Enter` on a track plays it; `Enter` on an artist or album in search shows a
+short toast for now (browse from search is later). While the prompt is open,
+Left and Right move the caret the same way they do when naming a playlist or a
+station. Queries go straight to SQLite, which is fast enough to run while
+handling the keypress. See [Library](Library.md).
 
 A library whose files carry **no album tags** cannot be grouped, so the pane
 falls back to a flat track list rather than looking empty.
