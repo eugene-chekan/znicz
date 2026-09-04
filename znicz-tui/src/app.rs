@@ -470,6 +470,16 @@ impl App {
             }
             return;
         }
+        if self.hits.close.is_some_and(|r| point_in(r, column, row)) {
+            if self.modal != Modal::None {
+                self.modal = Modal::None;
+                self.playlist_prompt = None;
+                self.radio_prompt = None;
+            } else if self.queue_open {
+                self.close_queue();
+            }
+            return;
+        }
         if self.modal != Modal::None {
             self.on_overlay_click(column, row);
             return;
@@ -483,28 +493,6 @@ impl App {
                     self.focus = Focus::Queue;
                     return;
                 }
-            }
-            let sheet = layout::is_sheet(self.list_width, true);
-            if sheet {
-                if self
-                    .hits
-                    .queue_toggle
-                    .is_some_and(|r| point_in(r, column, row))
-                {
-                    self.close_queue();
-                }
-                return;
-            }
-            if self
-                .hits
-                .library_pane
-                .is_some_and(|r| point_in(r, column, row))
-                || self
-                    .hits
-                    .queue_toggle
-                    .is_some_and(|r| point_in(r, column, row))
-            {
-                self.close_queue();
             }
             return;
         }
@@ -541,9 +529,6 @@ impl App {
         if self.hits.overlay.is_some_and(|r| point_in(r, column, row)) {
             return;
         }
-        self.modal = Modal::None;
-        self.playlist_prompt = None;
-        self.radio_prompt = None;
     }
 
     // --- key handling ---

@@ -149,46 +149,48 @@ fn the_right_border_opens_the_queue_when_it_is_closed() {
 }
 
 #[test]
-fn a_click_on_the_library_closes_an_overlay_queue() {
+fn a_library_click_under_an_open_queue_does_not_close_it() {
     let mut app = new_app();
-    app.list_width = 100;
+    queue(&mut app, 2);
     app.queue_open = true;
     app.focus = Focus::Queue;
-    app.hits.library_pane = Some(Rect::new(0, 0, 59, 20));
-    app.hits.queue = Some(ListHit {
-        inner: Rect::new(60, 1, 38, 18),
-        offset: 0,
-        len: 0,
-    });
-    app.on_mouse(left_click(10, 5));
-    assert!(!app.queue_open);
-    assert_eq!(app.focus, Focus::Library);
+    app.hits = HitMap {
+        library: Some(ListHit {
+            inner: Rect::new(1, 1, 40, 10),
+            offset: 0,
+            len: 0,
+        }),
+        library_pane: Some(Rect::new(0, 0, 50, 20)),
+        queue: Some(ListHit {
+            inner: Rect::new(51, 1, 28, 10),
+            offset: 0,
+            len: 2,
+        }),
+        queue_toggle: Some(Rect::new(49, 0, 1, 20)),
+        ..HitMap::default()
+    };
+    app.on_mouse(left_click(2, 5));
+    assert!(app.queue_open);
 }
 
 #[test]
-fn the_right_border_closes_a_queue_sheet() {
+fn a_toggle_column_click_does_not_close_an_open_queue() {
     let mut app = new_app();
-    app.list_width = 81;
     app.queue_open = true;
     app.focus = Focus::Queue;
-    app.hits.queue_toggle = Some(Rect::new(80, 0, 1, 20));
-    app.hits.queue = Some(ListHit {
-        inner: Rect::new(1, 1, 79, 18),
-        offset: 0,
-        len: 0,
-    });
-    app.on_mouse(left_click(80, 2));
-    assert!(!app.queue_open);
-    assert_eq!(app.focus, Focus::Library);
+    app.hits.queue_toggle = Some(Rect::new(79, 0, 1, 20));
+    app.hits.library_pane = Some(Rect::new(0, 0, 80, 20));
+    app.on_mouse(left_click(79, 4));
+    assert!(app.queue_open);
 }
 
 #[test]
-fn a_click_outside_help_closes_it() {
+fn a_click_outside_help_does_not_close_it() {
     let mut app = new_app();
     app.modal = Modal::Help;
     app.hits.overlay = Some(Rect::new(10, 4, 60, 16));
     app.on_mouse(left_click(0, 0));
-    assert_eq!(app.modal, Modal::None);
+    assert_eq!(app.modal, Modal::Help);
 }
 
 #[test]
@@ -201,12 +203,33 @@ fn a_click_inside_help_does_not_close_it() {
 }
 
 #[test]
-fn a_click_outside_inspector_closes_it() {
+fn a_click_outside_inspector_does_not_close_it() {
     let mut app = new_app();
     app.modal = Modal::Inspector;
     app.hits.overlay = Some(Rect::new(20, 4, 40, 12));
     app.on_mouse(left_click(0, 0));
+    assert_eq!(app.modal, Modal::Inspector);
+}
+
+#[test]
+fn a_click_on_close_dismisses_help() {
+    let mut app = new_app();
+    app.modal = Modal::Help;
+    app.hits.overlay = Some(Rect::new(10, 4, 60, 16));
+    app.hits.close = Some(Rect::new(68, 4, 1, 1));
+    app.on_mouse(left_click(68, 4));
     assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn a_click_on_close_closes_the_queue_drawer() {
+    let mut app = new_app();
+    app.queue_open = true;
+    app.focus = Focus::Queue;
+    app.hits.close = Some(Rect::new(78, 0, 1, 1));
+    app.on_mouse(left_click(78, 0));
+    assert!(!app.queue_open);
+    assert_eq!(app.focus, Focus::Library);
 }
 
 #[test]
@@ -239,12 +262,12 @@ fn a_devices_row_click_moves_the_cursor_without_applying() {
 }
 
 #[test]
-fn a_click_outside_devices_closes_the_overlay() {
+fn a_click_outside_devices_does_not_close_the_overlay() {
     let mut app = new_app();
     app.modal = Modal::Devices;
     app.hits.overlay = Some(Rect::new(10, 4, 40, 12));
     app.on_mouse(left_click(0, 0));
-    assert_eq!(app.modal, Modal::None);
+    assert_eq!(app.modal, Modal::Devices);
 }
 
 #[test]
