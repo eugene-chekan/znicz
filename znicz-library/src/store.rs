@@ -5,6 +5,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use crate::error::Result;
 use crate::track::{AlbumSummary, ArtistSummary, SearchHit, SearchLimits, Track};
 
+/// Synthetic browse root for compilation albums (see `browse_artists`).
+pub const VARIOUS_ARTISTS_NAME: &str = "Various Artists";
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS tracks (
     id             INTEGER PRIMARY KEY,
@@ -400,6 +403,116 @@ impl Library {
             .map_err(Into::into)
     }
 
+    /// Distinct browse artists for artist-first navigation, including a synthetic
+    /// [`VARIOUS_ARTISTS_NAME`] root when any compilation album exists.
+    pub fn browse_artists(&self) -> Result<Vec<ArtistSummary>> {
+        let attributed = self.attribute_albums()?;
+        let mut by_artist: std::collections::BTreeMap<String, u32> =
+            std::collections::BTreeMap::new();
+        for album in &attributed {
+            *by_artist
+                .entry(album.browse_artist.clone())
+                .or_insert(0) += album.summary.track_count;
+        }
+        let mut artists: Vec<ArtistSummary> = by_artist
+            .into_iter()
+            .map(|(name, track_count)| ArtistSummary { name, track_count })
+            .collect();
+        artists.sort_by(|a, b| {
+            a.name
+                .to_lowercase()
+                .cmp(&b.name.to_lowercase())
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        Ok(artists)
+    }
+
+    /// Albums attributed to a browse artist (compilations for Various Artists).
+    pub fn albums_for_browse_artist(&self, artist: &str) -> Result<Vec<AlbumSummary>> {
+        let attributed = self.attribute_albums()?;
+        let mut albums: Vec<AlbumSummary> = attributed
+            .into_iter()
+            .filter(|a| a.browse_artist.eq_ignore_ascii_case(artist))
+            .map(|a| a.summary)
+            .collect();
+        albums.sort_by(|a, b| {
+            a.album
+                .to_lowercase()
+                .cmp(&b.album.to_lowercase())
+                .then_with(|| a.album.cmp(&b.album))
+        });
+        Ok(albums)
+    }
+
+    /// Classify each tagged album into a browse artist using the Various Artists rule.
+    fn attribute_albums(&self) -> Result<Vec<AttributedAlbum>> {
+        let mut statement = self.conn.prepare(
+            "SELECT album, artist, album_artist, year, duration_secs
+             FROM tracks
+             WHERE album IS NOT NULL AND album <> ''
+             ORDER BY album COLLATE NOCASE",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<i64>>(3)?,
+                row.get::<_, Option<f64>>(4)?,
+            ))
+        })?;
+
+        let mut groups: std::collections::BTreeMap<String, AlbumGroup> =
+            std::collections::BTreeMap::new();
+        for row in rows {
+            let (album, artist, album_artist, year, duration_secs) = row?;
+            let key = album.to_lowercase();
+            let group = groups.entry(key).or_insert_with(|| AlbumGroup {
+                display_album: album.clone(),
+                artists: Vec::new(),
+                album_artists: Vec::new(),
+                year: None,
+                track_count: 0,
+                total_secs: None,
+            });
+            if group.track_count == 0 {
+                group.display_album = album;
+            }
+            if let Some(a) = artist.filter(|s| !s.is_empty()) {
+                group.artists.push(a);
+            }
+            if let Some(aa) = album_artist.filter(|s| !s.is_empty()) {
+                group.album_artists.push(aa);
+            }
+            if let Some(y) = year {
+                let y = y as u32;
+                group.year = Some(group.year.map_or(y, |cur| cur.max(y)));
+            }
+            group.track_count += 1;
+            if let Some(secs) = duration_secs {
+                group.total_secs = Some(group.total_secs.unwrap_or(0.0) + secs);
+            }
+        }
+
+        Ok(groups
+            .into_values()
+            .map(|g| {
+                let browse_artist = classify_browse_artist(&g);
+                let album_artist_display = display_album_artist(&g);
+                AttributedAlbum {
+                    browse_artist,
+                    summary: AlbumSummary {
+                        album: g.display_album,
+                        album_artist: album_artist_display,
+                        year: g.year,
+                        track_count: g.track_count,
+                        total_secs: g.total_secs,
+                    },
+                }
+            })
+            .collect())
+    }
+
     /// Remove rows whose file no longer exists. Returns how many were dropped.
     pub fn remove_missing(&mut self) -> Result<usize> {
         let paths: Vec<String> = {
@@ -517,6 +630,85 @@ fn row_to_track(row: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
         bits_per_sample: row.get::<_, Option<i64>>(13)?.map(|v| v as u32),
         duration_secs: row.get(14)?,
     })
+}
+
+struct AlbumGroup {
+    display_album: String,
+    artists: Vec<String>,
+    album_artists: Vec<String>,
+    year: Option<u32>,
+    track_count: u32,
+    total_secs: Option<f64>,
+}
+
+struct AttributedAlbum {
+    browse_artist: String,
+    summary: AlbumSummary,
+}
+
+fn name_key(value: &str) -> String {
+    value.to_lowercase()
+}
+
+fn distinct_names(values: &[String]) -> Vec<String> {
+    let mut seen = std::collections::BTreeMap::<String, String>::new();
+    for value in values {
+        seen.entry(name_key(value)).or_insert_with(|| value.clone());
+    }
+    seen.into_values().collect()
+}
+
+fn is_various_artists_tag(value: &str) -> bool {
+    value.eq_ignore_ascii_case(VARIOUS_ARTISTS_NAME)
+}
+
+fn classify_browse_artist(group: &AlbumGroup) -> String {
+    // Tagged VA: any track has album_artist = "Various Artists".
+    if group.album_artists.iter().any(|aa| is_various_artists_tag(aa)) {
+        return VARIOUS_ARTISTS_NAME.to_string();
+    }
+
+    // Untagged multi-artist: every album_artist empty, ≥2 distinct artists.
+    if group.album_artists.is_empty() {
+        let artists = distinct_names(&group.artists);
+        if artists.len() >= 2 {
+            return VARIOUS_ARTISTS_NAME.to_string();
+        }
+    }
+
+    let album_artists = distinct_names(&group.album_artists);
+    if album_artists.len() == 1 {
+        return album_artists[0].clone();
+    }
+
+    let artists = distinct_names(&group.artists);
+    if artists.len() == 1 {
+        return artists[0].clone();
+    }
+
+    // Fallback: COALESCE(album_artist, artist) style display name.
+    if let Some(aa) = group.album_artists.first() {
+        return aa.clone();
+    }
+    if let Some(a) = group.artists.first() {
+        return a.clone();
+    }
+    "Unknown Artist".to_string()
+}
+
+fn display_album_artist(group: &AlbumGroup) -> Option<String> {
+    let album_artists = distinct_names(&group.album_artists);
+    if album_artists.len() == 1 {
+        return Some(album_artists[0].clone());
+    }
+    if let Some(aa) = group.album_artists.first() {
+        return Some(aa.clone());
+    }
+    let artists = distinct_names(&group.artists);
+    if artists.len() == 1 {
+        return Some(artists[0].clone());
+    }
+    group.artists.first().cloned()
 }
 
 #[cfg(test)]
@@ -874,5 +1066,186 @@ mod tests {
             .search_entities("  ", SearchLimits::default())
             .unwrap()
             .is_empty());
+    }
+
+    fn upsert_simple(
+        library: &mut Library,
+        path: &str,
+        title: &str,
+        artist: Option<&str>,
+        album: Option<&str>,
+        album_artist: Option<&str>,
+    ) {
+        library
+            .upsert_track(
+                Path::new(path),
+                title,
+                artist.map(str::to_string),
+                album.map(str::to_string),
+                album_artist.map(str::to_string),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(0),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn browse_artists_includes_various_artists_for_tagged_compilation() {
+        let mut library = Library::open_in_memory().unwrap();
+        upsert_simple(
+            &mut library,
+            "/music/va1.flac",
+            "One",
+            Some("A"),
+            Some("Comp"),
+            Some("Various Artists"),
+        );
+        upsert_simple(
+            &mut library,
+            "/music/va2.flac",
+            "Two",
+            Some("B"),
+            Some("Comp"),
+            Some("various artists"),
+        );
+        upsert_simple(
+            &mut library,
+            "/music/solo.flac",
+            "Solo",
+            Some("Miles"),
+            Some("Kind of Blue"),
+            Some("Miles"),
+        );
+
+        let artists = library.browse_artists().unwrap();
+        let names: Vec<_> = artists.iter().map(|a| a.name.as_str()).collect();
+        assert!(
+            names.iter().any(|n| *n == VARIOUS_ARTISTS_NAME),
+            "got {names:?}"
+        );
+        assert!(names.iter().any(|n| *n == "Miles"));
+        assert!(!names.iter().any(|n| *n == "A" || *n == "B"));
+
+        let comps = library
+            .albums_for_browse_artist(VARIOUS_ARTISTS_NAME)
+            .unwrap();
+        assert_eq!(comps.len(), 1);
+        assert_eq!(comps[0].album, "Comp");
+        assert_eq!(comps[0].track_count, 2);
+    }
+
+    #[test]
+    fn browse_artists_includes_various_artists_for_untagged_multi_artist_album() {
+        let mut library = Library::open_in_memory().unwrap();
+        upsert_simple(
+            &mut library,
+            "/music/m1.flac",
+            "One",
+            Some("A"),
+            Some("Mixed"),
+            None,
+        );
+        upsert_simple(
+            &mut library,
+            "/music/m2.flac",
+            "Two",
+            Some("B"),
+            Some("Mixed"),
+            None,
+        );
+
+        let artists = library.browse_artists().unwrap();
+        assert_eq!(artists.len(), 1);
+        assert_eq!(artists[0].name, VARIOUS_ARTISTS_NAME);
+        assert_eq!(artists[0].track_count, 2);
+    }
+
+    #[test]
+    fn multi_artist_album_with_real_album_artist_stays_under_that_name() {
+        let mut library = Library::open_in_memory().unwrap();
+        upsert_simple(
+            &mut library,
+            "/music/s1.flac",
+            "One",
+            Some("Guest A"),
+            Some("OST"),
+            Some("Original Soundtrack"),
+        );
+        upsert_simple(
+            &mut library,
+            "/music/s2.flac",
+            "Two",
+            Some("Guest B"),
+            Some("OST"),
+            Some("Original Soundtrack"),
+        );
+
+        let artists = library.browse_artists().unwrap();
+        let names: Vec<_> = artists.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, vec!["Original Soundtrack"]);
+        assert!(!names.contains(&VARIOUS_ARTISTS_NAME));
+
+        let albums = library
+            .albums_for_browse_artist("Original Soundtrack")
+            .unwrap();
+        assert_eq!(albums.len(), 1);
+        assert_eq!(albums[0].album, "OST");
+    }
+
+    #[test]
+    fn albums_for_browse_artist_returns_only_that_artists_albums() {
+        let mut library = Library::open_in_memory().unwrap();
+        upsert_simple(
+            &mut library,
+            "/music/a1.flac",
+            "T1",
+            Some("Alpha"),
+            Some("First"),
+            None,
+        );
+        upsert_simple(
+            &mut library,
+            "/music/a2.flac",
+            "T2",
+            Some("Alpha"),
+            Some("Second"),
+            None,
+        );
+        upsert_simple(
+            &mut library,
+            "/music/b1.flac",
+            "T3",
+            Some("Beta"),
+            Some("Other"),
+            None,
+        );
+
+        let albums = library.albums_for_browse_artist("alpha").unwrap();
+        let names: Vec<_> = albums.iter().map(|a| a.album.as_str()).collect();
+        assert_eq!(names, vec!["First", "Second"]);
+    }
+
+    #[test]
+    fn various_artists_root_absent_when_no_compilations() {
+        let mut library = Library::open_in_memory().unwrap();
+        upsert_simple(
+            &mut library,
+            "/music/a.flac",
+            "T",
+            Some("Solo"),
+            Some("LP"),
+            None,
+        );
+        let artists = library.browse_artists().unwrap();
+        assert_eq!(artists.len(), 1);
+        assert_eq!(artists[0].name, "Solo");
     }
 }
