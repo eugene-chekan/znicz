@@ -43,3 +43,36 @@ pub struct AlbumSummary {
     pub track_count: u32,
     pub total_secs: Option<f64>,
 }
+
+/// One artist name with how many tracks are attributed to it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ArtistSummary {
+    pub name: String,
+    pub track_count: u32,
+}
+
+/// One row from an entity search: artist, album, or title-matched track.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SearchHit {
+    Artist(ArtistSummary),
+    Album(AlbumSummary),
+    Track(Track),
+}
+
+/// Per-kind caps for [`crate::Library::search_entities`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SearchLimits {
+    pub artists: usize,
+    pub albums: usize,
+    pub tracks: usize,
+}
+
+impl Default for SearchLimits {
+    fn default() -> Self {
+        Self {
+            artists: 50,
+            albums: 50,
+            tracks: 200,
+        }
+    }
+}

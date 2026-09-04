@@ -13,7 +13,7 @@ mod track;
 pub use error::{LibraryError, Result};
 pub use scan::ScanReport;
 pub use store::Library;
-pub use track::{AlbumSummary, Track};
+pub use track::{AlbumSummary, ArtistSummary, SearchHit, SearchLimits, Track};
 
 /// Where the library database lives by default.
 pub fn default_database_path() -> Option<std::path::PathBuf> {
