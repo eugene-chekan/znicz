@@ -148,7 +148,10 @@ pub(crate) fn close_button_rect(area: Rect) -> Option<Rect> {
 }
 
 pub(crate) fn close_title() -> Line<'static> {
-    Line::from(Span::styled(" X ", theme::key())).right_aligned()
+    // Single "X", right-aligned into the titles strip (inside the borders). That
+    // lands on `area.x + width - 2`, matching `close_button_rect`. A padded
+    // " X " put the glyph one cell left of the hit.
+    Line::from(Span::styled("X", theme::key())).right_aligned()
 }
 
 /// Border for a pane, highlighted when it has focus.
