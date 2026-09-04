@@ -131,3 +131,5 @@ Not in phases 3–6. Tracked as GitHub issues; see [Issues](../Issues.md).
 - Show the app version — [#22](https://github.com/eugene-chekan/znicz/issues/22)
 - Auto-pan now-playing text when it does not fit — [#34](https://github.com/eugene-chekan/znicz/issues/34)
 - Reorder list rows with Alt-↑ / Alt-↓ — [#36](https://github.com/eugene-chekan/znicz/issues/36)
+- Full-screen Now Playing view (large cover) — [#46](https://github.com/eugene-chekan/znicz/issues/46)
+- Finer volume control (more steps, 1% keys) — [#47](https://github.com/eugene-chekan/znicz/issues/47)
