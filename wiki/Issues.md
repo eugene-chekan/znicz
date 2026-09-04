@@ -14,6 +14,8 @@ Parked TUI ideas (file, do not start unless asked):
 - [#22 Show the app version](https://github.com/eugene-chekan/znicz/issues/22) (place and shape still open)
 - [#34 Auto-pan now-playing text](https://github.com/eugene-chekan/znicz/issues/34) (marquee when artist / title does not fit)
 - [#36 Reorder list rows with Alt-↑ / Alt-↓](https://github.com/eugene-chekan/znicz/issues/36) (cursor stays on the moved item)
+- [#46 Full-screen Now Playing view](https://github.com/eugene-chekan/znicz/issues/46) (large cover and current-track info)
+- [#47 Finer volume control](https://github.com/eugene-chekan/znicz/issues/47) (more indicator steps; 1% key step)
 
 Playlists (file, do not start unless asked):
 
