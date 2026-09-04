@@ -394,6 +394,25 @@ fn a_click_on_the_transport_does_nothing() {
 }
 
 #[test]
+fn a_drawn_footer_help_hint_is_clickable() {
+    let mut app = new_app();
+    let state = app.player.state();
+    let mut terminal = Terminal::new(TestBackend::new(100, 24)).expect("backend");
+    terminal
+        .draw(|frame| views::render(frame, &mut app, &state))
+        .expect("draw");
+    let help = app
+        .hits
+        .footer_hints
+        .iter()
+        .find(|h| h.key.code == KeyCode::Char('?'))
+        .expect("? help footer hit")
+        .rect;
+    app.on_mouse(left_click(help.x, help.y));
+    assert_eq!(app.modal, Modal::Help);
+}
+
+#[test]
 fn a_footer_help_hit_opens_help() {
     let mut app = new_app();
     app.hits.footer_hints = vec![FooterHit {
