@@ -4,9 +4,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::Terminal;
+use std::path::PathBuf;
 use znicz_core::Command;
 use znicz_core::{spawn_player, AudioConfig, PlaybackStatus, PlayerHandle};
-use std::path::PathBuf;
 use znicz_library::{AlbumSummary, Track};
 use znicz_tui::hit::{FooterHit, HitMap, ListHit};
 use znicz_tui::views;

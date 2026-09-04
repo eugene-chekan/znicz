@@ -505,10 +505,7 @@ impl App {
                 }
             }
             let list = Rect::new(0, 0, self.list_width, self.list_height);
-            if matches!(
-                layout::drawer(list, true),
-                layout::Drawer::Overlay(_)
-            ) {
+            if matches!(layout::drawer(list, true), layout::Drawer::Overlay(_)) {
                 if let Some(hit) = self.hits.library {
                     if let Some(index) = hit.row_at(column, row) {
                         self.library.set_index(index);

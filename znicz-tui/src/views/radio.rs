@@ -48,8 +48,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     } else {
         "Enter play · a add · n new · e edit · c copy · d delete · Esc close"
     };
-    let block = views::pane_block("Radio", focused, Some(hint.to_string()))
-        .title(views::close_title());
+    let block =
+        views::pane_block("Radio", focused, Some(hint.to_string())).title(views::close_title());
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
