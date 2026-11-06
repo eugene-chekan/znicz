@@ -124,7 +124,8 @@ is drawn depends on config and width:
   in, Esc steps back). Still artist-first, not albums-as-home.
 - **`library_layout = "tree"`**: expandable tree at any width. Enter or
   **Space** / **o** expands or collapses; open nodes are remembered for the
-  session only.
+  session only. Album lists are cached per expanded artist, so a redraw does
+  not re-scan the library; **r** refreshes those lists.
 
 `/` opens search. Results are entity hits — artists, albums, then
 title-matched tracks. **Enter** on an artist or album leaves search and focuses

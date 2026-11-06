@@ -20,6 +20,12 @@ Playlists (file, do not start unless asked):
 - [#18 Browse and edit saved playlist contents](https://github.com/eugene-chekan/znicz/issues/18) (view, delete rows, reorder; keys in [#36](https://github.com/eugene-chekan/znicz/issues/36))
 - [#19 Add a library item to a saved playlist](https://github.com/eugene-chekan/znicz/issues/19)
 
+Performance follow-ups (filed after the 0.5.1 tree fix):
+
+- [#55 Render only visible rows in library and queue lists](https://github.com/eugene-chekan/znicz/issues/55) (per-frame list builds grow with queue and library size)
+- [#56 Cache album attribution instead of re-scanning tracks per artist step](https://github.com/eugene-chekan/znicz/issues/56) (full tracks scan on column and paging selection changes)
+- [#57 Stop sending the whole queue with every player state request](https://github.com/eugene-chekan/znicz/issues/57) (state clones and serializes the queue twice per frame with the drawer open)
+
 Product phase **5** (album art) is done. Phase **6** (MusicBrainz) and **later
 radio** (HLS, PLS, XSPF) are on the
 [roadmap](Plans/Roadmap.md), not duplicated as issues yet. Phase 4 (radio
