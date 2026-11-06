@@ -1,6 +1,6 @@
 # App Version Visibility Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Make the running build visible through `znicz --version` and the TUI help footer.
 
@@ -15,7 +15,7 @@
 **Files:**
 - Create: `docs/superpowers/plans/2026-11-06-app-version.md` (this file)
 
-- [ ] **Step 1: Commit the plan**
+- [x] **Step 1: Commit the plan**
 
 ```bash
 git add docs/superpowers/plans/2026-11-06-app-version.md
@@ -30,7 +30,7 @@ git commit -m "Add app version implementation plan"
 - Modify: `znicz/src/main.rs` (command attribute, tests module)
 - Test: `znicz/src/main.rs`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 At the end of `znicz/src/main.rs`, add:
 
@@ -51,7 +51,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run:
 
@@ -61,7 +61,7 @@ cargo test -p znicz --bin znicz --offline version_is_wired
 
 Expected: FAIL. Clap renders `"znicz \n"` because the command has no version.
 
-- [ ] **Step 3: Add the version attribute**
+- [x] **Step 3: Add the version attribute**
 
 Replace:
 
@@ -75,7 +75,7 @@ with:
 #[command(name = "znicz", version, about = "Audiophile TUI music player")]
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run:
 
@@ -85,7 +85,7 @@ cargo test -p znicz --bin znicz --offline version_is_wired
 
 Expected: `1 passed; 0 failed`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz/src/main.rs
@@ -99,7 +99,7 @@ git commit -m "Wire znicz --version"
 **Files:**
 - Modify: `znicz-tui/src/views/help.rs` (constants, helper, tests)
 
-- [ ] **Step 1: Write the failing unit tests**
+- [x] **Step 1: Write the failing unit tests**
 
 In `znicz-tui/src/views/help.rs`, inside `mod tests`, add:
 
@@ -122,7 +122,7 @@ In `znicz-tui/src/views/help.rs`, inside `mod tests`, add:
     }
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run:
 
@@ -132,7 +132,7 @@ cargo test -p znicz-tui --lib --offline help::tests
 
 Expected: compile error, `cannot find function version_title`.
 
-- [ ] **Step 3: Add the constants and helper**
+- [x] **Step 3: Add the constants and helper**
 
 After the `use` block in `znicz-tui/src/views/help.rs`, add:
 
@@ -159,7 +159,7 @@ fn version_title(popup_width: u16) -> Option<Line<'static>> {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run:
 
@@ -169,7 +169,7 @@ cargo test -p znicz-tui --lib --offline help::tests
 
 Expected: `2 passed; 0 failed`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/views/help.rs
@@ -184,7 +184,7 @@ git commit -m "Add help footer version title"
 - Modify: `znicz-tui/src/views/help.rs` (`render`)
 - Test: `znicz-tui/tests/render.rs`
 
-- [ ] **Step 1: Write the failing render test**
+- [x] **Step 1: Write the failing render test**
 
 In `znicz-tui/tests/render.rs`, after `the_help_overlay_draws_at_every_size`, add:
 
@@ -202,7 +202,7 @@ fn the_help_overlay_shows_the_app_version_and_close_hint() {
 }
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run:
 
@@ -212,7 +212,7 @@ cargo test -p znicz-tui --test render --offline the_help_overlay_shows_the_app_v
 
 Expected: FAIL, `version missing from help`.
 
-- [ ] **Step 3: Add the second bottom title**
+- [x] **Step 3: Add the second bottom title**
 
 In `render`, replace:
 
@@ -241,7 +241,7 @@ with:
     let inner = block.inner(popup);
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run:
 
@@ -251,7 +251,7 @@ cargo test -p znicz-tui --test render --offline the_help_overlay_shows_the_app_v
 
 Expected: `1 passed; 0 failed`.
 
-- [ ] **Step 5: Run the help and render suites**
+- [x] **Step 5: Run the help and render suites**
 
 Run:
 
@@ -262,7 +262,7 @@ cargo test -p znicz-tui --test render --offline
 
 Expected: all pass, including the tiny-size render coverage.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add znicz-tui/src/views/help.rs znicz-tui/tests/render.rs
@@ -276,7 +276,7 @@ git commit -m "Show the version in the help footer"
 **Files:**
 - Test: workspace and the real binary
 
-- [ ] **Step 1: Run formatting**
+- [x] **Step 1: Run formatting**
 
 ```bash
 cargo fmt --all -- --check
@@ -284,7 +284,7 @@ cargo fmt --all -- --check
 
 Expected: exit 0, no output.
 
-- [ ] **Step 2: Run Clippy**
+- [x] **Step 2: Run Clippy**
 
 ```bash
 cargo clippy --workspace --all-targets --offline -- -D warnings
@@ -292,7 +292,7 @@ cargo clippy --workspace --all-targets --offline -- -D warnings
 
 Expected: exit 0, no warnings.
 
-- [ ] **Step 3: Run the full test suite**
+- [x] **Step 3: Run the full test suite**
 
 ```bash
 cargo test --workspace --offline
@@ -311,7 +311,7 @@ Expected: every suite reports `test result: ok` with 0 failed.
 - Modify: `wiki/Architecture/TUI.md`
 - Modify: `wiki/Issues.md`
 
-- [ ] **Step 1: Bump the workspace version**
+- [x] **Step 1: Bump the workspace version**
 
 In `Cargo.toml`, change:
 
@@ -325,7 +325,7 @@ to:
 version = "0.5.2"
 ```
 
-- [ ] **Step 2: Refresh the lock file**
+- [x] **Step 2: Refresh the lock file**
 
 ```bash
 cargo check --workspace --offline
@@ -334,7 +334,7 @@ grep -A1 'name = "znicz' Cargo.lock
 
 Expected: all five workspace crates show `version = "0.5.2"`.
 
-- [ ] **Step 3: Add the CLI usage line**
+- [x] **Step 3: Add the CLI usage line**
 
 In `README.md`, after the `# Select device` block, add:
 
@@ -343,7 +343,7 @@ In `README.md`, after the `# Select device` block, add:
 znicz --version
 ```
 
-- [ ] **Step 4: Mention the help footer**
+- [x] **Step 4: Mention the help footer**
 
 In `README.md`, replace:
 
@@ -358,7 +358,7 @@ Press `?` in the player for the full keymap; the overlay footer shows the
 running version. The essentials:
 ```
 
-- [ ] **Step 5: Document the help footer in the wiki**
+- [x] **Step 5: Document the help footer in the wiki**
 
 In `wiki/Architecture/TUI.md`, after:
 
@@ -374,7 +374,7 @@ The `?` overlay also shows the build in its bottom-left corner
 (` znicz 0.y.z `); `znicz --version` prints the same number.
 ```
 
-- [ ] **Step 6: Move issue #22 to Closed in the wiki**
+- [x] **Step 6: Move issue #22 to Closed in the wiki**
 
 In `wiki/Issues.md`, remove this line from **Open**:
 
@@ -397,7 +397,7 @@ omits it when the popup is too narrow. MCP state and always-visible chrome stay
 out of scope.
 ```
 
-- [ ] **Step 7: Re-run formatting and the full suite**
+- [x] **Step 7: Re-run formatting and the full suite**
 
 ```bash
 cargo fmt --all -- --check
@@ -406,7 +406,7 @@ cargo test --workspace --offline
 
 Expected: exit 0 and all tests pass.
 
-- [ ] **Step 8: Confirm the real CLI output**
+- [x] **Step 8: Confirm the real CLI output**
 
 ```bash
 cargo run -p znicz --offline -- --version
@@ -418,7 +418,7 @@ Expected:
 znicz 0.5.2
 ```
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add Cargo.toml Cargo.lock README.md wiki/Architecture/TUI.md wiki/Issues.md
