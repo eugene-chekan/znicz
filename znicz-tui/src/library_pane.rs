@@ -1102,12 +1102,14 @@ impl LibraryPane {
             self.paging_level = ColumnFocus::Artists;
             self.artist_cursor.clamp(self.artists.len());
             self.refresh_albums_for_selection();
+            self.refresh_expanded_artists();
             return;
         }
 
         self.artists.clear();
         self.albums.clear();
         self.search_hits.clear();
+        self.tree_albums_by_artist.clear();
         match library.all_tracks(500) {
             Ok(tracks) if !tracks.is_empty() => {
                 self.notice = None;
@@ -1149,6 +1151,29 @@ impl LibraryPane {
         self.tree_albums_by_artist
             .insert(name.to_lowercase(), albums.clone());
         self.albums = albums;
+    }
+
+    /// Refresh cached album lists for every expanded artist after a reload, so
+    /// an external scan shows up without waiting for a collapse and re-expand.
+    fn refresh_expanded_artists(&mut self) {
+        let names: Vec<String> = self
+            .expanded
+            .iter()
+            .filter_map(|id| match id {
+                TreeNodeId::Artist(name) => Some(name.clone()),
+                TreeNodeId::Album { .. } => None,
+            })
+            .collect();
+        for name in names {
+            let albums = match self.library.as_ref() {
+                Some(library) => library
+                    .albums_for_browse_artist(&name)
+                    .unwrap_or_default(),
+                None => continue,
+            };
+            self.tree_albums_by_artist
+                .insert(name.to_lowercase(), albums);
+        }
     }
 
     fn refresh_tracks_for_selection(&mut self) {
@@ -1651,6 +1676,54 @@ mod tests {
         assert_eq!(pane.enter(strip()), EnterResult::Moved, "collapse Miles");
         assert!(!pane.tree_albums_by_artist.contains_key("miles"));
         assert_eq!(pane.tree_rows().len(), 1);
+    }
+
+    #[test]
+    fn reload_refreshes_albums_for_every_expanded_artist() {
+        let mut library = Library::open_in_memory().expect("open");
+        for (path, title, artist, album) in [
+            ("/music/1.flac", "Giant Steps", "Coltrane", "Giant Steps"),
+            ("/music/2.flac", "So What", "Miles", "Kind of Blue"),
+        ] {
+            library
+                .upsert_track_for_test(
+                    Path::new(path),
+                    title,
+                    Some(artist.into()),
+                    Some(album.into()),
+                    None,
+                )
+                .unwrap();
+        }
+        let mut pane = LibraryPane::new(Some(library));
+        pane.set_preferred_layout(LibraryLayout::Tree);
+
+        assert_eq!(pane.enter(strip()), EnterResult::Moved, "expand Coltrane");
+        pane.step(1, strip()); // Giant Steps
+        pane.step(1, strip()); // Miles
+        assert_eq!(pane.enter(strip()), EnterResult::Moved, "expand Miles");
+
+        // A scan adds a second Miles album after his list was cached.
+        pane.library
+            .as_mut()
+            .unwrap()
+            .upsert_track_for_test(
+                Path::new("/music/3.flac"),
+                "Bitches Brew",
+                Some("Miles".into()),
+                Some("Bitches Brew".into()),
+                None,
+            )
+            .unwrap();
+
+        pane.reload_browse();
+
+        assert!(
+            pane.tree_rows().iter().any(
+                |row| matches!(row, TreeRow::Album { album, .. } if album.album == "Bitches Brew")
+            ),
+            "reload must refresh every expanded artist, not only the selected one"
+        );
     }
 
     #[test]
