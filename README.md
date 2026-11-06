@@ -57,6 +57,9 @@ znicz --list-devices
 # Select device
 znicz --device "device-name" track.flac
 
+# Print the app version
+znicz --version
+
 # MCP server (stdio; autostarts znicz player)
 znicz mcp
 
@@ -123,7 +126,8 @@ When the device will not take the file's own rate the badge reads `▲ resampled
 so a silent conversion never goes unnoticed. Long titles pan with
 `Alt-←` / `Alt-→` on the highlighted row.
 
-Press `?` in the player for the full keymap. The essentials:
+Press `?` in the player for the full keymap; the overlay footer shows the
+running version. The essentials:
 
 | Key | Action |
 |-----|--------|

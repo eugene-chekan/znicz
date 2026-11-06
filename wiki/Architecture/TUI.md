@@ -231,6 +231,9 @@ station name.
 Repeat is `e`, shuffle is `z`. The full keymap lives in `znicz-tui/src/keys.rs`
 and in the `?` overlay.
 
+The `?` overlay also shows the build in its bottom-left corner
+(` znicz 0.y.z `); `znicz --version` prints the same number.
+
 ## Messages instead of silence
 
 The interface owns the screen, so anything written to the log or to stdout is
