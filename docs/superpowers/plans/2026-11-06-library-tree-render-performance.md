@@ -756,7 +756,7 @@ git commit -m "Bump workspace version to 0.5.1"
 
 **Files:** none.
 
-- [ ] **Step 1: Confirm the branch state**
+- [x] **Step 1: Confirm the branch state**
 
 Run:
 
@@ -768,13 +768,13 @@ git --no-pager log --oneline main..HEAD
 Expected: a clean tree and the planned commits on
 `fix/tree-render-performance`.
 
-- [ ] **Step 2: Push**
+- [x] **Step 2: Push**
 
 ```bash
 git push -u origin HEAD
 ```
 
-- [ ] **Step 3: Open the pull request**
+- [x] **Step 3: Open the pull request**
 
 ```bash
 gh pr create --title "Fix tree library redraw performance" --body "$(cat <<'PR'
@@ -784,10 +784,10 @@ gh pr create --title "Fix tree library redraw performance" --body "$(cat <<'PR'
 - Refresh those caches on reload; bump to 0.5.1 and update the wiki.
 
 ## Test Plan
-- [ ] `cargo test --workspace --offline`
-- [ ] `cargo clippy --workspace --all-targets --offline -- -D warnings`
-- [ ] `cargo fmt --all -- --check`
-- [ ] `cargo run --release -p znicz-tui --example tree_bench --offline -- /home/eugene/.local/share/znicz/library.db`
+- [x] `cargo test --workspace --offline`
+- [x] `cargo clippy --workspace --all-targets --offline -- -D warnings`
+- [x] `cargo fmt --all -- --check`
+- [x] `cargo run --release -p znicz-tui --example tree_bench --offline -- /home/eugene/.local/share/znicz/library.db`
 
 Baseline frame: 368 ms over 69 rows. Post-fix single-selection frame: see PR.
 PR
