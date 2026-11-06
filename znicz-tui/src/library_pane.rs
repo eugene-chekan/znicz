@@ -3,7 +3,7 @@
 //! Artist-first hierarchy (artist → album → track) with three presentations:
 //! columns when wide enough, expandable tree, or single-column paging.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use znicz_library::{AlbumSummary, ArtistSummary, Library, SearchHit, SearchLimits, Track};
 
@@ -104,6 +104,9 @@ pub struct LibraryPane {
     column_focus: ColumnFocus,
     paging_level: ColumnFocus,
     expanded: HashSet<TreeNodeId>,
+    /// Albums of each expanded artist, keyed by case-folded artist name.
+    /// Tree rows read these so a redraw does not re-scan the library.
+    tree_albums_by_artist: HashMap<String, Vec<AlbumSummary>>,
     tree_cursor: Cursor,
     /// Tracks loaded for expanded albums (keyed by album name, case-folded).
     tree_track_cache: std::collections::HashMap<String, Vec<Track>>,
@@ -133,6 +136,7 @@ impl LibraryPane {
             column_focus: ColumnFocus::Artists,
             paging_level: ColumnFocus::Artists,
             expanded: HashSet::new(),
+            tree_albums_by_artist: HashMap::new(),
             tree_cursor: Cursor::new(),
             tree_track_cache: std::collections::HashMap::new(),
             tree_album_cache: std::collections::HashMap::new(),
@@ -654,15 +658,18 @@ impl LibraryPane {
                     }
                 } else {
                     self.expanded.insert(id);
-                    if let Some(lib) = self.library.as_ref() {
-                        if let Ok(albums) = lib.albums_for_browse_artist(&artist.name) {
-                            for album in albums {
-                                self.tree_album_cache
-                                    .insert(album.album.to_lowercase(), album);
-                            }
-                        }
+                    let albums = self
+                        .library
+                        .as_ref()
+                        .and_then(|lib| lib.albums_for_browse_artist(&artist.name).ok())
+                        .unwrap_or_default();
+                    for album in &albums {
+                        self.tree_album_cache
+                            .insert(album.album.to_lowercase(), album.clone());
                     }
-                    self.load_albums_for_artist(&artist.name);
+                    self.tree_albums_by_artist
+                        .insert(artist.name.to_lowercase(), albums.clone());
+                    self.albums = albums;
                 }
                 true
             }
@@ -712,11 +719,20 @@ impl LibraryPane {
             if !expanded {
                 continue;
             }
-            let albums = self
-                .library
-                .as_ref()
-                .and_then(|lib| lib.albums_for_browse_artist(&artist.name).ok())
-                .unwrap_or_default();
+            let artist_key = artist.name.to_lowercase();
+            let cached = self.tree_albums_by_artist.get(&artist_key);
+            let fallback;
+            let albums: &[AlbumSummary] = match cached {
+                Some(albums) => albums,
+                None => {
+                    fallback = self
+                        .library
+                        .as_ref()
+                        .and_then(|lib| lib.albums_for_browse_artist(&artist.name).ok())
+                        .unwrap_or_default();
+                    &fallback
+                }
+            };
             for album in albums {
                 let album_id = TreeNodeId::Album {
                     artist: artist.name.clone(),
@@ -1120,11 +1136,14 @@ impl LibraryPane {
     }
 
     fn load_albums_for_artist(&mut self, name: &str) {
-        self.albums = self
+        let albums = self
             .library
             .as_ref()
             .and_then(|lib| lib.albums_for_browse_artist(name).ok())
             .unwrap_or_default();
+        self.tree_albums_by_artist
+            .insert(name.to_lowercase(), albums.clone());
+        self.albums = albums;
     }
 
     fn refresh_tracks_for_selection(&mut self) {
@@ -1577,6 +1596,33 @@ mod tests {
         assert_eq!(pane.offset_for_row(0, Some(0)), 4);
         assert_eq!(pane.offset_for_row(1, Some(0)), 0);
         assert_eq!(pane.offset_for_row(0, None), 0);
+    }
+
+    #[test]
+    fn expanded_tree_rows_use_cached_albums_after_the_library_goes_away() {
+        let mut library = Library::open_in_memory().expect("open");
+        library
+            .upsert_track_for_test(
+                Path::new("/music/a.flac"),
+                "So What",
+                Some("Miles".into()),
+                Some("Kind of Blue".into()),
+                None,
+            )
+            .unwrap();
+        let mut pane = LibraryPane::new(Some(library));
+        pane.set_preferred_layout(LibraryLayout::Tree);
+
+        assert_eq!(pane.enter(strip()), EnterResult::Moved, "expand Miles");
+        let with_library = pane.tree_rows().len();
+        assert!(with_library >= 2, "artist plus its album");
+
+        pane.library = None;
+        assert_eq!(
+            pane.tree_rows().len(),
+            with_library,
+            "expanded rows must come from the cache, not the connection"
+        );
     }
 
     #[test]
