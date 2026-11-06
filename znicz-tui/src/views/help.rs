@@ -18,12 +18,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     app.hits.overlay = Some(popup);
     app.hits.close = crate::views::close_button_rect(popup);
 
-    let block = Block::default()
+    let mut block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme::border_active())
         .title(Span::styled(" Keys ", theme::title()))
         .title(crate::views::close_title())
-        .title_bottom(Line::from(Span::styled(" any key closes ", theme::dim())).right_aligned());
+        .title_bottom(Line::from(Span::styled(CLOSE_HINT, theme::dim())).right_aligned());
+    if let Some(version) = version_title(popup.width) {
+        block = block.title_bottom(version);
+    }
     let inner = block.inner(popup);
 
     // Clear first, or the pane underneath shows through the overlay.
