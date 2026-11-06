@@ -431,7 +431,7 @@ git commit -m "Bump to 0.5.2 and document the version"
 
 **Files:** none.
 
-- [ ] **Step 1: Confirm the branch state**
+- [x] **Step 1: Confirm the branch state**
 
 ```bash
 git --no-optional-locks status --short
@@ -440,13 +440,13 @@ git --no-pager log --oneline main..HEAD
 
 Expected: a clean tree and the planned commits on `feat/app-version`.
 
-- [ ] **Step 2: Push**
+- [x] **Step 2: Push**
 
 ```bash
 git push -u origin HEAD
 ```
 
-- [ ] **Step 3: Open the pull request**
+- [x] **Step 3: Open the pull request**
 
 Write the body to a file, then create the PR:
 
