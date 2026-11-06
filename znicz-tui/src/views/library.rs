@@ -170,10 +170,13 @@ fn render_column_list(
 fn render_tree(frame: &mut Frame, area: Rect, app: &mut App, strip: usize, focused: bool) {
     let rows = app.library.tree_rows();
     let count = rows.len();
+    // Resolve the selection once: asking per row rebuilds the tree for every
+    // row and re-queries the library.
+    let selected = app.library.selected_index(strip);
     let items: Vec<ListItem> = rows
         .iter()
         .enumerate()
-        .map(|(i, row)| tree_row(app, row, strip, app.library.offset_for(i, strip)))
+        .map(|(i, row)| tree_row(app, row, strip, app.library.offset_for_row(i, selected)))
         .collect();
     let title = "Library".to_string();
     let summary = format!("{count} rows");

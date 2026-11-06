@@ -751,7 +751,15 @@ impl LibraryPane {
     }
 
     pub fn offset_for(&self, index: usize, strip_inner: usize) -> usize {
-        if self.selected_index(strip_inner) == Some(index) {
+        self.offset_for_row(index, self.selected_index(strip_inner))
+    }
+
+    /// Pan offset for one row when the selection has already been resolved.
+    ///
+    /// Tree rendering resolves the selected index once per frame; calling
+    /// [`Self::offset_for`] per row rebuilds the tree for every row.
+    pub fn offset_for_row(&self, index: usize, selected: Option<usize>) -> usize {
+        if selected == Some(index) {
             self.h_offset
         } else {
             0
@@ -1558,6 +1566,17 @@ mod tests {
             artist: "Miles".into(),
             album: "Kind of Blue".into()
         }));
+    }
+
+    #[test]
+    fn only_the_selected_row_gets_the_pan_offset_regardless_of_layout() {
+        let mut pane = LibraryPane::new(None);
+        pane.inject_albums_for_test(vec![long_album("a"), long_album("b")]);
+        pane.pan(4, 10, strip());
+
+        assert_eq!(pane.offset_for_row(0, Some(0)), 4);
+        assert_eq!(pane.offset_for_row(1, Some(0)), 0);
+        assert_eq!(pane.offset_for_row(0, None), 0);
     }
 
     #[test]
