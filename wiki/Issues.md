@@ -9,7 +9,6 @@ Parked TUI ideas (file, do not start unless asked):
 
 - [#5 Command palette](https://github.com/eugene-chekan/znicz/issues/5)
 - [#6 Settings screen overlay](https://github.com/eugene-chekan/znicz/issues/6)
-- [#22 Show the app version](https://github.com/eugene-chekan/znicz/issues/22) (place and shape still open)
 - [#34 Auto-pan now-playing text](https://github.com/eugene-chekan/znicz/issues/34) (marquee when artist / title does not fit)
 - [#36 Reorder list rows with Alt-↑ / Alt-↓](https://github.com/eugene-chekan/znicz/issues/36) (cursor stays on the moved item)
 - [#46 Full-screen Now Playing view](https://github.com/eugene-chekan/znicz/issues/46) (large cover and current-track info)
@@ -32,6 +31,17 @@ radio** (HLS, PLS, XSPF) are on the
 streams, including ICY now playing) is done.
 
 ## Closed
+
+### [#22 Show the app version in the player](https://github.com/eugene-chekan/znicz/issues/22)
+
+- **Fixed:** 2026-11-06
+- **Component:** `znicz`, `znicz-tui`
+- **Status:** **Fixed** in 0.5.2
+
+`znicz --version` / `-V` prints the workspace version. The `?` help overlay
+shows ` znicz 0.5.2 ` in its bottom-left corner, next to `any key closes`, and
+omits it when the popup is too narrow. MCP state and always-visible chrome stay
+out of scope.
 
 ### [#7 Three-column artist / album / tracks library](https://github.com/eugene-chekan/znicz/issues/7) and [#9 Library tree view with expandable nodes](https://github.com/eugene-chekan/znicz/issues/9)
 

@@ -18,7 +18,7 @@ mod daemon;
 use daemon::{acquire_player_lock, clear_stale_player_files, ensure_player, player_is_up};
 
 #[derive(Debug, Parser)]
-#[command(name = "znicz", about = "Audiophile TUI music player")]
+#[command(name = "znicz", version, about = "Audiophile TUI music player")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -841,4 +841,19 @@ fn list_albums(library_path: Option<PathBuf>) -> color_eyre::Result<()> {
     }
     println!("{} album(s)", albums.len());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn version_is_wired() {
+        let rendered = Cli::command().render_version();
+        assert!(
+            rendered.contains(env!("CARGO_PKG_VERSION")),
+            "expected the workspace version in {rendered:?}"
+        );
+    }
 }

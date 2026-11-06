@@ -248,6 +248,18 @@ fn the_help_overlay_draws_at_every_size() {
 }
 
 #[test]
+fn the_help_overlay_shows_the_app_version_and_close_hint() {
+    let mut app = App::with_library(player(), None);
+    app.modal = Modal::Help;
+    let screen = draw(&mut app, 120, 40);
+    assert!(
+        screen.contains(&format!("znicz {}", env!("CARGO_PKG_VERSION"))),
+        "version missing from help:\n{screen}"
+    );
+    assert!(screen.contains("any key closes"), "close hint missing");
+}
+
+#[test]
 fn the_signal_inspector_shows_the_device_sample_format() {
     let mut app = App::with_library(player(), None);
     app.modal = Modal::Inspector;
