@@ -9,6 +9,10 @@ use crate::app::App;
 use crate::keys::{self, Binding};
 use crate::theme;
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const VERSION_PREFIX: &str = " znicz ";
+const CLOSE_HINT: &str = " any key closes ";
+
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let popup = centered(86, 100, area);
     app.hits.overlay = Some(popup);
@@ -52,6 +56,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     frame.render_widget(Paragraph::new(left), columns[0]);
     frame.render_widget(Paragraph::new(right), columns[1]);
+}
+
+/// The bottom-left version title, or `None` when both titles cannot fit.
+///
+/// The close hint is functional, so it keeps the row when a tiny popup has no
+/// room for the version.
+fn version_title(popup_width: u16) -> Option<Line<'static>> {
+    let label = format!("{VERSION_PREFIX}{VERSION} ");
+    let budget = popup_width.saturating_sub(2) as usize;
+    if label.chars().count() + CLOSE_HINT.chars().count() > budget {
+        return None;
+    }
+    Some(Line::from(Span::styled(label, theme::dim())).left_aligned())
 }
 
 fn section(lines: &mut Vec<Line<'static>>, title: &str, bindings: &'static [Binding]) {
@@ -103,5 +120,22 @@ mod tests {
     fn a_tiny_screen_does_not_produce_a_negative_box() {
         let popup = centered(78, 80, Rect::new(0, 0, 4, 3));
         assert!(popup.width <= 4 && popup.height <= 3);
+    }
+
+    #[test]
+    fn the_version_title_names_the_package_version() {
+        let title = version_title(80).expect("a normal popup has room");
+        let text: String = title
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert_eq!(text, format!(" znicz {} ", env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn a_narrow_popup_drops_the_version_and_keeps_the_close_hint() {
+        assert!(version_title(30).is_none());
+        assert!(version_title(80).is_some());
     }
 }
