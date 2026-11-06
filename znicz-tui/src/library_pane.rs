@@ -647,7 +647,9 @@ impl LibraryPane {
                         TreeNodeId::Artist(_) => true,
                     });
                     // Drop cached albums/tracks for this artist.
-                    let albums = match self.tree_albums_by_artist.remove(&artist.name.to_lowercase())
+                    let albums = match self
+                        .tree_albums_by_artist
+                        .remove(&artist.name.to_lowercase())
                     {
                         Some(albums) => albums,
                         None => self
@@ -1166,9 +1168,7 @@ impl LibraryPane {
             .collect();
         for name in names {
             let albums = match self.library.as_ref() {
-                Some(library) => library
-                    .albums_for_browse_artist(&name)
-                    .unwrap_or_default(),
+                Some(library) => library.albums_for_browse_artist(&name).unwrap_or_default(),
                 None => continue,
             };
             self.tree_albums_by_artist
