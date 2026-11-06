@@ -647,14 +647,19 @@ impl LibraryPane {
                         TreeNodeId::Artist(_) => true,
                     });
                     // Drop cached albums/tracks for this artist.
-                    if let Some(lib) = self.library.as_ref() {
-                        if let Ok(albums) = lib.albums_for_browse_artist(&artist.name) {
-                            for album in albums {
-                                let key = album.album.to_lowercase();
-                                self.tree_album_cache.remove(&key);
-                                self.tree_track_cache.remove(&key);
-                            }
-                        }
+                    let albums = match self.tree_albums_by_artist.remove(&artist.name.to_lowercase())
+                    {
+                        Some(albums) => albums,
+                        None => self
+                            .library
+                            .as_ref()
+                            .and_then(|lib| lib.albums_for_browse_artist(&artist.name).ok())
+                            .unwrap_or_default(),
+                    };
+                    for album in albums {
+                        let key = album.album.to_lowercase();
+                        self.tree_album_cache.remove(&key);
+                        self.tree_track_cache.remove(&key);
                     }
                 } else {
                     self.expanded.insert(id);
@@ -1623,6 +1628,29 @@ mod tests {
             with_library,
             "expanded rows must come from the cache, not the connection"
         );
+    }
+
+    #[test]
+    fn collapsing_an_artist_drops_its_cached_albums() {
+        let mut library = Library::open_in_memory().expect("open");
+        library
+            .upsert_track_for_test(
+                Path::new("/music/a.flac"),
+                "So What",
+                Some("Miles".into()),
+                Some("Kind of Blue".into()),
+                None,
+            )
+            .unwrap();
+        let mut pane = LibraryPane::new(Some(library));
+        pane.set_preferred_layout(LibraryLayout::Tree);
+
+        assert_eq!(pane.enter(strip()), EnterResult::Moved, "expand Miles");
+        assert!(pane.tree_albums_by_artist.contains_key("miles"));
+
+        assert_eq!(pane.enter(strip()), EnterResult::Moved, "collapse Miles");
+        assert!(!pane.tree_albums_by_artist.contains_key("miles"));
+        assert_eq!(pane.tree_rows().len(), 1);
     }
 
     #[test]
