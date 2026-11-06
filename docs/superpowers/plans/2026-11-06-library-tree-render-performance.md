@@ -1,6 +1,6 @@
 # Library Tree Render Performance Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Make the tree library view redraw without re-querying SQLite for every row or every frame.
 
@@ -16,7 +16,7 @@
 - Create: `znicz-tui/examples/tree_bench.rs`
 - Test: run the example against `/home/eugene/.local/share/znicz/library.db`
 
-- [ ] **Step 1: Write the benchmark example**
+- [x] **Step 1: Write the benchmark example**
 
 ```rust
 //! Measures the per-frame cost of the tree library layout.
@@ -79,7 +79,7 @@ fn main() {
 }
 ```
 
-- [ ] **Step 2: Run the benchmark to record the baseline**
+- [x] **Step 2: Run the benchmark to record the baseline**
 
 Run:
 
@@ -98,7 +98,7 @@ single-selection frame: 4ms..6ms
 
 Record the actual three timings in the commit message body.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add znicz-tui/examples/tree_bench.rs
@@ -113,7 +113,7 @@ git commit -m "Add tree layout frame benchmark"
 - Modify: `znicz-tui/src/library_pane.rs` (`offset_for`, tests module)
 - Modify: `znicz-tui/src/views/library.rs` (`render_tree`)
 
-- [ ] **Step 1: Write the failing unit test**
+- [x] **Step 1: Write the failing unit test**
 
 In `znicz-tui/src/library_pane.rs`, inside `mod tests`, after
 `tree_layout_expands_and_remembers_session_state`, add:
@@ -131,7 +131,7 @@ In `znicz-tui/src/library_pane.rs`, inside `mod tests`, after
     }
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run:
 
@@ -141,7 +141,7 @@ cargo test -p znicz-tui --lib --offline only_the_selected_row_gets_the_pan_offse
 
 Expected: compile error, `no method named offset_for_row found for struct LibraryPane`.
 
-- [ ] **Step 3: Add the pure offset rule**
+- [x] **Step 3: Add the pure offset rule**
 
 Replace `offset_for` in `znicz-tui/src/library_pane.rs` with:
 
@@ -163,7 +163,7 @@ Replace `offset_for` in `znicz-tui/src/library_pane.rs` with:
     }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run:
 
@@ -173,7 +173,7 @@ cargo test -p znicz-tui --lib --offline only_the_selected_row_gets_the_pan_offse
 
 Expected: `1 passed; 0 failed`.
 
-- [ ] **Step 5: Use the new rule in `render_tree`**
+- [x] **Step 5: Use the new rule in `render_tree`**
 
 In `znicz-tui/src/views/library.rs`, replace the start of `render_tree`:
 
@@ -193,7 +193,7 @@ fn render_tree(frame: &mut Frame, area: Rect, app: &mut App, strip: usize, focus
 
 The rest of the function is unchanged.
 
-- [ ] **Step 6: Run the TUI tests**
+- [x] **Step 6: Run the TUI tests**
 
 Run:
 
@@ -203,7 +203,7 @@ cargo test -p znicz-tui --offline
 
 Expected: all tests pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add znicz-tui/src/library_pane.rs znicz-tui/src/views/library.rs
@@ -217,7 +217,7 @@ git commit -m "Resolve tree selection once per frame"
 **Files:**
 - Modify: `znicz-tui/src/library_pane.rs` (imports, struct, `new`, `load_albums_for_artist`, `toggle_expand_at_cursor`, `tree_rows`, tests module)
 
-- [ ] **Step 1: Write the failing unit test**
+- [x] **Step 1: Write the failing unit test**
 
 In `znicz-tui/src/library_pane.rs`, inside `mod tests`, add:
 
@@ -250,7 +250,7 @@ In `znicz-tui/src/library_pane.rs`, inside `mod tests`, add:
     }
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run:
 
@@ -261,7 +261,7 @@ cargo test -p znicz-tui --lib --offline expanded_tree_rows_use_cached_albums_aft
 Expected: FAIL with `assertion left == right failed`, left `1`, right `2`.
 The artist row survives, but the album row needs the library.
 
-- [ ] **Step 3: Add the cache field**
+- [x] **Step 3: Add the cache field**
 
 Change the import at the top of `znicz-tui/src/library_pane.rs`:
 
@@ -283,7 +283,7 @@ Initialize it in `LibraryPane::new`, after `expanded: HashSet::new(),`:
             tree_albums_by_artist: HashMap::new(),
 ```
 
-- [ ] **Step 4: Populate the cache when albums load**
+- [x] **Step 4: Populate the cache when albums load**
 
 Replace `load_albums_for_artist` with:
 
@@ -324,7 +324,7 @@ after `if expanded { ... }`):
 This keeps the old side effect (`self.albums` is set for this artist) and
 removes the second query that `load_albums_for_artist` used to make.
 
-- [ ] **Step 5: Read the cache in `tree_rows`**
+- [x] **Step 5: Read the cache in `tree_rows`**
 
 Replace this block in `tree_rows`:
 
@@ -357,7 +357,7 @@ with:
             for album in albums {
 ```
 
-- [ ] **Step 6: Run the test to verify it passes**
+- [x] **Step 6: Run the test to verify it passes**
 
 Run:
 
@@ -367,7 +367,7 @@ cargo test -p znicz-tui --lib --offline expanded_tree_rows_use_cached_albums_aft
 
 Expected: `1 passed; 0 failed`.
 
-- [ ] **Step 7: Run the whole TUI suite**
+- [x] **Step 7: Run the whole TUI suite**
 
 Run:
 
@@ -377,7 +377,7 @@ cargo test -p znicz-tui --offline
 
 Expected: all tests pass.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add znicz-tui/src/library_pane.rs
@@ -391,7 +391,7 @@ git commit -m "Cache albums for expanded tree artists"
 **Files:**
 - Modify: `znicz-tui/src/library_pane.rs` (`toggle_expand_at_cursor`, tests module)
 
-- [ ] **Step 1: Write the failing unit test**
+- [x] **Step 1: Write the failing unit test**
 
 In `znicz-tui/src/library_pane.rs`, inside `mod tests`, add:
 
@@ -420,7 +420,7 @@ In `znicz-tui/src/library_pane.rs`, inside `mod tests`, add:
     }
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run:
 
@@ -430,7 +430,7 @@ cargo test -p znicz-tui --lib --offline collapsing_an_artist_drops_its_cached_al
 
 Expected: FAIL on `assert!(!pane.tree_albums_by_artist.contains_key("miles"))`.
 
-- [ ] **Step 3: Remove the key on collapse**
+- [x] **Step 3: Remove the key on collapse**
 
 In `toggle_expand_at_cursor`, replace the artist collapse branch:
 
@@ -459,7 +459,7 @@ In `toggle_expand_at_cursor`, replace the artist collapse branch:
                 } else {
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run:
 
@@ -469,7 +469,7 @@ cargo test -p znicz-tui --lib --offline collapsing_an_artist_drops_its_cached_al
 
 Expected: `1 passed; 0 failed`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/library_pane.rs
@@ -483,7 +483,7 @@ git commit -m "Drop cached albums when collapsing an artist"
 **Files:**
 - Modify: `znicz-tui/src/library_pane.rs` (`reload_browse`, new helper, tests module)
 
-- [ ] **Step 1: Write the failing unit test**
+- [x] **Step 1: Write the failing unit test**
 
 In `znicz-tui/src/library_pane.rs`, inside `mod tests`, add:
 
@@ -537,7 +537,7 @@ In `znicz-tui/src/library_pane.rs`, inside `mod tests`, add:
     }
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run:
 
@@ -549,7 +549,7 @@ Expected: FAIL with the message `reload must refresh every expanded artist, not
 only the selected one`. `reload_browse` refreshes only the selected artist
 (Coltrane); Miles keeps the stale cached list.
 
-- [ ] **Step 3: Add the refresh helper**
+- [x] **Step 3: Add the refresh helper**
 
 Add this method to `impl LibraryPane`, next to `refresh_albums_for_selection`:
 
@@ -578,7 +578,7 @@ Add this method to `impl LibraryPane`, next to `refresh_albums_for_selection`:
     }
 ```
 
-- [ ] **Step 4: Call it from `reload_browse`**
+- [x] **Step 4: Call it from `reload_browse`**
 
 In the non-empty-artists branch of `reload_browse`, after
 `self.refresh_albums_for_selection();`, add:
@@ -593,7 +593,7 @@ In the fallback branch (no artists), after `self.search_hits.clear();`, add:
         self.tree_albums_by_artist.clear();
 ```
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [x] **Step 5: Run the test to verify it passes**
 
 Run:
 
@@ -603,7 +603,7 @@ cargo test -p znicz-tui --lib --offline reload_refreshes_albums_for_every_expand
 
 Expected: `1 passed; 0 failed`.
 
-- [ ] **Step 6: Run the whole TUI suite**
+- [x] **Step 6: Run the whole TUI suite**
 
 Run:
 
@@ -613,7 +613,7 @@ cargo test -p znicz-tui --offline
 
 Expected: all tests pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add znicz-tui/src/library_pane.rs
@@ -628,7 +628,7 @@ git commit -m "Refresh expanded artist albums on reload"
 - Test: `znicz-tui/examples/tree_bench.rs`
 - Test: workspace
 
-- [ ] **Step 1: Re-run the benchmark**
+- [x] **Step 1: Re-run the benchmark**
 
 Run:
 
@@ -648,7 +648,7 @@ single-selection frame: < 1ms
 The rendered path now uses the single-selection figure. Record the exact
 numbers in the pull request body.
 
-- [ ] **Step 2: Run formatting**
+- [x] **Step 2: Run formatting**
 
 Run:
 
@@ -658,7 +658,7 @@ cargo fmt --all -- --check
 
 Expected: exit code 0, no output.
 
-- [ ] **Step 3: Run Clippy**
+- [x] **Step 3: Run Clippy**
 
 Run:
 
@@ -668,7 +668,7 @@ cargo clippy --workspace --all-targets --offline -- -D warnings
 
 Expected: exit code 0, no warnings.
 
-- [ ] **Step 4: Run the full test suite**
+- [x] **Step 4: Run the full test suite**
 
 Run:
 
@@ -678,7 +678,7 @@ cargo test --workspace --offline
 
 Expected: every suite reports `test result: ok` with 0 failed.
 
-- [ ] **Step 5: Commit any formatting fixes**
+- [x] **Step 5: Commit any formatting fixes**
 
 If `cargo fmt` changed files:
 
@@ -697,7 +697,7 @@ git commit -m "Format tree render changes"
 - Modify: `wiki/Rust/Cargo-Workspace.md`
 - Modify: `wiki/Architecture/TUI.md`
 
-- [ ] **Step 1: Bump the workspace version**
+- [x] **Step 1: Bump the workspace version**
 
 In `Cargo.toml`, change:
 
@@ -711,7 +711,7 @@ to:
 version = "0.5.1"
 ```
 
-- [ ] **Step 2: Refresh the lock file**
+- [x] **Step 2: Refresh the lock file**
 
 Run:
 
@@ -728,12 +728,12 @@ grep -A1 'name = "znicz' Cargo.lock
 Expected: `znicz`, `znicz-core`, `znicz-library`, `znicz-mcp`, and `znicz-tui`
 all show `version = "0.5.1"`.
 
-- [ ] **Step 3: Update the wiki version**
+- [x] **Step 3: Update the wiki version**
 
 In `wiki/Rust/Cargo-Workspace.md`, change `currently **0.5.0**` to
 `currently **0.5.1**`.
 
-- [ ] **Step 4: Document the tree cache**
+- [x] **Step 4: Document the tree cache**
 
 In `wiki/Architecture/TUI.md`, in the `library_layout = "tree"` bullet, after
 the sentence about Enter/Space expanding a node, add:
@@ -743,7 +743,7 @@ Album lists are cached per expanded artist, so a redraw does not re-scan the
 library; **r** refreshes those lists.
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Cargo.toml Cargo.lock wiki/Rust/Cargo-Workspace.md wiki/Architecture/TUI.md
