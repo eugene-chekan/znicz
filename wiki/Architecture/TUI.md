@@ -49,7 +49,7 @@ cover    ▶ So What
 8 rows   Miles Davis — Kind of Blue
          ━━━●━━━━  1:02 / 9:22  70%
          FLAC 24/96 → DAC  ● bit perfect
-Space pause  a add  ] queue  i inspect  …
+Space pause · / search · a add · ] queue · P playlists · R radio    ? more
 ```
 
 The library is the stage and always fills the list region. The queue is an
@@ -148,11 +148,13 @@ is drawn depends on config and width:
   three columns side by side. **h** / **l** (or **Tab** / **Shift-Tab**)
   move focus between columns; arrows seek.
 - Same preference but a **narrow** strip: single-column paging (Enter drills
-  in, Esc steps back; **l** / **h** also drill in and step back). Still artist-first, not albums-as-home.
+  in, Esc steps back; **l** / **h** also drill in and step back). Still
+  artist-first, not albums-as-home.
 - **`library_layout = "tree"`**: expandable tree at any width. Enter or
   **Space** / **o** expands or collapses; open nodes are remembered for the
-  session only. **l** expands, **h** collapses or jumps to the parent. Album lists are cached per expanded artist, so a redraw does
-  not re-scan the library; **r** refreshes those lists.
+  session only. **l** expands, **h** collapses or jumps to the parent. Album
+  lists are cached per expanded artist, so a redraw does not re-scan the
+  library; **r** refreshes those lists.
 
 `/` opens search. Results are entity hits — artists, albums, then
 title-matched tracks. **Enter** on an artist or album leaves search and focuses
