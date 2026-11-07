@@ -98,9 +98,13 @@ pub fn context_hints(context: Context) -> &'static [Hint] {
     }
 }
 
-/// The right-aligned `? more` hint, or `None` inside help itself.
+/// The right-aligned `? more` hint, or `None` where `?` is typed text or help is open.
 pub fn more_hint(context: Context) -> Option<Hint> {
-    (context != Context::Help).then_some(MORE)
+    let typed_or_help = matches!(
+        context,
+        Context::Search | Context::Prompt | Context::StationPrompt | Context::Help
+    );
+    (!typed_or_help).then_some(MORE)
 }
 
 /// Works in every pane.
@@ -325,10 +329,12 @@ mod tests {
     }
 
     #[test]
-    fn every_context_but_help_ends_in_more() {
+    fn more_shows_only_where_question_mark_opens_help() {
         for context in ALL_CONTEXTS {
             match context {
-                Context::Help => assert_eq!(more_hint(context), None),
+                Context::Search | Context::Prompt | Context::StationPrompt | Context::Help => {
+                    assert_eq!(more_hint(context), None, "{context:?}")
+                }
                 _ => assert_eq!(more_hint(context), Some(MORE), "{context:?}"),
             }
         }

@@ -158,8 +158,8 @@ Bottom-right: ` / filter · Esc close `, replacing ` any key closes `.
 
 The hint line lists the current context's hints in priority order, drawing as
 many as fit from the left. ` ? more ` is right-aligned and its width is reserved
-first, so it is always visible (except in the Help context, which has no
-`? more`). Separators stay ` · `.
+first, so it is always visible (except in Help, Search, and the prompts, where
+`?` is typed text or help is already open). Separators stay ` · `.
 
 | Context | Hints, in priority order |
 | --- | --- |

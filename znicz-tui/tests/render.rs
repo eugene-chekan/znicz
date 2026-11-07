@@ -684,3 +684,13 @@ fn a_typing_prompt_footer_says_save_and_cancel() {
     let row = footer(&screen);
     assert!(row.contains("Enter save · Esc cancel"), "{row}");
 }
+
+#[test]
+fn a_prompt_footer_has_no_more_hint() {
+    let mut app = App::with_library(player(), None);
+    app.modal = Modal::Playlists;
+    app.playlist_prompt = Some(PlaylistPrompt::Save(LineEdit::from_text("x")));
+    let screen = draw(&mut app, 100, 24);
+    let row = footer(&screen);
+    assert!(!row.contains("? more"), "{row}");
+}
