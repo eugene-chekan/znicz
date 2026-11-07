@@ -657,6 +657,10 @@ impl App {
 
     /// Keys while help is open: scroll, filter, close. Everything else is inert.
     fn on_help_key(&mut self, key: KeyEvent) {
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+            self.should_quit = true;
+            return;
+        }
         if self.help.editing {
             match key.code {
                 KeyCode::Esc => {
@@ -853,6 +857,7 @@ impl App {
             return Context::Prompt;
         }
         match self.modal {
+            Modal::Help if self.help.editing => Context::HelpFilter,
             Modal::Help => Context::Help,
             Modal::Devices => Context::Devices,
             Modal::Inspector => Context::Inspector,

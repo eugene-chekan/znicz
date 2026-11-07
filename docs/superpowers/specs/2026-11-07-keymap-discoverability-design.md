@@ -173,6 +173,7 @@ first, so it is always visible (except in Help, Search, and the prompts, where
 | `Prompt` (playlist name) | `Enter save` · `Esc cancel` |
 | `StationPrompt` (station form) | `Enter save` · `Esc cancel` · `Tab next field` |
 | `Help` | `/ filter` · `Esc close` |
+| `HelpFilter` (typing in help) | `Enter keep` · `Esc clear` |
 
 Removed from the footer, kept in help: `Alt-← / Alt-→ pan`, `, devices`,
 `i inspect`, `c copy`.
@@ -200,7 +201,7 @@ the context's help sections document, so hints cannot drift from the tables.
 New items:
 
 - `enum Context { Library, LibraryTree, Search, Queue, Devices, Inspector,
-  Playlists, Radio, Prompt, StationPrompt, Help }`.
+  Playlists, Radio, Prompt, StationPrompt, Help, HelpFilter }`.
 - `fn context_hints(context: Context) -> &'static [Hint]` and
   `fn more_hint(context: Context) -> Option<Hint>`.
 - `pub const INSPECTOR: &[Binding]` (`Esc / i` close), so the inspector has a

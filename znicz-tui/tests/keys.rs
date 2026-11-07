@@ -1314,3 +1314,13 @@ fn space_pauses_instead_of_expanding_the_hidden_tree_under_a_modal() {
         "Space under a modal must not expand the tree behind it"
     );
 }
+
+#[test]
+fn ctrl_c_quits_while_typing_a_help_filter() {
+    let mut app = new_app();
+    press_char(&mut app, '?');
+    press_char(&mut app, '/');
+    assert!(app.help.editing);
+    press_ctrl(&mut app, 'c');
+    assert!(app.should_quit);
+}

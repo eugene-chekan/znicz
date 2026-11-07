@@ -694,3 +694,14 @@ fn a_prompt_footer_has_no_more_hint() {
     let row = footer(&screen);
     assert!(!row.contains("? more"), "{row}");
 }
+
+#[test]
+fn the_footer_while_typing_a_help_filter_offers_keep_and_clear() {
+    let mut app = App::with_library(player(), None);
+    app.modal = Modal::Help;
+    app.help.editing = true;
+    let screen = draw(&mut app, 100, 24);
+    let row = footer(&screen);
+    assert!(row.contains("Enter keep · Esc clear"), "{row}");
+    assert!(!row.contains("Esc close"), "{row}");
+}

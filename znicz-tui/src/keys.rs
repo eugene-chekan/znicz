@@ -30,6 +30,8 @@ pub enum Context {
     Prompt,
     StationPrompt,
     Help,
+    /// Help with its filter row taking keys.
+    HelpFilter,
 }
 
 /// One clickable footer hint: what it says and the key a click sends.
@@ -71,6 +73,8 @@ const ENTER_SAVE: Hint = hint("Enter save", KeyCode::Enter);
 const CANCEL: Hint = hint("Esc cancel", KeyCode::Esc);
 const NEXT_FIELD: Hint = hint("Tab next field", KeyCode::Tab);
 const FILTER: Hint = hint("/ filter", KeyCode::Char('/'));
+const ENTER_KEEP: Hint = hint("Enter keep", KeyCode::Enter);
+const ESC_CLEAR: Hint = hint("Esc clear", KeyCode::Esc);
 
 /// Drawn at the right end of the footer in every context except help.
 pub const MORE: Hint = hint("? more", KeyCode::Char('?'));
@@ -95,6 +99,7 @@ pub fn context_hints(context: Context) -> &'static [Hint] {
         Context::Prompt => &[ENTER_SAVE, CANCEL],
         Context::StationPrompt => &[ENTER_SAVE, CANCEL, NEXT_FIELD],
         Context::Help => &[FILTER, CLOSE],
+        Context::HelpFilter => &[ENTER_KEEP, ESC_CLEAR],
     }
 }
 
@@ -102,7 +107,11 @@ pub fn context_hints(context: Context) -> &'static [Hint] {
 pub fn more_hint(context: Context) -> Option<Hint> {
     let typed_or_help = matches!(
         context,
-        Context::Search | Context::Prompt | Context::StationPrompt | Context::Help
+        Context::Search
+            | Context::Prompt
+            | Context::StationPrompt
+            | Context::Help
+            | Context::HelpFilter
     );
     (!typed_or_help).then_some(MORE)
 }
@@ -215,7 +224,7 @@ pub fn context_title(context: Context) -> Option<&'static str> {
         Context::Inspector => Some("Inspector"),
         Context::Playlists => Some("Playlists"),
         Context::Radio => Some("Radio"),
-        Context::Prompt | Context::StationPrompt | Context::Help => None,
+        Context::Prompt | Context::StationPrompt | Context::Help | Context::HelpFilter => None,
     }
 }
 
@@ -297,7 +306,7 @@ mod tests {
         }
     }
 
-    const ALL_CONTEXTS: [Context; 11] = [
+    const ALL_CONTEXTS: [Context; 12] = [
         Context::Library,
         Context::LibraryTree,
         Context::Search,
@@ -309,6 +318,7 @@ mod tests {
         Context::Prompt,
         Context::StationPrompt,
         Context::Help,
+        Context::HelpFilter,
     ];
 
     /// Columns a hint row needs: labels plus ` · ` between them.
@@ -332,7 +342,11 @@ mod tests {
     fn more_shows_only_where_question_mark_opens_help() {
         for context in ALL_CONTEXTS {
             match context {
-                Context::Search | Context::Prompt | Context::StationPrompt | Context::Help => {
+                Context::Search
+                | Context::Prompt
+                | Context::StationPrompt
+                | Context::Help
+                | Context::HelpFilter => {
                     assert_eq!(more_hint(context), None, "{context:?}")
                 }
                 _ => assert_eq!(more_hint(context), Some(MORE), "{context:?}"),
