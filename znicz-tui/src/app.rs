@@ -17,6 +17,7 @@ use znicz_library::{Library, Track};
 
 use crate::cover::CoverCache;
 use crate::cursor::Cursor;
+use crate::help_state::{HelpState, HELP_PAGE};
 use crate::hit::HitMap;
 use crate::keys::Context;
 use crate::layout;
@@ -241,6 +242,7 @@ pub struct App {
     pub focus: Focus,
     pub queue_open: bool,
     pub modal: Modal,
+    pub help: HelpState,
     pub list_width: u16,
     pub list_height: u16,
     pub title_slot: usize,
@@ -312,6 +314,7 @@ impl App {
             focus: Focus::Library,
             queue_open: false,
             modal: Modal::None,
+            help: HelpState::default(),
             list_width: 100,
             list_height: 0,
             title_slot: 0,
@@ -440,7 +443,8 @@ impl App {
             Modal::Devices => self.device_cursor.step(delta, self.devices.len()),
             Modal::Playlists => self.playlist_cursor.step(delta, self.playlists.len()),
             Modal::Radio => self.station_cursor.step(delta, self.stations.len()),
-            Modal::Help | Modal::Inspector => {}
+            Modal::Help => self.help.scroll_by(delta),
+            Modal::Inspector => {}
             Modal::None => match self.focus {
                 Focus::Library => self.library.step(delta, self.library_strip()),
                 Focus::Queue if self.queue_open => {
@@ -571,7 +575,7 @@ impl App {
     pub fn on_key(&mut self, key: KeyEvent) {
         self.library.set_preferred_layout(self.tui.library_layout);
         if self.modal == Modal::Help {
-            self.modal = Modal::None;
+            self.on_help_key(key);
             return;
         }
 
@@ -645,6 +649,55 @@ impl App {
         }
     }
 
+    /// Open help on whatever the user is looking at now.
+    fn open_help(&mut self) {
+        self.help = HelpState::open(self.context());
+        self.modal = Modal::Help;
+    }
+
+    /// Keys while help is open: scroll, filter, close. Everything else is inert.
+    fn on_help_key(&mut self, key: KeyEvent) {
+        if self.help.editing {
+            match key.code {
+                KeyCode::Esc => {
+                    self.help.query = LineEdit::new();
+                    self.help.editing = false;
+                    self.help.scroll = 0;
+                }
+                KeyCode::Enter => self.help.editing = false,
+                _ => {
+                    if self.help.query.on_key(key) {
+                        self.help.scroll = 0;
+                    }
+                }
+            }
+            return;
+        }
+
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                KeyCode::Char('c') => self.should_quit = true,
+                KeyCode::Char('d') => self.help.scroll_by(HELP_PAGE),
+                KeyCode::Char('u') => self.help.scroll_by(-HELP_PAGE),
+                _ => {}
+            }
+            return;
+        }
+
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => self.modal = Modal::None,
+            KeyCode::Char('/') => self.help.editing = true,
+            KeyCode::Char('j') | KeyCode::Down => self.help.scroll_by(1),
+            KeyCode::Char('k') | KeyCode::Up => self.help.scroll_by(-1),
+            KeyCode::PageDown => self.help.scroll_by(HELP_PAGE),
+            KeyCode::PageUp => self.help.scroll_by(-HELP_PAGE),
+            KeyCode::Char('g') | KeyCode::Home => self.help.scroll = 0,
+            // Clamped to the last page when help is drawn.
+            KeyCode::Char('G') | KeyCode::End => self.help.scroll = usize::MAX,
+            _ => {}
+        }
+    }
+
     fn on_search_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Esc => {
@@ -680,7 +733,7 @@ impl App {
         }
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
-            KeyCode::Char('?') => self.modal = Modal::Help,
+            KeyCode::Char('?') => self.open_help(),
             KeyCode::Char(',') => self.toggle_devices_modal(),
             KeyCode::Char('i') => self.toggle_inspector_modal(),
             KeyCode::Char('P') => self.toggle_playlists_modal(),

@@ -621,3 +621,13 @@ fn a_drawn_footer_add_hint_covers_its_label_and_sends_a() {
     assert_eq!(add.rect.width, 5, "the hit covers `a add`");
     assert_eq!(add.rect.y, 23);
 }
+
+#[test]
+fn wheel_scrolls_help() {
+    let mut app = new_app();
+    app.modal = Modal::Help;
+    app.on_mouse(wheel(false));
+    app.on_mouse(wheel(false));
+    app.on_mouse(wheel(true));
+    assert_eq!(app.help.scroll, 1);
+}

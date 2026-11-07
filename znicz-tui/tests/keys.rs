@@ -6,7 +6,9 @@
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use znicz_core::PlaybackStatus;
 use znicz_core::{spawn_player, AudioConfig, Command, PlayerHandle, QueueItem, RepeatMode};
+use znicz_tui::keys::Context;
 use znicz_tui::library_pane::ColumnFocus;
 use znicz_tui::{App, Focus, Modal, PlaylistPrompt, RadioPrompt, StationField};
 
@@ -184,17 +186,6 @@ fn i_replaces_the_devices_modal() {
 }
 
 #[test]
-fn question_mark_still_opens_help_and_the_next_key_only_closes_it() {
-    let mut app = new_app();
-    press_char(&mut app, '?');
-    assert_eq!(app.modal, Modal::Help);
-
-    press_char(&mut app, 'q');
-    assert_eq!(app.modal, Modal::None, "the overlay should close");
-    assert!(!app.should_quit, "and that key must not also quit");
-}
-
-#[test]
 fn esc_closes_search_then_devices_then_the_drawer() {
     let mut app = new_app();
 
@@ -229,18 +220,6 @@ fn q_quits_and_ctrl_c_quits() {
     let mut app = new_app();
     press_ctrl(&mut app, 'c');
     assert!(app.should_quit, "Ctrl-C should also quit");
-}
-
-#[test]
-fn help_opens_and_any_key_closes_it() {
-    let mut app = new_app();
-    press_char(&mut app, '?');
-    assert_eq!(app.modal, Modal::Help);
-
-    // While help is up, keys dismiss it rather than doing their usual job.
-    press_char(&mut app, 'q');
-    assert_eq!(app.modal, Modal::None, "the overlay should close");
-    assert!(!app.should_quit, "and that key must not also quit");
 }
 
 #[test]
@@ -1213,4 +1192,109 @@ fn capital_h_and_l_are_unbound() {
     press_char(&mut app, 'H');
     assert_eq!(app.library.column_focus(), ColumnFocus::Artists);
     assert!(app.toasts.is_empty());
+}
+
+#[test]
+fn help_opens_on_the_current_context() {
+    let mut app = new_app();
+    open_queue(&mut app);
+    press_char(&mut app, '?');
+    assert_eq!(app.modal, Modal::Help);
+    assert_eq!(app.help.context, Context::Queue);
+}
+
+#[test]
+fn q_closes_help_without_quitting() {
+    let mut app = new_app();
+    press_char(&mut app, '?');
+    press_char(&mut app, 'q');
+    assert_eq!(app.modal, Modal::None);
+    assert!(!app.should_quit, "q inside help must not quit");
+}
+
+#[test]
+fn question_mark_and_esc_close_help() {
+    let mut app = new_app();
+    press_char(&mut app, '?');
+    press_char(&mut app, '?');
+    assert_eq!(app.modal, Modal::None);
+    press_char(&mut app, '?');
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn help_ignores_playback_and_unbound_keys() {
+    let mut app = new_app();
+    queue(&mut app, 2);
+    press_char(&mut app, '?');
+    for c in [' ', 'n', 'x', 'h'] {
+        press_char(&mut app, c);
+    }
+    assert_eq!(app.modal, Modal::Help);
+    assert_eq!(app.state().status, PlaybackStatus::Stopped);
+}
+
+#[test]
+fn slash_filters_help_and_esc_clears_before_closing() {
+    let mut app = new_app();
+    press_char(&mut app, '?');
+    press_char(&mut app, '/');
+    assert!(app.help.editing);
+    press_typed(&mut app, "vol q");
+    assert_eq!(
+        app.help.query.as_str(),
+        "vol q",
+        "q is text while filtering"
+    );
+    assert_eq!(app.modal, Modal::Help);
+
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(
+        app.modal,
+        Modal::Help,
+        "the first Esc only clears the filter"
+    );
+    assert!(app.help.query.is_empty());
+    assert!(!app.help.editing);
+
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn enter_keeps_the_help_filter_and_returns_to_scrolling() {
+    let mut app = new_app();
+    press_char(&mut app, '?');
+    press_char(&mut app, '/');
+    press_typed(&mut app, "seek");
+    press(&mut app, KeyCode::Enter);
+    assert!(!app.help.editing);
+    assert_eq!(app.help.query.as_str(), "seek");
+
+    press_char(&mut app, 'j');
+    assert_eq!(app.help.scroll, 1, "j scrolls once the filter is kept");
+    assert_eq!(app.help.query.as_str(), "seek");
+}
+
+#[test]
+fn j_k_g_scroll_help() {
+    let mut app = new_app();
+    press_char(&mut app, '?');
+    press_char(&mut app, 'j');
+    press_char(&mut app, 'j');
+    press_char(&mut app, 'k');
+    assert_eq!(app.help.scroll, 1);
+    press_ctrl(&mut app, 'd');
+    assert_eq!(app.help.scroll, 11);
+    press_char(&mut app, 'g');
+    assert_eq!(app.help.scroll, 0);
+}
+
+#[test]
+fn ctrl_c_still_quits_from_help() {
+    let mut app = new_app();
+    press_char(&mut app, '?');
+    press_ctrl(&mut app, 'c');
+    assert!(app.should_quit);
 }
