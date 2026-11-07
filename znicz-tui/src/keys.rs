@@ -6,6 +6,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// One documented binding.
+#[derive(Debug, PartialEq, Eq)]
 pub struct Binding {
     pub keys: &'static str,
     pub action: &'static str,
@@ -180,6 +181,86 @@ pub const RADIO: &[Binding] = &[
     b("Esc", "close"),
 ];
 
+pub const INSPECTOR: &[Binding] = &[b("Esc / i", "close")];
+
+/// A titled group of bindings in the help overlay.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Section {
+    pub title: &'static str,
+    pub bindings: Vec<&'static Binding>,
+    /// Belongs to another context: drawn dim, after the sections that apply now.
+    pub dim: bool,
+}
+
+/// Context tables, in the order they appear when they are not first.
+const CONTEXT_SECTIONS: &[(&str, &[Binding])] = &[
+    ("Library", LIBRARY),
+    ("Queue", QUEUE),
+    ("Playlists", PLAYLISTS),
+    ("Radio", RADIO),
+    ("Devices", DEVICES),
+    ("Inspector", INSPECTOR),
+];
+
+/// Title of the section holding this context's own keys, if it has a table.
+pub fn context_title(context: Context) -> Option<&'static str> {
+    match context {
+        Context::Library | Context::LibraryTree | Context::Search => Some("Library"),
+        Context::Queue => Some("Queue"),
+        Context::Devices => Some("Devices"),
+        Context::Inspector => Some("Inspector"),
+        Context::Playlists => Some("Playlists"),
+        Context::Radio => Some("Radio"),
+        Context::Prompt | Context::StationPrompt | Context::Help => None,
+    }
+}
+
+fn section(title: &'static str, bindings: &'static [Binding], dim: bool) -> Section {
+    Section {
+        title,
+        bindings: bindings.iter().collect(),
+        dim,
+    }
+}
+
+/// Help in display order: this context, Playback, Navigation, then the rest dim.
+pub fn help_sections(context: Context) -> Vec<Section> {
+    let first = context_title(context);
+    let mut sections = Vec::new();
+    for &(title, bindings) in CONTEXT_SECTIONS {
+        if Some(title) == first {
+            sections.push(section(title, bindings, false));
+        }
+    }
+    sections.push(section("Playback", GLOBAL, false));
+    sections.push(section("Navigation", NAVIGATION, false));
+    for &(title, bindings) in CONTEXT_SECTIONS {
+        if Some(title) != first {
+            sections.push(section(title, bindings, true));
+        }
+    }
+    sections
+}
+
+/// Keep bindings whose keys or action contain `query`, ignoring case.
+///
+/// Sections left empty are dropped. A blank query keeps everything.
+pub fn filter_sections(sections: Vec<Section>, query: &str) -> Vec<Section> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return sections;
+    }
+    sections
+        .into_iter()
+        .filter_map(|mut section| {
+            section.bindings.retain(|b| {
+                b.keys.to_lowercase().contains(&query) || b.action.to_lowercase().contains(&query)
+            });
+            (!section.bindings.is_empty()).then_some(section)
+        })
+        .collect()
+}
+
 /// Short hints for the footer, per pane.
 pub fn hints(pane: &str) -> &'static str {
     match pane {
@@ -208,7 +289,7 @@ mod tests {
     #[test]
     fn every_binding_documents_both_a_key_and_an_action() {
         let tables = [
-            GLOBAL, NAVIGATION, QUEUE, LIBRARY, DEVICES, PLAYLISTS, RADIO,
+            GLOBAL, NAVIGATION, QUEUE, LIBRARY, DEVICES, PLAYLISTS, RADIO, INSPECTOR,
         ];
         for table in tables {
             for binding in table {
@@ -303,6 +384,100 @@ mod tests {
                 };
                 assert_eq!(hint.key.code, expected, "{context:?}: {}", hint.label);
                 assert_eq!(hint.key.modifiers, KeyModifiers::NONE);
+            }
+        }
+    }
+
+    fn titles(sections: &[Section]) -> Vec<&'static str> {
+        sections.iter().map(|s| s.title).collect()
+    }
+
+    #[test]
+    fn help_starts_with_the_context_then_playback_and_navigation() {
+        let sections = help_sections(Context::Queue);
+        assert_eq!(
+            titles(&sections),
+            [
+                "Queue",
+                "Playback",
+                "Navigation",
+                "Library",
+                "Playlists",
+                "Radio",
+                "Devices",
+                "Inspector"
+            ]
+        );
+        let dims: Vec<bool> = sections.iter().map(|s| s.dim).collect();
+        assert_eq!(dims, [false, false, false, true, true, true, true, true]);
+    }
+
+    #[test]
+    fn tree_and_search_open_help_on_library() {
+        for context in [Context::Library, Context::LibraryTree, Context::Search] {
+            assert_eq!(help_sections(context)[0].title, "Library", "{context:?}");
+        }
+    }
+
+    #[test]
+    fn prompts_and_help_have_no_context_section() {
+        for context in [Context::Prompt, Context::StationPrompt, Context::Help] {
+            let sections = help_sections(context);
+            assert_eq!(sections[0].title, "Playback", "{context:?}");
+            assert_eq!(sections.len(), 8, "every table still listed once");
+            assert_eq!(context_title(context), None);
+        }
+    }
+
+    #[test]
+    fn the_filter_matches_actions_ignoring_case() {
+        let sections = filter_sections(help_sections(Context::Library), "VOL");
+        assert_eq!(titles(&sections), ["Playback"]);
+        assert!(sections[0].bindings.iter().all(|b| b.action.contains("volume")));
+    }
+
+    #[test]
+    fn the_filter_matches_key_text() {
+        let sections = filter_sections(help_sections(Context::Library), "del");
+        assert!(sections
+            .iter()
+            .flat_map(|s| s.bindings.iter())
+            .any(|b| b.keys == "d / Del"));
+    }
+
+    #[test]
+    fn a_blank_filter_keeps_everything_and_a_miss_keeps_nothing() {
+        let all = help_sections(Context::Queue);
+        assert_eq!(filter_sections(all.clone(), "  "), all);
+        assert!(filter_sections(all, "zzzz").is_empty());
+    }
+
+    #[test]
+    fn table_backed_hints_name_a_documented_key() {
+        for context in [
+            Context::Library,
+            Context::LibraryTree,
+            Context::Queue,
+            Context::Devices,
+            Context::Inspector,
+            Context::Playlists,
+            Context::Radio,
+        ] {
+            let sections = help_sections(context);
+            let documented: Vec<&Binding> = sections
+                .iter()
+                .filter(|s| !s.dim)
+                .flat_map(|s| s.bindings.iter().copied())
+                .collect();
+            for hint in context_hints(context) {
+                let token = hint.label.split_once(' ').map(|(k, _)| k).unwrap();
+                assert!(
+                    documented
+                        .iter()
+                        .any(|b| b.keys.split(" / ").any(|k| k == token)),
+                    "{context:?}: hint {:?} has no binding in its help sections",
+                    hint.label
+                );
             }
         }
     }
