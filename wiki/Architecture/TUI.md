@@ -87,6 +87,33 @@ a cover is showing.
 Every row is also truncated to the window width with `…`, counting **characters
 rather than bytes** so accented titles are never cut mid-character.
 
+## Keys, footer, and help
+
+Arrows seek (`→` / `←` 5 s, `Shift-→` / `Shift-←` 30 s). `h` / `l` move left
+and right in the library and never play anything:
+
+| Layout | `h` | `l` |
+| --- | --- | --- |
+| Columns | previous column (stops at Artists) | next column (stops at Tracks) |
+| Tree | collapse an open node, else jump to the parent | expand a closed artist or album |
+| Single column | back one level | into the artist or album |
+
+They do nothing in search results, the queue, or modals. `Tab` still cycles
+columns and wraps.
+
+The footer shows a short hint list for the current **context** (library,
+library tree, search prompt, queue, devices, inspector, playlists, radio, a
+name prompt, the station form, or help), most important first, as many as fit.
+` ? more ` is right-aligned and always kept. Each hint carries the key it sends,
+so clicking one runs that key.
+
+`?` opens help on the context it was opened from: that context's keys first,
+then Playback and Navigation, then every other context dimmed. `j` / `k`,
+`Ctrl-d` / `Ctrl-u`, `g` / `G`, and the wheel scroll. `/` filters by key or
+action (case-insensitive); `Enter` keeps the filter, `Esc` clears it, and a
+second `Esc`, `?`, or `q` closes help (`q` does not quit from here). Other keys
+are ignored while help is open.
+
 ## The signal path
 
 The second transport line is the audiophile part of the interface. It reads
@@ -118,13 +145,13 @@ The home screen is **artist-first browse**: artists → albums → tracks. How t
 is drawn depends on config and width:
 
 - **`library_layout = "columns"`** (default) and a wide enough library strip:
-  three columns side by side. **Tab** / **Shift-Tab** move focus between
-  columns. Seek stays on **h** / **l**.
+  three columns side by side. **h** / **l** (or **Tab** / **Shift-Tab**)
+  move focus between columns; arrows seek.
 - Same preference but a **narrow** strip: single-column paging (Enter drills
-  in, Esc steps back). Still artist-first, not albums-as-home.
+  in, Esc steps back; **l** / **h** also drill in and step back). Still artist-first, not albums-as-home.
 - **`library_layout = "tree"`**: expandable tree at any width. Enter or
   **Space** / **o** expands or collapses; open nodes are remembered for the
-  session only. Album lists are cached per expanded artist, so a redraw does
+  session only. **l** expands, **h** collapses or jumps to the parent. Album lists are cached per expanded artist, so a redraw does
   not re-scan the library; **r** refreshes those lists.
 
 `/` opens search. Results are entity hits — artists, albums, then
@@ -192,7 +219,7 @@ are next and repeat again.
 `s` still stops while the list is showing; while naming a file, every letter
 (including `s`, which is stop everywhere else) is part of the name. Left and
 Right move the caret; Home and End jump to the ends. The footer switches to
-type/cancel so the global keymap is not what you type into.
+`Enter save · Esc cancel` so the global keymap is not what you type into.
 
 ### Radio
 
@@ -271,7 +298,10 @@ top of the player.
 | `views/inspector.rs` | full signal-path overlay (`i`) |
 | `views/playlists.rs` | saved M3U overlay (`P`) |
 | `views/radio.rs` | saved stations overlay (`R`) |
-| `views/status.rs` | key hints only |
+| `views/status.rs` | footer hint line for the current context |
+| `views/help.rs` | help overlay: context first, scroll, filter row |
+| `help_state.rs` | help context, scroll, and filter text |
+| `footer_hits.rs` | footer hint placement and click targets |
 | `theme.rs` | every colour, in one place |
 | `keys.rs` | the keymap as data |
 | `cursor.rs` | list cursor movement |
@@ -283,9 +313,11 @@ top of the player.
 | `format.rs` | durations, rates, bars, truncation |
 | `library_pane.rs` | browsing state |
 
-`keys.rs` holds the bindings as data, and both the help overlay and the footer
-hints are generated from it. The old help text had drifted from the code and
-documented keys that did nothing; generating it removes that possibility.
+`keys.rs` holds the bindings as data. Help is generated from those tables, and
+the footer hints for each context are listed next to them; a unit test checks
+that every hint names a key the context's help documents. The old help text had
+drifted from the code and documented keys that did nothing; generating it
+removes that possibility.
 
 Colours are the terminal's named 16 rather than RGB, so Znicz follows whatever
 palette the user has chosen.
