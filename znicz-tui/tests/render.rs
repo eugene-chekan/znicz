@@ -138,12 +138,20 @@ fn the_cover_slot_is_fully_painted_when_nothing_is_playing() {
 }
 
 #[test]
-fn show_cover_false_keeps_two_transport_rows() {
+fn show_cover_false_uses_three_text_rows() {
     let mut app = App::with_library(player(), None);
     app.tui.show_cover = false;
     let screen = draw(&mut app, 90, 24);
     assert!(screen.contains("Nothing playing"), "{screen}");
-    assert_eq!(app.list_height, 21);
+    assert_eq!(app.list_height, 20);
+}
+
+#[test]
+fn a_short_window_keeps_the_list_instead_of_the_cover() {
+    let mut app = App::with_library(player(), None);
+    app.tui.show_cover = true;
+    draw(&mut app, 48, 14);
+    assert_eq!(app.list_height, 11, "14 rows - 2 transport - 1 footer");
 }
 
 #[test]
