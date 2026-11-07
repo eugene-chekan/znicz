@@ -3,6 +3,8 @@
 //! The help overlay and the footer hints are both generated from these tables,
 //! so the documented keys and the shown keys cannot drift apart.
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
 /// One documented binding.
 pub struct Binding {
     pub keys: &'static str,
@@ -11,6 +13,93 @@ pub struct Binding {
 
 const fn b(keys: &'static str, action: &'static str) -> Binding {
     Binding { keys, action }
+}
+
+/// Where the user is: picks the footer hints and the first help section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Context {
+    Library,
+    LibraryTree,
+    Search,
+    Queue,
+    Devices,
+    Inspector,
+    Playlists,
+    Radio,
+    Prompt,
+    StationPrompt,
+    Help,
+}
+
+/// One clickable footer hint: what it says and the key a click sends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Hint {
+    pub label: &'static str,
+    pub key: KeyEvent,
+}
+
+const fn hint(label: &'static str, code: KeyCode) -> Hint {
+    Hint {
+        label,
+        key: KeyEvent::new(code, KeyModifiers::NONE),
+    }
+}
+
+const SPACE_PAUSE: Hint = hint("Space pause", KeyCode::Char(' '));
+const SEARCH: Hint = hint("/ search", KeyCode::Char('/'));
+const ADD: Hint = hint("a add", KeyCode::Char('a'));
+const EXPAND: Hint = hint("o expand", KeyCode::Char('o'));
+const QUEUE_OPEN: Hint = hint("] queue", KeyCode::Char(']'));
+const QUEUE_CLOSE: Hint = hint("] close", KeyCode::Char(']'));
+const PLAYLISTS_OPEN: Hint = hint("P playlists", KeyCode::Char('P'));
+const RADIO_OPEN: Hint = hint("R radio", KeyCode::Char('R'));
+const ENTER_PLAY: Hint = hint("Enter play", KeyCode::Enter);
+const REMOVE: Hint = hint("d remove", KeyCode::Char('d'));
+const JUMP: Hint = hint("o jump", KeyCode::Char('o'));
+const CLEAR: Hint = hint("C clear", KeyCode::Char('C'));
+const SELECT: Hint = hint("Enter select", KeyCode::Enter);
+const RESCAN: Hint = hint("r rescan", KeyCode::Char('r'));
+const NEW: Hint = hint("n new", KeyCode::Char('n'));
+const EDIT: Hint = hint("e edit", KeyCode::Char('e'));
+const DELETE: Hint = hint("d delete", KeyCode::Char('d'));
+const CLOSE: Hint = hint("Esc close", KeyCode::Esc);
+
+// Prompt and help hints: these keys belong to a prompt, not a binding table.
+const ENTER_SEARCH: Hint = hint("Enter search", KeyCode::Enter);
+const ENTER_SAVE: Hint = hint("Enter save", KeyCode::Enter);
+const CANCEL: Hint = hint("Esc cancel", KeyCode::Esc);
+const NEXT_FIELD: Hint = hint("Tab next field", KeyCode::Tab);
+const FILTER: Hint = hint("/ filter", KeyCode::Char('/'));
+
+/// Drawn at the right end of the footer in every context except help.
+pub const MORE: Hint = hint("? more", KeyCode::Char('?'));
+
+/// Footer hints for a context, most important first.
+pub fn context_hints(context: Context) -> &'static [Hint] {
+    match context {
+        Context::Library => &[
+            SPACE_PAUSE,
+            SEARCH,
+            ADD,
+            QUEUE_OPEN,
+            PLAYLISTS_OPEN,
+            RADIO_OPEN,
+        ],
+        Context::LibraryTree => &[SEARCH, ADD, EXPAND, QUEUE_OPEN, PLAYLISTS_OPEN, RADIO_OPEN],
+        Context::Search => &[ENTER_SEARCH, CANCEL],
+        Context::Queue => &[ENTER_PLAY, REMOVE, JUMP, CLEAR, QUEUE_CLOSE],
+        Context::Devices => &[SELECT, RESCAN, CLOSE],
+        Context::Inspector => &[SPACE_PAUSE, CLOSE],
+        Context::Playlists | Context::Radio => &[ENTER_PLAY, ADD, NEW, EDIT, DELETE, CLOSE],
+        Context::Prompt => &[ENTER_SAVE, CANCEL],
+        Context::StationPrompt => &[ENTER_SAVE, CANCEL, NEXT_FIELD],
+        Context::Help => &[FILTER, CLOSE],
+    }
+}
+
+/// The right-aligned `? more` hint, or `None` inside help itself.
+pub fn more_hint(context: Context) -> Option<Hint> {
+    (context != Context::Help).then_some(MORE)
 }
 
 /// Works in every pane.
@@ -125,6 +214,95 @@ mod tests {
             for binding in table {
                 assert!(!binding.keys.is_empty());
                 assert!(!binding.action.is_empty());
+            }
+        }
+    }
+
+    const ALL_CONTEXTS: [Context; 11] = [
+        Context::Library,
+        Context::LibraryTree,
+        Context::Search,
+        Context::Queue,
+        Context::Devices,
+        Context::Inspector,
+        Context::Playlists,
+        Context::Radio,
+        Context::Prompt,
+        Context::StationPrompt,
+        Context::Help,
+    ];
+
+    /// Columns a hint row needs: labels plus ` · ` between them.
+    fn row_width(hints: &[Hint]) -> usize {
+        let labels: usize = hints.iter().map(|h| h.label.chars().count()).sum();
+        labels + 3 * hints.len().saturating_sub(1)
+    }
+
+    #[test]
+    fn every_context_fits_eighty_columns_with_more() {
+        for context in ALL_CONTEXTS {
+            let mut width = row_width(context_hints(context));
+            if let Some(more) = more_hint(context) {
+                width += 3 + more.label.chars().count();
+            }
+            assert!(width <= 80, "{context:?} needs {width} columns");
+        }
+    }
+
+    #[test]
+    fn every_context_but_help_ends_in_more() {
+        for context in ALL_CONTEXTS {
+            match context {
+                Context::Help => assert_eq!(more_hint(context), None),
+                _ => assert_eq!(more_hint(context), Some(MORE), "{context:?}"),
+            }
+        }
+        assert_eq!(MORE.key.code, KeyCode::Char('?'));
+    }
+
+    #[test]
+    fn library_hints_lead_with_pause_and_label_p_and_r() {
+        let labels: Vec<&str> = context_hints(Context::Library)
+            .iter()
+            .map(|h| h.label)
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                "Space pause",
+                "/ search",
+                "a add",
+                "] queue",
+                "P playlists",
+                "R radio"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_tree_offers_expand_instead_of_pause() {
+        let labels: Vec<&str> = context_hints(Context::LibraryTree)
+            .iter()
+            .map(|h| h.label)
+            .collect();
+        assert!(labels.contains(&"o expand"), "{labels:?}");
+        assert!(!labels.contains(&"Space pause"), "{labels:?}");
+    }
+
+    #[test]
+    fn each_hint_sends_the_key_its_label_names() {
+        for context in ALL_CONTEXTS {
+            for hint in context_hints(context) {
+                let token = hint.label.split_once(' ').map(|(k, _)| k).unwrap();
+                let expected = match token {
+                    "Space" => KeyCode::Char(' '),
+                    "Enter" => KeyCode::Enter,
+                    "Esc" => KeyCode::Esc,
+                    "Tab" => KeyCode::Tab,
+                    one => KeyCode::Char(one.chars().next().unwrap()),
+                };
+                assert_eq!(hint.key.code, expected, "{context:?}: {}", hint.label);
+                assert_eq!(hint.key.modifiers, KeyModifiers::NONE);
             }
         }
     }
