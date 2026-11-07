@@ -5,32 +5,42 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use crate::app::{App, Focus, Modal};
-use crate::footer_hits;
+use crate::app::App;
+use crate::footer_hits::{self, PlacedHint, SEPARATOR};
 use crate::keys;
 use crate::theme;
 
-/// Key hints for the focused pane. Toasts never replace this line.
+/// Key hints for the current context. Toasts never replace this line.
 pub fn render_footer(frame: &mut Frame, area: Rect, app: &mut App) {
-    let text = hints_for(app);
-    app.hits.footer_hints = footer_hits::layout_footer_hits(area, text);
-    let line = Line::from(Span::styled(text, theme::dim()));
-    frame.render_widget(Paragraph::new(line), area);
+    let context = app.context();
+    let placed =
+        footer_hits::layout_footer(area, keys::context_hints(context), keys::more_hint(context));
+    app.hits.footer_hints = footer_hits::footer_hits(&placed);
+    frame.render_widget(Paragraph::new(footer_line(area, &placed)), area);
 }
 
-fn hints_for(app: &App) -> &'static str {
-    if app.library.is_typing() || app.playlist_prompt.is_some() || app.radio_prompt.is_some() {
-        return "type · ← → · Enter · Esc cancel";
+/// Hints at their placed columns: ` · ` between neighbours, spaces before `? more`.
+fn footer_line(area: Rect, placed: &[PlacedHint]) -> Line<'static> {
+    let separator_width = SEPARATOR.chars().count() as u16;
+    let mut spans = Vec::new();
+    let mut x = area.x;
+    for item in placed {
+        let gap = item.rect.x.saturating_sub(x);
+        if x > area.x && gap == separator_width {
+            spans.push(Span::styled(SEPARATOR, theme::dim()));
+        } else if gap > 0 {
+            spans.push(Span::raw(" ".repeat(usize::from(gap))));
+        }
+        let (key, action) = item
+            .hint
+            .label
+            .split_once(' ')
+            .unwrap_or((item.hint.label, ""));
+        spans.push(Span::styled(key, theme::key()));
+        if !action.is_empty() {
+            spans.push(Span::styled(format!(" {action}"), theme::dim()));
+        }
+        x = item.rect.x + item.rect.width;
     }
-    let pane = match app.modal {
-        Modal::Devices => "Devices",
-        Modal::Inspector => "Inspector",
-        Modal::Playlists => "Playlists",
-        Modal::Radio => "Radio",
-        _ => match app.focus {
-            Focus::Queue => "Queue",
-            Focus::Library => "Library",
-        },
-    };
-    keys::hints(pane)
+    Line::from(spans)
 }

@@ -18,6 +18,7 @@ use znicz_library::{Library, Track};
 use crate::cover::CoverCache;
 use crate::cursor::Cursor;
 use crate::hit::HitMap;
+use crate::keys::Context;
 use crate::layout;
 use crate::library_pane::{ColumnFocus, EffectiveLayout, Item, LibraryPane, Mode};
 use crate::line_edit::LineEdit;
@@ -780,6 +781,38 @@ impl App {
         self.focus = Focus::Library;
         self.library
             .clamp_pan(self.title_slot(), self.library_strip());
+    }
+
+    /// What the footer and help describe right now.
+    pub fn context(&self) -> Context {
+        if self.library.is_typing() {
+            return Context::Search;
+        }
+        match &self.radio_prompt {
+            Some(RadioPrompt::Form { .. }) => return Context::StationPrompt,
+            Some(RadioPrompt::Copy(_)) => return Context::Prompt,
+            None => {}
+        }
+        if self.playlist_prompt.is_some() {
+            return Context::Prompt;
+        }
+        match self.modal {
+            Modal::Help => Context::Help,
+            Modal::Devices => Context::Devices,
+            Modal::Inspector => Context::Inspector,
+            Modal::Playlists => Context::Playlists,
+            Modal::Radio => Context::Radio,
+            Modal::None => match self.focus {
+                Focus::Queue => Context::Queue,
+                Focus::Library
+                    if self.library.effective_layout(self.library_strip())
+                        == EffectiveLayout::Tree =>
+                {
+                    Context::LibraryTree
+                }
+                Focus::Library => Context::Library,
+            },
+        }
     }
 
     fn library_strip(&self) -> usize {

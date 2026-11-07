@@ -1,139 +1,154 @@
-//! Footer hint segments → key events and hit rects.
+//! Where each footer hint lands, so a click can run that hint's key.
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 
 use crate::hit::FooterHit;
+use crate::keys::Hint;
 
-pub fn key_for_hint_segment(segment: &str) -> Option<KeyEvent> {
-    let segment = segment.trim();
-    if segment.is_empty() {
-        return None;
-    }
-    // Close-preferring compound labels first.
-    if segment.contains("Esc") && segment.contains("close") {
-        return Some(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-    }
-    if segment.starts_with("Alt-") && segment.contains("pan") {
-        return Some(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT));
-    }
-    let key_part = segment.split_whitespace().next()?;
-    match key_part {
-        "Enter" => Some(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-        "Esc" => Some(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
-        "Space" => Some(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE)),
-        "type" | "←" | "→" => None,
-        s if s.chars().count() == 1 => {
-            let c = s.chars().next()?;
-            Some(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
-        }
-        _ => None,
-    }
+/// Drawn between neighbouring hints.
+pub const SEPARATOR: &str = " · ";
+const SEPARATOR_WIDTH: u16 = 3;
+
+/// A hint and the cells it occupies on the footer row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlacedHint {
+    pub rect: Rect,
+    pub hint: Hint,
 }
 
-pub fn layout_footer_hits(area: Rect, line: &str) -> Vec<FooterHit> {
+fn label_width(hint: &Hint) -> u16 {
+    hint.label.chars().count() as u16
+}
+
+/// Lay hints out left to right, keeping `more` right-aligned.
+///
+/// The space for `more` (plus one separator) is reserved first, so it is never
+/// pushed off by a long hint list. Hints that do not fit whole are dropped
+/// rather than cut.
+pub fn layout_footer(area: Rect, hints: &[Hint], more: Option<Hint>) -> Vec<PlacedHint> {
     if area.width == 0 || area.height == 0 {
         return Vec::new();
     }
-    let mut out = Vec::new();
-    let mut x = 0u16;
-    let parts: Vec<&str> = line.split(" · ").collect();
-    for (i, part) in parts.iter().enumerate() {
-        let sep = if i + 1 < parts.len() { " · " } else { "" };
-        let part_width = part.chars().count() as u16;
-        if x.saturating_add(part_width) > area.width {
+    let more = more.filter(|m| label_width(m) <= area.width);
+    let budget = match &more {
+        Some(m) => area
+            .width
+            .saturating_sub(label_width(m))
+            .saturating_sub(SEPARATOR_WIDTH),
+        None => area.width,
+    };
+
+    let mut placed = Vec::new();
+    let mut x: u16 = 0;
+    for hint in hints {
+        let gap = if placed.is_empty() {
+            0
+        } else {
+            SEPARATOR_WIDTH
+        };
+        let width = label_width(hint);
+        if u32::from(x) + u32::from(gap) + u32::from(width) > u32::from(budget) {
             break;
         }
-        if let Some(key) = key_for_hint_segment(part) {
-            out.push(FooterHit {
-                rect: Rect {
-                    x: area.x + x,
-                    y: area.y,
-                    width: part_width,
-                    height: 1,
-                },
-                key,
-            });
-        }
-        x = x.saturating_add(part_width);
-        let sep_width = sep.chars().count() as u16;
-        if x.saturating_add(sep_width) > area.width {
-            break;
-        }
-        x = x.saturating_add(sep_width);
+        x += gap;
+        placed.push(PlacedHint {
+            rect: Rect::new(area.x + x, area.y, width, 1),
+            hint: *hint,
+        });
+        x += width;
     }
-    out
+
+    if let Some(more) = more {
+        let width = label_width(&more);
+        placed.push(PlacedHint {
+            rect: Rect::new(area.x + area.width - width, area.y, width, 1),
+            hint: more,
+        });
+    }
+    placed
+}
+
+/// Click targets for placed hints.
+pub fn footer_hits(placed: &[PlacedHint]) -> Vec<FooterHit> {
+    placed
+        .iter()
+        .map(|p| FooterHit {
+            rect: p.rect,
+            key: p.hint.key,
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    #[test]
-    fn maps_common_footer_segments() {
-        assert_eq!(
-            key_for_hint_segment("? help").map(|k| k.code),
-            Some(KeyCode::Char('?'))
-        );
-        assert_eq!(
-            key_for_hint_segment("Esc close").map(|k| k.code),
-            Some(KeyCode::Esc)
-        );
-        assert_eq!(
-            key_for_hint_segment("i / Esc close").map(|k| k.code),
-            Some(KeyCode::Esc)
-        );
-        assert_eq!(
-            key_for_hint_segment("Enter play").map(|k| k.code),
-            Some(KeyCode::Enter)
-        );
-        assert_eq!(
-            key_for_hint_segment("Space pause").map(|k| k.code),
-            Some(KeyCode::Char(' '))
-        );
-        assert_eq!(
-            key_for_hint_segment("a add").map(|k| k.code),
-            Some(KeyCode::Char('a'))
-        );
-        assert_eq!(
-            key_for_hint_segment("C clear").map(|k| k.code),
-            Some(KeyCode::Char('C'))
-        );
-        assert_eq!(
-            key_for_hint_segment("/ search").map(|k| k.code),
-            Some(KeyCode::Char('/'))
-        );
-        assert_eq!(
-            key_for_hint_segment("] queue").map(|k| k.code),
-            Some(KeyCode::Char(']'))
-        );
-        assert_eq!(
-            key_for_hint_segment(", devices").map(|k| k.code),
-            Some(KeyCode::Char(','))
-        );
-        assert_eq!(
-            key_for_hint_segment("P").map(|k| k.code),
-            Some(KeyCode::Char('P'))
-        );
-        assert_eq!(
-            key_for_hint_segment("R").map(|k| k.code),
-            Some(KeyCode::Char('R'))
-        );
-        let pan = key_for_hint_segment("Alt-← / Alt-→ pan").expect("pan");
-        assert_eq!(pan.code, KeyCode::Right);
-        assert!(pan.modifiers.contains(KeyModifiers::ALT));
-        assert!(key_for_hint_segment("type").is_none());
-        assert!(key_for_hint_segment("← →").is_none());
+    fn h(label: &'static str, c: char) -> Hint {
+        Hint {
+            label,
+            key: KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+        }
+    }
+
+    fn labels(placed: &[PlacedHint]) -> Vec<&'static str> {
+        placed.iter().map(|p| p.hint.label).collect()
     }
 
     #[test]
-    fn layout_skips_unmapped_and_clips_to_width() {
-        let area = Rect::new(0, 23, 20, 1);
-        let hits = layout_footer_hits(area, "/ search · a add · ? help");
-        assert_eq!(hits.len(), 2); // "/ search" (8) + " · " (3) + "a add" (5) = 16; "? help" needs 9 more → clip
-        assert_eq!(hits[0].key.code, KeyCode::Char('/'));
-        assert_eq!(hits[0].rect, Rect::new(0, 23, 8, 1));
-        assert_eq!(hits[1].key.code, KeyCode::Char('a'));
-        assert_eq!(hits[1].rect, Rect::new(11, 23, 5, 1));
+    fn hints_run_left_to_right_and_more_sits_on_the_right() {
+        let area = Rect::new(0, 23, 40, 1);
+        let placed = layout_footer(
+            area,
+            &[h("/ search", '/'), h("a add", 'a')],
+            Some(h("? more", '?')),
+        );
+        assert_eq!(labels(&placed), ["/ search", "a add", "? more"]);
+        assert_eq!(placed[0].rect, Rect::new(0, 23, 8, 1));
+        assert_eq!(placed[1].rect, Rect::new(11, 23, 5, 1));
+        assert_eq!(placed[2].rect, Rect::new(34, 23, 6, 1));
+    }
+
+    #[test]
+    fn hints_that_would_crowd_more_are_dropped() {
+        // Budget is 20 - 6 ("? more") - 3 (separator) = 11: only "/ search" fits.
+        let placed = layout_footer(
+            Rect::new(0, 0, 20, 1),
+            &[h("/ search", '/'), h("a add", 'a')],
+            Some(h("? more", '?')),
+        );
+        assert_eq!(labels(&placed), ["/ search", "? more"]);
+    }
+
+    #[test]
+    fn without_more_hints_use_the_full_width() {
+        let placed = layout_footer(
+            Rect::new(0, 0, 16, 1),
+            &[h("/ search", '/'), h("a add", 'a')],
+            None,
+        );
+        assert_eq!(labels(&placed), ["/ search", "a add"]);
+    }
+
+    #[test]
+    fn a_footer_too_narrow_for_any_label_places_nothing() {
+        let placed = layout_footer(
+            Rect::new(0, 0, 4, 1),
+            &[h("/ search", '/')],
+            Some(h("? more", '?')),
+        );
+        assert!(placed.is_empty());
+        assert!(layout_footer(Rect::new(0, 0, 0, 1), &[h("a add", 'a')], None).is_empty());
+    }
+
+    #[test]
+    fn hits_carry_each_hints_key() {
+        let placed = layout_footer(
+            Rect::new(0, 23, 40, 1),
+            &[h("a add", 'a')],
+            Some(h("? more", '?')),
+        );
+        let keys: Vec<KeyCode> = footer_hits(&placed).iter().map(|h| h.key.code).collect();
+        assert_eq!(keys, [KeyCode::Char('a'), KeyCode::Char('?')]);
     }
 }

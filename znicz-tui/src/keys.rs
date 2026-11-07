@@ -1,7 +1,7 @@
 //! The keymap, written down once.
 //!
-//! The help overlay and the footer hints are both generated from these tables,
-//! so the documented keys and the shown keys cannot drift apart.
+//! Help is generated from the binding tables, and a test checks that every
+//! footer hint names a key those tables document, so the two cannot drift.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -261,27 +261,6 @@ pub fn filter_sections(sections: Vec<Section>, query: &str) -> Vec<Section> {
         .collect()
 }
 
-/// Short hints for the footer, per pane.
-pub fn hints(pane: &str) -> &'static str {
-    match pane {
-        "Queue" => {
-            "Enter play · d remove · C clear · o jump · Alt-← / Alt-→ pan · ] close · ? help"
-        }
-        "Library" => {
-            "/ search · a add · ] queue · i inspect · P · R · Alt-← / Alt-→ pan · , devices · ? help"
-        }
-        "Devices" => "Enter select · r rescan · Esc close · ? help",
-        "Inspector" => "i / Esc close · Space pause · ? help",
-        "Playlists" => {
-            "Enter play · a add · n new · e edit · c copy · d delete · Esc close · ? help"
-        }
-        "Radio" => {
-            "Enter play · a add · n new · e edit · c copy · d delete · Esc close · ? help"
-        }
-        _ => "] queue · ? help · q quit",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -486,109 +465,26 @@ mod tests {
     }
 
     #[test]
-    fn each_pane_has_its_own_hint_line() {
-        for pane in ["Queue", "Library", "Devices"] {
-            assert!(
-                hints(pane).contains("?"),
-                "{pane} hints should mention help"
-            );
-        }
-        assert!(hints("Queue") != hints("Library"));
-        assert!(
-            hints("Library").contains("Alt-→"),
-            "library hints should show Alt-arrow pan, got {}",
-            hints("Library")
-        );
-        assert!(
-            GLOBAL.iter().any(|b| b.keys.contains("Alt-→")),
-            "global help should document Alt-arrow pan"
-        );
-        assert!(
-            GLOBAL.iter().any(|b| b.keys == "i"),
-            "global help should document the signal inspector"
-        );
-        assert!(
-            GLOBAL.iter().any(|b| b.keys == "P"),
-            "global help should document playlists as P, not p"
-        );
-        assert!(
+    fn the_global_table_keeps_its_letters() {
+        let has = |keys: &str, action: &str| {
             GLOBAL
                 .iter()
-                .any(|b| b.keys == "p" && b.action.contains("previous")),
-            "global help should document p as previous"
-        );
-        assert!(
-            GLOBAL.iter().all(|b| !b.keys.contains('N')),
-            "N must not appear in the keymap"
-        );
-        assert!(
-            hints("Library").contains("i inspect"),
-            "library hints should mention inspect, got {}",
-            hints("Library")
-        );
-        assert!(
-            hints("Library").contains('P'),
-            "library hints should mention P, got {}",
-            hints("Library")
-        );
-        assert!(
-            GLOBAL
-                .iter()
-                .all(|b| !b.keys.contains('<') && !b.keys.contains('>')),
-            "< and > must not appear in the keymap"
-        );
-        assert!(
-            GLOBAL
-                .iter()
-                .any(|b| b.keys == "R" && b.action.contains("radio")),
-            "global help should document R as radio"
-        );
-        assert!(
-            GLOBAL
-                .iter()
-                .any(|b| b.keys == "e" && b.action.contains("repeat")),
-            "global help should document e as repeat"
-        );
-        assert!(
-            GLOBAL
-                .iter()
-                .any(|b| b.keys == "r" && b.action.contains("reload")),
-            "global help should document r as reload"
-        );
-        assert!(
-            LIBRARY.iter().all(|b| b.keys != "R"),
-            "library must not document R as reload"
-        );
-        assert!(
-            DEVICES
-                .iter()
-                .any(|b| b.keys == "r" && b.action.contains("rescan")),
-            "devices should document r as rescan"
-        );
-        assert!(
-            hints("Library").contains('R'),
-            "library hints should mention R radio, got {}",
-            hints("Library")
-        );
-        assert!(
-            hints("Devices").contains("r rescan"),
-            "devices hints should mention r rescan, got {}",
-            hints("Devices")
-        );
-        assert!(
-            hints("Radio").contains("add"),
-            "radio hints should mention add, got {}",
-            hints("Radio")
-        );
-        assert!(
-            hints("Playlists").contains("e edit"),
-            "playlist hints should mention edit, got {}",
-            hints("Playlists")
-        );
-        assert!(
-            hints("Radio").contains("n new"),
-            "radio hints should mention new, got {}",
-            hints("Radio")
-        );
+                .any(|b| b.keys == keys && b.action.contains(action))
+        };
+        assert!(has("P", "playlists"));
+        assert!(has("p", "previous"));
+        assert!(has("R", "radio"));
+        assert!(has("e", "repeat"));
+        assert!(has("r", "reload"));
+        assert!(has("i", "inspector"));
+        assert!(GLOBAL.iter().any(|b| b.keys.contains("Alt-→")));
+        assert!(GLOBAL.iter().all(|b| !b.keys.contains('N')));
+        assert!(GLOBAL
+            .iter()
+            .all(|b| !b.keys.contains('<') && !b.keys.contains('>')));
+        assert!(LIBRARY.iter().all(|b| b.keys != "R"));
+        assert!(DEVICES
+            .iter()
+            .any(|b| b.keys == "r" && b.action.contains("rescan")));
     }
 }

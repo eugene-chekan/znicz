@@ -586,3 +586,56 @@ fn a_very_long_title_is_cut_rather_than_wrapped() {
         );
     }
 }
+
+fn footer(screen: &str) -> &str {
+    screen.lines().last().expect("a footer row")
+}
+
+#[test]
+fn the_footer_keeps_more_and_drops_low_priority_hints_when_narrow() {
+    let mut app = App::with_library(player(), None);
+
+    let wide = draw(&mut app, 80, 24);
+    let row = footer(&wide);
+    assert!(row.starts_with("Space pause · / search"), "{row}");
+    assert!(row.contains("R radio"), "{row}");
+    assert!(row.trim_end().ends_with("? more"), "{row}");
+
+    let narrow = draw(&mut app, 40, 12);
+    let row = footer(&narrow);
+    assert!(row.starts_with("Space pause"), "{row}");
+    assert!(!row.contains("R radio"), "{row}");
+    assert!(row.trim_end().ends_with("? more"), "{row}");
+}
+
+#[test]
+fn the_tree_footer_offers_expand_instead_of_pause() {
+    let mut app = App::with_library(player(), None);
+    app.library
+        .set_preferred_layout(znicz_tui::LibraryLayout::Tree);
+    let screen = draw(&mut app, 100, 24);
+    let row = footer(&screen);
+    assert!(row.contains("o expand"), "{row}");
+    assert!(!row.contains("Space pause"), "{row}");
+}
+
+#[test]
+fn the_queue_footer_lists_queue_keys() {
+    let mut app = App::with_library(player(), None);
+    app.queue_open = true;
+    app.focus = Focus::Queue;
+    let screen = draw(&mut app, 100, 24);
+    let row = footer(&screen);
+    assert!(row.contains("d remove"), "{row}");
+    assert!(row.contains("] close"), "{row}");
+}
+
+#[test]
+fn a_typing_prompt_footer_says_save_and_cancel() {
+    let mut app = App::with_library(player(), None);
+    app.modal = Modal::Playlists;
+    app.playlist_prompt = Some(PlaylistPrompt::Save(LineEdit::from_text("x")));
+    let screen = draw(&mut app, 100, 24);
+    let row = footer(&screen);
+    assert!(row.contains("Enter save · Esc cancel"), "{row}");
+}

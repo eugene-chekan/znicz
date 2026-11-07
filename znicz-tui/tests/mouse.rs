@@ -603,3 +603,21 @@ fn a_footer_hit_runs_while_an_overlay_is_open() {
     app.on_mouse(left_click(2, 23));
     assert_eq!(app.modal, Modal::Help);
 }
+
+#[test]
+fn a_drawn_footer_add_hint_covers_its_label_and_sends_a() {
+    let mut app = new_app();
+    let state = app.player.state();
+    let mut terminal = Terminal::new(TestBackend::new(100, 24)).expect("backend");
+    terminal
+        .draw(|frame| views::render(frame, &mut app, &state))
+        .expect("draw");
+    let add = app
+        .hits
+        .footer_hints
+        .iter()
+        .find(|h| h.key.code == KeyCode::Char('a'))
+        .expect("a add footer hit");
+    assert_eq!(add.rect.width, 5, "the hit covers `a add`");
+    assert_eq!(add.rect.y, 23);
+}
