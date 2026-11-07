@@ -603,3 +603,51 @@ fn a_footer_hit_runs_while_an_overlay_is_open() {
     app.on_mouse(left_click(2, 23));
     assert_eq!(app.modal, Modal::Help);
 }
+
+#[test]
+fn a_drawn_footer_add_hint_covers_its_label_and_sends_a() {
+    let mut app = new_app();
+    let state = app.player.state();
+    let mut terminal = Terminal::new(TestBackend::new(100, 24)).expect("backend");
+    terminal
+        .draw(|frame| views::render(frame, &mut app, &state))
+        .expect("draw");
+    let add = app
+        .hits
+        .footer_hints
+        .iter()
+        .find(|h| h.key.code == KeyCode::Char('a'))
+        .expect("a add footer hit");
+    assert_eq!(add.rect.width, 5, "the hit covers `a add`");
+    assert_eq!(add.rect.y, 23);
+}
+
+#[test]
+fn wheel_scrolls_help() {
+    let mut app = new_app();
+    app.modal = Modal::Help;
+    app.on_mouse(wheel(false));
+    app.on_mouse(wheel(false));
+    app.on_mouse(wheel(true));
+    assert_eq!(app.help.scroll, 1);
+}
+
+#[test]
+fn a_footer_enter_hit_submits_a_typing_search() {
+    let mut app = new_app();
+    app.library.begin_search();
+    app.library.push_char('x');
+    app.hits.search_prompt = Some(Rect::new(0, 0, 80, 1));
+    app.hits.footer_hints = vec![FooterHit {
+        rect: Rect::new(0, 23, 12, 1),
+        key: KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+    }];
+    app.on_mouse(left_click(2, 23));
+    assert!(!app.library.is_typing());
+    let toast = app.toasts.current().expect("a message should appear");
+    assert!(
+        toast.text.contains("no library"),
+        "the search should be submitted, not cancelled: {}",
+        toast.text
+    );
+}

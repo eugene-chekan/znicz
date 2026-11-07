@@ -1,27 +1,33 @@
-//! The help overlay, built from the keymap tables so it cannot go stale.
+//! The help overlay: this context's keys first, then the rest, with a filter.
 
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
 use crate::app::App;
-use crate::keys::{self, Binding};
+use crate::help_state::HelpState;
+use crate::keys::{self, Section};
 use crate::theme;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const VERSION_PREFIX: &str = " znicz ";
-const CLOSE_HINT: &str = " any key closes ";
+const CLOSE_HINT: &str = " / filter · Esc close ";
+const FILTER_PREFIX: &str = "/ ";
+/// One column of keys and actions reads best kept narrow.
+const MAX_WIDTH: u16 = 64;
+/// Fits the longest key label (`Shift-→ / Shift-←`) plus a gap.
+const KEY_COLUMN: usize = 19;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    let popup = centered(86, 100, area);
+    let popup = popup_rect(area);
     app.hits.overlay = Some(popup);
     app.hits.close = crate::views::close_button_rect(popup);
 
     let mut block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme::border_active())
-        .title(Span::styled(" Keys ", theme::title()))
+        .title(Span::styled(title(&app.help), theme::title()))
         .title(crate::views::close_title())
         .title_bottom(Line::from(Span::styled(CLOSE_HINT, theme::dim())).right_aligned());
     if let Some(version) = version_title(popup.width) {
@@ -33,32 +39,91 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_widget(Clear, popup);
     frame.render_widget(block, popup);
 
-    // Two columns: the full keymap does not fit in one on a normal terminal.
-    let mut left = Vec::new();
-    section(&mut left, "Playback", keys::GLOBAL);
+    let sections = keys::filter_sections(keys::help_sections(app.help.context), &app.help.query);
+    let lines = help_lines(&sections);
 
-    let mut right = Vec::new();
-    section(&mut right, "Lists", keys::NAVIGATION);
-    section(&mut right, "Queue", keys::QUEUE);
-    section(&mut right, "Library", keys::LIBRARY);
-    section(&mut right, "Devices", keys::DEVICES);
-    section(&mut right, "Playlists", keys::PLAYLISTS);
-    section(&mut right, "Radio", keys::RADIO);
+    let (list_area, prompt_area) = split_prompt(inner, app.help.shows_prompt());
+    app.help
+        .clamp_scroll(lines.len(), usize::from(list_area.height));
+    let scroll = u16::try_from(app.help.scroll).unwrap_or(u16::MAX);
+    frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), list_area);
 
-    // Below this width the columns would each be too narrow to read, so fall
-    // back to a single scrolling-free list of the essentials.
-    if inner.width < 60 {
-        frame.render_widget(Paragraph::new(left).scroll((0, 0)), inner);
-        return;
+    if let Some(prompt_area) = prompt_area {
+        let line = if app.help.editing {
+            crate::views::prompt_line(FILTER_PREFIX, &app.help.query)
+        } else {
+            crate::views::prompt_line_idle(FILTER_PREFIX, app.help.query.as_str())
+        };
+        frame.render_widget(Paragraph::new(line), prompt_area);
     }
+}
 
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
-        .split(inner);
+fn title(help: &HelpState) -> String {
+    match keys::context_title(help.context) {
+        Some(name) => format!(" Keys · {name} "),
+        None => " Keys ".to_string(),
+    }
+}
 
-    frame.render_widget(Paragraph::new(left), columns[0]);
-    frame.render_widget(Paragraph::new(right), columns[1]);
+/// Section titles and binding rows. Sections for other contexts draw dim.
+fn help_lines(sections: &[Section]) -> Vec<Line<'static>> {
+    if sections.is_empty() {
+        return vec![Line::from(Span::styled(" no keys match", theme::dim()))];
+    }
+    let mut lines = Vec::new();
+    for section in sections {
+        let (title_style, key_style, action_style) = if section.dim {
+            (theme::dim(), theme::dim(), theme::dim())
+        } else {
+            (theme::strong(), theme::key(), theme::text())
+        };
+        lines.push(Line::from(Span::styled(section.title, title_style)));
+        for binding in &section.bindings {
+            lines.push(Line::from(vec![
+                Span::raw(" "),
+                Span::styled(
+                    format!("{:<width$}", binding.keys, width = KEY_COLUMN),
+                    key_style,
+                ),
+                Span::styled(binding.action, action_style),
+            ]));
+        }
+    }
+    lines
+}
+
+/// The list area, and the filter row under it when the filter is showing.
+fn split_prompt(inner: Rect, show_prompt: bool) -> (Rect, Option<Rect>) {
+    if !show_prompt || inner.height < 2 {
+        return (inner, None);
+    }
+    let list = Rect {
+        height: inner.height - 1,
+        ..inner
+    };
+    let prompt = Rect {
+        y: inner.y + inner.height - 1,
+        height: 1,
+        ..inner
+    };
+    (list, Some(prompt))
+}
+
+/// Centred, at most `MAX_WIDTH` wide, inset one row from the top and bottom
+/// so the footer stays visible.
+fn popup_rect(area: Rect) -> Rect {
+    let width = area
+        .width
+        .saturating_sub(4)
+        .max(area.width.min(20))
+        .min(MAX_WIDTH);
+    let height = area.height.saturating_sub(2).max(area.height.min(5));
+    Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    }
 }
 
 /// The bottom-left version title, or `None` when both titles cannot fit.
@@ -74,55 +139,88 @@ fn version_title(popup_width: u16) -> Option<Line<'static>> {
     Some(Line::from(Span::styled(label, theme::dim())).left_aligned())
 }
 
-fn section(lines: &mut Vec<Line<'static>>, title: &str, bindings: &'static [Binding]) {
-    lines.push(Line::from(Span::styled(title.to_string(), theme::strong())));
-    for binding in bindings {
-        lines.push(Line::from(vec![
-            Span::raw(" "),
-            Span::styled(format!("{:<16}", binding.keys), theme::key()),
-            Span::styled(binding.action, theme::text()),
-        ]));
-    }
-}
-
-/// A box centred in `area`, sized as a percentage of it.
-fn centered(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(area);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(vertical[1])[1]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keys::Context;
 
     #[test]
-    fn the_overlay_stays_inside_the_screen() {
-        let screen = Rect::new(0, 0, 100, 40);
-        let popup = centered(78, 80, screen);
-        assert!(popup.x > 0 && popup.y > 0, "should be inset from the edges");
+    fn the_popup_caps_its_width_and_keeps_the_footer_row_free() {
+        let screen = Rect::new(0, 0, 200, 60);
+        let popup = popup_rect(screen);
+        assert_eq!(popup.width, MAX_WIDTH);
+        assert_eq!(popup.height, 58);
         assert!(popup.right() <= screen.right());
-        assert!(popup.bottom() <= screen.bottom());
+        assert!(popup.bottom() < screen.bottom(), "footer row stays visible");
     }
 
     #[test]
-    fn a_tiny_screen_does_not_produce_a_negative_box() {
-        let popup = centered(78, 80, Rect::new(0, 0, 4, 3));
-        assert!(popup.width <= 4 && popup.height <= 3);
+    fn a_tiny_screen_does_not_produce_an_oversized_box() {
+        for (w, h) in [(4, 3), (10, 3), (20, 5), (30, 8)] {
+            let popup = popup_rect(Rect::new(0, 0, w, h));
+            assert!(popup.width <= w && popup.height <= h, "{w}x{h}: {popup:?}");
+        }
+    }
+
+    #[test]
+    fn the_title_names_the_context() {
+        assert_eq!(title(&HelpState::open(Context::Queue)), " Keys · Queue ");
+        assert_eq!(title(&HelpState::open(Context::Prompt)), " Keys ");
+    }
+
+    #[test]
+    fn every_binding_row_fits_the_popup() {
+        use crate::keys::Context::*;
+        let contexts = [
+            Library,
+            LibraryTree,
+            Search,
+            Queue,
+            Devices,
+            Inspector,
+            Playlists,
+            Radio,
+            Prompt,
+            StationPrompt,
+            Help,
+        ];
+        for context in contexts {
+            for section in keys::help_sections(context) {
+                for binding in section.bindings {
+                    let width = 1
+                        + KEY_COLUMN.max(binding.keys.chars().count())
+                        + binding.action.chars().count();
+                    assert!(
+                        width <= usize::from(MAX_WIDTH) - 2,
+                        "{:?} / {}: {width} columns",
+                        binding.keys,
+                        binding.action
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_section_and_binding_gets_a_row() {
+        let sections = keys::help_sections(Context::Queue);
+        let rows = sections.len() + sections.iter().map(|s| s.bindings.len()).sum::<usize>();
+        assert_eq!(help_lines(&sections).len(), rows);
+    }
+
+    #[test]
+    fn no_sections_draw_one_explaining_row() {
+        let lines = help_lines(&[]);
+        assert_eq!(lines.len(), 1);
+    }
+
+    #[test]
+    fn the_filter_row_takes_the_last_inner_row() {
+        let inner = Rect::new(1, 1, 40, 10);
+        let (list, prompt) = split_prompt(inner, true);
+        assert_eq!(list.height, 9);
+        assert_eq!(prompt, Some(Rect::new(1, 10, 40, 1)));
+        assert_eq!(split_prompt(inner, false), (inner, None));
     }
 
     #[test]

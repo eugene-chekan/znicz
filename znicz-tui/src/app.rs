@@ -17,7 +17,9 @@ use znicz_library::{Library, Track};
 
 use crate::cover::CoverCache;
 use crate::cursor::Cursor;
+use crate::help_state::{HelpState, HELP_PAGE};
 use crate::hit::HitMap;
+use crate::keys::Context;
 use crate::layout;
 use crate::library_pane::{ColumnFocus, EffectiveLayout, Item, LibraryPane, Mode};
 use crate::line_edit::LineEdit;
@@ -59,7 +61,7 @@ fn make_picker(protocol: CoverProtocol) -> ratatui_image::picker::Picker {
 /// smooth seek bar, slow enough to stay near zero CPU.
 const TICK_RATE: Duration = Duration::from_millis(200);
 
-/// Seek step for the plain and shifted keys.
+/// Seek step for arrows, and for Shift + arrows.
 const SEEK_SMALL: i64 = 5;
 const SEEK_LARGE: i64 = 30;
 const VOLUME_STEP: f32 = 0.05;
@@ -240,6 +242,7 @@ pub struct App {
     pub focus: Focus,
     pub queue_open: bool,
     pub modal: Modal,
+    pub help: HelpState,
     pub list_width: u16,
     pub list_height: u16,
     pub title_slot: usize,
@@ -311,6 +314,7 @@ impl App {
             focus: Focus::Library,
             queue_open: false,
             modal: Modal::None,
+            help: HelpState::default(),
             list_width: 100,
             list_height: 0,
             title_slot: 0,
@@ -439,7 +443,8 @@ impl App {
             Modal::Devices => self.device_cursor.step(delta, self.devices.len()),
             Modal::Playlists => self.playlist_cursor.step(delta, self.playlists.len()),
             Modal::Radio => self.station_cursor.step(delta, self.stations.len()),
-            Modal::Help | Modal::Inspector => {}
+            Modal::Help => self.help.scroll_by(delta),
+            Modal::Inspector => {}
             Modal::None => match self.focus {
                 Focus::Library => self.library.step(delta, self.library_strip()),
                 Focus::Queue if self.queue_open => {
@@ -452,6 +457,16 @@ impl App {
     }
 
     fn on_left_click(&mut self, column: u16, row: u16) {
+        if let Some(hit) = self
+            .hits
+            .footer_hints
+            .iter()
+            .find(|h| point_in(h.rect, column, row))
+        {
+            let key = hit.key;
+            self.on_key(key);
+            return;
+        }
         if self.library.is_typing() {
             let on_prompt = self
                 .hits
@@ -461,16 +476,6 @@ impl App {
                 self.library.cancel_search();
                 self.toasts.info("search cancelled");
             }
-            return;
-        }
-        if let Some(hit) = self
-            .hits
-            .footer_hints
-            .iter()
-            .find(|h| point_in(h.rect, column, row))
-        {
-            let key = hit.key;
-            self.on_key(key);
             return;
         }
         if self.hits.close.is_some_and(|r| point_in(r, column, row)) {
@@ -570,7 +575,7 @@ impl App {
     pub fn on_key(&mut self, key: KeyEvent) {
         self.library.set_preferred_layout(self.tui.library_layout);
         if self.modal == Modal::Help {
-            self.modal = Modal::None;
+            self.on_help_key(key);
             return;
         }
 
@@ -644,6 +649,59 @@ impl App {
         }
     }
 
+    /// Open help on whatever the user is looking at now.
+    fn open_help(&mut self) {
+        self.help = HelpState::open(self.context());
+        self.modal = Modal::Help;
+    }
+
+    /// Keys while help is open: scroll, filter, close. Everything else is inert.
+    fn on_help_key(&mut self, key: KeyEvent) {
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+            self.should_quit = true;
+            return;
+        }
+        if self.help.editing {
+            match key.code {
+                KeyCode::Esc => {
+                    self.help.query = LineEdit::new();
+                    self.help.editing = false;
+                    self.help.scroll = 0;
+                }
+                KeyCode::Enter => self.help.editing = false,
+                _ => {
+                    if self.help.query.on_key(key) {
+                        self.help.scroll = 0;
+                    }
+                }
+            }
+            return;
+        }
+
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                KeyCode::Char('c') => self.should_quit = true,
+                KeyCode::Char('d') => self.help.scroll_by(HELP_PAGE),
+                KeyCode::Char('u') => self.help.scroll_by(-HELP_PAGE),
+                _ => {}
+            }
+            return;
+        }
+
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => self.modal = Modal::None,
+            KeyCode::Char('/') => self.help.editing = true,
+            KeyCode::Char('j') | KeyCode::Down => self.help.scroll_by(1),
+            KeyCode::Char('k') | KeyCode::Up => self.help.scroll_by(-1),
+            KeyCode::PageDown => self.help.scroll_by(HELP_PAGE),
+            KeyCode::PageUp => self.help.scroll_by(-HELP_PAGE),
+            KeyCode::Char('g') | KeyCode::Home => self.help.scroll = 0,
+            // Clamped to the last page when help is drawn.
+            KeyCode::Char('G') | KeyCode::End => self.help.scroll = usize::MAX,
+            _ => {}
+        }
+    }
+
     fn on_search_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Esc => {
@@ -679,7 +737,7 @@ impl App {
         }
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
-            KeyCode::Char('?') => self.modal = Modal::Help,
+            KeyCode::Char('?') => self.open_help(),
             KeyCode::Char(',') => self.toggle_devices_modal(),
             KeyCode::Char('i') => self.toggle_inspector_modal(),
             KeyCode::Char('P') => self.toggle_playlists_modal(),
@@ -746,10 +804,13 @@ impl App {
             KeyCode::Left if key.modifiers.contains(KeyModifiers::ALT) => {
                 self.pan_titles(-1);
             }
-            KeyCode::Right | KeyCode::Char('l') => self.seek_relative(SEEK_SMALL),
-            KeyCode::Left | KeyCode::Char('h') => self.seek_relative(-SEEK_SMALL),
-            KeyCode::Char('L') => self.seek_relative(SEEK_LARGE),
-            KeyCode::Char('H') => self.seek_relative(-SEEK_LARGE),
+            KeyCode::Right | KeyCode::Left => {
+                if let Some(seconds) = seek_seconds(key) {
+                    self.seek_relative(seconds);
+                }
+            }
+            KeyCode::Char('l') => self.library_horizontal(true),
+            KeyCode::Char('h') => self.library_horizontal(false),
 
             KeyCode::Char('+') | KeyCode::Char('=') => self.adjust_volume(VOLUME_STEP),
             KeyCode::Char('-') | KeyCode::Char('_') => self.adjust_volume(-VOLUME_STEP),
@@ -780,6 +841,39 @@ impl App {
         self.focus = Focus::Library;
         self.library
             .clamp_pan(self.title_slot(), self.library_strip());
+    }
+
+    /// What the footer and help describe right now.
+    pub fn context(&self) -> Context {
+        if self.library.is_typing() {
+            return Context::Search;
+        }
+        match &self.radio_prompt {
+            Some(RadioPrompt::Form { .. }) => return Context::StationPrompt,
+            Some(RadioPrompt::Copy(_)) => return Context::Prompt,
+            None => {}
+        }
+        if self.playlist_prompt.is_some() {
+            return Context::Prompt;
+        }
+        match self.modal {
+            Modal::Help if self.help.editing => Context::HelpFilter,
+            Modal::Help => Context::Help,
+            Modal::Devices => Context::Devices,
+            Modal::Inspector => Context::Inspector,
+            Modal::Playlists => Context::Playlists,
+            Modal::Radio => Context::Radio,
+            Modal::None => match self.focus {
+                Focus::Queue => Context::Queue,
+                Focus::Library
+                    if self.library.effective_layout(self.library_strip())
+                        == EffectiveLayout::Tree =>
+                {
+                    Context::LibraryTree
+                }
+                Focus::Library => Context::Library,
+            },
+        }
     }
 
     fn library_strip(&self) -> usize {
@@ -1272,10 +1366,22 @@ impl App {
         }
     }
 
+    /// `h` / `l`: move left or right in the library. Ignored anywhere else.
+    fn library_horizontal(&mut self, forward: bool) {
+        if self.focus != Focus::Library || self.modal != Modal::None {
+            return;
+        }
+        let strip = self.library_strip();
+        self.library.move_horizontal(forward, strip);
+    }
+
     /// Space (global) and `o` (library): expand/collapse tree parents.
     fn library_toggle_tree_expand(&mut self) -> bool {
         let strip = self.library_strip();
-        if self.focus != Focus::Library || !matches!(self.library.mode(), Mode::Browse) {
+        if self.focus != Focus::Library
+            || !matches!(self.library.mode(), Mode::Browse)
+            || self.modal != Modal::None
+        {
             return false;
         }
         if self.library.effective_layout(strip) != EffectiveLayout::Tree {
@@ -1656,6 +1762,20 @@ impl App {
 /// regardless of window size.
 const HALF_PAGE: isize = 10;
 
+/// Seconds an arrow key seeks: 5 plain, 30 with Shift. `None` for other keys.
+fn seek_seconds(key: KeyEvent) -> Option<i64> {
+    let step = if key.modifiers.contains(KeyModifiers::SHIFT) {
+        SEEK_LARGE
+    } else {
+        SEEK_SMALL
+    };
+    match key.code {
+        KeyCode::Right => Some(step),
+        KeyCode::Left => Some(-step),
+        _ => None,
+    }
+}
+
 fn entry_from_track(track: &Track) -> Entry {
     Entry {
         title: track.title.clone(),
@@ -1677,6 +1797,17 @@ pub fn repeat_label(mode: RepeatMode) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arrows_seek_five_seconds_and_shift_arrows_thirty() {
+        let plain = |code| KeyEvent::new(code, KeyModifiers::NONE);
+        let shifted = |code| KeyEvent::new(code, KeyModifiers::SHIFT);
+        assert_eq!(seek_seconds(plain(KeyCode::Right)), Some(5));
+        assert_eq!(seek_seconds(plain(KeyCode::Left)), Some(-5));
+        assert_eq!(seek_seconds(shifted(KeyCode::Right)), Some(30));
+        assert_eq!(seek_seconds(shifted(KeyCode::Left)), Some(-30));
+        assert_eq!(seek_seconds(plain(KeyCode::Char('l'))), None);
+    }
 
     #[test]
     fn repeat_labels_stay_readable() {

@@ -1,9 +1,12 @@
 //! The keymap, written down once.
 //!
-//! The help overlay and the footer hints are both generated from these tables,
-//! so the documented keys and the shown keys cannot drift apart.
+//! Help is generated from the binding tables, and a test checks that every
+//! footer hint names a key those tables document, so the two cannot drift.
+
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// One documented binding.
+#[derive(Debug, PartialEq, Eq)]
 pub struct Binding {
     pub keys: &'static str,
     pub action: &'static str,
@@ -11,6 +14,106 @@ pub struct Binding {
 
 const fn b(keys: &'static str, action: &'static str) -> Binding {
     Binding { keys, action }
+}
+
+/// Where the user is: picks the footer hints and the first help section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Context {
+    Library,
+    LibraryTree,
+    Search,
+    Queue,
+    Devices,
+    Inspector,
+    Playlists,
+    Radio,
+    Prompt,
+    StationPrompt,
+    Help,
+    /// Help with its filter row taking keys.
+    HelpFilter,
+}
+
+/// One clickable footer hint: what it says and the key a click sends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Hint {
+    pub label: &'static str,
+    pub key: KeyEvent,
+}
+
+const fn hint(label: &'static str, code: KeyCode) -> Hint {
+    Hint {
+        label,
+        key: KeyEvent::new(code, KeyModifiers::NONE),
+    }
+}
+
+const SPACE_PAUSE: Hint = hint("Space pause", KeyCode::Char(' '));
+const SEARCH: Hint = hint("/ search", KeyCode::Char('/'));
+const ADD: Hint = hint("a add", KeyCode::Char('a'));
+const EXPAND: Hint = hint("o expand", KeyCode::Char('o'));
+const QUEUE_OPEN: Hint = hint("] queue", KeyCode::Char(']'));
+const QUEUE_CLOSE: Hint = hint("] close", KeyCode::Char(']'));
+const PLAYLISTS_OPEN: Hint = hint("P playlists", KeyCode::Char('P'));
+const RADIO_OPEN: Hint = hint("R radio", KeyCode::Char('R'));
+const ENTER_PLAY: Hint = hint("Enter play", KeyCode::Enter);
+const REMOVE: Hint = hint("d remove", KeyCode::Char('d'));
+const JUMP: Hint = hint("o jump", KeyCode::Char('o'));
+const CLEAR: Hint = hint("C clear", KeyCode::Char('C'));
+const SELECT: Hint = hint("Enter select", KeyCode::Enter);
+const RESCAN: Hint = hint("r rescan", KeyCode::Char('r'));
+const NEW: Hint = hint("n new", KeyCode::Char('n'));
+const EDIT: Hint = hint("e edit", KeyCode::Char('e'));
+const DELETE: Hint = hint("d delete", KeyCode::Char('d'));
+const CLOSE: Hint = hint("Esc close", KeyCode::Esc);
+
+// Prompt and help hints: these keys belong to a prompt, not a binding table.
+const ENTER_SEARCH: Hint = hint("Enter search", KeyCode::Enter);
+const ENTER_SAVE: Hint = hint("Enter save", KeyCode::Enter);
+const CANCEL: Hint = hint("Esc cancel", KeyCode::Esc);
+const NEXT_FIELD: Hint = hint("Tab next field", KeyCode::Tab);
+const FILTER: Hint = hint("/ filter", KeyCode::Char('/'));
+const ENTER_KEEP: Hint = hint("Enter keep", KeyCode::Enter);
+const ESC_CLEAR: Hint = hint("Esc clear", KeyCode::Esc);
+
+/// Drawn at the right end of the footer in every context except help.
+pub const MORE: Hint = hint("? more", KeyCode::Char('?'));
+
+/// Footer hints for a context, most important first.
+pub fn context_hints(context: Context) -> &'static [Hint] {
+    match context {
+        Context::Library => &[
+            SPACE_PAUSE,
+            SEARCH,
+            ADD,
+            QUEUE_OPEN,
+            PLAYLISTS_OPEN,
+            RADIO_OPEN,
+        ],
+        Context::LibraryTree => &[SEARCH, ADD, EXPAND, QUEUE_OPEN, PLAYLISTS_OPEN, RADIO_OPEN],
+        Context::Search => &[ENTER_SEARCH, CANCEL],
+        Context::Queue => &[ENTER_PLAY, REMOVE, JUMP, CLEAR, QUEUE_CLOSE],
+        Context::Devices => &[SELECT, RESCAN, CLOSE],
+        Context::Inspector => &[SPACE_PAUSE, CLOSE],
+        Context::Playlists | Context::Radio => &[ENTER_PLAY, ADD, NEW, EDIT, DELETE, CLOSE],
+        Context::Prompt => &[ENTER_SAVE, CANCEL],
+        Context::StationPrompt => &[ENTER_SAVE, CANCEL, NEXT_FIELD],
+        Context::Help => &[FILTER, CLOSE],
+        Context::HelpFilter => &[ENTER_KEEP, ESC_CLEAR],
+    }
+}
+
+/// The right-aligned `? more` hint, or `None` where `?` is typed text or help is open.
+pub fn more_hint(context: Context) -> Option<Hint> {
+    let typed_or_help = matches!(
+        context,
+        Context::Search
+            | Context::Prompt
+            | Context::StationPrompt
+            | Context::Help
+            | Context::HelpFilter
+    );
+    (!typed_or_help).then_some(MORE)
 }
 
 /// Works in every pane.
@@ -21,9 +124,8 @@ pub const GLOBAL: &[Binding] = &[
     b("p", "previous track"),
     b("P", "playlists"),
     b("R", "radio"),
-    b("→ / l", "seek forward 5s"),
-    b("← / h", "seek back 5s"),
-    b("L / H", "seek 30s"),
+    b("→ / ←", "seek 5s"),
+    b("Shift-→ / Shift-←", "seek 30s"),
     b("+ / -", "volume up / down"),
     b("m", "mute"),
     b("e", "repeat: off, all, one"),
@@ -43,6 +145,7 @@ pub const GLOBAL: &[Binding] = &[
 pub const NAVIGATION: &[Binding] = &[
     b("j / ↓", "down"),
     b("k / ↑", "up"),
+    b("h / l", "left / right: column, level, back / into"),
     b("Ctrl-d / Ctrl-u", "half page down / up"),
     b("g / G", "first / last row"),
 ];
@@ -91,25 +194,84 @@ pub const RADIO: &[Binding] = &[
     b("Esc", "close"),
 ];
 
-/// Short hints for the footer, per pane.
-pub fn hints(pane: &str) -> &'static str {
-    match pane {
-        "Queue" => {
-            "Enter play · d remove · C clear · o jump · Alt-← / Alt-→ pan · ] close · ? help"
-        }
-        "Library" => {
-            "/ search · a add · ] queue · i inspect · P · R · Alt-← / Alt-→ pan · , devices · ? help"
-        }
-        "Devices" => "Enter select · r rescan · Esc close · ? help",
-        "Inspector" => "i / Esc close · Space pause · ? help",
-        "Playlists" => {
-            "Enter play · a add · n new · e edit · c copy · d delete · Esc close · ? help"
-        }
-        "Radio" => {
-            "Enter play · a add · n new · e edit · c copy · d delete · Esc close · ? help"
-        }
-        _ => "] queue · ? help · q quit",
+pub const INSPECTOR: &[Binding] = &[b("Esc / i", "close")];
+
+/// A titled group of bindings in the help overlay.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Section {
+    pub title: &'static str,
+    pub bindings: Vec<&'static Binding>,
+    /// Belongs to another context: drawn dim, after the sections that apply now.
+    pub dim: bool,
+}
+
+/// Context tables, in the order they appear when they are not first.
+const CONTEXT_SECTIONS: &[(&str, &[Binding])] = &[
+    ("Library", LIBRARY),
+    ("Queue", QUEUE),
+    ("Playlists", PLAYLISTS),
+    ("Radio", RADIO),
+    ("Devices", DEVICES),
+    ("Inspector", INSPECTOR),
+];
+
+/// Title of the section holding this context's own keys, if it has a table.
+pub fn context_title(context: Context) -> Option<&'static str> {
+    match context {
+        Context::Library | Context::LibraryTree | Context::Search => Some("Library"),
+        Context::Queue => Some("Queue"),
+        Context::Devices => Some("Devices"),
+        Context::Inspector => Some("Inspector"),
+        Context::Playlists => Some("Playlists"),
+        Context::Radio => Some("Radio"),
+        Context::Prompt | Context::StationPrompt | Context::Help | Context::HelpFilter => None,
     }
+}
+
+fn section(title: &'static str, bindings: &'static [Binding], dim: bool) -> Section {
+    Section {
+        title,
+        bindings: bindings.iter().collect(),
+        dim,
+    }
+}
+
+/// Help in display order: this context, Playback, Navigation, then the rest dim.
+pub fn help_sections(context: Context) -> Vec<Section> {
+    let first = context_title(context);
+    let mut sections = Vec::new();
+    for &(title, bindings) in CONTEXT_SECTIONS {
+        if Some(title) == first {
+            sections.push(section(title, bindings, false));
+        }
+    }
+    sections.push(section("Playback", GLOBAL, false));
+    sections.push(section("Navigation", NAVIGATION, false));
+    for &(title, bindings) in CONTEXT_SECTIONS {
+        if Some(title) != first {
+            sections.push(section(title, bindings, true));
+        }
+    }
+    sections
+}
+
+/// Keep bindings whose keys or action contain `query`, ignoring case.
+///
+/// Sections left empty are dropped. A blank query keeps everything.
+pub fn filter_sections(sections: Vec<Section>, query: &str) -> Vec<Section> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return sections;
+    }
+    sections
+        .into_iter()
+        .filter_map(|mut section| {
+            section.bindings.retain(|b| {
+                b.keys.to_lowercase().contains(&query) || b.action.to_lowercase().contains(&query)
+            });
+            (!section.bindings.is_empty()).then_some(section)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -117,9 +279,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn seek_lives_on_the_arrows_and_h_l_move() {
+        assert!(GLOBAL
+            .iter()
+            .any(|b| b.keys == "→ / ←" && b.action.contains("5s")));
+        assert!(GLOBAL
+            .iter()
+            .any(|b| b.keys == "Shift-→ / Shift-←" && b.action.contains("30s")));
+        assert!(GLOBAL.iter().all(|b| !b
+            .keys
+            .split(" / ")
+            .any(|k| matches!(k, "h" | "l" | "H" | "L"))));
+        assert!(NAVIGATION.iter().any(|b| b.keys == "h / l"));
+    }
+
+    #[test]
     fn every_binding_documents_both_a_key_and_an_action() {
         let tables = [
-            GLOBAL, NAVIGATION, QUEUE, LIBRARY, DEVICES, PLAYLISTS, RADIO,
+            GLOBAL, NAVIGATION, QUEUE, LIBRARY, DEVICES, PLAYLISTS, RADIO, INSPECTOR,
         ];
         for table in tables {
             for binding in table {
@@ -129,110 +306,220 @@ mod tests {
         }
     }
 
+    const ALL_CONTEXTS: [Context; 12] = [
+        Context::Library,
+        Context::LibraryTree,
+        Context::Search,
+        Context::Queue,
+        Context::Devices,
+        Context::Inspector,
+        Context::Playlists,
+        Context::Radio,
+        Context::Prompt,
+        Context::StationPrompt,
+        Context::Help,
+        Context::HelpFilter,
+    ];
+
+    /// Columns a hint row needs: labels plus ` · ` between them.
+    fn row_width(hints: &[Hint]) -> usize {
+        let labels: usize = hints.iter().map(|h| h.label.chars().count()).sum();
+        labels + 3 * hints.len().saturating_sub(1)
+    }
+
     #[test]
-    fn each_pane_has_its_own_hint_line() {
-        for pane in ["Queue", "Library", "Devices"] {
-            assert!(
-                hints(pane).contains("?"),
-                "{pane} hints should mention help"
-            );
+    fn every_context_fits_eighty_columns_with_more() {
+        for context in ALL_CONTEXTS {
+            let mut width = row_width(context_hints(context));
+            if let Some(more) = more_hint(context) {
+                width += 3 + more.label.chars().count();
+            }
+            assert!(width <= 80, "{context:?} needs {width} columns");
         }
-        assert!(hints("Queue") != hints("Library"));
-        assert!(
-            hints("Library").contains("Alt-→"),
-            "library hints should show Alt-arrow pan, got {}",
-            hints("Library")
+    }
+
+    #[test]
+    fn more_shows_only_where_question_mark_opens_help() {
+        for context in ALL_CONTEXTS {
+            match context {
+                Context::Search
+                | Context::Prompt
+                | Context::StationPrompt
+                | Context::Help
+                | Context::HelpFilter => {
+                    assert_eq!(more_hint(context), None, "{context:?}")
+                }
+                _ => assert_eq!(more_hint(context), Some(MORE), "{context:?}"),
+            }
+        }
+        assert_eq!(MORE.key.code, KeyCode::Char('?'));
+    }
+
+    #[test]
+    fn library_hints_lead_with_pause_and_label_p_and_r() {
+        let labels: Vec<&str> = context_hints(Context::Library)
+            .iter()
+            .map(|h| h.label)
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                "Space pause",
+                "/ search",
+                "a add",
+                "] queue",
+                "P playlists",
+                "R radio"
+            ]
         );
-        assert!(
-            GLOBAL.iter().any(|b| b.keys.contains("Alt-→")),
-            "global help should document Alt-arrow pan"
+    }
+
+    #[test]
+    fn the_tree_offers_expand_instead_of_pause() {
+        let labels: Vec<&str> = context_hints(Context::LibraryTree)
+            .iter()
+            .map(|h| h.label)
+            .collect();
+        assert!(labels.contains(&"o expand"), "{labels:?}");
+        assert!(!labels.contains(&"Space pause"), "{labels:?}");
+    }
+
+    #[test]
+    fn each_hint_sends_the_key_its_label_names() {
+        for context in ALL_CONTEXTS {
+            for hint in context_hints(context) {
+                let token = hint.label.split_once(' ').map(|(k, _)| k).unwrap();
+                let expected = match token {
+                    "Space" => KeyCode::Char(' '),
+                    "Enter" => KeyCode::Enter,
+                    "Esc" => KeyCode::Esc,
+                    "Tab" => KeyCode::Tab,
+                    one => KeyCode::Char(one.chars().next().unwrap()),
+                };
+                assert_eq!(hint.key.code, expected, "{context:?}: {}", hint.label);
+                assert_eq!(hint.key.modifiers, KeyModifiers::NONE);
+            }
+        }
+    }
+
+    fn titles(sections: &[Section]) -> Vec<&'static str> {
+        sections.iter().map(|s| s.title).collect()
+    }
+
+    #[test]
+    fn help_starts_with_the_context_then_playback_and_navigation() {
+        let sections = help_sections(Context::Queue);
+        assert_eq!(
+            titles(&sections),
+            [
+                "Queue",
+                "Playback",
+                "Navigation",
+                "Library",
+                "Playlists",
+                "Radio",
+                "Devices",
+                "Inspector"
+            ]
         );
-        assert!(
-            GLOBAL.iter().any(|b| b.keys == "i"),
-            "global help should document the signal inspector"
-        );
-        assert!(
-            GLOBAL.iter().any(|b| b.keys == "P"),
-            "global help should document playlists as P, not p"
-        );
-        assert!(
+        let dims: Vec<bool> = sections.iter().map(|s| s.dim).collect();
+        assert_eq!(dims, [false, false, false, true, true, true, true, true]);
+    }
+
+    #[test]
+    fn tree_and_search_open_help_on_library() {
+        for context in [Context::Library, Context::LibraryTree, Context::Search] {
+            assert_eq!(help_sections(context)[0].title, "Library", "{context:?}");
+        }
+    }
+
+    #[test]
+    fn prompts_and_help_have_no_context_section() {
+        for context in [Context::Prompt, Context::StationPrompt, Context::Help] {
+            let sections = help_sections(context);
+            assert_eq!(sections[0].title, "Playback", "{context:?}");
+            assert_eq!(sections.len(), 8, "every table still listed once");
+            assert_eq!(context_title(context), None);
+        }
+    }
+
+    #[test]
+    fn the_filter_matches_actions_ignoring_case() {
+        let sections = filter_sections(help_sections(Context::Library), "VOL");
+        assert_eq!(titles(&sections), ["Playback"]);
+        assert!(sections[0]
+            .bindings
+            .iter()
+            .all(|b| b.action.contains("volume")));
+    }
+
+    #[test]
+    fn the_filter_matches_key_text() {
+        let sections = filter_sections(help_sections(Context::Library), "del");
+        assert!(sections
+            .iter()
+            .flat_map(|s| s.bindings.iter())
+            .any(|b| b.keys == "d / Del"));
+    }
+
+    #[test]
+    fn a_blank_filter_keeps_everything_and_a_miss_keeps_nothing() {
+        let all = help_sections(Context::Queue);
+        assert_eq!(filter_sections(all.clone(), "  "), all);
+        assert!(filter_sections(all, "zzzz").is_empty());
+    }
+
+    #[test]
+    fn table_backed_hints_name_a_documented_key() {
+        for context in [
+            Context::Library,
+            Context::LibraryTree,
+            Context::Queue,
+            Context::Devices,
+            Context::Inspector,
+            Context::Playlists,
+            Context::Radio,
+        ] {
+            let sections = help_sections(context);
+            let documented: Vec<&Binding> = sections
+                .iter()
+                .filter(|s| !s.dim)
+                .flat_map(|s| s.bindings.iter().copied())
+                .collect();
+            for hint in context_hints(context) {
+                let token = hint.label.split_once(' ').map(|(k, _)| k).unwrap();
+                assert!(
+                    documented
+                        .iter()
+                        .any(|b| b.keys.split(" / ").any(|k| k == token)),
+                    "{context:?}: hint {:?} has no binding in its help sections",
+                    hint.label
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_global_table_keeps_its_letters() {
+        let has = |keys: &str, action: &str| {
             GLOBAL
                 .iter()
-                .any(|b| b.keys == "p" && b.action.contains("previous")),
-            "global help should document p as previous"
-        );
-        assert!(
-            GLOBAL.iter().all(|b| !b.keys.contains('N')),
-            "N must not appear in the keymap"
-        );
-        assert!(
-            hints("Library").contains("i inspect"),
-            "library hints should mention inspect, got {}",
-            hints("Library")
-        );
-        assert!(
-            hints("Library").contains('P'),
-            "library hints should mention P, got {}",
-            hints("Library")
-        );
-        assert!(
-            GLOBAL
-                .iter()
-                .all(|b| !b.keys.contains('<') && !b.keys.contains('>')),
-            "< and > must not appear in the keymap"
-        );
-        assert!(
-            GLOBAL
-                .iter()
-                .any(|b| b.keys == "R" && b.action.contains("radio")),
-            "global help should document R as radio"
-        );
-        assert!(
-            GLOBAL
-                .iter()
-                .any(|b| b.keys == "e" && b.action.contains("repeat")),
-            "global help should document e as repeat"
-        );
-        assert!(
-            GLOBAL
-                .iter()
-                .any(|b| b.keys == "r" && b.action.contains("reload")),
-            "global help should document r as reload"
-        );
-        assert!(
-            LIBRARY.iter().all(|b| b.keys != "R"),
-            "library must not document R as reload"
-        );
-        assert!(
-            DEVICES
-                .iter()
-                .any(|b| b.keys == "r" && b.action.contains("rescan")),
-            "devices should document r as rescan"
-        );
-        assert!(
-            hints("Library").contains('R'),
-            "library hints should mention R radio, got {}",
-            hints("Library")
-        );
-        assert!(
-            hints("Devices").contains("r rescan"),
-            "devices hints should mention r rescan, got {}",
-            hints("Devices")
-        );
-        assert!(
-            hints("Radio").contains("add"),
-            "radio hints should mention add, got {}",
-            hints("Radio")
-        );
-        assert!(
-            hints("Playlists").contains("e edit"),
-            "playlist hints should mention edit, got {}",
-            hints("Playlists")
-        );
-        assert!(
-            hints("Radio").contains("n new"),
-            "radio hints should mention new, got {}",
-            hints("Radio")
-        );
+                .any(|b| b.keys == keys && b.action.contains(action))
+        };
+        assert!(has("P", "playlists"));
+        assert!(has("p", "previous"));
+        assert!(has("R", "radio"));
+        assert!(has("e", "repeat"));
+        assert!(has("r", "reload"));
+        assert!(has("i", "inspector"));
+        assert!(GLOBAL.iter().any(|b| b.keys.contains("Alt-→")));
+        assert!(GLOBAL.iter().all(|b| !b.keys.contains('N')));
+        assert!(GLOBAL
+            .iter()
+            .all(|b| !b.keys.contains('<') && !b.keys.contains('>')));
+        assert!(LIBRARY.iter().all(|b| b.keys != "R"));
+        assert!(DEVICES
+            .iter()
+            .any(|b| b.keys == "r" && b.action.contains("rescan")));
     }
 }

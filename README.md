@@ -126,8 +126,9 @@ When the device will not take the file's own rate the badge reads `▲ resampled
 so a silent conversion never goes unnoticed. Long titles pan with
 `Alt-←` / `Alt-→` on the highlighted row.
 
-Press `?` in the player for the full keymap; the overlay footer shows the
-running version. The essentials:
+Press `?` in the player for the keymap: the keys for where you are come first,
+and `/` filters by key or action. The overlay footer shows the running version.
+The essentials:
 
 | Key | Action |
 |-----|--------|
@@ -137,11 +138,12 @@ running version. The essentials:
 | p | Previous track |
 | P | Playlists |
 | R | Radio |
-| → ← or l h | Seek ±5s (`L` / `H` for ±30s) |
+| → ← | Seek ±5s (Shift-→ / Shift-← for ±30s) |
 | + / - | Volume, `m` to mute |
 | e / z | Repeat (off, all, one) / shuffle |
 | r | Reload the list in front |
 | j k, g G, Ctrl-d Ctrl-u | Move in the list |
+| h l | Left / right: column, level, back / into (never plays) |
 | Enter | Open / expand browse, or play a track |
 | a / A | Add the selection / everything listed to the queue |
 | d / C | Remove from the queue / clear it |
