@@ -138,6 +138,7 @@ collapse or expand.
 | `Esc` (filter closed) | Close help |
 | `?` / `q` (filter closed) | Close help; `q` does **not** quit the TUI here |
 | X button | Close help |
+| `Ctrl-C` | Quit the TUI, as everywhere else |
 | any other key | Ignored |
 
 Playback keys are inert while help is open, as today.
@@ -182,29 +183,28 @@ Toasts still never replace the hint line.
 
 ### `keys.rs`
 
-The binding tables stay the single source. `Binding` gains an optional hint:
+The binding tables stay the single source for help. `Binding` itself does not
+change (it only gains `Debug, PartialEq, Eq` derives). Footer hints are separate
+consts, listed per context, because footer order differs from table order:
 
 ```rust
-pub struct Binding {
-    pub keys: &'static str,
-    pub action: &'static str,
-    pub hint: Option<Hint>,
-}
-
 pub struct Hint {
     pub label: &'static str,
     pub key: KeyEvent,
 }
 ```
 
+A unit test checks that every hint in a context with a table names a key that
+the context's help sections document, so hints cannot drift from the tables.
+
 New items:
 
 - `enum Context { Library, LibraryTree, Search, Queue, Devices, Inspector,
   Playlists, Radio, Prompt, StationPrompt, Help }`.
-- `fn context_hints(context: Context) -> Vec<Hint>` returns the footer hints in
-  the order of the table above. Hints for contexts whose tables do not hold the
-  binding (for example `Esc cancel` in `Search`) are declared next to that
-  function as consts.
+- `fn context_hints(context: Context) -> &'static [Hint]` and
+  `fn more_hint(context: Context) -> Option<Hint>`.
+- `pub const INSPECTOR: &[Binding]` (`Esc / i` close), so the inspector has a
+  help section.
 - `fn help_sections(context: Context) -> Vec<Section>` where
   `Section { title, bindings, dim }`, in display order.
 - `fn filter_sections(sections, query) -> Vec<Section>` implements the filter as
@@ -220,9 +220,11 @@ The `GLOBAL` table is updated for the new seek keys; `NAVIGATION` gains
 - `App::context() -> keys::Context` works out the context once per frame from
   the modal, focus, prompt state, and effective library layout. The footer and
   help both read it.
-- `Modal::Help` becomes `Modal::Help(HelpState)`, with
-  `HelpState { context, scroll, filter: Option<LineEdit> }`. The context is
-  captured when help opens.
+- `Modal::Help` stays a unit variant so `Modal` keeps `Copy`. `App` gains
+  `pub help: HelpState` (new `help_state.rs`:
+  `HelpState { context, scroll, query: LineEdit, editing }`), reset each time
+  help opens with the context captured at that moment.
+- The mouse wheel scrolls help.
 - A help key handler runs before the global keys whenever help is open.
 - Seek moves to `KeyCode::Right` / `Left` (`SHIFT` → `SEEK_LARGE`). The `H` and
   `L` arms are deleted.
