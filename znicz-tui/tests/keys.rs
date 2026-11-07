@@ -1298,3 +1298,19 @@ fn ctrl_c_still_quits_from_help() {
     press_ctrl(&mut app, 'c');
     assert!(app.should_quit);
 }
+
+#[test]
+fn space_pauses_instead_of_expanding_the_hidden_tree_under_a_modal() {
+    let mut app = app_with_library_rows();
+    app.tui.library_layout = znicz_tui::LibraryLayout::Tree;
+    press_char(&mut app, 'k');
+    assert_eq!(app.library.tree_rows().len(), 2, "two artists, collapsed");
+    press_char(&mut app, 'i');
+    assert_eq!(app.modal, Modal::Inspector);
+    press_char(&mut app, ' ');
+    assert_eq!(
+        app.library.tree_rows().len(),
+        2,
+        "Space under a modal must not expand the tree behind it"
+    );
+}

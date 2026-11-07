@@ -1373,7 +1373,10 @@ impl App {
     /// Space (global) and `o` (library): expand/collapse tree parents.
     fn library_toggle_tree_expand(&mut self) -> bool {
         let strip = self.library_strip();
-        if self.focus != Focus::Library || !matches!(self.library.mode(), Mode::Browse) {
+        if self.focus != Focus::Library
+            || !matches!(self.library.mode(), Mode::Browse)
+            || self.modal != Modal::None
+        {
             return false;
         }
         if self.library.effective_layout(strip) != EffectiveLayout::Tree {
