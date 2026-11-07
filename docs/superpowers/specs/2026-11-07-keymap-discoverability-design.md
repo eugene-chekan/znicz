@@ -40,7 +40,7 @@ The keymap works but is hard to learn:
 
 1. `h` / `l` move horizontally in the library in every layout; arrows seek.
 2. The footer shows a short, prioritised hint list for the current context,
-   always ending in `? more`.
+   ending in `? more` wherever `?` opens help.
 3. Help opens on the current context, scrolls, and filters by key or action.
 4. Footer hints and help come from the same tables in `keys.rs`, and footer
    clicks carry real key events.
