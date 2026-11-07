@@ -103,9 +103,11 @@ columns and wraps.
 
 The footer shows a short hint list for the current **context** (library,
 library tree, search prompt, queue, devices, inspector, playlists, radio, a
-name prompt, the station form, or help), most important first, as many as fit.
-` ? more ` is right-aligned and always kept. Each hint carries the key it sends,
-so clicking one runs that key.
+name prompt, the station form, help, or the help filter), most important first,
+as many as fit. Wherever `?` opens help, ` ? more ` is right-aligned and always
+kept; search, the prompts, and help itself leave it out because `?` is typed
+text there or help is already open. Each hint carries the key it sends, so
+clicking one runs that key.
 
 `?` opens help on the context it was opened from: that context's keys first,
 then Playback and Navigation, then every other context dimmed. `j` / `k`,
