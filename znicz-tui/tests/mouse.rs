@@ -631,3 +631,23 @@ fn wheel_scrolls_help() {
     app.on_mouse(wheel(true));
     assert_eq!(app.help.scroll, 1);
 }
+
+#[test]
+fn a_footer_enter_hit_submits_a_typing_search() {
+    let mut app = new_app();
+    app.library.begin_search();
+    app.library.push_char('x');
+    app.hits.search_prompt = Some(Rect::new(0, 0, 80, 1));
+    app.hits.footer_hints = vec![FooterHit {
+        rect: Rect::new(0, 23, 12, 1),
+        key: KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+    }];
+    app.on_mouse(left_click(2, 23));
+    assert!(!app.library.is_typing());
+    let toast = app.toasts.current().expect("a message should appear");
+    assert!(
+        toast.text.contains("no library"),
+        "the search should be submitted, not cancelled: {}",
+        toast.text
+    );
+}

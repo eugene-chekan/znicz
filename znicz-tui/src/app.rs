@@ -457,6 +457,16 @@ impl App {
     }
 
     fn on_left_click(&mut self, column: u16, row: u16) {
+        if let Some(hit) = self
+            .hits
+            .footer_hints
+            .iter()
+            .find(|h| point_in(h.rect, column, row))
+        {
+            let key = hit.key;
+            self.on_key(key);
+            return;
+        }
         if self.library.is_typing() {
             let on_prompt = self
                 .hits
@@ -466,16 +476,6 @@ impl App {
                 self.library.cancel_search();
                 self.toasts.info("search cancelled");
             }
-            return;
-        }
-        if let Some(hit) = self
-            .hits
-            .footer_hints
-            .iter()
-            .find(|h| point_in(h.rect, column, row))
-        {
-            let key = hit.key;
-            self.on_key(key);
             return;
         }
         if self.hits.close.is_some_and(|r| point_in(r, column, row)) {
