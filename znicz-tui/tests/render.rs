@@ -10,6 +10,8 @@ use std::time::Duration;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 use znicz_core::{spawn_player, AudioConfig, Command, PlayerHandle};
+use znicz_tui::help_state::HelpState;
+use znicz_tui::keys::Context;
 use znicz_tui::line_edit::LineEdit;
 use znicz_tui::{views, App, Focus, Modal, PlaylistPrompt, RadioPrompt, StationField};
 
@@ -234,17 +236,11 @@ fn the_help_overlay_draws_at_every_size() {
         assert_eq!(screen.lines().count(), height as usize);
     }
 
-    // On a normal terminal the keys should actually be legible.
     let screen = draw(&mut app, 100, 40);
-    assert!(screen.contains("Keys"), "the overlay needs its title");
-    assert!(screen.contains("play / pause"), "bindings should be listed");
-    assert!(screen.contains("search the library"));
-    assert!(screen.contains("signal inspector"));
-    assert!(screen.contains("playlists"), "{screen}");
-    assert!(screen.contains("previous track"), "{screen}");
-    assert!(screen.contains("Radio"), "{screen}");
-    assert!(screen.contains("new station"), "{screen}");
-    assert!(screen.contains("edit name"), "{screen}");
+    assert!(screen.contains("Keys · Library"), "{screen}");
+    assert!(screen.contains("search the library"), "{screen}");
+    assert!(screen.contains("play / pause"), "{screen}");
+    assert!(screen.contains("seek 30s"), "{screen}");
 }
 
 #[test]
@@ -256,7 +252,56 @@ fn the_help_overlay_shows_the_app_version_and_close_hint() {
         screen.contains(&format!("znicz {}", env!("CARGO_PKG_VERSION"))),
         "version missing from help:\n{screen}"
     );
-    assert!(screen.contains("any key closes"), "close hint missing");
+    assert!(
+        screen.contains("/ filter · Esc close"),
+        "close hint missing"
+    );
+    assert!(!screen.contains("any key closes"), "{screen}");
+}
+
+#[test]
+fn help_opened_from_the_queue_lists_queue_keys_first() {
+    let mut app = App::with_library(player(), None);
+    app.help = HelpState::open(Context::Queue);
+    app.modal = Modal::Help;
+    let screen = draw(&mut app, 100, 40);
+    assert!(screen.contains("Keys · Queue"), "{screen}");
+    let queue_row = screen.find("play the selected track").expect("queue keys");
+    let playback_row = screen.find("play / pause").expect("playback keys");
+    assert!(queue_row < playback_row, "queue keys come first:\n{screen}");
+}
+
+#[test]
+fn a_help_filter_shows_only_matching_rows() {
+    let mut app = App::with_library(player(), None);
+    app.modal = Modal::Help;
+    app.help.query = LineEdit::from_text("station");
+    let screen = draw(&mut app, 100, 40);
+    assert!(screen.contains("new station"), "{screen}");
+    assert!(
+        screen.contains("/ station"),
+        "the kept filter shows:\n{screen}"
+    );
+    assert!(!screen.contains("play / pause"), "{screen}");
+}
+
+#[test]
+fn a_help_filter_with_no_match_says_so() {
+    let mut app = App::with_library(player(), None);
+    app.modal = Modal::Help;
+    app.help.query = LineEdit::from_text("zzzz");
+    let screen = draw(&mut app, 100, 40);
+    assert!(screen.contains("no keys match"), "{screen}");
+}
+
+#[test]
+fn the_footer_inside_help_offers_filter_and_close_only() {
+    let mut app = App::with_library(player(), None);
+    app.modal = Modal::Help;
+    let screen = draw(&mut app, 100, 24);
+    let row = screen.lines().last().expect("footer row");
+    assert!(row.contains("/ filter · Esc close"), "{row}");
+    assert!(!row.contains("? more"), "{row}");
 }
 
 #[test]
