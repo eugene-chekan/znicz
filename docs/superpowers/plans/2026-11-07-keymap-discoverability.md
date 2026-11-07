@@ -94,7 +94,7 @@ git commit -m "Add keymap and discoverability implementation plan"
 **Files:**
 - Modify: `znicz-tui/src/keys.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to the `#[cfg(test)] mod tests` block in `znicz-tui/src/keys.rs` (after the existing tests):
 
@@ -189,12 +189,12 @@ Add to the `#[cfg(test)] mod tests` block in `znicz-tui/src/keys.rs` (after the 
     }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz-tui --lib keys::`
 Expected: compile error, `cannot find type Context` / `cannot find function context_hints`.
 
-- [ ] **Step 3: Implement the hint data**
+- [x] **Step 3: Implement the hint data**
 
 At the top of `znicz-tui/src/keys.rs`, under the module doc comment, add:
 
@@ -293,12 +293,12 @@ pub fn more_hint(context: Context) -> Option<Hint> {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-tui --lib keys::`
 Expected: PASS (the old `each_pane_has_its_own_hint_line` still passes; it is removed in Task 5).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/keys.rs
@@ -312,7 +312,7 @@ git commit -m "Add footer hint contexts to the keymap"
 **Files:**
 - Modify: `znicz-tui/src/keys.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to the tests module in `znicz-tui/src/keys.rs`:
 
@@ -420,12 +420,12 @@ Also add `INSPECTOR` to the `tables` array in the existing `every_binding_docume
         ];
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz-tui --lib keys::`
 Expected: compile error, `cannot find type Section` / `cannot find value INSPECTOR`.
 
-- [ ] **Step 3: Implement sections and the filter**
+- [x] **Step 3: Implement sections and the filter**
 
 In `znicz-tui/src/keys.rs`, add a derive to `Binding`:
 
@@ -519,12 +519,12 @@ pub fn filter_sections(sections: Vec<Section>, query: &str) -> Vec<Section> {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-tui --lib keys::`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/keys.rs
@@ -538,7 +538,7 @@ git commit -m "Build help sections and a filter from the keymap"
 **Files:**
 - Modify: `znicz-tui/src/library_pane.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to the `#[cfg(test)] mod tests` block at the bottom of `znicz-tui/src/library_pane.rs`:
 
@@ -649,12 +649,12 @@ Add to the `#[cfg(test)] mod tests` block at the bottom of `znicz-tui/src/librar
     }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz-tui --lib library_pane::tests::h_and_l`
 Expected: compile error, `no method named move_horizontal`.
 
-- [ ] **Step 3: Implement `move_horizontal`**
+- [x] **Step 3: Implement `move_horizontal`**
 
 In `znicz-tui/src/library_pane.rs`, after the `TreeRow` enum, add:
 
@@ -754,12 +754,12 @@ In `impl LibraryPane`, after `toggle_expand_at_cursor`, add:
     }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-tui --lib library_pane::`
 Expected: PASS (new and existing library pane tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/library_pane.rs
@@ -777,7 +777,7 @@ git commit -m "Move left and right in every library layout"
 - Modify: `znicz-tui/src/keys.rs` (delete `hints`, replace its test)
 - Test: `znicz-tui/tests/render.rs`, `znicz-tui/tests/mouse.rs`
 
-- [ ] **Step 1: Write the failing integration tests**
+- [x] **Step 1: Write the failing integration tests**
 
 Add to `znicz-tui/tests/render.rs`:
 
@@ -858,12 +858,12 @@ fn a_drawn_footer_add_hint_covers_its_label_and_sends_a() {
 }
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `cargo test -p znicz-tui --test render footer` and `cargo test -p znicz-tui --test mouse a_drawn_footer_add`
 Expected: FAIL; the footer still reads `/ search · a add · ] queue · i inspect · P · R …` and the prompt footer reads `type · ← → · Enter · Esc cancel`.
 
-- [ ] **Step 3: Rewrite `footer_hits.rs`**
+- [x] **Step 3: Rewrite `footer_hits.rs`**
 
 Replace the whole of `znicz-tui/src/footer_hits.rs` with:
 
@@ -1020,7 +1020,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 4: Add `App::context`**
+- [x] **Step 4: Add `App::context`**
 
 In `znicz-tui/src/app.rs`, add to the imports:
 
@@ -1064,7 +1064,7 @@ In `impl App`, directly above `fn library_strip(&self) -> usize`, add:
     }
 ```
 
-- [ ] **Step 5: Rewrite `views/status.rs`**
+- [x] **Step 5: Rewrite `views/status.rs`**
 
 Replace the whole of `znicz-tui/src/views/status.rs` with:
 
@@ -1120,7 +1120,7 @@ fn footer_line(area: Rect, placed: &[PlacedHint]) -> Line<'static> {
 }
 ```
 
-- [ ] **Step 6: Delete `keys::hints` and replace its test**
+- [x] **Step 6: Delete `keys::hints` and replace its test**
 
 In `znicz-tui/src/keys.rs`, delete the whole `hints` function (from `/// Short hints for the footer, per pane.` through its closing `}`).
 
@@ -1161,12 +1161,12 @@ Update the module doc comment at the top of `keys.rs` to:
 //! footer hint names a key those tables document, so the two cannot drift.
 ```
 
-- [ ] **Step 7: Run the tests to verify they pass**
+- [x] **Step 7: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-tui`
 Expected: PASS, including `a_drawn_footer_help_hint_is_clickable` (now the `? more` hint) and `hints_stay_when_a_toast_is_showing`.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add znicz-tui/src/footer_hits.rs znicz-tui/src/views/status.rs znicz-tui/src/app.rs znicz-tui/src/keys.rs znicz-tui/tests/render.rs znicz-tui/tests/mouse.rs
@@ -1182,7 +1182,7 @@ git commit -m "Draw the footer from the current context"
 - Modify: `znicz-tui/src/keys.rs` (`GLOBAL`, `NAVIGATION`)
 - Test: `znicz-tui/tests/keys.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `znicz-tui/src/app.rs`, add to the existing `#[cfg(test)] mod tests`:
 
@@ -1288,12 +1288,12 @@ In the existing `seeking_with_nothing_loaded_is_ignored` test, replace the `for 
     app.on_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `cargo test -p znicz-tui --lib seek` and `cargo test -p znicz-tui --test keys h_and_l`
 Expected: compile error for `seek_seconds`; once it compiles, the `h_and_l` tests fail because `l` still seeks.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `znicz-tui/src/app.rs`, below `const HALF_PAGE: isize = 10;`, add:
 
@@ -1372,12 +1372,12 @@ and in `NAVIGATION`, after `b("k / ↑", "up"),` add:
     b("h / l", "left / right: column, tree level, back / into"),
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-tui`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/app.rs znicz-tui/src/keys.rs znicz-tui/tests/keys.rs
@@ -1393,7 +1393,7 @@ git commit -m "Seek on arrows and move with h and l"
 - Modify: `znicz-tui/src/lib.rs`, `znicz-tui/src/app.rs`
 - Test: `znicz-tui/tests/keys.rs`, `znicz-tui/tests/mouse.rs`
 
-- [ ] **Step 1: Create `help_state.rs` with its unit tests**
+- [x] **Step 1: Create `help_state.rs` with its unit tests**
 
 Create `znicz-tui/src/help_state.rs`:
 
@@ -1494,7 +1494,7 @@ In `znicz-tui/src/lib.rs`, add `pub mod help_state;` after `pub mod format;`.
 Run: `cargo test -p znicz-tui --lib help_state`
 Expected: PASS.
 
-- [ ] **Step 2: Write the failing key tests**
+- [x] **Step 2: Write the failing key tests**
 
 In `znicz-tui/tests/keys.rs`, add to the imports:
 
@@ -1618,12 +1618,12 @@ fn wheel_scrolls_help() {
 }
 ```
 
-- [ ] **Step 3: Run them to verify they fail**
+- [x] **Step 3: Run them to verify they fail**
 
 Run: `cargo test -p znicz-tui --test keys help` and `cargo test -p znicz-tui --test mouse wheel_scrolls_help`
 Expected: compile error, `no field help on type App`.
 
-- [ ] **Step 4: Wire help state into `App`**
+- [x] **Step 4: Wire help state into `App`**
 
 In `znicz-tui/src/app.rs`:
 
@@ -1729,12 +1729,12 @@ In `on_wheel`, replace the arm `Modal::Help | Modal::Inspector => {}` with:
             Modal::Inspector => {}
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-tui`
 Expected: PASS. `wheel_is_ignored_while_help_is_open` still passes (the library does not move).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add znicz-tui/src/help_state.rs znicz-tui/src/lib.rs znicz-tui/src/app.rs znicz-tui/tests/keys.rs znicz-tui/tests/mouse.rs
@@ -1749,7 +1749,7 @@ git commit -m "Scroll and filter help instead of closing on any key"
 - Modify: `znicz-tui/src/views/help.rs` (rewrite)
 - Test: `znicz-tui/tests/render.rs`
 
-- [ ] **Step 1: Write the failing render tests**
+- [x] **Step 1: Write the failing render tests**
 
 In `znicz-tui/tests/render.rs`, add to the imports:
 
@@ -1834,12 +1834,12 @@ fn the_footer_inside_help_offers_filter_and_close_only() {
 }
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `cargo test -p znicz-tui --test render help`
 Expected: FAIL; the title is ` Keys `, the close hint is ` any key closes `, the filter is not applied, and the old popup covers the footer row.
 
-- [ ] **Step 3: Rewrite `views/help.rs`**
+- [x] **Step 3: Rewrite `views/help.rs`**
 
 Replace the whole of `znicz-tui/src/views/help.rs` with:
 
@@ -2055,12 +2055,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-tui`
 Expected: PASS, including the mouse tests `the_close_hit_covers_the_drawn_x_glyph` and `a_drawn_overlay_exposes_a_close_hit`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/views/help.rs znicz-tui/tests/render.rs
@@ -2077,11 +2077,11 @@ git commit -m "Draw help context first with a filter row"
 - Modify: `wiki/Architecture/TUI.md`
 - Modify: `wiki/Plans/Roadmap.md`
 
-- [ ] **Step 1: Bump the version**
+- [x] **Step 1: Bump the version**
 
 In the root `Cargo.toml`, change `version = "0.5.2"` under `[workspace.package]` to `version = "0.6.0"`. Run `cargo build -p znicz` so `Cargo.lock` picks up the new member versions.
 
-- [ ] **Step 2: Update the README key table**
+- [x] **Step 2: Update the README key table**
 
 In `README.md`, replace:
 
@@ -2110,7 +2110,7 @@ After the row `| j k, g G, Ctrl-d Ctrl-u | Move in the list |`, add:
 | h l | Left / right: column, tree level, back / into (never plays) |
 ```
 
-- [ ] **Step 3: Update `wiki/Architecture/TUI.md`**
+- [x] **Step 3: Update `wiki/Architecture/TUI.md`**
 
 Insert a new section directly above `## The signal path`:
 
@@ -2184,7 +2184,7 @@ drifted from the code and documented keys that did nothing; generating it
 removes that possibility.
 ```
 
-- [ ] **Step 4: Update `wiki/Plans/Roadmap.md`**
+- [x] **Step 4: Update `wiki/Plans/Roadmap.md`**
 
 Insert directly above `## Later TUI (parked)`:
 
@@ -2204,12 +2204,12 @@ A five-part rework of the player experience. Each part has its own spec and PR.
 Once Stage exists, Browse drops the cover and gives the library the full height.
 ```
 
-- [ ] **Step 5: Check the preview frames**
+- [x] **Step 5: Check the preview frames**
 
 Run: `cargo run -q -p znicz-tui --example preview -- 110 32 2>/dev/null`
 Expected: the library footer reads `Space pause · / search · a add · ] queue · P playlists · R radio` with `? more` at the right; the help frame is titled `Keys · …`, single column, with `/ filter · Esc close` in its bottom border and the footer row still visible beneath it.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add Cargo.toml Cargo.lock README.md wiki/Architecture/TUI.md wiki/Plans/Roadmap.md
@@ -2220,7 +2220,7 @@ git commit -m "Bump to 0.6.0 and document the new keymap and help"
 
 ### Task 10: Verify and open the PR
 
-- [ ] **Step 1: Format, lint, test**
+- [x] **Step 1: Format, lint, test**
 
 Run each and confirm it is clean:
 
@@ -2232,7 +2232,7 @@ cargo test --workspace
 
 Expected: no diff, no warnings, all tests pass. If `fmt` reports a diff, run `cargo fmt --all` and commit with `git commit -am "Format keymap changes"`.
 
-- [ ] **Step 2: Mark the plan done**
+- [x] **Step 2: Mark the plan done**
 
 Tick every checkbox in this file and commit:
 
@@ -2241,7 +2241,7 @@ git add docs/superpowers/plans/2026-11-07-keymap-discoverability.md
 git commit -m "Mark keymap plan complete"
 ```
 
-- [ ] **Step 3: Push and open the PR**
+- [x] **Step 3: Push and open the PR**
 
 ```bash
 git push -u origin feat/keymap-discoverability
