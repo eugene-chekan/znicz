@@ -433,7 +433,10 @@ mod tests {
     fn the_filter_matches_actions_ignoring_case() {
         let sections = filter_sections(help_sections(Context::Library), "VOL");
         assert_eq!(titles(&sections), ["Playback"]);
-        assert!(sections[0].bindings.iter().all(|b| b.action.contains("volume")));
+        assert!(sections[0]
+            .bindings
+            .iter()
+            .all(|b| b.action.contains("volume")));
     }
 
     #[test]
