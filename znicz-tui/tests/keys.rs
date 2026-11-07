@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use znicz_core::{spawn_player, AudioConfig, Command, PlayerHandle, QueueItem, RepeatMode};
+use znicz_tui::library_pane::ColumnFocus;
 use znicz_tui::{App, Focus, Modal, PlaylistPrompt, RadioPrompt, StationField};
 
 fn player() -> PlayerHandle {
@@ -453,9 +454,9 @@ fn navigation_keys_move_the_queue_cursor() {
 #[test]
 fn seeking_with_nothing_loaded_is_ignored() {
     let mut app = new_app();
-    for key in [KeyCode::Right, KeyCode::Left, KeyCode::Char('L')] {
-        press(&mut app, key);
-    }
+    press(&mut app, KeyCode::Right);
+    press(&mut app, KeyCode::Left);
+    app.on_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
     assert_eq!(app.state().position.as_secs(), 0);
     assert!(
         app.toasts.is_empty(),
@@ -1152,4 +1153,64 @@ fn c_copies_the_highlighted_station() {
     assert_eq!(stations[0].name, "Example");
     assert_eq!(stations[1].name, "Example2");
     assert_eq!(stations[0].url, stations[1].url);
+}
+
+/// Miles (one album, two tracks) and Portishead (one track), no ffmpeg needed.
+fn app_with_library_rows() -> App {
+    let mut library = znicz_library::Library::open_in_memory().expect("open library");
+    for (path, title, artist, album) in [
+        ("/music/a1.flac", "So What", "Miles", "Kind of Blue"),
+        (
+            "/music/a2.flac",
+            "Freddie Freeloader",
+            "Miles",
+            "Kind of Blue",
+        ),
+        ("/music/b1.flac", "Roads", "Portishead", "Dummy"),
+    ] {
+        library
+            .upsert_track_for_test(
+                std::path::Path::new(path),
+                title,
+                Some(artist.into()),
+                Some(album.into()),
+                None,
+            )
+            .expect("insert track");
+    }
+    App::with_library(player(), Some(library))
+}
+
+#[test]
+fn h_and_l_move_between_library_columns_and_never_play() {
+    let mut app = app_with_library_rows();
+    press_char(&mut app, 'l');
+    assert_eq!(app.library.column_focus(), ColumnFocus::Albums);
+    press_char(&mut app, 'l');
+    press_char(&mut app, 'l');
+    assert_eq!(app.library.column_focus(), ColumnFocus::Tracks);
+    assert!(
+        app.state().queue.is_empty(),
+        "l on a track must not play it"
+    );
+    press_char(&mut app, 'h');
+    assert_eq!(app.library.column_focus(), ColumnFocus::Albums);
+}
+
+#[test]
+fn h_and_l_do_nothing_while_the_queue_has_focus() {
+    let mut app = app_with_library_rows();
+    open_queue(&mut app);
+    press_char(&mut app, 'l');
+    assert_eq!(app.library.column_focus(), ColumnFocus::Artists);
+    assert_eq!(app.focus, Focus::Queue);
+}
+
+#[test]
+fn capital_h_and_l_are_unbound() {
+    let mut app = app_with_library_rows();
+    press_char(&mut app, 'L');
+    press_char(&mut app, 'H');
+    assert_eq!(app.library.column_focus(), ColumnFocus::Artists);
+    assert!(app.toasts.is_empty());
 }

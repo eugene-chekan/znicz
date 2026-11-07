@@ -111,9 +111,8 @@ pub const GLOBAL: &[Binding] = &[
     b("p", "previous track"),
     b("P", "playlists"),
     b("R", "radio"),
-    b("→ / l", "seek forward 5s"),
-    b("← / h", "seek back 5s"),
-    b("L / H", "seek 30s"),
+    b("→ / ←", "seek 5s"),
+    b("Shift-→ / Shift-←", "seek 30s"),
     b("+ / -", "volume up / down"),
     b("m", "mute"),
     b("e", "repeat: off, all, one"),
@@ -133,6 +132,7 @@ pub const GLOBAL: &[Binding] = &[
 pub const NAVIGATION: &[Binding] = &[
     b("j / ↓", "down"),
     b("k / ↑", "up"),
+    b("h / l", "left / right: column, tree level, back / into"),
     b("Ctrl-d / Ctrl-u", "half page down / up"),
     b("g / G", "first / last row"),
 ];
@@ -264,6 +264,21 @@ pub fn filter_sections(sections: Vec<Section>, query: &str) -> Vec<Section> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn seek_lives_on_the_arrows_and_h_l_move() {
+        assert!(GLOBAL
+            .iter()
+            .any(|b| b.keys == "→ / ←" && b.action.contains("5s")));
+        assert!(GLOBAL
+            .iter()
+            .any(|b| b.keys == "Shift-→ / Shift-←" && b.action.contains("30s")));
+        assert!(GLOBAL.iter().all(|b| !b
+            .keys
+            .split(" / ")
+            .any(|k| matches!(k, "h" | "l" | "H" | "L"))));
+        assert!(NAVIGATION.iter().any(|b| b.keys == "h / l"));
+    }
 
     #[test]
     fn every_binding_documents_both_a_key_and_an_action() {

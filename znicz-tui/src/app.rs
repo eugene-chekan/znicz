@@ -60,7 +60,7 @@ fn make_picker(protocol: CoverProtocol) -> ratatui_image::picker::Picker {
 /// smooth seek bar, slow enough to stay near zero CPU.
 const TICK_RATE: Duration = Duration::from_millis(200);
 
-/// Seek step for the plain and shifted keys.
+/// Seek step for arrows, and for Shift + arrows.
 const SEEK_SMALL: i64 = 5;
 const SEEK_LARGE: i64 = 30;
 const VOLUME_STEP: f32 = 0.05;
@@ -747,10 +747,13 @@ impl App {
             KeyCode::Left if key.modifiers.contains(KeyModifiers::ALT) => {
                 self.pan_titles(-1);
             }
-            KeyCode::Right | KeyCode::Char('l') => self.seek_relative(SEEK_SMALL),
-            KeyCode::Left | KeyCode::Char('h') => self.seek_relative(-SEEK_SMALL),
-            KeyCode::Char('L') => self.seek_relative(SEEK_LARGE),
-            KeyCode::Char('H') => self.seek_relative(-SEEK_LARGE),
+            KeyCode::Right | KeyCode::Left => {
+                if let Some(seconds) = seek_seconds(key) {
+                    self.seek_relative(seconds);
+                }
+            }
+            KeyCode::Char('l') => self.library_horizontal(true),
+            KeyCode::Char('h') => self.library_horizontal(false),
 
             KeyCode::Char('+') | KeyCode::Char('=') => self.adjust_volume(VOLUME_STEP),
             KeyCode::Char('-') | KeyCode::Char('_') => self.adjust_volume(-VOLUME_STEP),
@@ -1305,6 +1308,15 @@ impl App {
         }
     }
 
+    /// `h` / `l`: move left or right in the library. Ignored anywhere else.
+    fn library_horizontal(&mut self, forward: bool) {
+        if self.focus != Focus::Library || self.modal != Modal::None {
+            return;
+        }
+        let strip = self.library_strip();
+        self.library.move_horizontal(forward, strip);
+    }
+
     /// Space (global) and `o` (library): expand/collapse tree parents.
     fn library_toggle_tree_expand(&mut self) -> bool {
         let strip = self.library_strip();
@@ -1689,6 +1701,20 @@ impl App {
 /// regardless of window size.
 const HALF_PAGE: isize = 10;
 
+/// Seconds an arrow key seeks: 5 plain, 30 with Shift. `None` for other keys.
+fn seek_seconds(key: KeyEvent) -> Option<i64> {
+    let step = if key.modifiers.contains(KeyModifiers::SHIFT) {
+        SEEK_LARGE
+    } else {
+        SEEK_SMALL
+    };
+    match key.code {
+        KeyCode::Right => Some(step),
+        KeyCode::Left => Some(-step),
+        _ => None,
+    }
+}
+
 fn entry_from_track(track: &Track) -> Entry {
     Entry {
         title: track.title.clone(),
@@ -1710,6 +1736,17 @@ pub fn repeat_label(mode: RepeatMode) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arrows_seek_five_seconds_and_shift_arrows_thirty() {
+        let plain = |code| KeyEvent::new(code, KeyModifiers::NONE);
+        let shifted = |code| KeyEvent::new(code, KeyModifiers::SHIFT);
+        assert_eq!(seek_seconds(plain(KeyCode::Right)), Some(5));
+        assert_eq!(seek_seconds(plain(KeyCode::Left)), Some(-5));
+        assert_eq!(seek_seconds(shifted(KeyCode::Right)), Some(30));
+        assert_eq!(seek_seconds(shifted(KeyCode::Left)), Some(-30));
+        assert_eq!(seek_seconds(plain(KeyCode::Char('l'))), None);
+    }
 
     #[test]
     fn repeat_labels_stay_readable() {
