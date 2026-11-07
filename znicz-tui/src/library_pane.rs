@@ -81,6 +81,16 @@ pub enum TreeRow {
     },
 }
 
+impl TreeRow {
+    /// Nesting level: artists 0, albums 1, tracks 2.
+    fn depth(&self) -> usize {
+        match self {
+            Self::Artist { .. } => 0,
+            Self::Album { depth, .. } | Self::Track { depth, .. } => *depth,
+        }
+    }
+}
+
 /// What the cursor is sitting on, so the caller knows what a key should do.
 #[derive(Debug, Clone)]
 pub enum Item<'a> {
@@ -705,6 +715,86 @@ impl LibraryPane {
                 true
             }
             TreeRow::Track { .. } => false,
+        }
+    }
+
+    /// `h` / `l`: move left or right without ever playing a track.
+    ///
+    /// Columns step between columns, paging drills in or backs out, the tree
+    /// expands, collapses, or climbs to the parent. Search results ignore it.
+    /// Returns whether anything changed.
+    pub fn move_horizontal(&mut self, forward: bool, strip_inner: usize) -> bool {
+        if !matches!(self.mode, Mode::Browse) {
+            return false;
+        }
+        match self.effective_layout(strip_inner) {
+            EffectiveLayout::Columns => {
+                if forward {
+                    self.column_focus != ColumnFocus::Tracks
+                        && self.enter(strip_inner) == EnterResult::Moved
+                } else if self.column_focus == ColumnFocus::Artists {
+                    false
+                } else {
+                    self.focus_column(self.column_focus.prev());
+                    true
+                }
+            }
+            EffectiveLayout::Paging => {
+                if forward {
+                    self.paging_level != ColumnFocus::Tracks
+                        && self.enter(strip_inner) == EnterResult::Moved
+                } else {
+                    self.back()
+                }
+            }
+            EffectiveLayout::Tree => {
+                if forward {
+                    self.tree_expand()
+                } else {
+                    self.tree_collapse_or_parent()
+                }
+            }
+        }
+    }
+
+    /// Expand the closed artist or album under the cursor.
+    fn tree_expand(&mut self) -> bool {
+        let rows = self.tree_rows();
+        let Some(index) = self.tree_cursor.selected(rows.len()) else {
+            return false;
+        };
+        match rows.get(index) {
+            Some(TreeRow::Artist {
+                expanded: false, ..
+            })
+            | Some(TreeRow::Album {
+                expanded: false, ..
+            }) => self.toggle_expand_at_cursor(),
+            _ => false,
+        }
+    }
+
+    /// Collapse the open node under the cursor, or move to its parent row.
+    fn tree_collapse_or_parent(&mut self) -> bool {
+        let rows = self.tree_rows();
+        let Some(index) = self.tree_cursor.selected(rows.len()) else {
+            return false;
+        };
+        match &rows[index] {
+            TreeRow::Artist { expanded: true, .. } | TreeRow::Album { expanded: true, .. } => {
+                self.toggle_expand_at_cursor()
+            }
+            row => {
+                let depth = row.depth();
+                match rows[..index].iter().rposition(|r| r.depth() < depth) {
+                    Some(parent) => {
+                        self.tree_cursor.set(parent, rows.len());
+                        self.h_offset = 0;
+                        true
+                    }
+                    None => false,
+                }
+            }
         }
     }
 
@@ -1750,5 +1840,136 @@ mod tests {
         assert_eq!(pane.mode(), &Mode::Browse);
         assert_eq!(pane.paging_level(), ColumnFocus::Albums);
         assert_eq!(pane.albums().len(), 1);
+    }
+
+    /// Miles (one album, two tracks) sorts before Portishead (one track).
+    fn two_artist_library() -> Library {
+        let mut library = Library::open_in_memory().expect("open");
+        for (path, title, artist, album) in [
+            ("/music/a1.flac", "So What", "Miles", "Kind of Blue"),
+            (
+                "/music/a2.flac",
+                "Freddie Freeloader",
+                "Miles",
+                "Kind of Blue",
+            ),
+            ("/music/b1.flac", "Roads", "Portishead", "Dummy"),
+        ] {
+            library
+                .upsert_track_for_test(
+                    Path::new(path),
+                    title,
+                    Some(artist.into()),
+                    Some(album.into()),
+                    None,
+                )
+                .unwrap();
+        }
+        library
+    }
+
+    #[test]
+    fn h_and_l_step_through_columns_without_wrapping() {
+        let mut pane = LibraryPane::new(Some(two_artist_library()));
+        assert_eq!(pane.effective_layout(wide()), EffectiveLayout::Columns);
+
+        assert!(!pane.move_horizontal(false, wide()), "h stops at Artists");
+        assert_eq!(pane.column_focus(), ColumnFocus::Artists);
+        assert!(pane.move_horizontal(true, wide()));
+        assert_eq!(pane.column_focus(), ColumnFocus::Albums);
+        assert!(pane.move_horizontal(true, wide()));
+        assert_eq!(pane.column_focus(), ColumnFocus::Tracks);
+        assert!(!pane.move_horizontal(true, wide()), "l stops at Tracks");
+        assert_eq!(pane.column_focus(), ColumnFocus::Tracks);
+        assert!(pane.move_horizontal(false, wide()));
+        assert_eq!(pane.column_focus(), ColumnFocus::Albums);
+    }
+
+    #[test]
+    fn h_and_l_drill_in_and_back_out_in_paging() {
+        let mut pane = LibraryPane::new(Some(two_artist_library()));
+        assert_eq!(pane.effective_layout(strip()), EffectiveLayout::Paging);
+
+        assert!(
+            !pane.move_horizontal(false, strip()),
+            "h at the top does nothing"
+        );
+        assert!(pane.move_horizontal(true, strip()));
+        assert_eq!(pane.paging_level(), ColumnFocus::Albums);
+        assert!(pane.move_horizontal(true, strip()));
+        assert_eq!(pane.paging_level(), ColumnFocus::Tracks);
+        assert!(
+            !pane.move_horizontal(true, strip()),
+            "l on a track does nothing"
+        );
+        assert_eq!(pane.paging_level(), ColumnFocus::Tracks);
+        assert!(pane.move_horizontal(false, strip()));
+        assert_eq!(pane.paging_level(), ColumnFocus::Albums);
+        assert!(pane.move_horizontal(false, strip()));
+        assert_eq!(pane.paging_level(), ColumnFocus::Artists);
+    }
+
+    #[test]
+    fn h_and_l_expand_collapse_and_climb_the_tree() {
+        let mut pane = LibraryPane::new(Some(two_artist_library()));
+        pane.set_preferred_layout(LibraryLayout::Tree);
+        let s = strip();
+        assert_eq!(pane.tree_rows().len(), 2, "two collapsed artists");
+
+        assert!(pane.move_horizontal(true, s), "l expands the artist");
+        assert_eq!(pane.tree_rows().len(), 3);
+        assert!(
+            !pane.move_horizontal(true, s),
+            "l on an open artist does nothing"
+        );
+
+        pane.step(1, s); // album row
+        assert!(pane.move_horizontal(true, s), "l expands the album");
+        assert_eq!(pane.tree_rows().len(), 5);
+
+        pane.step(1, s); // first track
+        assert_eq!(pane.selected_index(s), Some(2));
+        assert!(!pane.move_horizontal(true, s), "l on a track does nothing");
+
+        assert!(
+            pane.move_horizontal(false, s),
+            "h on a track climbs to its album"
+        );
+        assert_eq!(pane.selected_index(s), Some(1));
+        assert!(
+            pane.move_horizontal(false, s),
+            "h on an open album collapses it"
+        );
+        assert_eq!(pane.tree_rows().len(), 3);
+        assert_eq!(pane.selected_index(s), Some(1));
+        assert!(
+            pane.move_horizontal(false, s),
+            "h on a closed album climbs to the artist"
+        );
+        assert_eq!(pane.selected_index(s), Some(0));
+        assert!(
+            pane.move_horizontal(false, s),
+            "h on an open artist collapses it"
+        );
+        assert_eq!(pane.tree_rows().len(), 2);
+        assert!(
+            !pane.move_horizontal(false, s),
+            "h on a closed top-level artist does nothing"
+        );
+    }
+
+    #[test]
+    fn h_and_l_do_nothing_in_search_results() {
+        let mut pane = LibraryPane::new(None);
+        pane.inject_search_hits_for_test(
+            "Love",
+            vec![SearchHit::Artist(ArtistSummary {
+                name: "Love".into(),
+                track_count: 1,
+            })],
+        );
+        assert!(!pane.move_horizontal(true, wide()));
+        assert!(!pane.move_horizontal(false, wide()));
+        assert!(matches!(pane.mode(), Mode::Search(_)));
     }
 }
