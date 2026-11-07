@@ -136,7 +136,7 @@ pub const GLOBAL: &[Binding] = &[
 pub const NAVIGATION: &[Binding] = &[
     b("j / ↓", "down"),
     b("k / ↑", "up"),
-    b("h / l", "left / right: column, tree level, back / into"),
+    b("h / l", "left / right: column, level, back / into"),
     b("Ctrl-d / Ctrl-u", "half page down / up"),
     b("g / G", "first / last row"),
 ];

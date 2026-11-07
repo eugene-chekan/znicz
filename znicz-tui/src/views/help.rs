@@ -169,6 +169,39 @@ mod tests {
     }
 
     #[test]
+    fn every_binding_row_fits_the_popup() {
+        use crate::keys::Context::*;
+        let contexts = [
+            Library,
+            LibraryTree,
+            Search,
+            Queue,
+            Devices,
+            Inspector,
+            Playlists,
+            Radio,
+            Prompt,
+            StationPrompt,
+            Help,
+        ];
+        for context in contexts {
+            for section in keys::help_sections(context) {
+                for binding in section.bindings {
+                    let width = 1
+                        + KEY_COLUMN.max(binding.keys.chars().count())
+                        + binding.action.chars().count();
+                    assert!(
+                        width <= usize::from(MAX_WIDTH) - 2,
+                        "{:?} / {}: {width} columns",
+                        binding.keys,
+                        binding.action
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn every_section_and_binding_gets_a_row() {
         let sections = keys::help_sections(Context::Queue);
         let rows = sections.len() + sections.iter().map(|s| s.bindings.len()).sum::<usize>();

@@ -143,7 +143,7 @@ The essentials:
 | e / z | Repeat (off, all, one) / shuffle |
 | r | Reload the list in front |
 | j k, g G, Ctrl-d Ctrl-u | Move in the list |
-| h l | Left / right: column, tree level, back / into (never plays) |
+| h l | Left / right: column, level, back / into (never plays) |
 | Enter | Open / expand browse, or play a track |
 | a / A | Add the selection / everything listed to the queue |
 | d / C | Remove from the queue / clear it |
