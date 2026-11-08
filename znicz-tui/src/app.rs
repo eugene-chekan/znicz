@@ -1,6 +1,6 @@
 //! The application: what is on screen, and what the keys do.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crossterm::event::{
@@ -127,6 +127,7 @@ pub enum Modal {
     Inspector,
     Playlists,
     Radio,
+    Messages,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -232,7 +233,12 @@ impl Modal {
     pub(crate) fn blocks_list_focus(self) -> bool {
         matches!(
             self,
-            Self::Devices | Self::Inspector | Self::Playlists | Self::Radio
+            Self::Help
+                | Self::Devices
+                | Self::Inspector
+                | Self::Playlists
+                | Self::Radio
+                | Self::Messages
         )
     }
 }
@@ -260,6 +266,8 @@ pub struct App {
     pub stations_path: PathBuf,
     pub stations: Vec<znicz_core::Station>,
     pub station_cursor: Cursor,
+    pub message_cursor: Cursor,
+    pub message_h_offset: usize,
     pub radio_prompt: Option<RadioPrompt>,
     pub meta: MetaCache,
     pub toasts: Toasts,
@@ -268,11 +276,13 @@ pub struct App {
     pub picker: Option<ratatui_image::picker::Picker>,
     pub(crate) cover_image: Option<ratatui_image::protocol::StatefulProtocol>,
     pub(crate) cover_draw_key: Option<(String, u16, u16)>,
+    pub(crate) playing: Option<crate::playing::PlayingRef>,
     pub(crate) library_list_state: ratatui::widgets::ListState,
     pub(crate) queue_list_state: ratatui::widgets::ListState,
     pub(crate) device_list_state: ratatui::widgets::ListState,
     pub(crate) playlist_list_state: ratatui::widgets::ListState,
     pub(crate) station_list_state: ratatui::widgets::ListState,
+    pub(crate) messages_list_state: ratatui::widgets::ListState,
     pub should_quit: bool,
 }
 
@@ -296,6 +306,22 @@ impl Drop for MouseCapture {
 }
 
 impl App {
+    /// Re-resolve what is playing when the current file changes.
+    pub fn refresh_playing(&mut self, state: &PlayerState) {
+        let info = state.current_track.as_ref();
+        let path = info.and_then(|t| t.path.as_ref());
+        if self.playing.as_ref().map(|p| &p.path) == path {
+            return;
+        }
+        self.playing = info.and_then(|info| {
+            let path = info.path.as_ref()?;
+            self.library
+                .locate(path)
+                .map(|track| crate::playing::PlayingRef::from_track(&track))
+                .or_else(|| crate::playing::PlayingRef::from_info(info))
+        });
+    }
+
     pub fn new(player: PlayerHandle) -> Self {
         Self::with_library(player, None)
     }
@@ -334,6 +360,8 @@ impl App {
                 .unwrap_or_else(|| std::env::temp_dir().join("znicz-stations.toml")),
             stations: Vec::new(),
             station_cursor: Cursor::new(),
+            message_cursor: Cursor::new(),
+            message_h_offset: 0,
             radio_prompt: None,
             meta: MetaCache::new(),
             toasts: Toasts::new(),
@@ -342,11 +370,13 @@ impl App {
             picker: Some(ratatui_image::picker::Picker::halfblocks()),
             cover_image: None,
             cover_draw_key: None,
+            playing: None,
             library_list_state: ratatui::widgets::ListState::default(),
             queue_list_state: ratatui::widgets::ListState::default(),
             device_list_state: ratatui::widgets::ListState::default(),
             playlist_list_state: ratatui::widgets::ListState::default(),
             station_list_state: ratatui::widgets::ListState::default(),
+            messages_list_state: ratatui::widgets::ListState::default(),
             should_quit: false,
         }
     }
@@ -443,6 +473,10 @@ impl App {
             Modal::Devices => self.device_cursor.step(delta, self.devices.len()),
             Modal::Playlists => self.playlist_cursor.step(delta, self.playlists.len()),
             Modal::Radio => self.station_cursor.step(delta, self.stations.len()),
+            Modal::Messages => {
+                self.message_cursor.step(delta, self.toasts.history_len());
+                self.message_h_offset = 0;
+            }
             Modal::Help => self.help.scroll_by(delta),
             Modal::Inspector => {}
             Modal::None => match self.focus {
@@ -480,9 +514,7 @@ impl App {
         }
         if self.hits.close.is_some_and(|r| point_in(r, column, row)) {
             if self.modal != Modal::None {
-                self.modal = Modal::None;
-                self.playlist_prompt = None;
-                self.radio_prompt = None;
+                self.close_modal();
             } else if self.queue_open {
                 self.close_queue();
             }
@@ -561,6 +593,10 @@ impl App {
                     Modal::Devices => self.device_cursor.set(index, self.devices.len()),
                     Modal::Playlists => self.playlist_cursor.set(index, self.playlists.len()),
                     Modal::Radio => self.station_cursor.set(index, self.stations.len()),
+                    Modal::Messages => {
+                        self.message_cursor.set(index, self.toasts.history_len());
+                        self.message_h_offset = 0;
+                    }
                     _ => {}
                 }
             }
@@ -615,6 +651,10 @@ impl App {
             return;
         }
 
+        if self.modal == Modal::Messages && self.on_messages_key(key) {
+            return;
+        }
+
         if self.on_global_key(key) {
             return;
         }
@@ -624,7 +664,7 @@ impl App {
             return;
         }
 
-        if self.modal == Modal::Inspector {
+        if matches!(self.modal, Modal::Inspector | Modal::Messages) {
             return;
         }
 
@@ -637,11 +677,9 @@ impl App {
     fn on_esc(&mut self) {
         if matches!(
             self.modal,
-            Modal::Devices | Modal::Inspector | Modal::Playlists | Modal::Radio
+            Modal::Devices | Modal::Inspector | Modal::Playlists | Modal::Radio | Modal::Messages
         ) {
-            self.modal = Modal::None;
-            self.playlist_prompt = None;
-            self.radio_prompt = None;
+            self.close_modal();
         } else if self.focus == Focus::Queue && self.queue_open {
             self.close_queue();
         } else {
@@ -651,7 +689,9 @@ impl App {
 
     /// Open help on whatever the user is looking at now.
     fn open_help(&mut self) {
+        let return_to = self.modal;
         self.help = HelpState::open(self.context());
+        self.help.return_to = return_to;
         self.modal = Modal::Help;
     }
 
@@ -689,7 +729,7 @@ impl App {
         }
 
         match key.code {
-            KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => self.modal = Modal::None,
+            KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => self.close_modal(),
             KeyCode::Char('/') => self.help.editing = true,
             KeyCode::Char('j') | KeyCode::Down => self.help.scroll_by(1),
             KeyCode::Char('k') | KeyCode::Up => self.help.scroll_by(-1),
@@ -742,7 +782,9 @@ impl App {
             KeyCode::Char('i') => self.toggle_inspector_modal(),
             KeyCode::Char('P') => self.toggle_playlists_modal(),
             KeyCode::Char('R') => self.toggle_radio_modal(),
+            KeyCode::Char('M') => self.toggle_messages_modal(),
 
+            KeyCode::Char(']') if self.modal.blocks_list_focus() => {}
             KeyCode::Char(']') => {
                 if self.queue_open {
                     self.close_queue();
@@ -751,6 +793,7 @@ impl App {
                 }
             }
 
+            KeyCode::Tab if self.modal.blocks_list_focus() => {}
             KeyCode::Tab => {
                 let strip = self.library_strip();
                 if self.focus == Focus::Library
@@ -770,6 +813,7 @@ impl App {
                     self.swap_focus();
                 }
             }
+            KeyCode::BackTab if self.modal.blocks_list_focus() => {}
             KeyCode::BackTab => {
                 let strip = self.library_strip();
                 if self.focus == Focus::Library
@@ -839,8 +883,11 @@ impl App {
     fn close_queue(&mut self) {
         self.queue_open = false;
         self.focus = Focus::Library;
-        self.library
-            .clamp_pan(self.title_slot(), self.library_strip());
+        self.library.clamp_pan(
+            self.title_slot(),
+            self.library_strip(),
+            self.playing.as_ref(),
+        );
     }
 
     /// What the footer and help describe right now.
@@ -863,6 +910,7 @@ impl App {
             Modal::Inspector => Context::Inspector,
             Modal::Playlists => Context::Playlists,
             Modal::Radio => Context::Radio,
+            Modal::Messages => Context::Messages,
             Modal::None => match self.focus {
                 Focus::Queue => Context::Queue,
                 Focus::Library
@@ -892,7 +940,15 @@ impl App {
         };
     }
 
+    /// Another modal is about to replace Messages: tidy what it leaves behind.
+    fn leave_messages(&mut self) {
+        if self.modal == Modal::Messages {
+            self.toasts.clear_fresh();
+        }
+    }
+
     fn toggle_devices_modal(&mut self) {
+        self.leave_messages();
         self.modal = if self.modal == Modal::Devices {
             Modal::None
         } else {
@@ -901,6 +957,7 @@ impl App {
     }
 
     fn toggle_inspector_modal(&mut self) {
+        self.leave_messages();
         self.modal = if self.modal == Modal::Inspector {
             Modal::None
         } else {
@@ -913,6 +970,7 @@ impl App {
             self.modal = Modal::None;
             self.playlist_prompt = None;
         } else {
+            self.leave_messages();
             self.reload_playlists();
             self.modal = Modal::Playlists;
         }
@@ -923,9 +981,47 @@ impl App {
             self.modal = Modal::None;
             self.radio_prompt = None;
         } else {
+            self.leave_messages();
             self.playlist_prompt = None;
             self.reload_stations();
             self.modal = Modal::Radio;
+        }
+    }
+
+    fn toggle_messages_modal(&mut self) {
+        if self.modal == Modal::Messages {
+            self.close_modal();
+        } else {
+            self.toasts.mark_read();
+            self.message_cursor.first();
+            self.message_h_offset = 0;
+            self.modal = Modal::Messages;
+        }
+    }
+
+    /// Close whatever modal is open, tidying what it leaves behind.
+    fn close_modal(&mut self) {
+        if self.modal == Modal::Help {
+            self.modal = self.help.return_to;
+            return;
+        }
+        self.leave_messages();
+        self.modal = Modal::None;
+        self.playlist_prompt = None;
+        self.radio_prompt = None;
+    }
+
+    /// Keys the Messages list owns. Returns false for anything else.
+    fn on_messages_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Char('C') => {
+                // No message here: it would land in the history just cleared.
+                self.toasts.clear_history();
+                self.message_cursor.first();
+                self.message_h_offset = 0;
+                true
+            }
+            _ => false,
         }
     }
 
@@ -947,6 +1043,7 @@ impl App {
     fn reload_front(&mut self) {
         match self.modal {
             Modal::Radio => self.reload_stations(),
+            Modal::Messages => {}
             Modal::Playlists => self.reload_playlists(),
             Modal::Devices => {
                 self.devices = load_output_devices();
@@ -956,6 +1053,8 @@ impl App {
             }
             _ => {
                 self.library.reload_albums();
+                // Re-resolve from the reloaded library on the next frame.
+                self.playing = None;
                 self.toasts.success("library reloaded");
             }
         }
@@ -1359,6 +1458,7 @@ impl App {
                 let tracks = self.library.listed_tracks(strip);
                 self.enqueue(tracks);
             }
+            KeyCode::Char('J') => self.jump_to_playing(),
             KeyCode::Char('o') => {
                 let _ = self.library_toggle_tree_expand();
             }
@@ -1373,6 +1473,31 @@ impl App {
         }
         let strip = self.library_strip();
         self.library.move_horizontal(forward, strip);
+    }
+
+    /// `J`: select the playing track in the library.
+    fn jump_to_playing(&mut self) {
+        if self.modal != Modal::None {
+            return;
+        }
+        let path = self.player.state().current_track.and_then(|t| t.path);
+        self.jump_to_path(path.as_deref());
+    }
+
+    /// Select `path` in the library, or say why not. `None`: nothing (or a stream) plays.
+    pub fn jump_to_path(&mut self, path: Option<&Path>) {
+        let Some(path) = path else {
+            self.toasts.info("nothing playing in the library");
+            return;
+        };
+        let strip = self.library_strip();
+        let found = match self.library.locate(path) {
+            Some(track) => self.library.reveal(&track, strip),
+            None => false,
+        };
+        if !found {
+            self.toasts.info("playing track is not in the library");
+        }
     }
 
     /// Space (global) and `o` (library): expand/collapse tree parents.
@@ -1494,7 +1619,9 @@ impl App {
     // --- list movement, applied to whichever list has focus ---
 
     fn list_len(&self) -> usize {
-        if self.modal == Modal::Radio {
+        if self.modal == Modal::Messages {
+            self.toasts.history_len()
+        } else if self.modal == Modal::Radio {
             self.stations.len()
         } else if self.modal == Modal::Playlists {
             self.playlists.len()
@@ -1512,7 +1639,10 @@ impl App {
         if self.modal == Modal::Inspector {
             return;
         }
-        if self.modal == Modal::Radio {
+        if self.modal == Modal::Messages {
+            self.message_cursor.step(delta, len);
+            self.message_h_offset = 0;
+        } else if self.modal == Modal::Radio {
             self.station_cursor.step(delta, len);
         } else if self.modal == Modal::Playlists {
             self.playlist_cursor.step(delta, len);
@@ -1531,7 +1661,10 @@ impl App {
         if self.modal == Modal::Inspector {
             return;
         }
-        if self.modal == Modal::Radio {
+        if self.modal == Modal::Messages {
+            self.message_cursor.page(delta, len);
+            self.message_h_offset = 0;
+        } else if self.modal == Modal::Radio {
             self.station_cursor.page(delta, len);
         } else if self.modal == Modal::Playlists {
             self.playlist_cursor.page(delta, len);
@@ -1549,7 +1682,10 @@ impl App {
         if self.modal == Modal::Inspector {
             return;
         }
-        if self.modal == Modal::Radio {
+        if self.modal == Modal::Messages {
+            self.message_cursor.first();
+            self.message_h_offset = 0;
+        } else if self.modal == Modal::Radio {
             self.station_cursor.first();
         } else if self.modal == Modal::Playlists {
             self.playlist_cursor.first();
@@ -1568,7 +1704,10 @@ impl App {
         if self.modal == Modal::Inspector {
             return;
         }
-        if self.modal == Modal::Radio {
+        if self.modal == Modal::Messages {
+            self.message_cursor.last(len);
+            self.message_h_offset = 0;
+        } else if self.modal == Modal::Radio {
             self.station_cursor.last(len);
         } else if self.modal == Modal::Playlists {
             self.playlist_cursor.last(len);
@@ -1655,11 +1794,21 @@ impl App {
     }
 
     fn pan_titles(&mut self, dir: isize) {
+        if self.modal == Modal::Messages {
+            let next = self.message_h_offset as isize + dir;
+            // Clamped to the text when drawn.
+            self.message_h_offset = next.max(0) as usize;
+            return;
+        }
         if self.focus == Focus::Queue && self.queue_open {
             self.pan_queue(dir);
         } else {
-            self.library
-                .pan(dir, self.title_slot(), self.library_strip());
+            self.library.pan(
+                dir,
+                self.title_slot(),
+                self.library_strip(),
+                self.playing.as_ref(),
+            );
         }
     }
 
@@ -1943,5 +2092,17 @@ mod tests {
             PlaybackStatus::Stopped,
             "adding must not start playback"
         );
+    }
+
+    #[test]
+    fn reloading_the_library_forgets_the_resolved_playing_row() {
+        let mut app = App::with_library(test_player(), None);
+        app.playing = Some(crate::playing::PlayingRef {
+            path: std::path::PathBuf::from("/music/a.flac"),
+            artist: Some("A".into()),
+            album: None,
+        });
+        app.on_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+        assert_eq!(app.playing, None, "the next frame must re-resolve");
     }
 }

@@ -27,6 +27,7 @@ pub enum Context {
     Inspector,
     Playlists,
     Radio,
+    Messages,
     Prompt,
     StationPrompt,
     Help,
@@ -66,6 +67,8 @@ const NEW: Hint = hint("n new", KeyCode::Char('n'));
 const EDIT: Hint = hint("e edit", KeyCode::Char('e'));
 const DELETE: Hint = hint("d delete", KeyCode::Char('d'));
 const CLOSE: Hint = hint("Esc close", KeyCode::Esc);
+/// Opens the Messages list; the footer appends the unread count.
+pub const MESSAGES_OPEN: Hint = hint("M messages", KeyCode::Char('M'));
 
 // Prompt and help hints: these keys belong to a prompt, not a binding table.
 const ENTER_SEARCH: Hint = hint("Enter search", KeyCode::Enter);
@@ -89,13 +92,23 @@ pub fn context_hints(context: Context) -> &'static [Hint] {
             QUEUE_OPEN,
             PLAYLISTS_OPEN,
             RADIO_OPEN,
+            MESSAGES_OPEN,
         ],
-        Context::LibraryTree => &[SEARCH, ADD, EXPAND, QUEUE_OPEN, PLAYLISTS_OPEN, RADIO_OPEN],
+        Context::LibraryTree => &[
+            SEARCH,
+            ADD,
+            EXPAND,
+            QUEUE_OPEN,
+            PLAYLISTS_OPEN,
+            RADIO_OPEN,
+            MESSAGES_OPEN,
+        ],
         Context::Search => &[ENTER_SEARCH, CANCEL],
         Context::Queue => &[ENTER_PLAY, REMOVE, JUMP, CLEAR, QUEUE_CLOSE],
         Context::Devices => &[SELECT, RESCAN, CLOSE],
         Context::Inspector => &[SPACE_PAUSE, CLOSE],
         Context::Playlists | Context::Radio => &[ENTER_PLAY, ADD, NEW, EDIT, DELETE, CLOSE],
+        Context::Messages => &[CLEAR, CLOSE],
         Context::Prompt => &[ENTER_SAVE, CANCEL],
         Context::StationPrompt => &[ENTER_SAVE, CANCEL, NEXT_FIELD],
         Context::Help => &[FILTER, CLOSE],
@@ -137,6 +150,7 @@ pub const GLOBAL: &[Binding] = &[
     b("Alt-← / Alt-→", "pan titles"),
     b("i", "signal inspector"),
     b(",", "devices"),
+    b("M", "messages"),
     b("?", "this help"),
     b("q", "quit TUI"),
 ];
@@ -164,6 +178,7 @@ pub const LIBRARY: &[Binding] = &[
     b("Tab / Shift-Tab", "next / previous column"),
     b("a", "add selection to the queue"),
     b("A", "add everything listed"),
+    b("J", "jump to the playing track"),
     b("Esc", "back one browse level"),
 ];
 
@@ -196,6 +211,8 @@ pub const RADIO: &[Binding] = &[
 
 pub const INSPECTOR: &[Binding] = &[b("Esc / i", "close")];
 
+pub const MESSAGES: &[Binding] = &[b("C", "clear the history"), b("Esc / M", "close")];
+
 /// A titled group of bindings in the help overlay.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Section {
@@ -213,6 +230,7 @@ const CONTEXT_SECTIONS: &[(&str, &[Binding])] = &[
     ("Radio", RADIO),
     ("Devices", DEVICES),
     ("Inspector", INSPECTOR),
+    ("Messages", MESSAGES),
 ];
 
 /// Title of the section holding this context's own keys, if it has a table.
@@ -224,6 +242,7 @@ pub fn context_title(context: Context) -> Option<&'static str> {
         Context::Inspector => Some("Inspector"),
         Context::Playlists => Some("Playlists"),
         Context::Radio => Some("Radio"),
+        Context::Messages => Some("Messages"),
         Context::Prompt | Context::StationPrompt | Context::Help | Context::HelpFilter => None,
     }
 }
@@ -296,7 +315,7 @@ mod tests {
     #[test]
     fn every_binding_documents_both_a_key_and_an_action() {
         let tables = [
-            GLOBAL, NAVIGATION, QUEUE, LIBRARY, DEVICES, PLAYLISTS, RADIO, INSPECTOR,
+            GLOBAL, NAVIGATION, QUEUE, LIBRARY, DEVICES, PLAYLISTS, RADIO, INSPECTOR, MESSAGES,
         ];
         for table in tables {
             for binding in table {
@@ -306,7 +325,7 @@ mod tests {
         }
     }
 
-    const ALL_CONTEXTS: [Context; 12] = [
+    const ALL_CONTEXTS: [Context; 13] = [
         Context::Library,
         Context::LibraryTree,
         Context::Search,
@@ -315,6 +334,7 @@ mod tests {
         Context::Inspector,
         Context::Playlists,
         Context::Radio,
+        Context::Messages,
         Context::Prompt,
         Context::StationPrompt,
         Context::Help,
@@ -328,13 +348,14 @@ mod tests {
     }
 
     #[test]
-    fn every_context_fits_eighty_columns_with_more() {
+    // M messages is last in the library lists, so narrower footers drop it first.
+    fn every_context_fits_ninety_columns_with_more() {
         for context in ALL_CONTEXTS {
             let mut width = row_width(context_hints(context));
             if let Some(more) = more_hint(context) {
                 width += 3 + more.label.chars().count();
             }
-            assert!(width <= 80, "{context:?} needs {width} columns");
+            assert!(width <= 90, "{context:?} needs {width} columns");
         }
     }
 
@@ -369,7 +390,8 @@ mod tests {
                 "a add",
                 "] queue",
                 "P playlists",
-                "R radio"
+                "R radio",
+                "M messages"
             ]
         );
     }
@@ -419,11 +441,15 @@ mod tests {
                 "Playlists",
                 "Radio",
                 "Devices",
-                "Inspector"
+                "Inspector",
+                "Messages"
             ]
         );
         let dims: Vec<bool> = sections.iter().map(|s| s.dim).collect();
-        assert_eq!(dims, [false, false, false, true, true, true, true, true]);
+        assert_eq!(
+            dims,
+            [false, false, false, true, true, true, true, true, true]
+        );
     }
 
     #[test]
@@ -438,7 +464,7 @@ mod tests {
         for context in [Context::Prompt, Context::StationPrompt, Context::Help] {
             let sections = help_sections(context);
             assert_eq!(sections[0].title, "Playback", "{context:?}");
-            assert_eq!(sections.len(), 8, "every table still listed once");
+            assert_eq!(sections.len(), 9, "every table still listed once");
             assert_eq!(context_title(context), None);
         }
     }
@@ -479,6 +505,7 @@ mod tests {
             Context::Inspector,
             Context::Playlists,
             Context::Radio,
+            Context::Messages,
         ] {
             let sections = help_sections(context);
             let documented: Vec<&Binding> = sections

@@ -1,5 +1,6 @@
 //! What the help overlay remembers while it is open.
 
+use crate::app::Modal;
 use crate::keys::Context;
 use crate::line_edit::LineEdit;
 
@@ -15,6 +16,8 @@ pub struct HelpState {
     pub query: LineEdit,
     /// Typing goes into `query` instead of scrolling.
     pub editing: bool,
+    /// The modal help replaced; closing help goes back to it.
+    pub return_to: Modal,
 }
 
 impl HelpState {
@@ -24,6 +27,7 @@ impl HelpState {
             scroll: 0,
             query: LineEdit::new(),
             editing: false,
+            return_to: Modal::None,
         }
     }
 

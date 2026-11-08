@@ -651,3 +651,32 @@ fn a_footer_enter_hit_submits_a_typing_search() {
         toast.text
     );
 }
+
+#[test]
+fn a_click_selects_a_message_row_and_the_wheel_moves_it() {
+    let mut app = new_app();
+    for i in 0..4 {
+        app.toasts.info(format!("m{i}"));
+    }
+    app.modal = Modal::Messages;
+    app.hits.overlay = Some(Rect::new(10, 2, 60, 10));
+    app.hits.overlay_list = Some(ListHit {
+        inner: Rect::new(11, 3, 58, 8),
+        offset: 0,
+        len: 4,
+    });
+    app.on_mouse(left_click(20, 5));
+    assert_eq!(app.message_cursor.selected(4), Some(2));
+    app.on_mouse(wheel(false));
+    assert_eq!(app.message_cursor.selected(4), Some(3));
+}
+
+#[test]
+fn the_help_x_returns_to_the_modal_it_replaced() {
+    let mut app = new_app();
+    app.on_key(KeyEvent::new(KeyCode::Char(','), KeyModifiers::NONE));
+    app.on_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
+    app.hits.close = Some(Rect::new(68, 4, 1, 1));
+    app.on_mouse(left_click(68, 4));
+    assert_eq!(app.modal, Modal::Devices);
+}

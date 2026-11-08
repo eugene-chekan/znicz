@@ -1,6 +1,10 @@
-# Znicz
+<p align="center">
+  <img src="znicz-tui/assets/logo.png" alt="Znicz logo: a candle in a glass whose flame holds a play symbol" width="160">
+</p>
 
-Cross-platform audiophile TUI music player with a native MCP server for AI agent control.
+<h1 align="center">Znicz</h1>
+
+<p align="center">Cross-platform audiophile TUI music player with a native MCP server for AI agent control.</p>
 
 ## Features
 
@@ -115,15 +119,15 @@ the global keys back.
 `i` opens a signal inspector
 with the full file → device path, including the device sample format that stays
 off the transport line.
-Transport sits at the bottom. With cover on (default), an eight-row slot on
+Transport sits at the bottom. With cover on (default) and a window at least 24 rows tall, an eight-row slot on
 the left shows embedded album art for files; streams use an ICY image when one
 decodes, else an AudioAddict song cover on those networks, else station art,
 else the Znicz logo;
-chrome stacks to the right. With `show_cover = false`, transport is one or
-two full-width lines as before. Example signal path:
+chrome stacks to the right. With `show_cover = false` or a shorter window, transport is two or
+three full-width lines. Example signal path:
 `FLAC 96 kHz 24-bit 2882 kbps stereo → 96 kHz stereo  ● bit perfect`.
 When the device will not take the file's own rate the badge reads `▲ resampled`,
-so a silent conversion never goes unnoticed. Long titles pan with
+so a silent conversion never goes unnoticed. Messages appear on the transport's last row rather than over the list. Long titles pan with
 `Alt-←` / `Alt-→` on the highlighted row.
 
 Press `?` in the player for the keymap: the keys for where you are come first,
@@ -150,6 +154,8 @@ The essentials:
 | / | Search the library |
 | Space / o | Expand or collapse a tree node |
 | ] | Open / close the queue |
+| M | Messages: recent history; unread warnings and errors are counted |
+| J | Jump the library to the playing track |
 | Tab | Next column when three-column browse is active; otherwise library ↔ queue |
 | Shift-Tab | Previous column (or queue focus when the drawer is open) |
 | Alt-← / Alt-→ | Pan a long title |

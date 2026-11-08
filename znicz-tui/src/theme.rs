@@ -45,12 +45,17 @@ pub fn border_idle() -> Style {
     Style::default().fg(MUTED)
 }
 
-/// The row under the cursor in a list.
+/// The row under the cursor in the list that has focus.
 pub fn selected() -> Style {
     Style::default()
-        .bg(Color::DarkGray)
-        .fg(STRONG)
+        .bg(ACCENT)
+        .fg(Color::Black)
         .add_modifier(Modifier::BOLD)
+}
+
+/// The selected row in a list without focus: still visible, quieter.
+pub fn selected_idle() -> Style {
+    Style::default().bg(Color::DarkGray).fg(TEXT)
 }
 
 /// The queue entry that is currently playing.

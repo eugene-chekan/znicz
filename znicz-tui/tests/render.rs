@@ -138,12 +138,20 @@ fn the_cover_slot_is_fully_painted_when_nothing_is_playing() {
 }
 
 #[test]
-fn show_cover_false_keeps_two_transport_rows() {
+fn show_cover_false_uses_three_text_rows() {
     let mut app = App::with_library(player(), None);
     app.tui.show_cover = false;
     let screen = draw(&mut app, 90, 24);
     assert!(screen.contains("Nothing playing"), "{screen}");
-    assert_eq!(app.list_height, 21);
+    assert_eq!(app.list_height, 20);
+}
+
+#[test]
+fn a_short_window_keeps_the_list_instead_of_the_cover() {
+    let mut app = App::with_library(player(), None);
+    app.tui.show_cover = true;
+    draw(&mut app, 48, 14);
+    assert_eq!(app.list_height, 11, "14 rows - 2 transport - 1 footer");
 }
 
 #[test]
@@ -369,7 +377,7 @@ fn transport_sits_at_the_bottom_and_drops_the_signal_line_when_short() {
 }
 
 #[test]
-fn a_success_toast_has_its_own_box_and_mark() {
+fn a_success_message_has_its_mark() {
     let mut app = App::with_library(player(), None);
     app.toasts.success("queue cleared");
     let screen = draw(&mut app, 90, 24);
@@ -397,30 +405,29 @@ fn a_playlist_error_toast_shows_the_whole_message() {
 }
 
 #[test]
-fn hints_stay_when_a_toast_is_showing() {
+fn a_message_sits_in_the_transport_not_over_the_list() {
     let mut app = App::with_library(player(), None);
     app.toasts.error("could not open device");
     let screen = draw(&mut app, 90, 24);
-    assert!(screen.contains("could not open device"), "{screen}");
-    assert!(
-        screen.contains("? help") || screen.contains("search"),
-        "hints must remain:\n{screen}"
-    );
-    assert!(
-        screen.contains('x'),
-        "errors should carry a level mark:\n{screen}"
-    );
     let lines: Vec<&str> = screen.lines().collect();
-    let toast_row = lines
+    let row = lines
         .iter()
-        .position(|line| line.contains("could not open device"))
-        .expect("toast text");
-    let transport = znicz_tui::layout::transport_height(24, app.tui.show_cover) as usize;
-    let last_list_row = lines.len().saturating_sub(transport + 1 + 1);
+        .position(|line| line.contains("x could not open device"))
+        .expect("message row");
     assert!(
-        toast_row < last_list_row,
-        "toast must sit above the pane border, not on it:\n{screen}"
+        row >= usize::from(app.list_height) && row < lines.len() - 1,
+        "message must be in the transport, row {row}:\n{screen}"
     );
+    assert!(lines[lines.len() - 1].contains("search"), "hints remain");
+}
+
+#[test]
+fn unread_alerts_show_once_the_message_expires() {
+    let mut app = App::with_library(player(), None);
+    app.toasts.warn("stream dropped");
+    app.toasts.expire_live_for_test();
+    let screen = draw(&mut app, 90, 24);
+    assert!(screen.contains("▲ 1 unread · M"), "{screen}");
 }
 
 #[test]
@@ -704,4 +711,208 @@ fn the_footer_while_typing_a_help_filter_offers_keep_and_clear() {
     let row = footer(&screen);
     assert!(row.contains("Enter keep · Esc clear"), "{row}");
     assert!(!row.contains("Esc close"), "{row}");
+}
+
+/// Rows from the top of the transport to the bottom of the screen.
+fn below_list(screen: &str, list_height: u16) -> Vec<String> {
+    screen
+        .lines()
+        .skip(usize::from(list_height))
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn no_modal_covers_the_transport_or_footer() {
+    let modals = [
+        Modal::Help,
+        Modal::Devices,
+        Modal::Inspector,
+        Modal::Playlists,
+        Modal::Radio,
+        Modal::Messages,
+    ];
+    for &(width, height) in &[(80u16, 24u16), (120, 40), (60, 18), (40, 12)] {
+        let mut app = App::with_library(player(), None);
+        let plain = draw(&mut app, width, height);
+        let expected = below_list(&plain, app.list_height);
+        for modal in modals {
+            app.modal = modal;
+            let screen = draw(&mut app, width, height);
+            let rows = below_list(&screen, app.list_height);
+            // The footer row legitimately changes hints per modal; compare the
+            // transport rows only.
+            let transport = rows.len() - 1;
+            assert_eq!(
+                rows[..transport],
+                expected[..transport],
+                "{modal:?} at {width}x{height} covered the transport:\n{screen}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_messages_list_shows_history_newest_first() {
+    let mut app = App::with_library(player(), None);
+    app.toasts.info("added 4 tracks");
+    app.toasts.error("device refused 96 kHz");
+    app.modal = Modal::Messages;
+    let screen = draw(&mut app, 100, 30);
+    assert!(screen.contains("Messages"), "{screen}");
+    let error = screen.find("device refused 96 kHz").expect("error row");
+    let info = screen.find("added 4 tracks").expect("info row");
+    assert!(error < info, "newest first:\n{screen}");
+    assert!(screen.contains(" 0s"), "age column:\n{screen}");
+}
+
+#[test]
+fn an_empty_messages_list_says_so() {
+    let mut app = App::with_library(player(), None);
+    app.modal = Modal::Messages;
+    let screen = draw(&mut app, 100, 30);
+    assert!(screen.contains("No messages yet"), "{screen}");
+}
+
+#[test]
+fn the_footer_counts_unread_alerts() {
+    let mut app = App::with_library(player(), None);
+    app.toasts.warn("stream dropped");
+    app.toasts.error("device refused");
+    let screen = draw(&mut app, 120, 24);
+    let row = screen.lines().last().unwrap();
+    assert!(row.contains("M messages (2)"), "{row}");
+}
+
+#[test]
+fn the_help_border_says_keep_and_clear_while_filtering() {
+    let mut app = App::with_library(player(), None);
+    app.modal = Modal::Help;
+    app.help.editing = true;
+    let screen = draw(&mut app, 100, 40);
+    let border = screen
+        .lines()
+        .find(|line| line.contains("znicz "))
+        .expect("help bottom border");
+    assert!(border.contains("Enter keep · Esc clear"), "{border}");
+}
+
+fn library_app() -> App {
+    let mut library = znicz_library::Library::open_in_memory().expect("open library");
+    for (path, title, artist, album) in [
+        ("/music/a1.flac", "So What", "Miles", "Kind of Blue"),
+        (
+            "/music/a2.flac",
+            "Freddie Freeloader",
+            "Miles",
+            "Kind of Blue",
+        ),
+        (
+            "/music/sour-times.flac",
+            "Sour Times",
+            "Portishead",
+            "Dummy",
+        ),
+    ] {
+        library
+            .upsert_track_for_test(
+                std::path::Path::new(path),
+                title,
+                Some(artist.into()),
+                Some(album.into()),
+                None,
+            )
+            .expect("insert track");
+    }
+    App::with_library(player(), Some(library))
+}
+
+fn buffer(app: &mut App, width: u16, height: u16) -> ratatui::buffer::Buffer {
+    let state = app.state();
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
+    terminal
+        .draw(|frame| views::render(frame, app, &state))
+        .expect("draw");
+    terminal.backend().buffer().clone()
+}
+
+#[test]
+fn the_focused_selection_is_accent_and_others_stay_grey() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::style::Color;
+
+    let mut app = library_app();
+    // First artist row: inside the Artists column border, row 1.
+    let artists = buffer(&mut app, 120, 30);
+    assert_eq!(artists[(2, 1)].bg, Color::Cyan, "focused column");
+
+    app.on_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+    let albums = buffer(&mut app, 120, 30);
+    assert_eq!(
+        albums[(2, 1)].bg,
+        Color::DarkGray,
+        "artist stays visible, grey"
+    );
+}
+
+#[test]
+fn the_library_behind_help_keeps_a_grey_selection() {
+    use ratatui::style::Color;
+
+    let mut app = library_app();
+    app.modal = Modal::Help;
+    // Help is at most 64 wide and centred, so column 2 of the first row is clear of it.
+    let screen = buffer(&mut app, 140, 30);
+    assert_eq!(screen[(2, 1)].bg, Color::DarkGray, "behind a modal: grey");
+}
+
+#[test]
+fn column_titles_name_their_parent() {
+    let mut app = library_app();
+    let screen = draw(&mut app, 120, 30);
+    assert!(screen.contains("Albums · Miles"), "{screen}");
+    assert!(screen.contains("Tracks · Kind of Blue"), "{screen}");
+}
+
+#[test]
+fn the_tree_title_follows_the_cursor() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let mut app = library_app();
+    app.tui.library_layout = znicz_tui::LibraryLayout::Tree;
+    app.on_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE)); // expand Miles
+    app.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE)); // album row
+    let screen = draw(&mut app, 120, 30);
+    assert!(
+        screen.contains("Library › Miles › Kind of Blue"),
+        "{screen}"
+    );
+}
+
+#[test]
+fn paging_titles_show_the_path() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let mut app = library_app();
+    draw(&mut app, 50, 30); // narrow: single-column paging
+    app.on_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+    let screen = draw(&mut app, 50, 30);
+    assert!(screen.contains("Library › Miles"), "{screen}");
+}
+
+#[test]
+fn the_library_marks_the_playing_track_album_and_artist() {
+    let mut app = library_app();
+    let screen = draw_with(&mut app, &playing_state(), 140, 30);
+    assert!(screen.contains("Portishead ♪"), "{screen}");
+    // Select Portishead so its albums and tracks show.
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    app.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+    let screen = draw_with(&mut app, &playing_state(), 140, 30);
+    assert!(screen.contains("Dummy ♪"), "{screen}");
+    assert!(
+        screen
+            .lines()
+            .any(|l| l.contains("Sour Times — Portishead") && l.contains('▶')),
+        "{screen}"
+    );
+    assert!(!screen.contains("Miles ♪"), "{screen}");
 }

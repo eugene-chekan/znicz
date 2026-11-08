@@ -1324,3 +1324,150 @@ fn ctrl_c_quits_while_typing_a_help_filter() {
     press_ctrl(&mut app, 'c');
     assert!(app.should_quit);
 }
+
+#[test]
+fn capital_m_opens_and_closes_messages() {
+    let mut app = new_app();
+    press_char(&mut app, 'M');
+    assert_eq!(app.modal, Modal::Messages);
+    press_char(&mut app, 'M');
+    assert_eq!(app.modal, Modal::None);
+    press_char(&mut app, 'M');
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn opening_messages_marks_alerts_read() {
+    let mut app = new_app();
+    app.toasts.warn("stream dropped");
+    assert!(app.toasts.unread_alerts().is_some());
+    press_char(&mut app, 'M');
+    assert_eq!(app.toasts.unread_alerts(), None);
+}
+
+#[test]
+fn capital_c_clears_the_message_history() {
+    let mut app = new_app();
+    app.toasts.info("one");
+    app.toasts.info("two");
+    press_char(&mut app, 'M');
+    press_char(&mut app, 'C');
+    assert_eq!(app.toasts.history_len(), 0);
+    assert_eq!(app.modal, Modal::Messages);
+}
+
+#[test]
+fn j_and_k_move_through_messages() {
+    let mut app = new_app();
+    for i in 0..3 {
+        app.toasts.info(format!("m{i}"));
+    }
+    press_char(&mut app, 'M');
+    press_char(&mut app, 'j');
+    press_char(&mut app, 'j');
+    assert_eq!(app.message_cursor.selected(3), Some(2));
+}
+
+#[test]
+fn library_and_queue_keys_stay_out_of_the_messages_list() {
+    let mut app = app_with_library_rows();
+    press_char(&mut app, 'M');
+    for c in ['a', '/', 'o'] {
+        press_char(&mut app, c);
+    }
+    press(&mut app, KeyCode::Enter);
+    assert!(app.player.state().queue.is_empty());
+    assert!(!app.library.is_typing());
+    assert_eq!(app.modal, Modal::Messages);
+}
+
+#[test]
+fn alt_arrow_pans_a_message_and_moving_resets_it() {
+    let mut app = new_app();
+    app.toasts.info("a very long message");
+    press_char(&mut app, 'M');
+    app.on_key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT));
+    assert_eq!(app.message_h_offset, 1);
+    press_char(&mut app, 'j');
+    assert_eq!(app.message_h_offset, 0);
+}
+
+#[test]
+fn closing_help_returns_to_the_modal_it_replaced() {
+    let mut app = new_app();
+    press_char(&mut app, ',');
+    press_char(&mut app, '?');
+    assert_eq!(app.modal, Modal::Help);
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.modal, Modal::Devices);
+
+    press_char(&mut app, '?');
+    press_char(&mut app, 'q');
+    assert_eq!(app.modal, Modal::Devices);
+    assert!(!app.should_quit);
+}
+
+#[test]
+fn closing_help_opened_from_the_library_returns_to_nothing() {
+    let mut app = new_app();
+    press_char(&mut app, '?');
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn capital_j_with_nothing_playing_says_so() {
+    let mut app = app_with_library_rows();
+    press_char(&mut app, 'J');
+    assert_eq!(
+        app.toasts.current().unwrap().text,
+        "nothing playing in the library"
+    );
+}
+
+#[test]
+fn jumping_to_a_library_file_selects_it() {
+    let mut app = app_with_library_rows();
+    app.jump_to_path(Some(std::path::Path::new("/music/a2.flac")));
+    assert_eq!(app.library.column_focus(), ColumnFocus::Tracks);
+    assert!(app.toasts.is_empty());
+}
+
+#[test]
+fn jumping_to_a_file_outside_the_library_says_so() {
+    let mut app = app_with_library_rows();
+    app.jump_to_path(Some(std::path::Path::new("/elsewhere/x.flac")));
+    assert_eq!(
+        app.toasts.current().unwrap().text,
+        "playing track is not in the library"
+    );
+}
+
+#[test]
+fn another_modal_replacing_messages_ends_the_viewing() {
+    let mut app = new_app();
+    press_char(&mut app, 'M');
+    assert_eq!(app.modal, Modal::Messages);
+    press_char(&mut app, ',');
+    assert_eq!(app.modal, Modal::Devices);
+
+    app.toasts.error("x");
+    assert!(app.toasts.unread_alerts().is_some());
+}
+
+#[test]
+fn tab_and_bracket_do_nothing_behind_a_modal() {
+    for modal_key in ['M', ',', 'i', 'P', 'R'] {
+        let mut app = new_app();
+        press_char(&mut app, modal_key);
+        let modal = app.modal;
+        assert_ne!(modal, Modal::None);
+        for key in [KeyCode::Tab, KeyCode::BackTab, KeyCode::Char(']')] {
+            press(&mut app, key);
+            assert!(!app.queue_open, "{key:?} behind {modal:?}");
+            assert_eq!(app.focus, Focus::Library, "{key:?} behind {modal:?}");
+            assert_eq!(app.modal, modal);
+        }
+    }
+}

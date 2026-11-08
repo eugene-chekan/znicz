@@ -12,35 +12,51 @@ pub fn columns_usable(strip_inner: usize) -> bool {
     strip_inner >= MIN_COLUMNS_STRIP
 }
 
-const HINTS: u16 = 1;
-const MIN_LIST: u16 = 3;
 /// Below this height the signal-path line is dropped to keep the lists usable.
 pub const COMPACT_HEIGHT: u16 = 20;
-const COVER_TARGET: u16 = 8;
-const COVER_MIN: u16 = 4;
-
-pub fn text_transport_height(window: u16) -> u16 {
-    if window < COMPACT_HEIGHT {
-        1
-    } else {
-        2
-    }
-}
+/// The cover only shows on a window at least this tall; shorter ones keep the list.
+pub const COVER_MIN_WINDOW: u16 = 24;
+const COVER_ROWS: u16 = 8;
+/// Below this list-region height a modal takes the whole list region.
+pub const MODAL_FULL_BELOW: u16 = 10;
 
 pub fn cover_enabled(window: u16, show_cover: bool) -> bool {
-    show_cover && window.saturating_sub(MIN_LIST + HINTS) >= COVER_MIN
+    show_cover && window >= COVER_MIN_WINDOW
 }
 
+/// Transport rows, including the message row.
 pub fn transport_height(window: u16, show_cover: bool) -> u16 {
-    if !cover_enabled(window, show_cover) {
-        return text_transport_height(window);
-    }
-    let available = window.saturating_sub(MIN_LIST + HINTS);
-    if available >= COVER_TARGET {
-        COVER_TARGET
+    if cover_enabled(window, show_cover) {
+        COVER_ROWS
+    } else if window < COMPACT_HEIGHT {
+        2
     } else {
-        available
+        3
     }
+}
+
+/// A `want_w` × `want_h` box centred in the list region and clamped to it.
+///
+/// A short list region gives the modal all of it.
+pub fn modal_rect(list: Rect, want_w: u16, want_h: u16) -> Rect {
+    if list.height < MODAL_FULL_BELOW {
+        return list;
+    }
+    let width = want_w.min(list.width);
+    let height = want_h.min(list.height);
+    Rect {
+        x: list.x + (list.width - width) / 2,
+        y: list.y + (list.height - height) / 2,
+        width,
+        height,
+    }
+}
+
+/// Devices, Playlists, Radio, Messages: 70 % of the list region, at least 40 × 8.
+pub fn list_modal_rect(list: Rect) -> Rect {
+    let width = ((u32::from(list.width) * 70 / 100) as u16).max(40);
+    let height = ((u32::from(list.height) * 70 / 100) as u16).max(8);
+    modal_rect(list, width, height)
 }
 
 pub fn cover_width(cover_rows: u16, font_w: u16, font_h: u16, area_width: u16) -> u16 {
@@ -104,70 +120,6 @@ pub fn is_sheet(list_width: u16, open: bool) -> bool {
     open && list_width <= DRAWER_WIDTH.saturating_add(MIN_STRIP)
 }
 
-/// Height of one boxed toast, including its own border.
-pub const TOAST_BOX_HEIGHT: u16 = 3;
-/// Gap from the pane border, so the toast does not sit on the line.
-pub const TOAST_INSET: u16 = 1;
-/// Mark plus the space after it (`× message`).
-pub const TOAST_MARK_AND_SPACE: u16 = 2;
-/// Left and right border of a boxed toast.
-pub const TOAST_BORDERS: u16 = 2;
-/// Narrowest list that still gets a boxed toast.
-const TOAST_BOX_MIN_WIDTH: u16 = 12;
-
-/// A 3-row bordered box when the list can hold it; otherwise a 1-row line.
-pub fn toast_boxed(list: Rect) -> bool {
-    list.height >= TOAST_BOX_HEIGHT + TOAST_INSET * 2 && list.width >= TOAST_BOX_MIN_WIDTH
-}
-
-/// Columns needed to draw a toast without cutting `text`.
-///
-/// `boxed` is the 3-row bordered box used when the list is large enough.
-pub fn toast_width_for(text: &str, boxed: bool) -> u16 {
-    let borders = if boxed { TOAST_BORDERS as usize } else { 0 };
-    text.chars()
-        .count()
-        .saturating_add(TOAST_MARK_AND_SPACE as usize)
-        .saturating_add(borders)
-        .max(1) as u16
-}
-
-/// Bottom-right boxes for up to three toasts, inset from the pane border.
-pub fn toast_areas(list: Rect, count: u16, line_width: u16) -> Vec<Rect> {
-    let count = count.min(3);
-    if count == 0 || list.width == 0 || list.height == 0 {
-        return Vec::new();
-    }
-
-    let boxed = toast_boxed(list);
-    let inset = if boxed { TOAST_INSET } else { 0 };
-    let height = if boxed { TOAST_BOX_HEIGHT } else { 1 };
-    let width = line_width
-        .min(list.width.saturating_sub(inset.saturating_mul(2)))
-        .max(1);
-    let x = list.x + list.width.saturating_sub(width).saturating_sub(inset);
-
-    (0..count)
-        .filter_map(|i| {
-            let stacked = height.saturating_mul(i + 1);
-            let y = list
-                .y
-                .saturating_add(list.height)
-                .saturating_sub(inset)
-                .saturating_sub(stacked);
-            if y < list.y {
-                return None;
-            }
-            Some(Rect {
-                x,
-                y,
-                width,
-                height,
-            })
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -221,60 +173,51 @@ mod tests {
     }
 
     #[test]
-    fn toast_areas_stack_up_from_the_bottom_right() {
-        let list = Rect::new(0, 0, 80, 10);
-        let areas = toast_areas(list, 3, 32);
-        assert_eq!(areas.len(), 3);
-        // Inset 1 from the right and from the bottom; each box is 3 rows.
-        assert_eq!(areas[0], Rect::new(47, 6, 32, 3));
-        assert_eq!(areas[1], Rect::new(47, 3, 32, 3));
-        assert_eq!(areas[2], Rect::new(47, 0, 32, 3));
-        assert!(
-            areas[0].bottom() < list.bottom(),
-            "must not sit on the pane's bottom border"
-        );
-        assert!(
-            areas[0].right() < list.right(),
-            "must not sit on the pane's right border"
-        );
-    }
-
-    #[test]
-    fn a_tiny_list_falls_back_to_a_single_line() {
-        let list = Rect::new(0, 0, 20, 3);
-        let areas = toast_areas(list, 1, 32);
-        assert_eq!(areas.len(), 1);
-        assert_eq!(areas[0].height, 1);
-        assert_eq!(areas[0].y, 2);
-    }
-
-    #[test]
-    fn toast_width_covers_the_playlist_empty_error() {
-        let text = "player error: playlist had no playable files";
-        let width = toast_width_for(text, true);
-        assert!(
-            width > 42,
-            "must be wider than the old 40% cap so the reason fits, got {width}"
-        );
-    }
-
-    #[test]
     fn cover_uses_eight_rows_on_a_normal_window() {
         assert_eq!(transport_height(24, true), 8);
         assert!(cover_enabled(24, true));
     }
 
     #[test]
-    fn cover_shrinks_then_drops() {
-        assert_eq!(transport_height(11, true), 7); // available = 11 - 4 = 7
-        assert_eq!(transport_height(7, true), 1); // available = 3 → cover off, compact
-        assert!(!cover_enabled(7, true));
+    fn a_modal_is_centred_and_clamped_to_the_list_region() {
+        let list = Rect::new(0, 0, 100, 30);
+        assert_eq!(modal_rect(list, 40, 10), Rect::new(30, 10, 40, 10));
+        assert_eq!(
+            modal_rect(list, 200, 50),
+            list,
+            "never larger than the list"
+        );
     }
 
     #[test]
-    fn cover_off_keeps_today_s_chrome() {
-        assert_eq!(transport_height(24, false), 2);
-        assert_eq!(transport_height(16, false), 1);
+    fn a_short_list_region_gives_the_modal_all_of_it() {
+        let list = Rect::new(0, 2, 80, 9);
+        assert_eq!(modal_rect(list, 40, 5), list);
+    }
+
+    #[test]
+    fn list_modals_take_seventy_percent_with_a_floor() {
+        let list = Rect::new(0, 0, 100, 30);
+        assert_eq!(list_modal_rect(list), Rect::new(15, 4, 70, 21));
+        let small = Rect::new(0, 0, 50, 10);
+        let rect = list_modal_rect(small);
+        assert_eq!((rect.width, rect.height), (40, 8));
+    }
+
+    #[test]
+    fn the_cover_needs_a_24_row_window() {
+        assert!(cover_enabled(24, true));
+        assert!(!cover_enabled(23, true));
+        assert!(!cover_enabled(40, false));
+    }
+
+    #[test]
+    fn transport_rows_include_the_message_row() {
+        assert_eq!(transport_height(30, true), 8);
+        assert_eq!(transport_height(22, true), 3, "no cover below 24 rows");
+        assert_eq!(transport_height(15, true), 2);
+        assert_eq!(transport_height(30, false), 3);
+        assert_eq!(transport_height(15, false), 2);
     }
 
     #[test]

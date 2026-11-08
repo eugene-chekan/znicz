@@ -6,17 +6,33 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::app::App;
-use crate::footer_hits::{self, PlacedHint, SEPARATOR};
-use crate::keys;
+use crate::footer_hits::{self, FooterLabel, PlacedHint, SEPARATOR};
+use crate::keys::{self, Hint};
 use crate::theme;
 
 /// Key hints for the current context. Toasts never replace this line.
 pub fn render_footer(frame: &mut Frame, area: Rect, app: &mut App) {
     let context = app.context();
-    let placed =
-        footer_hits::layout_footer(area, keys::context_hints(context), keys::more_hint(context));
+    let unread = app.toasts.unread_alerts().map(|(count, _)| count);
+    let labels: Vec<FooterLabel> = keys::context_hints(context)
+        .iter()
+        .map(|hint| display_label(*hint, unread))
+        .collect();
+    let more = keys::more_hint(context).map(FooterLabel::from);
+    let placed = footer_hits::layout_footer(area, &labels, more);
     app.hits.footer_hints = footer_hits::footer_hits(&placed);
     frame.render_widget(Paragraph::new(footer_line(area, &placed)), area);
+}
+
+/// The hint as drawn: `M messages` carries the unread-alerts count.
+fn display_label(hint: Hint, unread: Option<usize>) -> FooterLabel {
+    let mut label = FooterLabel::from(hint);
+    if hint == keys::MESSAGES_OPEN {
+        if let Some(count) = unread {
+            label.text = format!("{} ({count})", hint.label);
+        }
+    }
+    label
 }
 
 /// Hints at their placed columns: ` · ` between neighbours, spaces before `? more`.
@@ -32,11 +48,11 @@ fn footer_line(area: Rect, placed: &[PlacedHint]) -> Line<'static> {
             spans.push(Span::raw(" ".repeat(usize::from(gap))));
         }
         let (key, action) = item
-            .hint
             .label
+            .text
             .split_once(' ')
-            .unwrap_or((item.hint.label, ""));
-        spans.push(Span::styled(key, theme::key()));
+            .unwrap_or((item.label.text.as_str(), ""));
+        spans.push(Span::styled(key.to_string(), theme::key()));
         if !action.is_empty() {
             spans.push(Span::styled(format!(" {action}"), theme::dim()));
         }

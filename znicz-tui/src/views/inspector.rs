@@ -13,15 +13,11 @@ use crate::app::App;
 use crate::format;
 use crate::theme;
 
-pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState) {
+pub fn render(frame: &mut Frame, list: Rect, app: &mut App, state: &PlayerState) {
     let content = lines(state);
-    let height = (content.len() as u16)
-        .saturating_add(2)
-        .clamp(3, area.height.max(1));
-    let width = ((area.width as u32 * 62 / 100).max(44) as u16)
-        .min(area.width)
-        .max(1);
-    let popup = centered(area, width, height);
+    let height = (content.len() as u16).saturating_add(2).max(3);
+    let width = ((u32::from(list.width) * 62 / 100) as u16).max(44);
+    let popup = crate::layout::modal_rect(list, width, height);
     app.hits.overlay = Some(popup);
     app.hits.close = crate::views::close_button_rect(popup);
 
@@ -145,17 +141,6 @@ fn path_lines(lines: &mut Vec<Line<'static>>, track: &TrackInfo, output: &Output
     }
 }
 
-fn centered(area: Rect, width: u16, height: u16) -> Rect {
-    let width = width.min(area.width);
-    let height = height.min(area.height);
-    Rect {
-        x: area.x + (area.width.saturating_sub(width)) / 2,
-        y: area.y + (area.height.saturating_sub(height)) / 2,
-        width,
-        height,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,14 +231,6 @@ mod tests {
         let text = dump(&state);
         assert!(text.contains("--"), "{text}");
         assert!(!text.contains('?'), "{text}");
-    }
-
-    #[test]
-    fn a_tiny_popup_stays_inside_the_screen() {
-        let popup = centered(Rect::new(0, 0, 10, 3), 44, 14);
-        assert!(popup.width <= 10 && popup.height <= 3);
-        assert_eq!(popup.x, 0);
-        assert_eq!(popup.y, 0);
     }
 
     #[test]

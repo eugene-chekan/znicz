@@ -4,6 +4,7 @@ mod devices;
 mod help;
 mod inspector;
 mod library;
+mod messages;
 mod now_playing;
 mod playlists;
 mod queue;
@@ -13,7 +14,7 @@ mod status;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear};
 use ratatui::Frame;
 use znicz_core::PlayerState;
 
@@ -26,6 +27,7 @@ use crate::toast::Level;
 
 pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
     app.hits = HitMap::default();
+    app.refresh_playing(state);
     let area = frame.area();
     let show_cover = app.tui.show_cover;
     let transport = crate::layout::transport_height(area.height, show_cover);
@@ -63,6 +65,7 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
     app.library.clamp_pan(
         app.title_slot,
         crate::layout::strip_inner(list, app.queue_open),
+        app.playing.as_ref(),
     );
 
     library::render(frame, list, app);
@@ -82,53 +85,17 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
     status::render_footer(frame, chunks[2], app);
 
     match app.modal {
-        Modal::Help => help::render(frame, area, app),
-        Modal::Devices => devices::render_modal(frame, area, app, state),
-        Modal::Inspector => inspector::render(frame, area, app, state),
-        Modal::Playlists => playlists::render_modal(frame, area, app),
-        Modal::Radio => radio::render_modal(frame, area, app),
+        Modal::Help => help::render(frame, list, app),
+        Modal::Devices => devices::render_modal(frame, list, app, state),
+        Modal::Inspector => inspector::render(frame, list, app, state),
+        Modal::Playlists => playlists::render_modal(frame, list, app),
+        Modal::Radio => radio::render_modal(frame, list, app),
+        Modal::Messages => messages::render_modal(frame, list, app),
         Modal::None => {}
     }
-
-    render_toasts(frame, list, app);
 }
 
-fn render_toasts(frame: &mut Frame, list: Rect, app: &App) {
-    let shown = app.toasts.visible();
-    if shown.is_empty() {
-        return;
-    }
-    let boxed = crate::layout::toast_boxed(list);
-    let line_width = shown
-        .iter()
-        .map(|toast| crate::layout::toast_width_for(&toast.text, boxed))
-        .max()
-        .unwrap_or(1);
-    let areas = crate::layout::toast_areas(list, shown.len() as u16, line_width);
-    for (toast, area) in shown.iter().zip(areas) {
-        frame.render_widget(Clear, area);
-        let (marker, style) = toast_mark(toast.level);
-        let inner_w = if boxed {
-            inner_width(area)
-        } else {
-            area.width as usize
-        };
-        let text_w = inner_w.saturating_sub(crate::layout::TOAST_MARK_AND_SPACE as usize);
-        let text = format::truncate(&toast.text, text_w);
-        let line = Line::from(vec![
-            Span::styled(format!("{marker} "), style),
-            Span::styled(text, theme::strong()),
-        ]);
-        if boxed {
-            let block = Block::default().borders(Borders::ALL).border_style(style);
-            frame.render_widget(Paragraph::new(line).block(block), area);
-        } else {
-            frame.render_widget(Paragraph::new(line), area);
-        }
-    }
-}
-
-fn toast_mark(level: Level) -> (&'static str, Style) {
+pub(crate) fn level_mark(level: Level) -> (&'static str, Style) {
     match level {
         Level::Info => ("●", theme::info()),
         Level::Success => ("●", theme::good()),
@@ -214,6 +181,66 @@ pub(crate) fn inner_width(area: Rect) -> usize {
     area.width.saturating_sub(2) as usize
 }
 
-pub(crate) fn no_style() -> Style {
-    Style::default()
+/// Highlight for the selected row: accent when the list has focus, grey otherwise.
+pub(crate) fn highlight(focused: bool) -> Style {
+    if focused {
+        theme::selected()
+    } else {
+        theme::selected_idle()
+    }
+}
+
+const CRUMB_SEPARATOR: &str = " › ";
+
+/// `Library › Artist › Album`, fitted to `width` characters.
+///
+/// Middle segments shrink first, then the last; the first is never shortened.
+pub(crate) fn breadcrumb(parts: &[&str], width: usize) -> String {
+    let mut parts: Vec<String> = parts.iter().map(|p| p.to_string()).collect();
+    let joined = |parts: &[String]| parts.join(CRUMB_SEPARATOR);
+    let len = parts.len();
+    if len > 1 {
+        for i in (1..len - 1).chain(std::iter::once(len - 1)) {
+            let over = joined(&parts).chars().count().saturating_sub(width);
+            if over == 0 {
+                break;
+            }
+            let keep = parts[i].chars().count().saturating_sub(over).max(1);
+            parts[i] = format::truncate(&parts[i], keep);
+        }
+    }
+    format::truncate(&joined(&parts), width)
+}
+
+/// Room for a pane title: the width minus corners and the padding spaces.
+pub(crate) fn title_width(area: Rect) -> usize {
+    usize::from(area.width).saturating_sub(4)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_short_breadcrumb_is_joined_whole() {
+        assert_eq!(
+            breadcrumb(&["Library", "Miles", "Kind of Blue"], 40),
+            "Library › Miles › Kind of Blue"
+        );
+    }
+
+    #[test]
+    fn middle_segments_shrink_before_the_last() {
+        let crumb = breadcrumb(&["Library", "Miles Davis Quintet", "Kind of Blue"], 30);
+        assert_eq!(crumb.chars().count(), 30);
+        assert!(crumb.starts_with("Library › "), "{crumb}");
+        assert!(crumb.ends_with(" › Kind of Blue"), "{crumb}");
+    }
+
+    #[test]
+    fn library_is_never_shortened() {
+        let crumb = breadcrumb(&["Library", "Miles", "Kind of Blue"], 16);
+        assert!(crumb.starts_with("Library"), "{crumb}");
+        assert!(crumb.chars().count() <= 16, "{crumb}");
+    }
 }
