@@ -31,23 +31,22 @@ pub fn render_transport(
 
     if !with_cover {
         let width = area.width as usize;
-        if area.height >= 2 && show_signal {
-            let chrome_area = Rect {
-                x: area.x,
-                y: area.y,
-                width: area.width,
-                height: 1,
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(vec![Constraint::Length(1); area.height as usize])
+            .split(area);
+        let last = rows.len().saturating_sub(1);
+        for (i, row) in rows.iter().enumerate() {
+            let line = if i == 0 {
+                chrome_line(state, width)
+            } else if i == last {
+                message_line(&app.toasts, width)
+            } else if show_signal {
+                signal_line(state, width)
+            } else {
+                Line::from("")
             };
-            let signal_area = Rect {
-                x: area.x,
-                y: area.y + 1,
-                width: area.width,
-                height: 1,
-            };
-            frame.render_widget(Paragraph::new(chrome_line(state, width)), chrome_area);
-            frame.render_widget(Paragraph::new(signal_line(state, width)), signal_area);
-        } else {
-            frame.render_widget(Paragraph::new(chrome_line(state, width)), area);
+            frame.render_widget(Paragraph::new(line), *row);
         }
         return;
     }
@@ -57,7 +56,7 @@ pub fn render_transport(
     let cover_w = crate::layout::cover_width(area.height, font.width, font.height, area.width);
     let (cover, chrome) = crate::layout::cover_chrome_split(area, cover_w);
     render_cover(frame, cover, app, state);
-    render_stacked_chrome(frame, chrome, state, show_signal);
+    render_stacked_chrome(frame, chrome, state, &app.toasts, show_signal);
 }
 
 fn cover_draw_label(ready: &CoverReady) -> String {
@@ -132,7 +131,13 @@ fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerStat
     }
 }
 
-fn render_stacked_chrome(frame: &mut Frame, area: Rect, state: &PlayerState, show_signal: bool) {
+fn render_stacked_chrome(
+    frame: &mut Frame,
+    area: Rect,
+    state: &PlayerState,
+    toasts: &crate::toast::Toasts,
+    show_signal: bool,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -149,10 +154,44 @@ fn render_stacked_chrome(frame: &mut Frame, area: Rect, state: &PlayerState, sho
             1 => artist_album_row(state, width),
             2 => seek_row(state, width),
             3 if show_signal => signal_line(state, width),
+            4 => message_line(toasts, width),
             _ => Line::from(""),
         };
         frame.render_widget(Paragraph::new(line), *row);
     }
+}
+
+/// The transport's message row: the newest live message (with `+N` for the
+/// rest), else the unread-alerts marker, else blank. Always `width` wide.
+pub(crate) fn message_line(toasts: &crate::toast::Toasts, width: usize) -> Line<'static> {
+    if width == 0 {
+        return Line::from("");
+    }
+    if let Some(toast) = toasts.current() {
+        let (mark, style) = crate::views::level_mark(toast.level);
+        let extra = toasts.live_extra();
+        let suffix = if extra > 0 {
+            format!(" +{extra}")
+        } else {
+            String::new()
+        };
+        let suffix_w = suffix.chars().count();
+        let text = format::truncate(&toast.text, width.saturating_sub(2 + suffix_w));
+        let pad = width.saturating_sub(2 + text.chars().count() + suffix_w);
+        return Line::from(vec![
+            Span::styled(format!("{mark} "), style),
+            Span::styled(text, theme::strong()),
+            Span::raw(" ".repeat(pad)),
+            Span::styled(suffix, theme::dim()),
+        ]);
+    }
+    if let Some((count, level)) = toasts.unread_alerts() {
+        let (mark, style) = crate::views::level_mark(level);
+        let label = format::truncate(&format!("{mark} {count} unread · M"), width);
+        let pad = width.saturating_sub(label.chars().count());
+        return Line::from(vec![Span::raw(" ".repeat(pad)), Span::styled(label, style)]);
+    }
+    Line::from(" ".repeat(width))
 }
 
 fn title_row(state: &PlayerState, width: usize) -> Line<'static> {
@@ -625,5 +664,45 @@ mod tests {
             "an unknown length makes the total a lie"
         );
         assert_eq!(total_duration(&[]), None);
+    }
+
+    fn text(line: &Line) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn the_message_row_shows_the_newest_live_message() {
+        let mut toasts = crate::toast::Toasts::new();
+        toasts.info("first");
+        toasts.success("added 4 tracks");
+        let row = text(&message_line(&toasts, 40));
+        assert!(row.starts_with("● added 4 tracks"), "{row:?}");
+        assert!(row.trim_end().ends_with("+1"), "{row:?}");
+        assert_eq!(row.chars().count(), 40);
+    }
+
+    #[test]
+    fn the_message_row_shows_unread_alerts_once_messages_expire() {
+        let mut toasts = crate::toast::Toasts::new();
+        toasts.warn("stream dropped");
+        toasts.error("device refused");
+        toasts.expire_live_for_test();
+        let row = text(&message_line(&toasts, 40));
+        assert!(row.trim_end().ends_with("x 2 unread · M"), "{row:?}");
+    }
+
+    #[test]
+    fn the_message_row_is_blank_with_nothing_to_say() {
+        let toasts = crate::toast::Toasts::new();
+        assert_eq!(text(&message_line(&toasts, 40)).trim(), "");
+    }
+
+    #[test]
+    fn a_long_message_is_cut_to_the_row() {
+        let mut toasts = crate::toast::Toasts::new();
+        toasts.error("player error: playlist had no playable files at all");
+        let row = text(&message_line(&toasts, 20));
+        assert_eq!(row.chars().count(), 20);
+        assert!(row.ends_with('…'), "{row:?}");
     }
 }

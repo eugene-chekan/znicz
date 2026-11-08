@@ -120,70 +120,6 @@ pub fn is_sheet(list_width: u16, open: bool) -> bool {
     open && list_width <= DRAWER_WIDTH.saturating_add(MIN_STRIP)
 }
 
-/// Height of one boxed toast, including its own border.
-pub const TOAST_BOX_HEIGHT: u16 = 3;
-/// Gap from the pane border, so the toast does not sit on the line.
-pub const TOAST_INSET: u16 = 1;
-/// Mark plus the space after it (`× message`).
-pub const TOAST_MARK_AND_SPACE: u16 = 2;
-/// Left and right border of a boxed toast.
-pub const TOAST_BORDERS: u16 = 2;
-/// Narrowest list that still gets a boxed toast.
-const TOAST_BOX_MIN_WIDTH: u16 = 12;
-
-/// A 3-row bordered box when the list can hold it; otherwise a 1-row line.
-pub fn toast_boxed(list: Rect) -> bool {
-    list.height >= TOAST_BOX_HEIGHT + TOAST_INSET * 2 && list.width >= TOAST_BOX_MIN_WIDTH
-}
-
-/// Columns needed to draw a toast without cutting `text`.
-///
-/// `boxed` is the 3-row bordered box used when the list is large enough.
-pub fn toast_width_for(text: &str, boxed: bool) -> u16 {
-    let borders = if boxed { TOAST_BORDERS as usize } else { 0 };
-    text.chars()
-        .count()
-        .saturating_add(TOAST_MARK_AND_SPACE as usize)
-        .saturating_add(borders)
-        .max(1) as u16
-}
-
-/// Bottom-right boxes for up to three toasts, inset from the pane border.
-pub fn toast_areas(list: Rect, count: u16, line_width: u16) -> Vec<Rect> {
-    let count = count.min(3);
-    if count == 0 || list.width == 0 || list.height == 0 {
-        return Vec::new();
-    }
-
-    let boxed = toast_boxed(list);
-    let inset = if boxed { TOAST_INSET } else { 0 };
-    let height = if boxed { TOAST_BOX_HEIGHT } else { 1 };
-    let width = line_width
-        .min(list.width.saturating_sub(inset.saturating_mul(2)))
-        .max(1);
-    let x = list.x + list.width.saturating_sub(width).saturating_sub(inset);
-
-    (0..count)
-        .filter_map(|i| {
-            let stacked = height.saturating_mul(i + 1);
-            let y = list
-                .y
-                .saturating_add(list.height)
-                .saturating_sub(inset)
-                .saturating_sub(stacked);
-            if y < list.y {
-                return None;
-            }
-            Some(Rect {
-                x,
-                y,
-                width,
-                height,
-            })
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -234,44 +170,6 @@ mod tests {
         assert_eq!(strip_inner(wide, true), 58);
         // closed: inner_width = 80 - 2 for a 80-wide pane; here 100 - 2
         assert_eq!(strip_inner(wide, false), 98);
-    }
-
-    #[test]
-    fn toast_areas_stack_up_from_the_bottom_right() {
-        let list = Rect::new(0, 0, 80, 10);
-        let areas = toast_areas(list, 3, 32);
-        assert_eq!(areas.len(), 3);
-        // Inset 1 from the right and from the bottom; each box is 3 rows.
-        assert_eq!(areas[0], Rect::new(47, 6, 32, 3));
-        assert_eq!(areas[1], Rect::new(47, 3, 32, 3));
-        assert_eq!(areas[2], Rect::new(47, 0, 32, 3));
-        assert!(
-            areas[0].bottom() < list.bottom(),
-            "must not sit on the pane's bottom border"
-        );
-        assert!(
-            areas[0].right() < list.right(),
-            "must not sit on the pane's right border"
-        );
-    }
-
-    #[test]
-    fn a_tiny_list_falls_back_to_a_single_line() {
-        let list = Rect::new(0, 0, 20, 3);
-        let areas = toast_areas(list, 1, 32);
-        assert_eq!(areas.len(), 1);
-        assert_eq!(areas[0].height, 1);
-        assert_eq!(areas[0].y, 2);
-    }
-
-    #[test]
-    fn toast_width_covers_the_playlist_empty_error() {
-        let text = "player error: playlist had no playable files";
-        let width = toast_width_for(text, true);
-        assert!(
-            width > 42,
-            "must be wider than the old 40% cap so the reason fits, got {width}"
-        );
     }
 
     #[test]

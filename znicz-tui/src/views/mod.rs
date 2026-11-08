@@ -13,12 +13,11 @@ mod status;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear};
 use ratatui::Frame;
 use znicz_core::PlayerState;
 
 use crate::app::{App, Modal};
-use crate::format;
 use crate::hit::HitMap;
 use crate::line_edit::LineEdit;
 use crate::theme;
@@ -89,46 +88,9 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
         Modal::Radio => radio::render_modal(frame, list, app),
         Modal::None => {}
     }
-
-    render_toasts(frame, list, app);
 }
 
-fn render_toasts(frame: &mut Frame, list: Rect, app: &App) {
-    let shown = &app.toasts.recent()[..app.toasts.recent().len().min(3)];
-    if shown.is_empty() {
-        return;
-    }
-    let boxed = crate::layout::toast_boxed(list);
-    let line_width = shown
-        .iter()
-        .map(|toast| crate::layout::toast_width_for(&toast.text, boxed))
-        .max()
-        .unwrap_or(1);
-    let areas = crate::layout::toast_areas(list, shown.len() as u16, line_width);
-    for (toast, area) in shown.iter().zip(areas) {
-        frame.render_widget(Clear, area);
-        let (marker, style) = toast_mark(toast.level);
-        let inner_w = if boxed {
-            inner_width(area)
-        } else {
-            area.width as usize
-        };
-        let text_w = inner_w.saturating_sub(crate::layout::TOAST_MARK_AND_SPACE as usize);
-        let text = format::truncate(&toast.text, text_w);
-        let line = Line::from(vec![
-            Span::styled(format!("{marker} "), style),
-            Span::styled(text, theme::strong()),
-        ]);
-        if boxed {
-            let block = Block::default().borders(Borders::ALL).border_style(style);
-            frame.render_widget(Paragraph::new(line).block(block), area);
-        } else {
-            frame.render_widget(Paragraph::new(line), area);
-        }
-    }
-}
-
-fn toast_mark(level: Level) -> (&'static str, Style) {
+pub(crate) fn level_mark(level: Level) -> (&'static str, Style) {
     match level {
         Level::Info => ("●", theme::info()),
         Level::Success => ("●", theme::good()),

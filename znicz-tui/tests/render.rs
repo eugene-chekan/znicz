@@ -377,7 +377,7 @@ fn transport_sits_at_the_bottom_and_drops_the_signal_line_when_short() {
 }
 
 #[test]
-fn a_success_toast_has_its_own_box_and_mark() {
+fn a_success_message_has_its_mark() {
     let mut app = App::with_library(player(), None);
     app.toasts.success("queue cleared");
     let screen = draw(&mut app, 90, 24);
@@ -405,30 +405,29 @@ fn a_playlist_error_toast_shows_the_whole_message() {
 }
 
 #[test]
-fn hints_stay_when_a_toast_is_showing() {
+fn a_message_sits_in_the_transport_not_over_the_list() {
     let mut app = App::with_library(player(), None);
     app.toasts.error("could not open device");
     let screen = draw(&mut app, 90, 24);
-    assert!(screen.contains("could not open device"), "{screen}");
-    assert!(
-        screen.contains("? help") || screen.contains("search"),
-        "hints must remain:\n{screen}"
-    );
-    assert!(
-        screen.contains('x'),
-        "errors should carry a level mark:\n{screen}"
-    );
     let lines: Vec<&str> = screen.lines().collect();
-    let toast_row = lines
+    let row = lines
         .iter()
-        .position(|line| line.contains("could not open device"))
-        .expect("toast text");
-    let transport = znicz_tui::layout::transport_height(24, app.tui.show_cover) as usize;
-    let last_list_row = lines.len().saturating_sub(transport + 1 + 1);
+        .position(|line| line.contains("x could not open device"))
+        .expect("message row");
     assert!(
-        toast_row < last_list_row,
-        "toast must sit above the pane border, not on it:\n{screen}"
+        row >= usize::from(app.list_height) && row < lines.len() - 1,
+        "message must be in the transport, row {row}:\n{screen}"
     );
+    assert!(lines[lines.len() - 1].contains("search"), "hints remain");
+}
+
+#[test]
+fn unread_alerts_show_once_the_message_expires() {
+    let mut app = App::with_library(player(), None);
+    app.toasts.warn("stream dropped");
+    app.toasts.expire_live_for_test();
+    let screen = draw(&mut app, 90, 24);
+    assert!(screen.contains("▲ 1 unread · M"), "{screen}");
 }
 
 #[test]
