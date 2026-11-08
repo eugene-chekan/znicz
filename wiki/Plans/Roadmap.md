@@ -41,6 +41,7 @@ Znicz is a terminal player first, so the interface caught up with the engine:
   modal (`,`)
 - Two-line transport; boxed toasts (blue info, green success, yellow warn,
   red error) inset from the pane border so they do not steal hints
+  (replaced in 0.7.0 by the transport message row)
 - Signal inspector (`i`) for the full file → device path, including sample format
 - Horizontal pan of long titles with `Alt-←` and `Alt-→`
 - Library browsing and search from inside the player, not just the CLI
@@ -128,7 +129,7 @@ A five-part rework of the player experience. Each part has its own spec and PR.
 | # | Part | Status |
 | --- | --- | --- |
 | 1 | Keymap and discoverability: `h` / `l` move, arrows seek, context footer, context-first help with a filter | **Done** in 0.6.0 ([spec](../../docs/superpowers/specs/2026-11-07-keymap-discoverability-design.md)) |
-| 2 | Space and layering: modals inside the list region, toasts in a transport slot with history, focus styling, breadcrumb, playing marker | Planned |
+| 2 | Space and layering: modals inside the list region, toasts in a transport slot with history, focus styling, breadcrumb, playing marker | **Done** in 0.7.0 ([spec](../../docs/superpowers/specs/2026-11-07-space-and-layering-design.md)) |
 | 3 | Empty-library onboarding: scan a folder from the TUI | Planned |
 | 4 | Stage mode ([#46](https://github.com/eugene-chekan/znicz/issues/46)): full-screen now playing; the inspector folds in; marquee ([#34](https://github.com/eugene-chekan/znicz/issues/34)) | Planned |
 | 5 | Reorder rows ([#36](https://github.com/eugene-chekan/znicz/issues/36)) and finer volume ([#47](https://github.com/eugene-chekan/znicz/issues/47)) | Planned |

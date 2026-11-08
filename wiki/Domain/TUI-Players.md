@@ -37,7 +37,8 @@ problems specific to this kind of program:
 - **Nowhere to print.** The app owns the screen, so a `println!` or a log line
   either corrupts the display or is never seen. Anything the user needs to know
   has to be drawn as part of the interface. Znicz turns player errors into
-  boxed toasts in the list corner, not onto the hint line.
+  messages on the transport's last row (with a history on `M`), not onto the
+  hint line.
 - **Unknown window size.** A terminal can be 200×60 or 40×10, and it changes
   while running. Layouts need an order in which parts are dropped.
 - **Characters, not pixels.** Text has to be truncated to fit, and by character

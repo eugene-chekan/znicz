@@ -49,13 +49,17 @@ cover    ▶ So What
 8 rows   Miles Davis — Kind of Blue
          ━━━●━━━━  1:02 / 9:22  70%
          FLAC 24/96 → DAC  ● bit perfect
+         ● added 4 tracks
 Space pause · / search · a add · ] queue · P playlists · R radio    ? more
 ```
 
 The library is the stage and always fills the list region. The queue is an
-overlay drawer on the right (`]` toggles it). Long titles pan horizontally with
+overlay drawer on the right (`]` toggles it). Every modal (help, devices,
+inspector, playlists, radio, messages) opens **inside the list region**, so the
+transport and the footer are never covered. The transport ends in a message row;
+toasts no longer float over the list. Long titles pan horizontally with
 `Alt-←` and `Alt-→` on the highlighted row only. `<` and `>` are unbound.
-With cover on (default), transport is a square cover slot on the left and
+With cover on (default) and a window at least 24 rows tall, transport is a square cover slot on the left and
 stacked chrome on the right, with one empty cell between them. The cover
 widget starts on the same column as the library pane's left border and is
 pinned to the top of the slot so it meets the library's bottom edge. The
@@ -66,23 +70,24 @@ else the AudioAddict current-song `art_url` (RadioTunes / DI.FM / RockRadio /
 JazzRadio / ClassicalRadio / ZenRadio), else the station `art` file, else the
 logo. The picture is letterboxed onto an opaque canvas the size of the slot, so
 a stream cannot leave the previous cover on screen.
-`show_cover = false` restores the old full-width one- or two-line transport.
-Hints stay on their own line and are never replaced by a toast. Config: `[tui]`
+`show_cover = false`, or a window under 24 rows, uses the full-width text
+transport. Hints stay on their own line and are never replaced by a message. Config: `[tui]`
 in `config.toml` (`show_cover`, `cover_protocol`, `library_layout`).
 
 ### Responsive behaviour
 
-Always reserve **3** list rows and **1** hint row. `available = height - 4`.
-Compact windows (`height < 20`) still **drop the signal line**, whether or not
-a cover is showing.
+The list region is `Min(3)`; the footer is 1 row and the transport takes the
+rest of the fixed rows. The last transport row is always the message row.
 
-| Height | Cover | Transport text |
+| Window height | Cover | Transport rows |
 | --- | --- | --- |
-| `show_cover = false`, ≥ 20 | none | two lines |
-| `show_cover = false`, < 20 | none | one line |
-| cover on, `available ≥ 8` | 8 rows | stacked chrome to the right; signal dropped if height < 20 |
-| cover on, `available` 4–7 | that many rows | same |
-| cover on, `available < 4` | none | same as `show_cover = false` |
+| ≥ 24, `show_cover` on | 8-row cover | 8: title, artist — album, seek, signal, message beside the cover |
+| ≥ 20 (cover off or < 24) | none | 3: title + seek, signal, message |
+| < 20 | none | 2: title + seek, message |
+
+There is no shrinking cover: it is 8 rows or absent, so 48×14 keeps its list.
+When the list region is shorter than 10 rows, a modal takes the whole list
+region instead of 70 % of it (`layout::modal_rect`).
 
 Every row is also truncated to the window width with `…`, counting **characters
 rather than bytes** so accented titles are never cut mid-character.
@@ -99,7 +104,8 @@ and right in the library and never play anything:
 | Single column | back one level | into the artist or album |
 
 They do nothing in search results, the queue, or modals. `Tab` still cycles
-columns and wraps.
+columns and wraps. `M` opens the messages list and `J` jumps to the playing
+track.
 
 The footer shows a short hint list for the current **context** (library,
 library tree, search prompt, queue, devices, inspector, playlists, radio, a
@@ -113,8 +119,12 @@ clicking one runs that key.
 then Playback and Navigation, then every other context dimmed. `j` / `k`,
 `Ctrl-d` / `Ctrl-u`, `g` / `G`, and the wheel scroll. `/` filters by key or
 action (case-insensitive); `Enter` keeps the filter, `Esc` clears it, and a
-second `Esc`, `?`, or `q` closes help (`q` does not quit from here). Other keys
-are ignored while help is open.
+second `Esc`, `?`, or `q` closes help (`q` does not quit from here). Closing
+returns to the modal help replaced (devices, inspector, playlists, radio, or
+messages), or to the library. While you type a filter the help border reads
+`Enter keep · Esc clear`; otherwise `/ filter · Esc close`. Other keys are
+ignored while help is open, and the selection behind help is grey like any
+other modal.
 
 ## The signal path
 
@@ -167,6 +177,27 @@ SQLite. See [Library](Library.md).
 
 A library whose files carry **no album tags** cannot be grouped, so the pane
 falls back to a flat track list rather than looking empty.
+
+**Focus** is shown by colour. The focused pane has a cyan selection bar and an
+accent border; an unfocused one (other columns, the library behind the drawer,
+anything behind a modal) keeps its selection as a dark grey bar with a muted
+border, so a selection is never invisible.
+
+**Titles are breadcrumbs.** Columns title themselves `Artists`,
+`Albums · <artist>`, and `Tracks · <album>`. The tree shows
+`Library › <artist> › <album>` for the cursor row; paging shows the path of the
+level you are on; search is `Library › search "<query>"` and the flat list is
+`Library › all tracks`. When too wide, middle segments shorten first.
+
+**Playing marker.** The playing track shows `▶` in place of its number (tree
+tracks get a `▶ ` lead) and the playing colour. Its album and artist rows get
+` ♪`. When the current path changes, the TUI looks it up in the library
+(`Library::get_by_path`) to learn the browse artist and album, falling back to
+the track's own tags. Streams and an idle player have no marker. `J` jumps to
+the playing track: columns select artist, album, and track and focus Tracks;
+the tree expands to the track; paging drills to the album's tracks. It leaves
+search first, and says so in a message when nothing is playing or the file is
+not in the library.
 
 The queue drawer still overlays on the right; columns and the tree shrink under
 it the same way the old single list did.
@@ -265,17 +296,29 @@ and in the `?` overlay.
 The `?` overlay also shows the build in its bottom-left corner
 (` znicz 0.y.z `); `znicz --version` prints the same number.
 
-## Messages instead of silence
+## Messages
 
 The interface owns the screen, so anything written to the log or to stdout is
 invisible. Previously a failed file looked exactly like nothing happening. Now
-every player error and every action becomes a short-lived **boxed** message in
-the list corner (`toast.rs`), inset so it does not sit on the pane border. The
-box grows to the message, up to the list width, so a reason like
-`playlist had no playable files` is not cut off. A coloured mark and
-matching outline show the level at a glance: blue info, green success, yellow
-warn, red error. Errors stay up twice as long, since they need reading. Hints
-on the bottom line are never replaced.
+every player error and every action becomes a short message (`toast.rs`) on the
+**transport's last row**. It shows, in order of preference:
+
+1. the newest live message, with a level mark and colour (blue info, green
+   success, yellow warn, red error), truncated with `…`, and a dim `+N` on the
+   right when more are live;
+2. else, when unread alerts exist, `▲ 2 unread · M` (or `x`), coloured by the
+   worst level;
+3. else blank.
+
+Messages live 4 s, errors 8 s. Hints on the bottom line are never replaced.
+
+Expired messages go into a **history of 50**, newest first. **Unread** means
+warnings and errors only; info and success confirm what you just did. `M` opens
+the Messages list: a mark, an age (`12s`, `3m`, `1h`), and the text per row,
+with rows that were unread when it opened in bold until it closes. `C` clears
+the history; `Esc` or `M` closes; `Alt-←` / `Alt-→` pan the highlighted row.
+Opening it marks everything read. The footer hint reads `M messages (N)` while
+unread alerts exist.
 
 For this to work, key handlers use `send_blocking` rather than
 `send`: the engine's own result comes back, so a missing file or an unusable
@@ -296,9 +339,11 @@ top of the player.
 | File | Role |
 | --- | --- |
 | `app.rs` | state, event loop, key dispatch |
-| `layout.rs` | list region, drawer overlay, toast boxes, modal placement |
+| `layout.rs` | list region, drawer overlay, modal placement, transport height |
 | `views/` | drawing, one module per pane |
-| `views/now_playing.rs` | transport (cover slot + chrome, or one-/two-line text) |
+| `views/now_playing.rs` | transport (cover slot + chrome, or two-/three-line text) and the message row |
+| `views/messages.rs` | Messages list (`M`) |
+| `playing.rs` | which rows stand for the playing track, album, and artist |
 | `views/inspector.rs` | full signal-path overlay (`i`) |
 | `views/playlists.rs` | saved M3U overlay (`P`) |
 | `views/radio.rs` | saved stations overlay (`R`) |
@@ -313,7 +358,7 @@ top of the player.
 | `meta.rs` | background tag cache |
 | `cover.rs` | background cover cache + logo |
 | `tui_config.rs` | `show_cover` / `cover_protocol` / `library_layout` |
-| `toast.rs` | boxed, level-coloured messages |
+| `toast.rs` | live messages and history |
 | `format.rs` | durations, rates, bars, truncation |
 | `library_pane.rs` | browsing state |
 
