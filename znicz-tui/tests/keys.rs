@@ -1392,3 +1392,26 @@ fn alt_arrow_pans_a_message_and_moving_resets_it() {
     press_char(&mut app, 'j');
     assert_eq!(app.message_h_offset, 0);
 }
+
+#[test]
+fn closing_help_returns_to_the_modal_it_replaced() {
+    let mut app = new_app();
+    press_char(&mut app, ',');
+    press_char(&mut app, '?');
+    assert_eq!(app.modal, Modal::Help);
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.modal, Modal::Devices);
+
+    press_char(&mut app, '?');
+    press_char(&mut app, 'q');
+    assert_eq!(app.modal, Modal::Devices);
+    assert!(!app.should_quit);
+}
+
+#[test]
+fn closing_help_opened_from_the_library_returns_to_nothing() {
+    let mut app = new_app();
+    press_char(&mut app, '?');
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.modal, Modal::None);
+}

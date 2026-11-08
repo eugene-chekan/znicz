@@ -666,7 +666,9 @@ impl App {
 
     /// Open help on whatever the user is looking at now.
     fn open_help(&mut self) {
+        let return_to = self.modal;
         self.help = HelpState::open(self.context());
+        self.help.return_to = return_to;
         self.modal = Modal::Help;
     }
 
@@ -704,7 +706,7 @@ impl App {
         }
 
         match key.code {
-            KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => self.modal = Modal::None,
+            KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => self.close_modal(),
             KeyCode::Char('/') => self.help.editing = true,
             KeyCode::Char('j') | KeyCode::Down => self.help.scroll_by(1),
             KeyCode::Char('k') | KeyCode::Up => self.help.scroll_by(-1),
@@ -959,6 +961,10 @@ impl App {
 
     /// Close whatever modal is open, tidying what it leaves behind.
     fn close_modal(&mut self) {
+        if self.modal == Modal::Help {
+            self.modal = self.help.return_to;
+            return;
+        }
         if self.modal == Modal::Messages {
             self.toasts.clear_fresh();
         }

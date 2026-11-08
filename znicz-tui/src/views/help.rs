@@ -13,6 +13,16 @@ use crate::theme;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const VERSION_PREFIX: &str = " znicz ";
 const CLOSE_HINT: &str = " / filter · Esc close ";
+const FILTER_HINT: &str = " Enter keep · Esc clear ";
+
+/// Bottom-right border text: what Enter and Esc do right now.
+fn border_hint(editing: bool) -> &'static str {
+    if editing {
+        FILTER_HINT
+    } else {
+        CLOSE_HINT
+    }
+}
 const FILTER_PREFIX: &str = "/ ";
 /// One column of keys and actions reads best kept narrow.
 const MAX_WIDTH: u16 = 64;
@@ -24,13 +34,14 @@ pub fn render(frame: &mut Frame, list: Rect, app: &mut App) {
     app.hits.overlay = Some(popup);
     app.hits.close = crate::views::close_button_rect(popup);
 
+    let hint = border_hint(app.help.editing);
     let mut block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme::border_active())
         .title(Span::styled(title(&app.help), theme::title()))
         .title(crate::views::close_title())
-        .title_bottom(Line::from(Span::styled(CLOSE_HINT, theme::dim())).right_aligned());
-    if let Some(version) = version_title(popup.width) {
+        .title_bottom(Line::from(Span::styled(hint, theme::dim())).right_aligned());
+    if let Some(version) = version_title(popup.width, hint) {
         block = block.title_bottom(version);
     }
     let inner = block.inner(popup);
@@ -113,10 +124,10 @@ fn split_prompt(inner: Rect, show_prompt: bool) -> (Rect, Option<Rect>) {
 ///
 /// The close hint is functional, so it keeps the row when a tiny popup has no
 /// room for the version.
-fn version_title(popup_width: u16) -> Option<Line<'static>> {
+fn version_title(popup_width: u16, hint: &str) -> Option<Line<'static>> {
     let label = format!("{VERSION_PREFIX}{VERSION} ");
     let budget = popup_width.saturating_sub(2) as usize;
-    if label.chars().count() + CLOSE_HINT.chars().count() > budget {
+    if label.chars().count() + hint.chars().count() > budget {
         return None;
     }
     Some(Line::from(Span::styled(label, theme::dim())).left_aligned())
@@ -190,7 +201,7 @@ mod tests {
 
     #[test]
     fn the_version_title_names_the_package_version() {
-        let title = version_title(80).expect("a normal popup has room");
+        let title = version_title(80, CLOSE_HINT).expect("a normal popup has room");
         let text: String = title
             .spans
             .iter()
@@ -201,7 +212,7 @@ mod tests {
 
     #[test]
     fn a_narrow_popup_drops_the_version_and_keeps_the_close_hint() {
-        assert!(version_title(30).is_none());
-        assert!(version_title(80).is_some());
+        assert!(version_title(30, CLOSE_HINT).is_none());
+        assert!(version_title(80, CLOSE_HINT).is_some());
     }
 }

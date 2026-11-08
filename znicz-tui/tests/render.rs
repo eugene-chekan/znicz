@@ -783,3 +783,16 @@ fn the_footer_counts_unread_alerts() {
     let row = screen.lines().last().unwrap();
     assert!(row.contains("M messages (2)"), "{row}");
 }
+
+#[test]
+fn the_help_border_says_keep_and_clear_while_filtering() {
+    let mut app = App::with_library(player(), None);
+    app.modal = Modal::Help;
+    app.help.editing = true;
+    let screen = draw(&mut app, 100, 40);
+    let border = screen
+        .lines()
+        .find(|line| line.contains("znicz "))
+        .expect("help bottom border");
+    assert!(border.contains("Enter keep · Esc clear"), "{border}");
+}
