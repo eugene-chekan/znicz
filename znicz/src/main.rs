@@ -4,10 +4,12 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
+use znicz_core::wait_for_library;
 use znicz_core::{
     apply_to_player, copy_saved, list_saved, load_path, remove_saved, rename_saved,
     restore_session, save_session_from_player, saved_path, skipped_notice, spawn_player,
-    AudioConfig, AudioOutput, ClientRole, Command, IpcClient, IpcServer, SESSION_SAVE_DEBOUNCE,
+    AudioConfig, AudioOutput, ClientRole, Command, IpcClient, IpcServer, LibraryHost, LibraryOp,
+    ScanSummary, SESSION_SAVE_DEBOUNCE,
 };
 use znicz_library::Library;
 use znicz_mcp::run_stdio;
@@ -255,10 +257,20 @@ fn main() -> color_eyre::Result<()> {
         }
         Some(Commands::Player { command }) => match command {
             Some(PlayerCmd::Stop) => stop_player()?,
-            None => run_player_daemon(audio_config, config.player.idle_secs.unwrap_or(900))?,
+            None => run_player_daemon(
+                audio_config,
+                config.player.idle_secs.unwrap_or(900),
+                library_path.clone(),
+            )?,
         },
         Some(Commands::Scan { dirs, prune }) => {
-            scan_library(library_path, &dirs, prune)?;
+            scan_library(
+                library_path,
+                &dirs,
+                prune,
+                audio_config.device_id.as_deref(),
+                config_file.as_deref(),
+            )?;
         }
         Some(Commands::Search { query, limit }) => {
             search_library(library_path, &query, limit)?;
@@ -464,7 +476,11 @@ fn stop_player() -> color_eyre::Result<()> {
     Ok(())
 }
 
-fn run_player_daemon(audio_config: AudioConfig, idle_secs: u64) -> color_eyre::Result<()> {
+fn run_player_daemon(
+    audio_config: AudioConfig,
+    idle_secs: u64,
+    library_path: Option<PathBuf>,
+) -> color_eyre::Result<()> {
     let ipc = ipc_path()?;
     let lock_path = player_lock_path()?;
     clear_stale_player_files(&lock_path, &ipc);
@@ -484,12 +500,22 @@ fn run_player_daemon(audio_config: AudioConfig, idle_secs: u64) -> color_eyre::R
     } else {
         std::time::Duration::from_secs(idle_secs)
     };
-    let mut server = IpcServer::start_with_session(
+    // A broken library must not stop playback; library writes then report it.
+    let library: Option<Arc<dyn LibraryHost>> =
+        library_path.and_then(|path| match znicz_library::LibraryService::open(&path) {
+            Ok(service) => Some(Arc::new(service) as _),
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "library service unavailable");
+                None
+            }
+        });
+    let mut server = IpcServer::start_with_session_and_library(
         player.clone(),
         ipc,
         idle,
         session_path()?,
         SESSION_SAVE_DEBOUNCE,
+        library,
     )
     .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
     install_player_signals(server.stop_flag());
@@ -766,17 +792,24 @@ fn scan_library(
     library_path: Option<PathBuf>,
     dirs: &[PathBuf],
     prune: bool,
+    device: Option<&str>,
+    config: Option<&Path>,
 ) -> color_eyre::Result<()> {
     if dirs.is_empty() && !prune {
         println!("nothing to do: pass one or more folders, or --prune");
         return Ok(());
     }
 
-    let mut library = open_library(library_path)?;
+    let player = connect_agent(device, config)?;
+    let live = std::io::IsTerminal::is_terminal(&std::io::stdout());
 
     for dir in dirs {
-        println!("scanning {} ...", dir.display());
-        let report = library.scan(dir)?;
+        let folder = std::fs::canonicalize(dir)
+            .ok()
+            .filter(|p| p.is_dir())
+            .ok_or_else(|| color_eyre::eyre::eyre!("not a folder: {}", dir.display()))?;
+        println!("scanning {} ...", folder.display());
+        let report = run_library_job(&player, LibraryOp::AddFolder { path: folder }, live)?;
         println!(
             "  {} files: {} added, {} updated, {} unchanged, {} failed",
             report.seen, report.added, report.updated, report.unchanged, report.failed
@@ -784,12 +817,43 @@ fn scan_library(
     }
 
     if prune {
-        let removed = library.remove_missing()?;
-        println!("removed {removed} missing entries");
+        let report = run_library_job(&player, LibraryOp::Prune, live)?;
+        println!("removed {} missing entries", report.removed);
     }
 
+    let library = open_library(library_path)?;
     println!("library now holds {} tracks", library.track_count()?);
     Ok(())
+}
+
+/// Send one library job to the player and wait for it, drawing progress on a terminal.
+fn run_library_job(
+    player: &IpcClient,
+    op: LibraryOp,
+    live: bool,
+) -> color_eyre::Result<ScanSummary> {
+    let start = player.status().scans_finished;
+    player
+        .apply(op)
+        .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
+    let status = wait_for_library(player, start + 1, None, |status| {
+        if let (true, Some(p)) = (live, status.scanning.as_ref()) {
+            print!(
+                "\r  {} files · {} new · {} updated",
+                p.seen, p.added, p.updated
+            );
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+        }
+    })
+    .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
+    if live {
+        print!("\r\x1b[2K");
+    }
+    let summary = status.last.unwrap_or_default();
+    if let Some(error) = &summary.error {
+        color_eyre::eyre::bail!("scan failed: {error}");
+    }
+    Ok(summary)
 }
 
 fn search_library(
