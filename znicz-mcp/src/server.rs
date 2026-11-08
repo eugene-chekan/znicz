@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 
 use znicz_core::{
     apply_to_player, copy_saved, list_saved, load_path, remove_saved, rename_saved, sanitize_stem,
-    saved_path, write_path, AudioOutput, Command, IpcClient, LoadResult, PlaybackStatus,
-    PlayerState,
+    saved_path, wait_for_library, write_path, AudioOutput, Command, IpcClient, LibraryHost,
+    LibraryOp, LoadResult, PlaybackStatus, PlayerState, ScanSummary,
 };
 use znicz_library::{Library, Track};
 
@@ -86,6 +86,26 @@ impl ZniczMcpServer {
             .map_err(|_| McpError::internal_error("library lock poisoned", None))?;
 
         action(&mut guard).map_err(|e| McpError::internal_error(e.to_string(), None))
+    }
+
+    /// Send a library job to the player; with `wait`, return what it did.
+    fn run_library_job(&self, op: LibraryOp, wait: bool) -> Result<Option<ScanSummary>, McpError> {
+        let start = LibraryHost::status(&self.player).scans_finished;
+        LibraryHost::apply(&self.player, op)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        if !wait {
+            return Ok(None);
+        }
+        let status = wait_for_library(&self.player, start + 1, None, |_| {})
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let summary = status.last.unwrap_or_default();
+        if let Some(error) = &summary.error {
+            return Err(McpError::internal_error(
+                format!("scan failed: {error}"),
+                None,
+            ));
+        }
+        Ok(Some(summary))
     }
 
     fn json_result(value: &impl Serialize) -> Result<rmcp::model::CallToolResult, McpError> {
@@ -199,6 +219,9 @@ struct DevicesResult {
 struct ScanParams {
     /// Folder to walk. Subfolders are included.
     path: String,
+    /// Wait for the scan to finish (default) or return as soon as it is queued.
+    #[serde(default)]
+    wait: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -502,14 +525,28 @@ impl ZniczMcpServer {
         )]))
     }
 
-    #[tool(description = "Scan a folder into the music library")]
+    #[tool(
+        description = "Scan a folder into the music library (through the player, which remembers the folder)"
+    )]
     fn scan_library(
         &self,
         Parameters(params): Parameters<ScanParams>,
     ) -> Result<rmcp::model::CallToolResult, McpError> {
-        let root = PathBuf::from(params.path);
-        let report = self.with_library_locked(|library| library.scan(&root))?;
-        Self::json_result(&report)
+        let path = std::fs::canonicalize(&params.path).map_err(|_| {
+            McpError::invalid_params(format!("not a folder: {}", params.path), None)
+        })?;
+        let summary =
+            self.run_library_job(LibraryOp::AddFolder { path }, params.wait.unwrap_or(true))?;
+        match summary {
+            None => Self::json_result(&serde_json::json!({ "queued": true })),
+            Some(s) => Self::json_result(&serde_json::json!({
+                "seen": s.seen,
+                "added": s.added,
+                "updated": s.updated,
+                "unchanged": s.unchanged,
+                "failed": s.failed,
+            })),
+        }
     }
 
     #[tool(description = "Search the music library by title, artist or album")]
@@ -602,10 +639,19 @@ impl ZniczMcpServer {
         })
     }
 
-    #[tool(description = "Remove library entries whose files are gone")]
+    #[tool(description = "Drop library entries whose files no longer exist")]
     fn library_prune(&self) -> Result<rmcp::model::CallToolResult, McpError> {
-        let removed = self.with_library_locked(|library| library.remove_missing())?;
-        Self::json_result(&serde_json::json!({ "removed": removed }))
+        let summary = self
+            .run_library_job(LibraryOp::Prune, true)?
+            .unwrap_or_default();
+        Self::json_result(&serde_json::json!({ "removed": summary.removed }))
+    }
+
+    #[tool(
+        description = "Remembered music folders, the running scan's progress, and the last result"
+    )]
+    fn library_status(&self) -> Result<rmcp::model::CallToolResult, McpError> {
+        Self::json_result(&LibraryHost::status(&self.player))
     }
 
     #[tool(description = "List saved M3U playlists")]
@@ -1004,6 +1050,7 @@ fn prompt_meta(name: &str, description: &str) -> Prompt {
 mod tests {
     use super::*;
     use std::ops::{Deref, DerefMut};
+    use std::time::Duration;
     use znicz_core::{spawn_player, AudioConfig, ClientRole, IpcServer, PlaybackStatus};
 
     /// Serialises `ZNICZ_STATIONS_PATH` writes against
@@ -1053,6 +1100,82 @@ mod tests {
         let ipc = IpcServer::start(host.clone(), &path).expect("start ipc");
         let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect agent");
         (host, ipc, client)
+    }
+
+    /// A player that hosts a library service over a temp database, plus an MCP
+    /// server reading the same database.
+    fn hosted_with_library(name: &str) -> (IpcServer, ZniczMcpServer, PathBuf) {
+        let root = std::env::temp_dir().join(format!(
+            "znicz-mcp-lib-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let db = root.join("library.db");
+        let advertise = root.join("ipc.toml");
+        let (player, _thread) = znicz_core::spawn_player(znicz_core::AudioConfig::default());
+        let service = std::sync::Arc::new(znicz_library::LibraryService::open(&db).unwrap());
+        let host = IpcServer::start_with_library(player, &advertise, Duration::ZERO, service)
+            .expect("start ipc");
+        let client = IpcClient::connect(&advertise, ClientRole::Agent).expect("connect");
+        let server = ZniczMcpServer::with_library(client, Vec::new(), Library::open(&db).unwrap());
+        (host, server, root)
+    }
+
+    #[test]
+    fn scan_library_without_waiting_reports_queued() {
+        let (_host, server, root) = hosted_with_library("nowait");
+        let music = root.join("music");
+        std::fs::create_dir_all(&music).unwrap();
+        let result = server
+            .scan_library(Parameters(ScanParams {
+                path: music.to_string_lossy().into_owned(),
+                wait: Some(false),
+            }))
+            .expect("scan");
+        let json: serde_json::Value = serde_json::from_str(&result_text(&result)).unwrap();
+        assert_eq!(json["queued"], true);
+    }
+
+    #[test]
+    fn library_status_lists_remembered_folders() {
+        let (_host, server, root) = hosted_with_library("status");
+        let music = std::fs::canonicalize({
+            let m = root.join("music");
+            std::fs::create_dir_all(&m).unwrap();
+            m
+        })
+        .unwrap();
+        server
+            .scan_library(Parameters(ScanParams {
+                path: music.to_string_lossy().into_owned(),
+                wait: None,
+            }))
+            .expect("scan");
+        let status = server.library_status().expect("status");
+        let json: serde_json::Value = serde_json::from_str(&result_text(&status)).unwrap();
+        assert_eq!(json["folders"][0], music.to_string_lossy().as_ref());
+    }
+
+    #[test]
+    fn library_prune_reports_removed_entries() {
+        let (_host, server, root) = hosted_with_library("prune");
+        Library::open(&root.join("library.db"))
+            .unwrap()
+            .upsert_track_for_test(
+                std::path::Path::new("/nowhere/x.flac"),
+                "t",
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let result = server.library_prune().expect("prune");
+        let json: serde_json::Value = serde_json::from_str(&result_text(&result)).unwrap();
+        assert_eq!(json["removed"], 1);
     }
 
     fn server() -> Harness {
@@ -1309,11 +1432,10 @@ mod tests {
 
     #[test]
     fn scan_indexes_and_then_search_finds_the_track() {
-        let server = server_with_library();
+        let (_host, server, root) = hosted_with_library("scan");
 
         // Build a tiny folder with one real FLAC, if ffmpeg is around.
-        let dir = std::env::temp_dir().join("znicz-mcp-scan");
-        std::fs::remove_dir_all(&dir).ok();
+        let dir = root.join("music");
         std::fs::create_dir_all(&dir).expect("create dir");
 
         let track = dir.join("track.flac");
@@ -1338,6 +1460,7 @@ mod tests {
         let scan = server
             .scan_library(Parameters(ScanParams {
                 path: dir.to_string_lossy().into_owned(),
+                wait: None,
             }))
             .expect("scan_library");
         let report: serde_json::Value =
