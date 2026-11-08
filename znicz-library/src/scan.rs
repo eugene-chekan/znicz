@@ -8,6 +8,9 @@ use znicz_core::{is_audio_file, read_metadata, title_from_path};
 use crate::error::{LibraryError, Result};
 use crate::store::Library;
 
+/// How often the progress callback runs, in audio files seen.
+const PROGRESS_EVERY: usize = 100;
+
 /// What a scan did.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScanReport {
@@ -29,11 +32,22 @@ impl Library {
     /// Files that have not changed since the last scan are left alone, so
     /// rescanning a large library is cheap.
     pub fn scan(&mut self, root: &Path) -> Result<ScanReport> {
+        self.scan_with_progress(root, |_| {})
+    }
+
+    /// `scan`, calling `progress` at the start, every `PROGRESS_EVERY` audio
+    /// files, and at the end.
+    pub fn scan_with_progress(
+        &mut self,
+        root: &Path,
+        mut progress: impl FnMut(&ScanReport),
+    ) -> Result<ScanReport> {
         if !root.is_dir() {
             return Err(LibraryError::NotADirectory(root.display().to_string()));
         }
 
         let mut report = ScanReport::default();
+        progress(&report);
 
         for entry in WalkDir::new(root).follow_links(false) {
             let entry = match entry {
@@ -56,6 +70,9 @@ impl Library {
                 Indexed::Unchanged => report.unchanged += 1,
                 Indexed::Failed => report.failed += 1,
             }
+            if report.seen % PROGRESS_EVERY == 0 {
+                progress(&report);
+            }
         }
 
         tracing::info!(
@@ -68,6 +85,7 @@ impl Library {
             "library scan finished"
         );
 
+        progress(&report);
         Ok(report)
     }
 
@@ -141,4 +159,37 @@ fn file_modified_secs(path: &Path) -> Option<i64> {
         .duration_since(UNIX_EPOCH)
         .ok()
         .map(|d| d.as_secs() as i64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn progress_reports_growing_counts() {
+        let dir = std::env::temp_dir().join(format!(
+            "znicz-scan-progress-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Audio by extension, unreadable inside: seen and failed, never indexed.
+        for i in 0..250 {
+            std::fs::write(dir.join(format!("t{i}.flac")), b"not audio").unwrap();
+        }
+        let mut library = Library::open_in_memory().unwrap();
+        let mut seen = Vec::new();
+        let report = library
+            .scan_with_progress(&dir, |r| seen.push(r.seen))
+            .unwrap();
+        assert_eq!(report.seen, 250);
+        assert_eq!(seen.first(), Some(&0), "reports at the start");
+        assert_eq!(seen.last(), Some(&250), "and at the end");
+        assert!(seen.contains(&100) && seen.contains(&200), "{seen:?}");
+        assert!(seen.windows(2).all(|w| w[0] <= w[1]), "{seen:?}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

@@ -13,7 +13,8 @@ Available. The library is a SQLite index of local files, filled by scanning fold
 
 | Tool | Use it for |
 |------|------------|
-| `scan_library` | Index a folder (and its subfolders) |
+| `scan_library` | Index a folder (and its subfolders); the player remembers it |
+| `library_status` | Remembered folders, a running scan's progress, the last result |
 | `search_library` | Find tracks by title, artist, or album |
 | `get_track` | Full metadata for one file path |
 | `browse_album` | Track list of an album, in track order |
@@ -25,7 +26,12 @@ Available. The library is a SQLite index of local files, filled by scanning fold
 
 1. **Scan first.** `scan_library { "path": "/home/user/Music" }` walks the folder
    and reads tags. The report tells you how many files were added, updated,
-   unchanged, or failed.
+   unchanged, or failed. A folder appears in `folders` as soon as it is
+   queued, which does not prove it is indexed; check `last` and
+   `scans_finished` for a finished scan.
+   For a big folder, pass `"wait": false` to get `{"queued": true}` at once,
+   then poll `library_status` until `scanning` is null, `queued` is 0 and
+   `running` is false.
 2. **Find something.** `search_library { "query": "portishead", "limit": 20 }`
    matches title, artist, album, and album artist. Matching is partial and
    case-insensitive.
@@ -40,9 +46,13 @@ Available. The library is a SQLite index of local files, filled by scanning fold
   skipped, so pointing `scan_library` at a large folder again is fast.
 - `get_track` also works for files that were never scanned: it reads the tags
   straight from disk and sets `in_library: false`.
-- If a tool answers "no music library configured", the user needs
-  `[library].path` in `~/.config/znicz/config.toml`, or should run
-  `znicz scan <dir>` once.
+- Scans run in the shared `znicz player` process, one at a time. A scan
+  started from the TUI or `znicz scan` shows up in `library_status` too.
+- If a tool answers "no music library configured", the player has no library:
+  the user needs `[library].path` in `~/.config/znicz/config.toml` (or a data
+  directory the default path can use).
+- An error mentioning an older player means the running `znicz player` predates
+  library scanning; the user should run `znicz player stop` and try again.
 - Tracks with no tags fall back to the file name as the title.
 
 ## Related

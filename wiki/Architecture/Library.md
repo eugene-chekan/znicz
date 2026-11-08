@@ -13,7 +13,7 @@ other way round.
 ```
 znicz-library ──uses──> znicz-core (tags)
       ▲
-      └── znicz-tui, znicz-mcp, znicz (CLI)
+      └── znicz (player process: LibraryService), znicz-tui, znicz-mcp (reads)
 ```
 
 ## What gets stored
@@ -46,7 +46,8 @@ Two things make a rescan cheap:
 The scan returns a report: how many files were `seen`, `added`, `updated`,
 `unchanged`, and `failed`.
 
-Deleted files are not noticed during a scan — they are simply not walked. Use
+Scans run inside the [library service](#the-library-service), not in the
+front ends. Deleted files are not noticed during a scan — they are simply not walked. Use
 `library_prune` (or `znicz scan --prune`) to drop rows whose file is gone.
 
 ### Why lofty and not Symphonia here
@@ -123,27 +124,60 @@ The database uses **WAL mode**, so reading works while a scan is writing.
 From the command line:
 
 ```bash
-znicz scan ~/Music          # index a folder
+znicz scan ~/Music          # index a folder (through the player process)
 znicz scan ~/Music --prune  # index, then drop missing files
 znicz search portishead     # find tracks
 znicz albums                # list albums
 ```
 
 From an AI agent over MCP: `scan_library`, `search_library`, `get_track`,
-`browse_album`, `list_albums`, `library_stats`, `library_prune`. See
+`browse_album`, `list_albums`, `library_stats`, `library_status`,
+`library_prune`. In the TUI, `F` adds a folder and `U` rescans. See
 [MCP](MCP.md) and the bundled `library-management` skill.
 
 `get_track` is deliberately forgiving: if a path is not indexed, it reads the
 tags from disk and marks the answer `in_library: false`. An agent can ask about
 any file without a scan first.
 
-## Concurrency
+## The library service
 
-The MCP server holds its library behind a mutex, because a scan writes and
-SQLite connections are not shared across threads. The TUI holds its own
-`Library` on the UI thread (`LibraryPane`) and queries it on keypress. Playback
-runs on its own thread and never touches the database, so a long scan cannot
-disturb audio.
+`znicz player` is the **single writer** of `library.db`. It owns a
+`LibraryService` (`znicz-library`): one worker thread and a job queue. Jobs:
+
+- **`AddFolder`**: scan one folder and remember it.
+- **`RescanAll`**: scan every remembered folder.
+- **`Prune`**: drop rows whose file is gone.
+
+The protocol (`LibraryOp`, `LibraryStatus`, `ScanProgress`, `ScanSummary`,
+`LibraryHost`) lives in `znicz-core/src/library_host.rs`. Front ends send
+`Library { op }` over IPC; every `Ok` response carries the current
+`LibraryStatus`. `LibraryHost::wait_for_library` follows a job to the end and
+errors if the player restarts or cannot be reached. A running player from an
+older build gets a hint to run `znicz player stop`.
+
+Remembered folders live in a `folders` table. Rescan rules:
+
+- A remembered folder that is missing is **skipped** and its tracks are kept
+  (an unplugged drive does not empty the library). A folder that fails to scan
+  is skipped too.
+- A folder that scans **empty** while the library has tracks under it is
+  treated as missing (an unmounted drive leaves an empty mount point) and kept.
+- Folder paths are stored as written, made absolute but not canonicalised, so
+  a symlinked `~/Music` keeps its path and older indexes are not duplicated.
+- A job that panics is reported as `library job crashed` and the worker goes on.
+- Prune after a rescan removes rows only under the folders that were scanned.
+- Progress is published at least every 100 files.
+- While a job runs the service is `busy()`, which holds off the player's idle
+  exit.
+
+Known limitation: when several clients queue jobs at once, a waiting client
+reports whichever job finished last. Follow-up: per-job ids.
+
+Reads stay direct: the TUI browse and search, the MCP read tools, and the CLI
+track count open the database themselves. WAL mode lets them read while the
+worker writes. There is no direct-write fallback: `znicz scan` autostarts the
+player and fails if it cannot reach it. Playback runs on its own thread and
+never touches the database, so a long scan cannot disturb audio.
 
 ## Extra reading
 

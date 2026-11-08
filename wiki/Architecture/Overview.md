@@ -12,7 +12,11 @@ Human keys ---------------> znicz-tui ──┼── JSON TCP 127.0.0.1 ──>
 ```
 
 Both front ends can browse the library: the MCP server for agents, and the TUI
-for its library pane.
+for its library pane. They read the database directly. Writing is different:
+the player process is the **single writer** of `library.db`. It runs a
+`LibraryService` (`znicz-library`), and the TUI, MCP, and `znicz scan` reach it
+through `LibraryHost` over IPC (`Library { op }`; every `Ok` response carries
+the library status). See [Library](Library.md#the-library-service).
 
 `znicz` (the binary) starts the TUI, MCP, library CLI, or **`znicz player`**.
 The first TUI or MCP start **autostarts** the player process if it is not
@@ -32,7 +36,8 @@ running. Only that process calls `spawn_player` and opens the DAC.
 | TUI / MCP | Core | `Command` enum (`Play(QueueItem)`, pause, seek, …) |
 | Core | TUI / MCP | `PlayerState` + `PlayerEvent` |
 | Decoder thread | Audio callback | `f32` samples in a lock-free ring |
-| TUI / MCP / CLI | Library | search and album queries |
+| TUI / MCP / CLI | Library | search and album queries (direct reads) |
+| TUI / MCP / CLI | Player process | scan, rescan, and prune jobs (`LibraryOp`) |
 
 `PlayerState` is the whole of what a front end can see: transport status, current
 track with its tags, position, volume and mute, queue and position within it,

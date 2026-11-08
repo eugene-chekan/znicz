@@ -7,11 +7,13 @@
 
 mod error;
 mod scan;
+mod service;
 mod store;
 mod track;
 
 pub use error::{LibraryError, Result};
 pub use scan::ScanReport;
+pub use service::LibraryService;
 pub use store::{Library, VARIOUS_ARTISTS_NAME};
 pub use track::{AlbumSummary, ArtistSummary, SearchHit, SearchLimits, Track};
 

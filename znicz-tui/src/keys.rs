@@ -22,6 +22,7 @@ pub enum Context {
     Library,
     LibraryTree,
     Search,
+    FolderPrompt,
     Queue,
     Devices,
     Inspector,
@@ -67,6 +68,9 @@ const NEW: Hint = hint("n new", KeyCode::Char('n'));
 const EDIT: Hint = hint("e edit", KeyCode::Char('e'));
 const DELETE: Hint = hint("d delete", KeyCode::Char('d'));
 const CLOSE: Hint = hint("Esc close", KeyCode::Esc);
+const ADD_FOLDER: Hint = hint("F add folder", KeyCode::Char('F'));
+const TAB_COMPLETE: Hint = hint("Tab complete", KeyCode::Tab);
+const ENTER_SCAN: Hint = hint("Enter scan", KeyCode::Enter);
 /// Opens the Messages list; the footer appends the unread count.
 pub const MESSAGES_OPEN: Hint = hint("M messages", KeyCode::Char('M'));
 
@@ -92,6 +96,7 @@ pub fn context_hints(context: Context) -> &'static [Hint] {
             QUEUE_OPEN,
             PLAYLISTS_OPEN,
             RADIO_OPEN,
+            ADD_FOLDER,
             MESSAGES_OPEN,
         ],
         Context::LibraryTree => &[
@@ -101,9 +106,11 @@ pub fn context_hints(context: Context) -> &'static [Hint] {
             QUEUE_OPEN,
             PLAYLISTS_OPEN,
             RADIO_OPEN,
+            ADD_FOLDER,
             MESSAGES_OPEN,
         ],
         Context::Search => &[ENTER_SEARCH, CANCEL],
+        Context::FolderPrompt => &[TAB_COMPLETE, ENTER_SCAN, CANCEL],
         Context::Queue => &[ENTER_PLAY, REMOVE, JUMP, CLEAR, QUEUE_CLOSE],
         Context::Devices => &[SELECT, RESCAN, CLOSE],
         Context::Inspector => &[SPACE_PAUSE, CLOSE],
@@ -121,6 +128,7 @@ pub fn more_hint(context: Context) -> Option<Hint> {
     let typed_or_help = matches!(
         context,
         Context::Search
+            | Context::FolderPrompt
             | Context::Prompt
             | Context::StationPrompt
             | Context::Help
@@ -179,6 +187,8 @@ pub const LIBRARY: &[Binding] = &[
     b("a", "add selection to the queue"),
     b("A", "add everything listed"),
     b("J", "jump to the playing track"),
+    b("F", "add a music folder"),
+    b("U", "rescan music folders"),
     b("Esc", "back one browse level"),
 ];
 
@@ -237,6 +247,7 @@ const CONTEXT_SECTIONS: &[(&str, &[Binding])] = &[
 pub fn context_title(context: Context) -> Option<&'static str> {
     match context {
         Context::Library | Context::LibraryTree | Context::Search => Some("Library"),
+        Context::FolderPrompt => None,
         Context::Queue => Some("Queue"),
         Context::Devices => Some("Devices"),
         Context::Inspector => Some("Inspector"),
@@ -325,10 +336,11 @@ mod tests {
         }
     }
 
-    const ALL_CONTEXTS: [Context; 13] = [
+    const ALL_CONTEXTS: [Context; 14] = [
         Context::Library,
         Context::LibraryTree,
         Context::Search,
+        Context::FolderPrompt,
         Context::Queue,
         Context::Devices,
         Context::Inspector,
@@ -348,14 +360,14 @@ mod tests {
     }
 
     #[test]
-    // M messages is last in the library lists, so narrower footers drop it first.
-    fn every_context_fits_ninety_columns_with_more() {
+    // Later hints drop first on narrow terminals.
+    fn every_context_fits_a_wide_footer_with_more() {
         for context in ALL_CONTEXTS {
             let mut width = row_width(context_hints(context));
             if let Some(more) = more_hint(context) {
                 width += 3 + more.label.chars().count();
             }
-            assert!(width <= 90, "{context:?} needs {width} columns");
+            assert!(width <= 110, "{context:?} needs {width} columns");
         }
     }
 
@@ -364,6 +376,7 @@ mod tests {
         for context in ALL_CONTEXTS {
             match context {
                 Context::Search
+                | Context::FolderPrompt
                 | Context::Prompt
                 | Context::StationPrompt
                 | Context::Help
@@ -391,6 +404,7 @@ mod tests {
                 "] queue",
                 "P playlists",
                 "R radio",
+                "F add folder",
                 "M messages"
             ]
         );

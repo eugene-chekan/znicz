@@ -28,3 +28,8 @@ dirs.workspace = true
 # ALSA's chatter cannot draw over the interface.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# Used only to stop the autostarted player inheriting this process's stdio
+# handles on Windows (see `daemon::spawn_detached_player_exe`).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Console"] }

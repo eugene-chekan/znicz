@@ -40,7 +40,7 @@ pub fn render_transport(
             let line = if i == 0 {
                 chrome_line(state, width)
             } else if i == last {
-                message_line(&app.toasts, width)
+                message_line(&app.toasts, app.library_status.scanning.as_ref(), width)
             } else if show_signal {
                 signal_line(state, width)
             } else {
@@ -56,7 +56,15 @@ pub fn render_transport(
     let cover_w = crate::layout::cover_width(area.height, font.width, font.height, area.width);
     let (cover, chrome) = crate::layout::cover_chrome_split(area, cover_w);
     render_cover(frame, cover, app, state);
-    render_stacked_chrome(frame, chrome, state, &app.toasts, show_signal);
+    let scanning = app.library_status.scanning.clone();
+    render_stacked_chrome(
+        frame,
+        chrome,
+        state,
+        &app.toasts,
+        scanning.as_ref(),
+        show_signal,
+    );
 }
 
 fn cover_draw_label(ready: &CoverReady) -> String {
@@ -136,6 +144,7 @@ fn render_stacked_chrome(
     area: Rect,
     state: &PlayerState,
     toasts: &crate::toast::Toasts,
+    scanning: Option<&znicz_core::ScanProgress>,
     show_signal: bool,
 ) {
     if area.width == 0 || area.height == 0 {
@@ -154,7 +163,7 @@ fn render_stacked_chrome(
             1 => artist_album_row(state, width),
             2 => seek_row(state, width),
             3 if show_signal => signal_line(state, width),
-            4 => message_line(toasts, width),
+            4 => message_line(toasts, scanning, width),
             _ => Line::from(""),
         };
         frame.render_widget(Paragraph::new(line), *row);
@@ -163,7 +172,11 @@ fn render_stacked_chrome(
 
 /// The transport's message row: the newest live message (with `+N` for the
 /// rest), else the unread-alerts marker, else blank. Always `width` wide.
-pub(crate) fn message_line(toasts: &crate::toast::Toasts, width: usize) -> Line<'static> {
+pub(crate) fn message_line(
+    toasts: &crate::toast::Toasts,
+    scanning: Option<&znicz_core::ScanProgress>,
+    width: usize,
+) -> Line<'static> {
     if width == 0 {
         return Line::from("");
     }
@@ -183,6 +196,15 @@ pub(crate) fn message_line(toasts: &crate::toast::Toasts, width: usize) -> Line<
             Span::styled(text, theme::strong()),
             Span::raw(" ".repeat(pad)),
             Span::styled(suffix, theme::dim()),
+        ]);
+    }
+    if let Some(progress) = scanning {
+        let home = dirs::home_dir();
+        let text = crate::scan_status::progress_text(progress, home.as_deref(), width);
+        let pad = width.saturating_sub(text.chars().count());
+        return Line::from(vec![
+            Span::styled(text, theme::progress()),
+            Span::raw(" ".repeat(pad)),
         ]);
     }
     if let Some((count, level)) = toasts.unread_alerts() {
@@ -675,7 +697,7 @@ mod tests {
         let mut toasts = crate::toast::Toasts::new();
         toasts.info("first");
         toasts.success("added 4 tracks");
-        let row = text(&message_line(&toasts, 40));
+        let row = text(&message_line(&toasts, None, 40));
         assert!(row.starts_with("● added 4 tracks"), "{row:?}");
         assert!(row.trim_end().ends_with("+1"), "{row:?}");
         assert_eq!(row.chars().count(), 40);
@@ -687,22 +709,48 @@ mod tests {
         toasts.warn("stream dropped");
         toasts.error("device refused");
         toasts.expire_live_for_test();
-        let row = text(&message_line(&toasts, 40));
+        let row = text(&message_line(&toasts, None, 40));
         assert!(row.trim_end().ends_with("x 2 unread · M"), "{row:?}");
     }
 
     #[test]
     fn the_message_row_is_blank_with_nothing_to_say() {
         let toasts = crate::toast::Toasts::new();
-        assert_eq!(text(&message_line(&toasts, 40)).trim(), "");
+        assert_eq!(text(&message_line(&toasts, None, 40)).trim(), "");
     }
 
     #[test]
     fn a_long_message_is_cut_to_the_row() {
         let mut toasts = crate::toast::Toasts::new();
         toasts.error("player error: playlist had no playable files at all");
-        let row = text(&message_line(&toasts, 20));
+        let row = text(&message_line(&toasts, None, 20));
         assert_eq!(row.chars().count(), 20);
         assert!(row.ends_with('…'), "{row:?}");
+    }
+
+    #[test]
+    fn scan_progress_shows_when_no_message_is_live() {
+        let toasts = crate::toast::Toasts::new();
+        let progress = znicz_core::ScanProgress {
+            folder: std::path::PathBuf::from("/srv/music"),
+            seen: 12,
+            added: 3,
+            updated: 0,
+        };
+        let row = text(&message_line(&toasts, Some(&progress), 60));
+        assert!(
+            row.starts_with("⟳ scanning /srv/music · 12 files · 3 new"),
+            "{row:?}"
+        );
+        assert_eq!(row.chars().count(), 60);
+    }
+
+    #[test]
+    fn a_live_message_beats_scan_progress() {
+        let mut toasts = crate::toast::Toasts::new();
+        toasts.info("added 4 tracks");
+        let progress = znicz_core::ScanProgress::default();
+        let row = text(&message_line(&toasts, Some(&progress), 60));
+        assert!(row.starts_with("● added 4 tracks"), "{row:?}");
     }
 }

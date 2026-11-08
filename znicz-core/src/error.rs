@@ -14,6 +14,10 @@ pub enum ZniczError {
     #[error("player error: {0}")]
     Player(String),
 
+    /// A library write was refused or failed; the message is shown as is.
+    #[error("{0}")]
+    Library(String),
+
     #[error("not implemented: {0}")]
     NotImplemented(String),
 }

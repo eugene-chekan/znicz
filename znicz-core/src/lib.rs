@@ -2,6 +2,7 @@ pub mod audio;
 mod audioaddict;
 mod cover_fetch;
 pub mod error;
+pub mod library_host;
 pub mod metadata;
 pub mod player;
 pub mod playlist;
@@ -16,6 +17,9 @@ pub use audioaddict::{
 };
 pub use cover_fetch::fetch_cover;
 pub use error::{Result, ZniczError};
+pub use library_host::{
+    wait_for_library, LibraryHost, LibraryOp, LibraryStatus, ScanProgress, ScanSummary,
+};
 pub use metadata::{
     is_audio_file, read_cover, read_metadata, read_tags, title_from_path, AudioProperties,
     CoverArt, FileMetadata, TrackTags,
