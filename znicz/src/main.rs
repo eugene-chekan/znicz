@@ -800,14 +800,21 @@ fn scan_library(
         return Ok(());
     }
 
+    // Check every folder before contacting the player, so a typo scans nothing.
+    let folders = dirs
+        .iter()
+        .map(|dir| {
+            std::path::absolute(dir)
+                .ok()
+                .filter(|p| p.is_dir())
+                .ok_or_else(|| color_eyre::eyre::eyre!("not a folder: {}", dir.display()))
+        })
+        .collect::<color_eyre::Result<Vec<_>>>()?;
+
     let player = connect_agent(device, config)?;
     let live = std::io::IsTerminal::is_terminal(&std::io::stdout());
 
-    for dir in dirs {
-        let folder = std::path::absolute(dir)
-            .ok()
-            .filter(|p| p.is_dir())
-            .ok_or_else(|| color_eyre::eyre::eyre!("not a folder: {}", dir.display()))?;
+    for folder in folders {
         println!("scanning {} ...", folder.display());
         let report = run_library_job(&player, LibraryOp::AddFolder { path: folder }, live)?;
         println!(

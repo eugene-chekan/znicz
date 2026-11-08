@@ -106,3 +106,23 @@ fn scanning_a_missing_folder_fails() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn a_bad_folder_among_good_ones_scans_nothing() {
+    let iso = Isolated::new();
+    let output = iso
+        .znicz()
+        .arg("scan")
+        .arg(iso.dir.join("music"))
+        .arg(iso.dir.join("nope"))
+        .output()
+        .expect("run scan");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("not a folder"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // Validation fails before the player is even contacted.
+    assert!(!iso.ipc().exists(), "player was started");
+}
