@@ -42,9 +42,18 @@ Tools use the same `Command`s as the TUI. They talk to **`znicz player`**, not
 to the TUI ([#27](https://github.com/eugene-chekan/znicz/issues/27)).
 `session.toml` is the restart snapshot (Stopped); it is not the live bus.
 
-Library tools (`scan_library`, `search_library`, `get_track`, `browse_album`,
-`list_albums`, `library_stats`, `library_prune`) talk to
-[`znicz-library`](Library.md). Playlist tools (`list_playlists`,
+Library read tools (`search_library`, `get_track`, `browse_album`,
+`list_albums`, `library_stats`) read [`znicz-library`](Library.md) directly.
+Writes go through the player's [library service](Library.md#the-library-service):
+
+- `scan_library { path, wait? }` queues a scan. By default it waits and returns
+  the usual JSON report; `wait: false` returns `{"queued":true}` at once. It
+  runs off the async runtime, so the server stays responsive during a scan.
+- `library_prune` removes rows whose file is gone and returns `{"removed":N}`.
+- `library_status` reports the service state: idle or busy, progress, and the
+  last result.
+
+ Playlist tools (`list_playlists`,
 `import_playlist`, `save_playlist`, `play_playlist`, `rename_playlist`,
 `copy_playlist`, `remove_playlist`) load, write, rename, copy, and delete M3U
 files; see [Formats and metadata](../Domain/Formats-and-Metadata.md#playlists-phase-3).

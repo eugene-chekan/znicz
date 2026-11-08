@@ -76,6 +76,7 @@ znicz player stop
 
 ```bash
 # Index a folder (subfolders included). Rescans skip unchanged files.
+# Runs through the player process, which is started if needed.
 znicz scan ~/Music
 
 # Index, then drop entries whose files were deleted
@@ -105,6 +106,13 @@ znicz station copy Example Example2
 znicz station art "Example" ~/Pictures/example.png
 znicz station art "Example" --clear
 ```
+
+On first run with an empty library the TUI asks for a folder (pre-filled with
+your music folder) and scans it. `F` adds another folder and `U` rescans every
+remembered folder. `znicz scan` and the MCP `scan_library` tool go through the
+same `znicz player` process, which is the only writer of the index and
+remembers each folder you scan. Missing folders are skipped on a rescan and
+their tracks are kept.
 
 The index is a SQLite file, by default `~/.local/share/znicz/library.db`
 (`%APPDATA%\znicz\library.db` on Windows).
@@ -154,6 +162,8 @@ The essentials:
 | / | Search the library |
 | Space / o | Expand or collapse a tree node |
 | ] | Open / close the queue |
+| F | Add a music folder to the library (scan it) |
+| U | Rescan the remembered folders |
 | M | Messages: recent history; unread warnings and errors are counted |
 | J | Jump the library to the playing track |
 | Tab | Next column when three-column browse is active; otherwise library ↔ queue |
@@ -241,7 +251,7 @@ bit perfect or resampled.
 | Crate | Role |
 |-------|------|
 | `znicz-core` | Audio engine, player state, tag reading |
-| `znicz-library` | SQLite music index: scan, search, albums |
+| `znicz-library` | SQLite music index: scan, search, albums, library service |
 | `znicz-tui` | Ratatui frontend |
 | `znicz-mcp` | MCP server + skills |
 | `znicz` | CLI binary |

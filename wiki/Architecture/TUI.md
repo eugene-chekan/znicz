@@ -108,7 +108,7 @@ columns and wraps. `M` opens the messages list and `J` jumps to the playing
 track.
 
 The footer shows a short hint list for the current **context** (library,
-library tree, search prompt, queue, devices, inspector, playlists, radio, the
+library tree, search prompt, folder prompt, queue, devices, inspector, playlists, radio, the
 Messages list, a name prompt, the station form, help, or the help filter), most important first,
 as many as fit. Wherever `?` opens help, ` ? more ` is right-aligned and always
 kept; search, the prompts, and help itself leave it out because `?` is typed
@@ -296,6 +296,32 @@ and in the `?` overlay.
 The `?` overlay also shows the build in its bottom-left corner
 (` znicz 0.y.z `); `znicz --version` prints the same number.
 
+## Adding music
+
+The TUI scans through the player's [library service](Library.md#the-library-service);
+it never writes the database itself.
+
+- **First run.** An empty library opens a welcome with a `folder:` prompt
+  pre-filled with the platform music folder (`~/Music` style) or `~/`. `Enter`
+  scans it; `Esc` skips the prompt for the session. If the text is not a folder
+  the message `not a folder: …` appears and the prompt stays open.
+- **`F`** opens the same prompt later (add a folder). **`U`** rescans every
+  remembered folder.
+- **Completion.** `Tab` completes folder names: it fills in the common prefix
+  and, if several folders match, lists up to 5 as a message. Hidden folders
+  show only after you type a dot.
+- **Footer.** The `FolderPrompt` context reads `Tab complete · Enter scan ·
+  Esc cancel`. The library footer has `F add folder` before `M messages`.
+- **Progress.** While a job runs, the message row shows
+  `⟳ scanning ~/Music · 1,240 files · 37 new · 2 updated`. The row prefers a
+  live message, then progress, then the unread marker. An empty pane shows the
+  same text.
+- **Finish.** A message `scan done: …` (a warning when folders were missing:
+  `skipped missing …`; an error `scan failed: …`). The library reloads once the
+  last queued job is done, and not while search results are showing.
+- **Polling.** The TUI asks for the library status at most every 500 ms and
+  keeps the last status if the player cannot be reached.
+
 ## Messages
 
 The interface owns the screen, so anything written to the log or to stdout is
@@ -363,6 +389,8 @@ top of the player.
 | `toast.rs` | live messages and history |
 | `format.rs` | durations, rates, bars, truncation |
 | `library_pane.rs` | browsing state |
+| `folder_complete.rs` | `Tab` completion of folder names for the folder prompt |
+| `scan_status.rs` | scan progress and finish text, polling of the library status |
 
 `keys.rs` holds the bindings as data. Help is generated from those tables, and
 the footer hints for each context are listed next to them; a unit test checks
