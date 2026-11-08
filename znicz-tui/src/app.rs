@@ -367,6 +367,8 @@ impl App {
         !self.first_run_dismissed
             && self.folder_prompt.is_none()
             && self.modal == Modal::None
+            && self.playlist_prompt.is_none()
+            && self.radio_prompt.is_none()
             && !self.library.is_typing()
             && !self.library_status.busy()
             && self.library.has_no_music()

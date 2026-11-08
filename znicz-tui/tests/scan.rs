@@ -87,6 +87,20 @@ fn an_empty_library_opens_the_folder_prompt() {
 }
 
 #[test]
+fn the_folder_prompt_does_not_open_over_another_prompt() {
+    use znicz_tui::line_edit::LineEdit;
+    use znicz_tui::PlaylistPrompt;
+    let mut s = setup("over-prompt");
+    s.app.playlist_prompt = Some(PlaylistPrompt::Save(LineEdit::new()));
+    draw(&mut s.app);
+    assert!(s.app.folder_prompt.is_none());
+    s.app.playlist_prompt = None;
+    s.app.radio_prompt = Some(znicz_tui::RadioPrompt::Copy(LineEdit::new()));
+    draw(&mut s.app);
+    assert!(s.app.folder_prompt.is_none());
+}
+
+#[test]
 fn esc_skips_the_prompt_for_the_session() {
     let mut s = setup("skip");
     draw(&mut s.app);
