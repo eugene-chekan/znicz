@@ -37,7 +37,7 @@ git commit -m "Add space and layering implementation plan"
 - Modify: `znicz-tui/src/layout.rs`
 - Test: `znicz-tui/src/layout.rs` (tests module), `znicz-tui/tests/render.rs`
 
-- [ ] **Step 1: Write the failing unit tests**
+- [x] **Step 1: Write the failing unit tests**
 
 In `znicz-tui/src/layout.rs` tests module, delete `cover_shrinks_then_drops` and `cover_off_keeps_today_s_chrome`, and add:
 
@@ -83,12 +83,12 @@ In `znicz-tui/src/layout.rs` tests module, delete `cover_shrinks_then_drops` and
 
 Keep `cover_uses_eight_rows_on_a_normal_window` as is.
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `cargo test -p znicz-tui --lib layout::`
 Expected: compile error (`modal_rect`, `list_modal_rect` not found).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `znicz-tui/src/layout.rs`, replace everything from `const HINTS: u16 = 1;` through the end of `fn transport_height` with:
 
@@ -143,7 +143,7 @@ pub fn list_modal_rect(list: Rect) -> Rect {
 
 `text_transport_height` is gone; it had no other users.
 
-- [ ] **Step 4: Update the render test that pinned the old height**
+- [x] **Step 4: Update the render test that pinned the old height**
 
 In `znicz-tui/tests/render.rs`, replace the test `show_cover_false_keeps_two_transport_rows` with:
 
@@ -166,12 +166,12 @@ fn a_short_window_keeps_the_list_instead_of_the_cover() {
 }
 ```
 
-- [ ] **Step 5: Run and verify**
+- [x] **Step 5: Run and verify**
 
 Run: `cargo test -p znicz-tui`
 Expected: PASS. (The transport has a spare blank row until Task 5 fills it.)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add znicz-tui/src/layout.rs znicz-tui/tests/render.rs
@@ -186,7 +186,7 @@ git commit -m "Place modals in the list region and show the cover only on tall w
 - Modify: `znicz-tui/src/views/mod.rs`, `views/devices.rs`, `views/playlists.rs`, `views/radio.rs`, `views/inspector.rs`, `views/help.rs`
 - Test: `znicz-tui/tests/render.rs`
 
-- [ ] **Step 1: Write the failing render test**
+- [x] **Step 1: Write the failing render test**
 
 Add to `znicz-tui/tests/render.rs`:
 
@@ -230,12 +230,12 @@ fn no_modal_covers_the_transport_or_footer() {
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `cargo test -p znicz-tui --test render no_modal_covers`
 Expected: FAIL (Devices/Playlists/Radio at 70 % of the whole window overlap the transport).
 
-- [ ] **Step 3: Pass the list region to every modal**
+- [x] **Step 3: Pass the list region to every modal**
 
 In `znicz-tui/src/views/mod.rs` `render`, change the modal match to pass `list` instead of `area`:
 
@@ -250,14 +250,14 @@ In `znicz-tui/src/views/mod.rs` `render`, change the modal match to pass `list` 
     }
 ```
 
-- [ ] **Step 4: Use `list_modal_rect` in Devices, Playlists, Radio**
+- [x] **Step 4: Use `list_modal_rect` in Devices, Playlists, Radio**
 
 In each of `views/devices.rs`, `views/playlists.rs`, `views/radio.rs`:
 - in `render_modal`, replace `let popup = centered_modal(area);` with `let popup = crate::layout::list_modal_rect(area);`
 - delete the private `fn centered_modal`.
 - rename the `area` parameter of `render_modal` to `list` (and its use) so the signature reads `render_modal(frame: &mut Frame, list: Rect, …)`.
 
-- [ ] **Step 5: Inspector**
+- [x] **Step 5: Inspector**
 
 In `views/inspector.rs` `render`, rename the `area` parameter to `list` and replace the size/placement code (from `let height = …` through `let popup = centered(area, width, height);`) with:
 
@@ -269,19 +269,19 @@ In `views/inspector.rs` `render`, rename the `area` parameter to `list` and repl
 
 Delete the private `fn centered`.
 
-- [ ] **Step 6: Help**
+- [x] **Step 6: Help**
 
 In `views/help.rs`:
 - rename `render`'s `area` parameter to `list`;
 - replace `let popup = popup_rect(area);` with `let popup = crate::layout::modal_rect(list, MAX_WIDTH, list.height);`;
 - delete `fn popup_rect` and its two tests `the_popup_caps_its_width_and_keeps_the_footer_row_free` and `a_tiny_screen_does_not_produce_an_oversized_box` (layout tests now cover placement).
 
-- [ ] **Step 7: Run and verify**
+- [x] **Step 7: Run and verify**
 
 Run: `cargo test -p znicz-tui`
 Expected: PASS. If `the_signal_inspector_shows_the_device_sample_format` (90×24, list region 15 rows) no longer shows `f32` because the inspector content is taller than the list region, change that test's size from `90, 24` to `90, 30` (both draws) — the inspector now lives in the list region by design.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add znicz-tui/src/views znicz-tui/tests/render.rs
@@ -295,7 +295,7 @@ git commit -m "Open every modal inside the list region"
 **Files:**
 - Modify: `znicz-tui/src/toast.rs`
 
-- [ ] **Step 1: Write the failing unit tests**
+- [x] **Step 1: Write the failing unit tests**
 
 Add to the tests module of `znicz-tui/src/toast.rs`:
 
@@ -360,12 +360,12 @@ Add to the tests module of `znicz-tui/src/toast.rs`:
     }
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `cargo test -p znicz-tui --lib toast::`
 Expected: compile error.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `znicz-tui/src/toast.rs`:
 
@@ -478,12 +478,12 @@ Delete `pub fn visible`. After `pub fn recent`, add:
 
 `views/mod.rs` still calls `app.toasts.visible()`; replace that call in `render_toasts` with `&app.toasts.recent()[..app.toasts.recent().len().min(3)]` for now (Task 5 deletes `render_toasts`).
 
-- [ ] **Step 4: Run and verify**
+- [x] **Step 4: Run and verify**
 
 Run: `cargo test -p znicz-tui`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/toast.rs znicz-tui/src/views/mod.rs
@@ -498,7 +498,7 @@ git commit -m "Keep a message history with unread warnings and errors"
 - Modify: `znicz-tui/src/views/now_playing.rs`, `znicz-tui/src/views/mod.rs`, `znicz-tui/src/layout.rs`
 - Test: `znicz-tui/src/views/now_playing.rs` (tests), `znicz-tui/tests/render.rs`
 
-- [ ] **Step 1: Write the failing unit tests**
+- [x] **Step 1: Write the failing unit tests**
 
 Add to the tests module of `znicz-tui/src/views/now_playing.rs` (create `#[cfg(test)] mod tests { use super::*; … }` if absent; if one exists, add `use crate::toast::Toasts;` inside it):
 
@@ -544,12 +544,12 @@ Add to the tests module of `znicz-tui/src/views/now_playing.rs` (create `#[cfg(t
     }
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `cargo test -p znicz-tui --lib now_playing`
 Expected: compile error (`message_line` not found).
 
-- [ ] **Step 3: Add `message_line` and share the level mark**
+- [x] **Step 3: Add `message_line` and share the level mark**
 
 In `znicz-tui/src/views/mod.rs`, rename `fn toast_mark` to `pub(crate) fn level_mark` (update its one caller).
 
@@ -592,7 +592,7 @@ pub(crate) fn message_line(toasts: &crate::toast::Toasts, width: usize) -> Line<
 
 (`format`, `theme`, `Line`, `Span` are already imported in this module; add any that are missing.)
 
-- [ ] **Step 4: Draw it in both transports**
+- [x] **Step 4: Draw it in both transports**
 
 In `render_transport`, replace the `if !with_cover { … return; }` block with:
 
@@ -647,13 +647,13 @@ with the match:
 
 and its call: `render_stacked_chrome(frame, chrome, state, &app.toasts, show_signal);`.
 
-- [ ] **Step 5: Delete the toast boxes**
+- [x] **Step 5: Delete the toast boxes**
 
 - `views/mod.rs`: delete `fn render_toasts` and the `render_toasts(frame, list, app);` call.
 - `layout.rs`: delete `TOAST_BOX_HEIGHT`, `TOAST_INSET`, `TOAST_MARK_AND_SPACE`, `TOAST_BORDERS`, `TOAST_BOX_MIN_WIDTH`, `toast_boxed`, `toast_width_for`, `toast_areas`, and the tests `toast_areas_stack_up_from_the_bottom_right`, `a_tiny_list_falls_back_to_a_single_line`, `toast_width_covers_the_playlist_empty_error`.
 - Remove any now-unused imports the compiler reports.
 
-- [ ] **Step 6: Update render tests**
+- [x] **Step 6: Update render tests**
 
 In `znicz-tui/tests/render.rs`, replace `hints_stay_when_a_toast_is_showing` with:
 
@@ -687,12 +687,12 @@ fn unread_alerts_show_once_the_message_expires() {
 
 `a_success_toast_has_its_own_box_and_mark` and `a_playlist_error_toast_shows_the_whole_message` stay; rename the first to `a_success_message_has_its_mark`.
 
-- [ ] **Step 7: Run and verify**
+- [x] **Step 7: Run and verify**
 
 Run: `cargo test -p znicz-tui` and `cargo clippy -p znicz-tui --all-targets -- -D warnings`
 Expected: PASS, clean.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add znicz-tui/src znicz-tui/tests/render.rs
@@ -708,7 +708,7 @@ git commit -m "Show messages on a transport row instead of floating boxes"
 - Modify: `znicz-tui/src/views/mod.rs`, `znicz-tui/src/app.rs`, `znicz-tui/src/keys.rs`
 - Test: `znicz-tui/src/views/messages.rs`, `znicz-tui/src/keys.rs`, `znicz-tui/tests/keys.rs`, `znicz-tui/tests/render.rs`, `znicz-tui/tests/mouse.rs`
 
-- [ ] **Step 1: Write the failing integration tests**
+- [x] **Step 1: Write the failing integration tests**
 
 In `znicz-tui/tests/keys.rs` add:
 
@@ -809,12 +809,12 @@ fn a_click_selects_a_message_row_and_the_wheel_moves_it() {
 }
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `cargo test -p znicz-tui --test keys messages` (and `render messages`, `mouse message`)
 Expected: compile errors (`Modal::Messages`, `message_cursor`).
 
-- [ ] **Step 3: Keymap data**
+- [x] **Step 3: Keymap data**
 
 In `znicz-tui/src/keys.rs`:
 
@@ -832,7 +832,7 @@ pub const MESSAGES: &[Binding] = &[b("C", "clear the history"), b("Esc / M", "cl
 - `context_title`: add `Context::Messages => Some("Messages"),`.
 - Tests: add `Context::Messages` to `ALL_CONTEXTS` (size 13) and to the context list in `table_backed_hints_name_a_documented_key`; add `MESSAGES` to the `tables` array in `every_binding_documents_both_a_key_and_an_action`; append `"M messages"` to the expected labels in `library_hints_lead_with_pause_and_label_p_and_r`; in `every_context_fits_eighty_columns_with_more` change the bound to 90 and rename it `every_context_fits_ninety_columns_with_more`, with the comment `// M messages is last in the library lists, so narrower footers drop it first.`; in `help_starts_with_the_context_then_playback_and_navigation` and `prompts_and_help_have_no_context_section` the section count/titles grow by `Messages` at the end (expected titles end `…, "Devices", "Inspector", "Messages"`, dims gain one `true`, `sections.len()` becomes 9).
 
-- [ ] **Step 4: The Messages view**
+- [x] **Step 4: The Messages view**
 
 Create `znicz-tui/src/views/messages.rs`:
 
@@ -962,7 +962,7 @@ pub(crate) fn highlight(focused: bool) -> Style {
 
 In `views/mod.rs`, add `mod messages;` and the modal arm `Modal::Messages => messages::render_modal(frame, list, app),`.
 
-- [ ] **Step 5: App wiring**
+- [x] **Step 5: App wiring**
 
 In `znicz-tui/src/app.rs`:
 
@@ -1038,12 +1038,12 @@ In `znicz-tui/src/app.rs`:
         }
 ```
 
-- [ ] **Step 6: Run and verify**
+- [x] **Step 6: Run and verify**
 
 Run: `cargo test -p znicz-tui` and clippy.
 Expected: PASS, clean.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add znicz-tui/src znicz-tui/tests
@@ -1058,7 +1058,7 @@ git commit -m "Add the Messages list on M"
 - Modify: `znicz-tui/src/footer_hits.rs`, `znicz-tui/src/views/status.rs`
 - Test: `footer_hits.rs` tests, `znicz-tui/tests/render.rs`
 
-- [ ] **Step 1: Write the failing render test**
+- [x] **Step 1: Write the failing render test**
 
 Add to `znicz-tui/tests/render.rs`:
 
@@ -1074,12 +1074,12 @@ fn the_footer_counts_unread_alerts() {
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `cargo test -p znicz-tui --test render the_footer_counts`
 Expected: FAIL (footer shows `M messages`).
 
-- [ ] **Step 3: Owned footer labels**
+- [x] **Step 3: Owned footer labels**
 
 In `znicz-tui/src/footer_hits.rs`:
 
@@ -1140,12 +1140,12 @@ fn display_label(hint: Hint, unread: Option<usize>) -> FooterLabel {
 
 Import `FooterLabel` and `keys::Hint`. In `footer_line`, read the text from `item.label.text` (`split_once(' ')` on it) and produce owned spans (`Span::styled(key.to_string(), …)`).
 
-- [ ] **Step 4: Run and verify**
+- [x] **Step 4: Run and verify**
 
 Run: `cargo test -p znicz-tui` and clippy.
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/footer_hits.rs znicz-tui/src/views/status.rs znicz-tui/tests/render.rs
@@ -1160,7 +1160,7 @@ git commit -m "Count unread alerts on the footer's messages hint"
 - Modify: `znicz-tui/src/help_state.rs`, `znicz-tui/src/app.rs`, `znicz-tui/src/views/help.rs`
 - Test: `znicz-tui/tests/keys.rs`, `znicz-tui/tests/render.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `znicz-tui/tests/keys.rs`:
 
@@ -1220,11 +1220,11 @@ fn the_help_border_says_keep_and_clear_while_filtering() {
 }
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run the three tests. Expected: FAIL (help closes to `None`; border reads `/ filter · Esc close`).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `help_state.rs`: add `use crate::app::Modal;`, a field
 
@@ -1281,11 +1281,11 @@ fn border_hint(editing: bool) -> &'static str {
 - `version_title(popup_width: u16, hint: &str)`: use `hint.chars().count()` instead of `CLOSE_HINT`.
 - Update its tests to pass `CLOSE_HINT` as the second argument.
 
-- [ ] **Step 4: Run and verify**
+- [x] **Step 4: Run and verify**
 
 Run: `cargo test -p znicz-tui` and clippy. Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src znicz-tui/tests
@@ -1300,7 +1300,7 @@ git commit -m "Return from help to the modal it replaced"
 - Modify: `znicz-tui/src/theme.rs`, `znicz-tui/src/views/mod.rs`, `views/library.rs`, `views/queue.rs`, `views/devices.rs`, `views/playlists.rs`, `views/radio.rs`
 - Test: `znicz-tui/tests/render.rs`
 
-- [ ] **Step 1: Write the failing render test**
+- [x] **Step 1: Write the failing render test**
 
 Add to `znicz-tui/tests/render.rs`:
 
@@ -1352,12 +1352,12 @@ fn the_focused_selection_is_accent_and_others_stay_grey() {
 
 (Add `use crossterm::...` at the test's top only if `crossterm` is not already imported in render.rs; it is a dependency of `znicz-tui`, so it is available to its tests.)
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `cargo test -p znicz-tui --test render the_focused_selection`
 Expected: FAIL (focused bg is DarkGray; unfocused has no bg).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `theme.rs`: replace `selected()` and add `selected_idle()`:
 
@@ -1390,11 +1390,11 @@ In each of `views/library.rs` (three places: `render_column_list`, `render_tree`
 
 with `.highlight_style(views::highlight(focused))`.
 
-- [ ] **Step 4: Run and verify**
+- [x] **Step 4: Run and verify**
 
 Run: `cargo test -p znicz-tui` and clippy. Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src znicz-tui/tests/render.rs
@@ -1409,7 +1409,7 @@ git commit -m "Keep selections visible and show focus by colour"
 - Modify: `znicz-tui/src/views/mod.rs`, `znicz-tui/src/views/library.rs`
 - Test: `views/mod.rs` tests, `znicz-tui/tests/render.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Unit tests in `znicz-tui/src/views/mod.rs` (add a `#[cfg(test)] mod tests { use super::*; … }` if there is none):
 
@@ -1471,12 +1471,12 @@ fn paging_titles_show_the_path() {
 }
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `cargo test -p znicz-tui --lib breadcrumb` and `cargo test -p znicz-tui --test render title`
 Expected: compile error, then FAIL.
 
-- [ ] **Step 3: `breadcrumb`**
+- [x] **Step 3: `breadcrumb`**
 
 In `znicz-tui/src/views/mod.rs`:
 
@@ -1509,7 +1509,7 @@ pub(crate) fn title_width(area: Rect) -> usize {
 }
 ```
 
-- [ ] **Step 4: Use it in the library titles**
+- [x] **Step 4: Use it in the library titles**
 
 In `znicz-tui/src/views/library.rs`:
 
@@ -1614,11 +1614,11 @@ fn tree_crumbs(rows: &[TreeRow], selected: Option<usize>) -> Vec<String> {
     let title = views::breadcrumb(&parts, views::title_width(area));
 ```
 
-- [ ] **Step 5: Run and verify**
+- [x] **Step 5: Run and verify**
 
 Run: `cargo test -p znicz-tui` and clippy. Expected: PASS. Fix any older render test that asserted the old `Library / …` text (grep `"Library /"` in `znicz-tui/tests`) to the new ` › ` form.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add znicz-tui/src znicz-tui/tests
@@ -1634,7 +1634,7 @@ git commit -m "Show breadcrumbs in library titles"
 - Modify: `znicz-tui/src/lib.rs`, `znicz-tui/src/library_pane.rs`, `znicz-tui/src/app.rs`, `znicz-tui/src/views/mod.rs`, `znicz-tui/src/views/library.rs`
 - Test: `playing.rs`, `znicz-tui/tests/render.rs`
 
-- [ ] **Step 1: Create `playing.rs` with its tests**
+- [x] **Step 1: Create `playing.rs` with its tests**
 
 ```rust
 //! Which library rows stand for what is playing.
@@ -1752,7 +1752,7 @@ In `lib.rs`, add `pub mod playing;`.
 
 Run: `cargo test -p znicz-tui --lib playing::` — Expected: PASS.
 
-- [ ] **Step 2: Write the failing render test**
+- [x] **Step 2: Write the failing render test**
 
 ```rust
 #[test]
@@ -1777,7 +1777,7 @@ fn the_library_marks_the_playing_track_album_and_artist() {
 
 Run it — Expected: FAIL.
 
-- [ ] **Step 3: Resolve the playing track once per change**
+- [x] **Step 3: Resolve the playing track once per change**
 
 `library_pane.rs`, in `impl LibraryPane`:
 
@@ -1810,7 +1810,7 @@ Run it — Expected: FAIL.
 
 `views/mod.rs` `render`: call `app.refresh_playing(state);` right after `app.hits = HitMap::default();`.
 
-- [ ] **Step 4: Draw the markers**
+- [x] **Step 4: Draw the markers**
 
 In `views/library.rs`:
 
@@ -1847,11 +1847,11 @@ fn list_item(middle: &str, right: &str, strip: usize, offset: usize, playing: bo
 
 Widths: the ` ♪` is part of the middle text, so pan and truncation already account for it.
 
-- [ ] **Step 5: Run and verify**
+- [x] **Step 5: Run and verify**
 
 Run: `cargo test -p znicz-tui` and clippy. Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add znicz-tui/src znicz-tui/tests/render.rs
@@ -1866,7 +1866,7 @@ git commit -m "Mark the playing track, album, and artist in the library"
 - Modify: `znicz-tui/src/library_pane.rs`, `znicz-tui/src/app.rs`, `znicz-tui/src/keys.rs`
 - Test: `library_pane.rs` tests, `znicz-tui/tests/keys.rs`
 
-- [ ] **Step 1: Write the failing unit tests**
+- [x] **Step 1: Write the failing unit tests**
 
 In `library_pane.rs` tests (uses `two_artist_library()` from part 1):
 
@@ -1934,7 +1934,7 @@ In `library_pane.rs` tests (uses `two_artist_library()` from part 1):
 
 Run: `cargo test -p znicz-tui --lib library_pane::tests::reveal` — Expected: compile error.
 
-- [ ] **Step 2: Implement `reveal`**
+- [x] **Step 2: Implement `reveal`**
 
 In `impl LibraryPane`, after `focus_album`:
 
@@ -1983,7 +1983,7 @@ In `impl LibraryPane`, after `focus_album`:
 
 Run the unit tests — Expected: PASS.
 
-- [ ] **Step 3: Write the failing key tests**
+- [x] **Step 3: Write the failing key tests**
 
 In `znicz-tui/tests/keys.rs` (uses `app_with_library_rows()` from part 1):
 
@@ -2019,7 +2019,7 @@ fn jumping_to_a_file_outside_the_library_says_so() {
 
 Run — Expected: compile error (`jump_to_path`).
 
-- [ ] **Step 4: Wire `J`**
+- [x] **Step 4: Wire `J`**
 
 `app.rs`: add `use std::path::Path;` and, below `library_horizontal`:
 
@@ -2054,11 +2054,11 @@ In `on_library_key` add `KeyCode::Char('J') => self.jump_to_playing(),`.
 
 `keys.rs`: in `LIBRARY`, add `b("J", "jump to the playing track"),` after `b("A", "add everything listed"),`.
 
-- [ ] **Step 5: Run and verify**
+- [x] **Step 5: Run and verify**
 
 Run: `cargo test -p znicz-tui` and clippy. Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add znicz-tui/src znicz-tui/tests/keys.rs
@@ -2072,11 +2072,11 @@ git commit -m "Jump to the playing track with J"
 **Files:**
 - Modify: `Cargo.toml`, `Cargo.lock`, `README.md`, `wiki/Architecture/TUI.md`, `wiki/Plans/Roadmap.md`, `wiki/Rust/Cargo-Workspace.md`
 
-- [ ] **Step 1: Version**
+- [x] **Step 1: Version**
 
 Root `Cargo.toml` `[workspace.package] version` → `0.7.0`; run `cargo build -p znicz`; update the "currently 0.6.0" mention in `wiki/Rust/Cargo-Workspace.md` to 0.7.0.
 
-- [ ] **Step 2: README**
+- [x] **Step 2: README**
 
 In the key table add rows after the `]` row:
 
@@ -2087,7 +2087,7 @@ In the key table add rows after the `]` row:
 
 In the paragraph about the transport (above "Press `?`"), add a sentence: `Messages appear on the transport's last row rather than over the list.`
 
-- [ ] **Step 3: `wiki/Architecture/TUI.md`**
+- [x] **Step 3: `wiki/Architecture/TUI.md`**
 
 - Layout diagram: add a message row under the signal line (`         ● added 4 tracks`) and update the prose under it: modals open inside the list region, the transport has a message row, toasts no longer float.
 - Replace the "Responsive behaviour" table with the spec's table (cover only at ≥ 24 rows with `show_cover`; text transport 3 rows at ≥ 20, 2 below; list region `Min(3)`), and state that a modal takes the whole list region when it is shorter than 10 rows.
@@ -2096,15 +2096,15 @@ In the paragraph about the transport (above "Press `?`"), add a sentence: `Messa
 - In "Keys, footer, and help": help returns to the modal it replaced; border reads `Enter keep · Esc clear` while filtering.
 - Modules table: add `views/messages.rs` (Messages list) and `playing.rs` (which rows stand for what is playing); `toast.rs` becomes "live messages and history".
 
-- [ ] **Step 4: Roadmap**
+- [x] **Step 4: Roadmap**
 
 In `wiki/Plans/Roadmap.md` "TUI reimagining", part 2 row status → `**Done** in 0.7.0 ([spec](../../docs/superpowers/specs/2026-11-07-space-and-layering-design.md))`.
 
-- [ ] **Step 5: Preview**
+- [x] **Step 5: Preview**
 
 Run `cargo run -q -p znicz-tui --example preview -- 110 32 2>/dev/null` and `-- 48 14`. Check: modals sit inside the list region with the transport visible; messages on the transport's last row; no cover at 48×14. If the example references removed APIs (`toasts.visible`, toast layout functions), update it to compile.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add Cargo.toml Cargo.lock README.md wiki znicz-tui/examples
@@ -2115,6 +2115,6 @@ git commit -m "Bump to 0.7.0 and document space and layering"
 
 ### Task 14: Verify and open the PR
 
-- [ ] **Step 1:** `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` — all clean.
-- [ ] **Step 2:** Tick every checkbox in this plan; commit `Mark space and layering plan complete`.
-- [ ] **Step 3:** Push `feat/space-and-layering` and open a PR titled "Space and layering (TUI rework part 2)" summarising the spec's goals, ending with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+- [x] **Step 1:** `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` — all clean.
+- [x] **Step 2:** Tick every checkbox in this plan; commit `Mark space and layering plan complete`.
+- [x] **Step 3:** Push `feat/space-and-layering` and open a PR titled "Space and layering (TUI rework part 2)" summarising the spec's goals, ending with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
