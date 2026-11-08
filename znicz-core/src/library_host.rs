@@ -56,12 +56,15 @@ pub struct LibraryStatus {
     pub last: Option<ScanSummary>,
     /// Goes up by one each time a job finishes, success or failure.
     pub scans_finished: u64,
+    /// A job is running (scanning or pruning).
+    #[serde(default)]
+    pub running: bool,
 }
 
 impl LibraryStatus {
     /// A job is running or waiting.
     pub fn busy(&self) -> bool {
-        self.scanning.is_some() || self.queued > 0
+        self.running || self.scanning.is_some() || self.queued > 0
     }
 }
 
@@ -104,6 +107,16 @@ pub fn wait_for_library<H: LibraryHost + ?Sized>(
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[test]
+    fn a_running_job_is_busy() {
+        let status = LibraryStatus {
+            running: true,
+            ..Default::default()
+        };
+        assert!(status.busy());
+        assert!(!LibraryStatus::default().busy());
+    }
 
     /// Finishes one job per status read.
     struct Ticking {

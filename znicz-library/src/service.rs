@@ -122,6 +122,7 @@ fn run(mut library: Library, shared: Arc<Shared>) {
                 }
                 if let Some(job) = state.queue.pop_front() {
                     state.status.queued = state.queue.len();
+                    state.status.running = true;
                     state.rescan_running = matches!(job, Job::RescanAll);
                     break job;
                 }
@@ -136,6 +137,7 @@ fn run(mut library: Library, shared: Arc<Shared>) {
             return;
         };
         state.status.scanning = None;
+        state.status.running = false;
         state.rescan_running = false;
         state.status.last = Some(summary);
         state.status.scans_finished += 1;
@@ -327,5 +329,36 @@ mod tests {
             .unwrap();
         service.apply(LibraryOp::Prune).unwrap();
         assert_eq!(wait(&service, 1).last.unwrap().removed, 1);
+    }
+
+    #[test]
+    fn a_pruning_service_never_looks_idle_before_it_finishes() {
+        let root = temp_dir("busy");
+        let db = root.join("library.db");
+        let service = LibraryService::open(&db).unwrap();
+        {
+            let mut writer = Library::open(&db).unwrap();
+            for i in 0..2000 {
+                writer
+                    .upsert_track_for_test(
+                        Path::new(&format!("/nowhere/{i}.flac")),
+                        "t",
+                        None,
+                        None,
+                        None,
+                    )
+                    .unwrap();
+            }
+        }
+        service.apply(LibraryOp::Prune).unwrap();
+        let start = std::time::Instant::now();
+        loop {
+            let status = service.status();
+            if status.scans_finished >= 1 {
+                break;
+            }
+            assert!(status.busy(), "idle before the prune finished: {status:?}");
+            assert!(start.elapsed() < Duration::from_secs(30), "prune timed out");
+        }
     }
 }
