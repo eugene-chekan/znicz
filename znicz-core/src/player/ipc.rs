@@ -442,12 +442,22 @@ fn handle_session(stream: TcpStream, shared: Arc<Shared>) {
     }
 }
 
+/// An old player drops the connection on a request it does not know; say so.
+fn outdated_player_hint(e: impl std::fmt::Display) -> ZniczError {
+    ZniczError::Library(format!(
+        "{e} (the running player may be an older version; run `znicz player stop` and try again)"
+    ))
+}
+
 impl LibraryHost for IpcClient {
     fn apply(&self, op: LibraryOp) -> Result<()> {
-        match self.rpc(|token| IpcRequest::Library {
-            token: token.to_string(),
-            op: op.clone(),
-        })? {
+        match self
+            .rpc(|token| IpcRequest::Library {
+                token: token.to_string(),
+                op: op.clone(),
+            })
+            .map_err(outdated_player_hint)?
+        {
             IpcResponse::Ok { .. } => Ok(()),
             IpcResponse::Err { message } => Err(ZniczError::Library(message)),
         }
@@ -661,6 +671,14 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn a_transport_failure_suggests_restarting_the_player() {
+        let msg = outdated_player_hint("connection reset").to_string();
+        assert!(msg.contains("connection reset"), "{msg}");
+        assert!(msg.contains("older version"), "{msg}");
+        assert!(msg.contains("znicz player stop"), "{msg}");
+    }
 
     fn advertise_path() -> PathBuf {
         std::env::temp_dir().join(format!(
