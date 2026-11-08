@@ -1,6 +1,7 @@
 //! The application: what is on screen, and what the keys do.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crossterm::event::{
@@ -10,8 +11,8 @@ use crossterm::event::{
 use ratatui::layout::Rect;
 use znicz_core::{
     apply_to_player, list_saved, load_path, sanitize_stem, saved_path, skipped_notice, write_path,
-    AudioDeviceInfo, AudioOutput, Command, IpcClient, PlaybackStatus, PlayerEvent, PlayerHandle,
-    PlayerOps, PlayerState, RepeatMode,
+    AudioDeviceInfo, AudioOutput, Command, IpcClient, LibraryHost, LibraryOp, LibraryStatus,
+    PlaybackStatus, PlayerEvent, PlayerHandle, PlayerOps, PlayerState, RepeatMode,
 };
 use znicz_library::{Library, Track};
 
@@ -283,6 +284,16 @@ pub struct App {
     pub(crate) playlist_list_state: ratatui::widgets::ListState,
     pub(crate) station_list_state: ratatui::widgets::ListState,
     pub(crate) messages_list_state: ratatui::widgets::ListState,
+    /// Where library writes go: the player over IPC, or an in-process service in tests.
+    pub library_host: Option<Arc<dyn LibraryHost>>,
+    /// The writer's status as of the last frame.
+    pub library_status: LibraryStatus,
+    /// The folder prompt, while it is open.
+    pub folder_prompt: Option<LineEdit>,
+    /// The first-run prompt was dismissed; do not offer it again this session.
+    pub(crate) first_run_dismissed: bool,
+    /// `scans_finished` at the last poll, to notice finished jobs.
+    scans_seen: Option<u64>,
     pub should_quit: bool,
 }
 
@@ -306,6 +317,134 @@ impl Drop for MouseCapture {
 }
 
 impl App {
+    /// Read the library writer's status: reload and report finished jobs, and
+    /// offer the first-run prompt. Called once per frame.
+    pub fn poll_library(&mut self) {
+        let Some(host) = self.library_host.clone() else {
+            return;
+        };
+        let status = host.status();
+        if self
+            .scans_seen
+            .is_some_and(|seen| seen != status.scans_finished)
+        {
+            self.library.reload_browse();
+            self.playing = None;
+            if let Some(last) = &status.last {
+                let home = dirs::home_dir();
+                let (level, text) = crate::scan_status::finish_message(last, home.as_deref());
+                match level {
+                    crate::toast::Level::Error => self.toasts.error(text),
+                    crate::toast::Level::Warn => self.toasts.warn(text),
+                    crate::toast::Level::Success => self.toasts.success(text),
+                    crate::toast::Level::Info => self.toasts.info(text),
+                }
+            }
+        }
+        self.scans_seen = Some(status.scans_finished);
+        self.library_status = status;
+        if self.wants_first_run_prompt() {
+            self.open_folder_prompt();
+        }
+    }
+
+    fn wants_first_run_prompt(&self) -> bool {
+        !self.first_run_dismissed
+            && self.folder_prompt.is_none()
+            && self.modal == Modal::None
+            && !self.library.is_typing()
+            && !self.library_status.busy()
+            && self.library.has_no_music()
+    }
+
+    fn open_folder_prompt(&mut self) {
+        if self.library_host.is_none() {
+            self.toasts.error("no music library configured");
+            return;
+        }
+        self.folder_prompt = Some(LineEdit::from_text(default_folder_text()));
+    }
+
+    fn on_folder_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.folder_prompt = None;
+                self.first_run_dismissed = true;
+            }
+            KeyCode::Enter => self.submit_folder(),
+            KeyCode::Tab => self.complete_folder(),
+            _ => {
+                if let Some(edit) = self.folder_prompt.as_mut() {
+                    edit.on_key(key);
+                }
+            }
+        }
+    }
+
+    fn submit_folder(&mut self) {
+        let Some(typed) = self
+            .folder_prompt
+            .as_ref()
+            .map(|e| e.as_str().trim().to_string())
+        else {
+            return;
+        };
+        let home = dirs::home_dir().unwrap_or_default();
+        let path = crate::folder_complete::expand(&typed, &home);
+        if !path.is_dir() {
+            self.toasts.error(format!("not a folder: {typed}"));
+            return;
+        }
+        let Some(host) = self.library_host.clone() else {
+            self.toasts.error("no music library configured");
+            return;
+        };
+        match host.apply(LibraryOp::AddFolder { path }) {
+            Ok(()) => {
+                self.folder_prompt = None;
+                self.first_run_dismissed = true;
+                self.toasts.info(format!("scanning {typed}"));
+            }
+            Err(e) => self.toasts.error(e.to_string()),
+        }
+    }
+
+    fn complete_folder(&mut self) {
+        let Some(edit) = self.folder_prompt.as_mut() else {
+            return;
+        };
+        let home = dirs::home_dir().unwrap_or_default();
+        let done = crate::folder_complete::complete(edit.as_str(), &home);
+        *edit = LineEdit::from_text(done.text);
+        if done.matches.len() > 1 {
+            let mut shown: Vec<&str> = done.matches.iter().take(5).map(String::as_str).collect();
+            if done.matches.len() > 5 {
+                shown.push("…");
+            }
+            self.toasts.info(shown.join(" · "));
+        }
+    }
+
+    fn rescan_folders(&mut self) {
+        let Some(host) = self.library_host.clone() else {
+            self.toasts.error("no music library configured");
+            return;
+        };
+        let count = host.status().folders.len();
+        if count == 0 {
+            self.toasts
+                .info("no music folders yet — press F to add one");
+            return;
+        }
+        match host.apply(LibraryOp::RescanAll) {
+            Ok(()) => self.toasts.info(match count {
+                1 => "rescanning 1 folder".to_string(),
+                n => format!("rescanning {n} folders"),
+            }),
+            Err(e) => self.toasts.error(e.to_string()),
+        }
+    }
+
     /// Re-resolve what is playing when the current file changes.
     pub fn refresh_playing(&mut self, state: &PlayerState) {
         let info = state.current_track.as_ref();
@@ -331,7 +470,10 @@ impl App {
     }
 
     pub fn with_remote(player: IpcClient, library: Option<Library>) -> Self {
-        Self::with_engine(Engine::Remote(player), library)
+        let host: Arc<dyn LibraryHost> = Arc::new(player.clone());
+        let mut app = Self::with_engine(Engine::Remote(player), library);
+        app.library_host = Some(host);
+        app
     }
 
     fn with_engine(player: Engine, library: Option<Library>) -> Self {
@@ -377,6 +519,11 @@ impl App {
             playlist_list_state: ratatui::widgets::ListState::default(),
             station_list_state: ratatui::widgets::ListState::default(),
             messages_list_state: ratatui::widgets::ListState::default(),
+            library_host: None,
+            library_status: LibraryStatus::default(),
+            folder_prompt: None,
+            first_run_dismissed: false,
+            scans_seen: None,
             should_quit: false,
         }
     }
@@ -501,6 +648,9 @@ impl App {
             self.on_key(key);
             return;
         }
+        if self.folder_prompt.is_some() {
+            return;
+        }
         if self.library.is_typing() {
             let on_prompt = self
                 .hits
@@ -619,6 +769,11 @@ impl App {
         // before global keys, or `s` (stop) turns "To Listen" into "To Liten".
         if self.library.is_typing() {
             self.on_search_key(key);
+            return;
+        }
+
+        if self.folder_prompt.is_some() {
+            self.on_folder_key(key);
             return;
         }
 
@@ -771,7 +926,10 @@ impl App {
 
     /// Returns true when the key was a global one and needs no focus handling.
     fn on_global_key(&mut self, key: KeyEvent) -> bool {
-        if self.library.is_typing() || self.playlist_prompt.is_some() || self.radio_prompt.is_some()
+        if self.library.is_typing()
+            || self.folder_prompt.is_some()
+            || self.playlist_prompt.is_some()
+            || self.radio_prompt.is_some()
         {
             return false;
         }
@@ -894,6 +1052,9 @@ impl App {
     pub fn context(&self) -> Context {
         if self.library.is_typing() {
             return Context::Search;
+        }
+        if self.folder_prompt.is_some() {
+            return Context::FolderPrompt;
         }
         match &self.radio_prompt {
             Some(RadioPrompt::Form { .. }) => return Context::StationPrompt,
@@ -1459,6 +1620,8 @@ impl App {
                 self.enqueue(tracks);
             }
             KeyCode::Char('J') => self.jump_to_playing(),
+            KeyCode::Char('F') => self.open_folder_prompt(),
+            KeyCode::Char('U') => self.rescan_folders(),
             KeyCode::Char('o') => {
                 let _ = self.library_toggle_tree_expand();
             }
@@ -1940,6 +2103,16 @@ pub fn repeat_label(mode: RepeatMode) -> &'static str {
         RepeatMode::Off => "repeat off",
         RepeatMode::All => "repeat all",
         RepeatMode::One => "repeat one",
+    }
+}
+
+/// The folder prompt's starting text: the platform music folder, else home.
+fn default_folder_text() -> String {
+    let home = dirs::home_dir();
+    match (dirs::audio_dir(), home.as_deref()) {
+        (Some(music), Some(home)) if music.is_dir() => crate::folder_complete::tilde(&music, home),
+        (Some(music), None) if music.is_dir() => music.display().to_string(),
+        _ => "~/".to_string(),
     }
 }
 

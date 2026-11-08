@@ -1042,6 +1042,14 @@ impl LibraryPane {
         self.input.is_some()
     }
 
+    /// The library exists but holds no music yet.
+    pub fn has_no_music(&self) -> bool {
+        self.library.is_some()
+            && self.artists.is_empty()
+            && self.tracks.is_empty()
+            && !matches!(self.mode, Mode::Search(_))
+    }
+
     pub fn push_char(&mut self, c: char) {
         if let Some(input) = self.input.as_mut() {
             input.insert(c);
@@ -1291,7 +1299,7 @@ impl LibraryPane {
             }
             Ok(_) => {
                 self.mode = Mode::Browse;
-                self.notice = Some("library is empty — run `znicz scan <dir>`".to_string());
+                self.notice = Some("No music yet — press F to add a folder".to_string());
             }
             Err(e) => self.notice = Some(format!("could not read library: {e}")),
         }
