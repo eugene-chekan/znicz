@@ -1415,3 +1415,31 @@ fn closing_help_opened_from_the_library_returns_to_nothing() {
     press(&mut app, KeyCode::Esc);
     assert_eq!(app.modal, Modal::None);
 }
+
+#[test]
+fn capital_j_with_nothing_playing_says_so() {
+    let mut app = app_with_library_rows();
+    press_char(&mut app, 'J');
+    assert_eq!(
+        app.toasts.current().unwrap().text,
+        "nothing playing in the library"
+    );
+}
+
+#[test]
+fn jumping_to_a_library_file_selects_it() {
+    let mut app = app_with_library_rows();
+    app.jump_to_path(Some(std::path::Path::new("/music/a2.flac")));
+    assert_eq!(app.library.column_focus(), ColumnFocus::Tracks);
+    assert!(app.toasts.is_empty());
+}
+
+#[test]
+fn jumping_to_a_file_outside_the_library_says_so() {
+    let mut app = app_with_library_rows();
+    app.jump_to_path(Some(std::path::Path::new("/elsewhere/x.flac")));
+    assert_eq!(
+        app.toasts.current().unwrap().text,
+        "playing track is not in the library"
+    );
+}

@@ -1170,6 +1170,48 @@ impl LibraryPane {
         true
     }
 
+    /// `J`: leave search and select `track` in browse, in every layout.
+    pub fn reveal(&mut self, track: &Track, strip_inner: usize) -> bool {
+        let Some(album) = track.album.as_deref() else {
+            return false;
+        };
+        let album_artist = track.album_artist.as_deref().or(track.artist.as_deref());
+        if !self.focus_album(album, album_artist) {
+            return false;
+        }
+        let Some(index) = self.tracks.iter().position(|t| t.path == track.path) else {
+            return false;
+        };
+        self.track_cursor.set(index, self.tracks.len());
+        if self.effective_layout(strip_inner) == EffectiveLayout::Tree {
+            self.reveal_in_tree(index);
+        }
+        self.h_offset = 0;
+        true
+    }
+
+    /// Load the album's tracks into the tree and put the cursor on one of them.
+    fn reveal_in_tree(&mut self, track_index: usize) {
+        let Some(album) = self
+            .selected_album_index()
+            .and_then(|i| self.albums.get(i))
+            .cloned()
+        else {
+            return;
+        };
+        let key = album.album.to_lowercase();
+        self.tree_track_cache
+            .insert(key.clone(), self.tracks.clone());
+        self.tree_album_cache.insert(key.clone(), album);
+        let rows = self.tree_rows();
+        if let Some(row) = rows.iter().position(|r| {
+            matches!(r, TreeRow::Track { album_key, index, .. }
+                if *album_key == key && *index == track_index)
+        }) {
+            self.tree_cursor.set(row, rows.len());
+        }
+    }
+
     fn find_browse_artist_for_album(&self, album: &str) -> Option<String> {
         let library = self.library.as_ref()?;
         for artist in &self.artists {
@@ -1902,6 +1944,67 @@ mod tests {
     }
 
     /// Miles (one album, two tracks) sorts before Portishead (one track).
+    fn freddie(pane: &LibraryPane) -> Track {
+        pane.locate(Path::new("/music/a2.flac"))
+            .expect("in library")
+    }
+
+    fn selected_path(pane: &LibraryPane, strip: usize) -> Option<std::path::PathBuf> {
+        match pane.selected(strip) {
+            Some(Item::Track(track)) => Some(track.path.clone()),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn reveal_selects_artist_album_and_track_in_columns() {
+        let mut pane = LibraryPane::new(Some(two_artist_library()));
+        let track = freddie(&pane);
+        assert!(pane.reveal(&track, wide()));
+        assert_eq!(pane.column_focus(), ColumnFocus::Tracks);
+        assert_eq!(selected_path(&pane, wide()), Some("/music/a2.flac".into()));
+    }
+
+    #[test]
+    fn reveal_drills_paging_to_the_track() {
+        let mut pane = LibraryPane::new(Some(two_artist_library()));
+        let track = freddie(&pane);
+        assert!(pane.reveal(&track, strip()));
+        assert_eq!(pane.paging_level(), ColumnFocus::Tracks);
+        assert_eq!(selected_path(&pane, strip()), Some("/music/a2.flac".into()));
+    }
+
+    #[test]
+    fn reveal_expands_the_tree_to_the_track() {
+        let mut pane = LibraryPane::new(Some(two_artist_library()));
+        pane.set_preferred_layout(LibraryLayout::Tree);
+        let track = freddie(&pane);
+        assert!(pane.reveal(&track, strip()));
+        assert_eq!(selected_path(&pane, strip()), Some("/music/a2.flac".into()));
+    }
+
+    #[test]
+    fn reveal_leaves_search_first() {
+        let mut pane = LibraryPane::new(Some(two_artist_library()));
+        pane.begin_search();
+        for c in "Roads".chars() {
+            pane.push_char(c);
+        }
+        pane.submit_search();
+        assert!(matches!(pane.mode(), Mode::Search(_)));
+        let track = freddie(&pane);
+        assert!(pane.reveal(&track, wide()));
+        assert!(matches!(pane.mode(), Mode::Browse));
+    }
+
+    #[test]
+    fn reveal_without_an_album_fails() {
+        let mut pane = LibraryPane::new(Some(two_artist_library()));
+        let mut track = freddie(&pane);
+        track.album = None;
+        assert!(!pane.reveal(&track, wide()));
+    }
+
     fn two_artist_library() -> Library {
         let mut library = Library::open_in_memory().expect("open");
         for (path, title, artist, album) in [

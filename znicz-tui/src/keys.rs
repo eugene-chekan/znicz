@@ -178,6 +178,7 @@ pub const LIBRARY: &[Binding] = &[
     b("Tab / Shift-Tab", "next / previous column"),
     b("a", "add selection to the queue"),
     b("A", "add everything listed"),
+    b("J", "jump to the playing track"),
     b("Esc", "back one browse level"),
 ];
 

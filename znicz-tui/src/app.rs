@@ -1,6 +1,6 @@
 //! The application: what is on screen, and what the keys do.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crossterm::event::{
@@ -1446,6 +1446,7 @@ impl App {
                 let tracks = self.library.listed_tracks(strip);
                 self.enqueue(tracks);
             }
+            KeyCode::Char('J') => self.jump_to_playing(),
             KeyCode::Char('o') => {
                 let _ = self.library_toggle_tree_expand();
             }
@@ -1460,6 +1461,31 @@ impl App {
         }
         let strip = self.library_strip();
         self.library.move_horizontal(forward, strip);
+    }
+
+    /// `J`: select the playing track in the library.
+    fn jump_to_playing(&mut self) {
+        if self.modal != Modal::None {
+            return;
+        }
+        let path = self.player.state().current_track.and_then(|t| t.path);
+        self.jump_to_path(path.as_deref());
+    }
+
+    /// Select `path` in the library, or say why not. `None`: nothing (or a stream) plays.
+    pub fn jump_to_path(&mut self, path: Option<&Path>) {
+        let Some(path) = path else {
+            self.toasts.info("nothing playing in the library");
+            return;
+        };
+        let strip = self.library_strip();
+        let found = match self.library.locate(path) {
+            Some(track) => self.library.reveal(&track, strip),
+            None => false,
+        };
+        if !found {
+            self.toasts.info("playing track is not in the library");
+        }
     }
 
     /// Space (global) and `o` (library): expand/collapse tree parents.
