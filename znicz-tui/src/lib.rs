@@ -8,6 +8,7 @@
 pub mod app;
 pub mod cover;
 pub mod cursor;
+pub mod folder_complete;
 pub mod footer_hits;
 pub mod format;
 pub mod help_state;
@@ -18,6 +19,7 @@ pub mod library_pane;
 pub mod line_edit;
 pub mod meta;
 pub mod playing;
+pub mod scan_status;
 pub mod theme;
 pub mod toast;
 pub mod tui_config;

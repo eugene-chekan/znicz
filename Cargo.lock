@@ -4650,6 +4650,7 @@ dependencies = [
  "color-eyre",
  "crossbeam-channel",
  "crossterm 0.28.1",
+ "dirs",
  "image",
  "lofty",
  "ratatui",
