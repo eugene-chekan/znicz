@@ -108,11 +108,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         })
         .collect();
 
-    let list = List::new(items).highlight_style(if focused {
-        theme::selected()
-    } else {
-        views::no_style()
-    });
+    let list = List::new(items).highlight_style(views::highlight(focused));
 
     app.station_list_state
         .select(app.station_cursor.selected(app.stations.len()));

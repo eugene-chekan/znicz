@@ -796,3 +796,61 @@ fn the_help_border_says_keep_and_clear_while_filtering() {
         .expect("help bottom border");
     assert!(border.contains("Enter keep · Esc clear"), "{border}");
 }
+
+fn library_app() -> App {
+    let mut library = znicz_library::Library::open_in_memory().expect("open library");
+    for (path, title, artist, album) in [
+        ("/music/a1.flac", "So What", "Miles", "Kind of Blue"),
+        (
+            "/music/a2.flac",
+            "Freddie Freeloader",
+            "Miles",
+            "Kind of Blue",
+        ),
+        (
+            "/music/sour-times.flac",
+            "Sour Times",
+            "Portishead",
+            "Dummy",
+        ),
+    ] {
+        library
+            .upsert_track_for_test(
+                std::path::Path::new(path),
+                title,
+                Some(artist.into()),
+                Some(album.into()),
+                None,
+            )
+            .expect("insert track");
+    }
+    App::with_library(player(), Some(library))
+}
+
+fn buffer(app: &mut App, width: u16, height: u16) -> ratatui::buffer::Buffer {
+    let state = app.state();
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
+    terminal
+        .draw(|frame| views::render(frame, app, &state))
+        .expect("draw");
+    terminal.backend().buffer().clone()
+}
+
+#[test]
+fn the_focused_selection_is_accent_and_others_stay_grey() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::style::Color;
+
+    let mut app = library_app();
+    // First artist row: inside the Artists column border, row 1.
+    let artists = buffer(&mut app, 120, 30);
+    assert_eq!(artists[(2, 1)].bg, Color::Cyan, "focused column");
+
+    app.on_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+    let albums = buffer(&mut app, 120, 30);
+    assert_eq!(
+        albums[(2, 1)].bg,
+        Color::DarkGray,
+        "artist stays visible, grey"
+    );
+}

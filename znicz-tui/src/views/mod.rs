@@ -178,15 +178,11 @@ pub(crate) fn inner_width(area: Rect) -> usize {
     area.width.saturating_sub(2) as usize
 }
 
-pub(crate) fn no_style() -> Style {
-    Style::default()
-}
-
-/// Highlight for the selected row: strong when the list has focus.
+/// Highlight for the selected row: accent when the list has focus, grey otherwise.
 pub(crate) fn highlight(focused: bool) -> Style {
     if focused {
         theme::selected()
     } else {
-        no_style()
+        theme::selected_idle()
     }
 }

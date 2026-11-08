@@ -67,11 +67,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         })
         .collect();
 
-    let list = List::new(items).highlight_style(if focused {
-        theme::selected()
-    } else {
-        views::no_style()
-    });
+    let list = List::new(items).highlight_style(views::highlight(focused));
 
     app.playlist_list_state
         .select(app.playlist_cursor.selected(app.playlists.len()));

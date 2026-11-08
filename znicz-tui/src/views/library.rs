@@ -145,11 +145,9 @@ fn render_column_list(
     };
     let block = views::pane_block(title, focused, Some(summary));
     let inner = block.inner(area);
-    let list = List::new(items).block(block).highlight_style(if focused {
-        theme::selected()
-    } else {
-        views::no_style()
-    });
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(views::highlight(focused));
 
     let mut state = ListState::default();
     state.select(selected);
@@ -182,11 +180,9 @@ fn render_tree(frame: &mut Frame, area: Rect, app: &mut App, strip: usize, focus
     let summary = format!("{count} rows");
     let block = views::pane_block(&title, focused, Some(summary));
     let inner = block.inner(area);
-    let list = List::new(items).block(block).highlight_style(if focused {
-        theme::selected()
-    } else {
-        views::no_style()
-    });
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(views::highlight(focused));
     app.library_list_state
         .select(app.library.selected_index(strip));
     frame.render_stateful_widget(list, area, &mut app.library_list_state);
@@ -362,11 +358,9 @@ fn finish_list(
 ) {
     let block = views::pane_block(title, focused, Some(summary));
     let inner = block.inner(area);
-    let list = List::new(items).block(block).highlight_style(if focused {
-        theme::selected()
-    } else {
-        views::no_style()
-    });
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(views::highlight(focused));
     app.library_list_state
         .select(app.library.selected_index(strip));
     frame.render_stateful_widget(list, area, &mut app.library_list_state);

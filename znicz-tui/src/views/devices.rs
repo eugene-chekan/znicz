@@ -72,11 +72,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState)
 
     let block = views::pane_block("Devices", focused, Some(summary)).title(views::close_title());
     let inner = block.inner(area);
-    let list = List::new(items).block(block).highlight_style(if focused {
-        theme::selected()
-    } else {
-        views::no_style()
-    });
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(views::highlight(focused));
 
     app.device_list_state
         .select(app.device_cursor.selected(app.devices.len()));
