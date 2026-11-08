@@ -33,6 +33,7 @@ fn setup(name: &str) -> Setup {
     let (player, _thread) = spawn_player(AudioConfig::default());
     let mut app = App::with_library(player, Some(Library::open(&db).unwrap()));
     app.library_host = Some(service.clone());
+    app.library_poll_every = Duration::ZERO;
     Setup { app, root, service }
 }
 
@@ -189,4 +190,94 @@ fn the_prompt_sits_on_top_when_the_library_has_music() {
         "prompt on the pane's first row:\n{screen}"
     );
     assert!(screen.contains("Miles"), "{screen}");
+}
+
+/// A host that serves queued answers, then repeats the last one.
+struct Scripted {
+    answers: std::sync::Mutex<Vec<Result<znicz_core::LibraryStatus, String>>>,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+impl Scripted {
+    fn new(answers: Vec<Result<znicz_core::LibraryStatus, String>>) -> Arc<Self> {
+        Arc::new(Self {
+            answers: std::sync::Mutex::new(answers),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+}
+
+impl LibraryHost for Scripted {
+    fn apply(&self, _op: znicz_core::LibraryOp) -> znicz_core::Result<()> {
+        Ok(())
+    }
+    fn status(&self) -> znicz_core::LibraryStatus {
+        self.try_status().unwrap_or_default()
+    }
+    fn try_status(&self) -> znicz_core::Result<znicz_core::LibraryStatus> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut answers = self.answers.lock().unwrap();
+        let next = if answers.len() > 1 {
+            answers.remove(0)
+        } else {
+            answers[0].clone()
+        };
+        next.map_err(znicz_core::ZniczError::Library)
+    }
+}
+
+fn status(finished: u64, running: bool) -> znicz_core::LibraryStatus {
+    znicz_core::LibraryStatus {
+        scans_finished: finished,
+        running,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn an_unreachable_host_keeps_the_last_status() {
+    let mut s = setup("unreachable");
+    let host = Scripted::new(vec![Ok(status(5, true)), Err("connection lost".into())]);
+    s.app.library_host = Some(host);
+    s.app.poll_library();
+    assert_eq!(s.app.library_status.scans_finished, 5);
+    s.app.poll_library();
+    assert_eq!(s.app.library_status.scans_finished, 5);
+    assert!(s.app.library_status.busy());
+    assert!(s.app.folder_prompt.is_none());
+    assert!(s.app.toasts.current().is_none());
+}
+
+#[test]
+fn polling_is_throttled() {
+    let mut s = setup("throttle");
+    let host = Scripted::new(vec![Ok(status(1, false))]);
+    s.app.library_host = Some(host.clone());
+    s.app.library_poll_every = Duration::from_secs(60);
+    for _ in 0..5 {
+        s.app.poll_library();
+    }
+    assert_eq!(host.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[test]
+fn a_finished_scan_does_not_pull_the_user_out_of_search() {
+    let mut s = setup("search");
+    Library::open(&s.root.join("library.db"))
+        .unwrap()
+        .upsert_track_for_test(
+            Path::new("/m/a.flac"),
+            "So What",
+            Some("Miles".into()),
+            None,
+            None,
+        )
+        .unwrap();
+    s.app.library.reload_browse();
+    s.app.library.begin_search();
+    let host = Scripted::new(vec![Ok(status(0, false)), Ok(status(1, false))]);
+    s.app.library_host = Some(host);
+    s.app.poll_library();
+    s.app.poll_library();
+    assert!(s.app.library.is_typing(), "still searching");
 }

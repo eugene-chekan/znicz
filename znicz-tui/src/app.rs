@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
@@ -294,6 +294,9 @@ pub struct App {
     pub(crate) first_run_dismissed: bool,
     /// `scans_finished` at the last poll, to notice finished jobs.
     scans_seen: Option<u64>,
+    /// The least time between two status reads.
+    pub library_poll_every: Duration,
+    last_library_poll: Option<Instant>,
     pub should_quit: bool,
 }
 
@@ -323,13 +326,25 @@ impl App {
         let Some(host) = self.library_host.clone() else {
             return;
         };
-        let status = host.status();
+        if self
+            .last_library_poll
+            .is_some_and(|at| at.elapsed() < self.library_poll_every)
+        {
+            return;
+        }
+        self.last_library_poll = Some(Instant::now());
+        // An unreachable host is not a status: keep what we knew.
+        let Ok(status) = host.try_status() else {
+            return;
+        };
         if self
             .scans_seen
             .is_some_and(|seen| seen != status.scans_finished)
         {
-            self.library.reload_browse();
-            self.playing = None;
+            if should_reload(&status, self.library.mode()) {
+                self.library.reload_browse();
+                self.playing = None;
+            }
             if let Some(last) = &status.last {
                 let home = dirs::home_dir();
                 let (level, text) = crate::scan_status::finish_message(last, home.as_deref());
@@ -430,7 +445,7 @@ impl App {
             self.toasts.error("no music library configured");
             return;
         };
-        let count = host.status().folders.len();
+        let count = self.library_status.folders.len();
         if count == 0 {
             self.toasts
                 .info("no music folders yet — press F to add one");
@@ -524,6 +539,8 @@ impl App {
             folder_prompt: None,
             first_run_dismissed: false,
             scans_seen: None,
+            library_poll_every: Duration::from_millis(500),
+            last_library_poll: None,
             should_quit: false,
         }
     }
@@ -612,7 +629,10 @@ impl App {
     }
 
     fn on_wheel(&mut self, delta: isize) {
-        if self.library.is_typing() || self.playlist_prompt.is_some() || self.radio_prompt.is_some()
+        if self.library.is_typing()
+            || self.folder_prompt.is_some()
+            || self.playlist_prompt.is_some()
+            || self.radio_prompt.is_some()
         {
             return;
         }
@@ -2106,6 +2126,12 @@ pub fn repeat_label(mode: RepeatMode) -> &'static str {
     }
 }
 
+/// A finished job reloads the browse lists only once the queue is drained and
+/// the user is not looking at search results.
+fn should_reload(status: &LibraryStatus, mode: &Mode) -> bool {
+    !status.busy() && !matches!(mode, Mode::Search(_))
+}
+
 /// The folder prompt's starting text: the platform music folder, else home.
 fn default_folder_text() -> String {
     let home = dirs::home_dir();
@@ -2118,6 +2144,23 @@ fn default_folder_text() -> String {
 
 #[cfg(test)]
 mod tests {
+    use znicz_core::LibraryStatus;
+
+    #[test]
+    fn reload_waits_for_the_last_job_and_leaves_search_alone() {
+        let idle = LibraryStatus::default();
+        let queued = LibraryStatus {
+            queued: 1,
+            ..LibraryStatus::default()
+        };
+        assert!(super::should_reload(&idle, &super::Mode::Browse));
+        assert!(!super::should_reload(&queued, &super::Mode::Browse));
+        assert!(!super::should_reload(
+            &idle,
+            &super::Mode::Search("x".into())
+        ));
+    }
+
     use super::*;
 
     #[test]

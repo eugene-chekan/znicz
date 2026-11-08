@@ -68,10 +68,10 @@ const NEW: Hint = hint("n new", KeyCode::Char('n'));
 const EDIT: Hint = hint("e edit", KeyCode::Char('e'));
 const DELETE: Hint = hint("d delete", KeyCode::Char('d'));
 const CLOSE: Hint = hint("Esc close", KeyCode::Esc);
-/// Opens the Messages list; the footer appends the unread count.
 const ADD_FOLDER: Hint = hint("F add folder", KeyCode::Char('F'));
 const TAB_COMPLETE: Hint = hint("Tab complete", KeyCode::Tab);
 const ENTER_SCAN: Hint = hint("Enter scan", KeyCode::Enter);
+/// Opens the Messages list; the footer appends the unread count.
 pub const MESSAGES_OPEN: Hint = hint("M messages", KeyCode::Char('M'));
 
 // Prompt and help hints: these keys belong to a prompt, not a binding table.
