@@ -937,7 +937,15 @@ impl App {
         };
     }
 
+    /// Another modal is about to replace Messages: tidy what it leaves behind.
+    fn leave_messages(&mut self) {
+        if self.modal == Modal::Messages {
+            self.toasts.clear_fresh();
+        }
+    }
+
     fn toggle_devices_modal(&mut self) {
+        self.leave_messages();
         self.modal = if self.modal == Modal::Devices {
             Modal::None
         } else {
@@ -946,6 +954,7 @@ impl App {
     }
 
     fn toggle_inspector_modal(&mut self) {
+        self.leave_messages();
         self.modal = if self.modal == Modal::Inspector {
             Modal::None
         } else {
@@ -958,6 +967,7 @@ impl App {
             self.modal = Modal::None;
             self.playlist_prompt = None;
         } else {
+            self.leave_messages();
             self.reload_playlists();
             self.modal = Modal::Playlists;
         }
@@ -968,6 +978,7 @@ impl App {
             self.modal = Modal::None;
             self.radio_prompt = None;
         } else {
+            self.leave_messages();
             self.playlist_prompt = None;
             self.reload_stations();
             self.modal = Modal::Radio;
@@ -991,9 +1002,7 @@ impl App {
             self.modal = self.help.return_to;
             return;
         }
-        if self.modal == Modal::Messages {
-            self.toasts.clear_fresh();
-        }
+        self.leave_messages();
         self.modal = Modal::None;
         self.playlist_prompt = None;
         self.radio_prompt = None;

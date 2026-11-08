@@ -1443,3 +1443,15 @@ fn jumping_to_a_file_outside_the_library_says_so() {
         "playing track is not in the library"
     );
 }
+
+#[test]
+fn another_modal_replacing_messages_ends_the_viewing() {
+    let mut app = new_app();
+    press_char(&mut app, 'M');
+    assert_eq!(app.modal, Modal::Messages);
+    press_char(&mut app, ',');
+    assert_eq!(app.modal, Modal::Devices);
+
+    app.toasts.error("x");
+    assert!(app.toasts.unread_alerts().is_some());
+}
