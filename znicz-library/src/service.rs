@@ -179,14 +179,31 @@ fn scan_into(
 }
 
 fn rescan_all(library: &mut Library, shared: &Shared, summary: &mut ScanSummary) -> Result<()> {
+    rescan_folders(library, summary, |library, folder, summary| {
+        scan_into(library, shared, folder, summary)
+    })
+}
+
+/// Rescan every remembered folder with `scan`. A folder that is missing or
+/// fails to scan is reported as skipped and keeps its tracks; the others go on.
+fn rescan_folders(
+    library: &mut Library,
+    summary: &mut ScanSummary,
+    mut scan: impl FnMut(&mut Library, &Path, &mut ScanSummary) -> Result<()>,
+) -> Result<()> {
     let mut scanned = Vec::new();
     for folder in library.folders()? {
-        if folder.is_dir() {
-            scan_into(library, shared, &folder, summary)?;
-            scanned.push(folder);
-        } else {
+        if !folder.is_dir() {
             // An unplugged drive: keep its tracks, just say it was skipped.
             summary.skipped.push(folder);
+            continue;
+        }
+        match scan(library, &folder, summary) {
+            Ok(()) => scanned.push(folder),
+            Err(e) => {
+                tracing::warn!(folder = %folder.display(), error = %e, "folder rescan failed");
+                summary.skipped.push(folder);
+            }
         }
     }
     summary.removed = library.remove_missing_under(&scanned)?;
@@ -360,5 +377,42 @@ mod tests {
             assert!(status.busy(), "idle before the prune finished: {status:?}");
             assert!(start.elapsed() < Duration::from_secs(30), "prune timed out");
         }
+    }
+
+    #[test]
+    fn a_failing_folder_does_not_stop_the_rest_of_a_rescan() {
+        let root = temp_dir("failing");
+        let bad = music(&root, "bad", 0);
+        let good = music(&root, "good", 0);
+        let mut library = Library::open(&root.join("library.db")).unwrap();
+        library.remember_folder(&bad).unwrap();
+        library.remember_folder(&good).unwrap();
+        for path in [bad.join("kept.flac"), good.join("deleted.flac")] {
+            library
+                .upsert_track_for_test(&path, "t", None, None, None)
+                .unwrap();
+        }
+        let mut summary = ScanSummary::default();
+        let mut tried = Vec::new();
+        rescan_folders(&mut library, &mut summary, |_, folder, _| {
+            tried.push(folder.to_path_buf());
+            if folder == bad {
+                Err(crate::error::LibraryError::NotADirectory("boom".into()))
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap();
+        assert_eq!(tried, [bad.clone(), good.clone()]);
+        assert_eq!(summary.skipped, std::slice::from_ref(&bad));
+        assert_eq!(summary.removed, 1);
+        assert!(library
+            .get_by_path(&bad.join("kept.flac"))
+            .unwrap()
+            .is_some());
+        assert!(library
+            .get_by_path(&good.join("deleted.flac"))
+            .unwrap()
+            .is_none());
     }
 }
