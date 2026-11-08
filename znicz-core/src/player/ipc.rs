@@ -319,11 +319,14 @@ fn should_idle_exit(shared: &Shared, idle_since: &mut Option<Instant>) -> bool {
     }
     let stopped = shared.player.state().status == PlaybackStatus::Stopped;
     let no_ui = shared.ui_count.load(Ordering::SeqCst) == 0;
-    let scanning = shared
-        .library
-        .as_ref()
-        .is_some_and(|host| host.status().busy());
-    if stopped && no_ui && !scanning {
+    // Only ask the library when nothing else keeps the player up.
+    let scanning = || {
+        shared
+            .library
+            .as_ref()
+            .is_some_and(|host| host.status().busy())
+    };
+    if stopped && no_ui && !scanning() {
         let since = idle_since.get_or_insert_with(Instant::now);
         since.elapsed() >= shared.idle
     } else {
