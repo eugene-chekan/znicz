@@ -1,6 +1,10 @@
-# Znicz
+<p align="center">
+  <img src="znicz-tui/assets/logo.png" alt="Znicz logo: a candle in a glass whose flame holds a play symbol" width="160">
+</p>
 
-Cross-platform audiophile TUI music player with a native MCP server for AI agent control.
+<h1 align="center">Znicz</h1>
+
+<p align="center">Cross-platform audiophile TUI music player with a native MCP server for AI agent control.</p>
 
 ## Features
 
