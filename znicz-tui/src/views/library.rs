@@ -70,6 +70,19 @@ fn render_columns(frame: &mut Frame, area: Rect, app: &mut App, focused: bool) {
         ])
         .split(area);
 
+    let artist = app
+        .library
+        .selected_artist_index()
+        .and_then(|i| app.library.artists().get(i))
+        .map(|a| a.name.clone());
+    let album = app
+        .library
+        .selected_album_index()
+        .and_then(|i| app.library.albums().get(i))
+        .map(|a| a.album.clone());
+    let albums_title = column_title("Albums", artist.as_deref(), views::title_width(parts[1]));
+    let tracks_title = column_title("Tracks", album.as_deref(), views::title_width(parts[2]));
+
     render_column_list(
         frame,
         parts[0],
@@ -92,7 +105,7 @@ fn render_columns(frame: &mut Frame, area: Rect, app: &mut App, focused: bool) {
         frame,
         parts[1],
         app,
-        "Albums",
+        &albums_title,
         ColumnFocus::Albums,
         focused && app.library.column_focus() == ColumnFocus::Albums,
         app.library
@@ -110,7 +123,7 @@ fn render_columns(frame: &mut Frame, area: Rect, app: &mut App, focused: bool) {
         frame,
         parts[2],
         app,
-        "Tracks",
+        &tracks_title,
         ColumnFocus::Tracks,
         focused && app.library.column_focus() == ColumnFocus::Tracks,
         app.library
@@ -124,6 +137,14 @@ fn render_columns(frame: &mut Frame, area: Rect, app: &mut App, focused: bool) {
         app.library.tracks().len(),
         app.library.selected_track_index(),
     );
+}
+
+/// `Albums · Miles`: a column title naming its parent selection.
+fn column_title(name: &str, parent: Option<&str>, width: usize) -> String {
+    match parent {
+        Some(parent) => format::truncate(&format!("{name} · {parent}"), width),
+        None => name.to_string(),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -176,7 +197,11 @@ fn render_tree(frame: &mut Frame, area: Rect, app: &mut App, strip: usize, focus
         .enumerate()
         .map(|(i, row)| tree_row(app, row, strip, app.library.offset_for_row(i, selected)))
         .collect();
-    let title = "Library".to_string();
+    let crumbs = tree_crumbs(&rows, selected);
+    let parts: Vec<&str> = std::iter::once("Library")
+        .chain(crumbs.iter().map(String::as_str))
+        .collect();
+    let title = views::breadcrumb(&parts, views::title_width(area));
     let summary = format!("{count} rows");
     let block = views::pane_block(&title, focused, Some(summary));
     let inner = block.inner(area);
@@ -232,28 +257,45 @@ fn tree_row(app: &App, row: &TreeRow, strip: usize, offset: usize) -> ListItem<'
     }
 }
 
-fn render_paging(frame: &mut Frame, area: Rect, app: &mut App, strip: usize, focused: bool) {
-    let title = match app.library.paging_level() {
-        ColumnFocus::Artists => "Library / Artists".to_string(),
-        ColumnFocus::Albums => {
-            let name = app
-                .library
-                .selected_artist_index()
-                .and_then(|i| app.library.artists().get(i))
-                .map(|a| a.name.as_str())
-                .unwrap_or("Albums");
-            format!("Library / {}", format::truncate(name, 40))
-        }
-        ColumnFocus::Tracks => {
-            let name = app
-                .library
-                .selected_album_index()
-                .and_then(|i| app.library.albums().get(i))
-                .map(|a| a.album.as_str())
-                .unwrap_or("Tracks");
-            format!("Library / {}", format::truncate(name, 40))
-        }
+/// Artist (and album) names above the tree cursor, for the title.
+fn tree_crumbs(rows: &[TreeRow], selected: Option<usize>) -> Vec<String> {
+    let Some(index) = selected else {
+        return Vec::new();
     };
+    // A track row belongs to the nearest album row above it.
+    let index = match rows.get(index) {
+        Some(TreeRow::Track { .. }) => rows[..index]
+            .iter()
+            .rposition(|r| matches!(r, TreeRow::Album { .. }))
+            .unwrap_or(index),
+        _ => index,
+    };
+    match rows.get(index) {
+        Some(TreeRow::Artist { artist, .. }) => vec![artist.name.clone()],
+        Some(TreeRow::Album { artist, album, .. }) => vec![artist.clone(), album.album.clone()],
+        _ => Vec::new(),
+    }
+}
+
+fn render_paging(frame: &mut Frame, area: Rect, app: &mut App, strip: usize, focused: bool) {
+    let artist = app
+        .library
+        .selected_artist_index()
+        .and_then(|i| app.library.artists().get(i))
+        .map(|a| a.name.clone())
+        .unwrap_or_default();
+    let album = app
+        .library
+        .selected_album_index()
+        .and_then(|i| app.library.albums().get(i))
+        .map(|a| a.album.clone())
+        .unwrap_or_default();
+    let parts: Vec<&str> = match app.library.paging_level() {
+        ColumnFocus::Artists => vec!["Library"],
+        ColumnFocus::Albums => vec!["Library", &artist],
+        ColumnFocus::Tracks => vec!["Library", &artist, &album],
+    };
+    let title = views::breadcrumb(&parts, views::title_width(area));
 
     if app.library.is_empty(strip) {
         render_empty(frame, area, &title, focused, app);
@@ -295,11 +337,16 @@ fn render_paging(frame: &mut Frame, area: Rect, app: &mut App, strip: usize, foc
 }
 
 fn render_single_list(frame: &mut Frame, area: Rect, app: &mut App, strip: usize, focused: bool) {
-    let title = match app.library.mode() {
-        Mode::AllTracks => "Library / all tracks".to_string(),
-        Mode::Search(query) => format!("Library / search \"{}\"", format::truncate(query, 30)),
-        Mode::Browse => "Library".to_string(),
+    let search;
+    let parts: Vec<&str> = match app.library.mode() {
+        Mode::AllTracks => vec!["Library", "all tracks"],
+        Mode::Search(query) => {
+            search = format!("search \"{query}\"");
+            vec!["Library", &search]
+        }
+        Mode::Browse => vec!["Library"],
     };
+    let title = views::breadcrumb(&parts, views::title_width(area));
 
     if app.library.is_empty(strip) {
         render_empty(frame, area, &title, focused, app);

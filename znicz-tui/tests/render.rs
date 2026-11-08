@@ -865,3 +865,35 @@ fn the_library_behind_help_keeps_a_grey_selection() {
     let screen = buffer(&mut app, 140, 30);
     assert_eq!(screen[(2, 1)].bg, Color::DarkGray, "behind a modal: grey");
 }
+
+#[test]
+fn column_titles_name_their_parent() {
+    let mut app = library_app();
+    let screen = draw(&mut app, 120, 30);
+    assert!(screen.contains("Albums · Miles"), "{screen}");
+    assert!(screen.contains("Tracks · Kind of Blue"), "{screen}");
+}
+
+#[test]
+fn the_tree_title_follows_the_cursor() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let mut app = library_app();
+    app.tui.library_layout = znicz_tui::LibraryLayout::Tree;
+    app.on_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE)); // expand Miles
+    app.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE)); // album row
+    let screen = draw(&mut app, 120, 30);
+    assert!(
+        screen.contains("Library › Miles › Kind of Blue"),
+        "{screen}"
+    );
+}
+
+#[test]
+fn paging_titles_show_the_path() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let mut app = library_app();
+    draw(&mut app, 50, 30); // narrow: single-column paging
+    app.on_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+    let screen = draw(&mut app, 50, 30);
+    assert!(screen.contains("Library › Miles"), "{screen}");
+}

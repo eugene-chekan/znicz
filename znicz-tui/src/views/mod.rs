@@ -19,6 +19,7 @@ use ratatui::Frame;
 use znicz_core::PlayerState;
 
 use crate::app::{App, Modal};
+use crate::format;
 use crate::hit::HitMap;
 use crate::line_edit::LineEdit;
 use crate::theme;
@@ -184,5 +185,60 @@ pub(crate) fn highlight(focused: bool) -> Style {
         theme::selected()
     } else {
         theme::selected_idle()
+    }
+}
+
+const CRUMB_SEPARATOR: &str = " › ";
+
+/// `Library › Artist › Album`, fitted to `width` characters.
+///
+/// Middle segments shrink first, then the last; the first is never shortened.
+pub(crate) fn breadcrumb(parts: &[&str], width: usize) -> String {
+    let mut parts: Vec<String> = parts.iter().map(|p| p.to_string()).collect();
+    let joined = |parts: &[String]| parts.join(CRUMB_SEPARATOR);
+    let len = parts.len();
+    if len > 1 {
+        for i in (1..len - 1).chain(std::iter::once(len - 1)) {
+            let over = joined(&parts).chars().count().saturating_sub(width);
+            if over == 0 {
+                break;
+            }
+            let keep = parts[i].chars().count().saturating_sub(over).max(1);
+            parts[i] = format::truncate(&parts[i], keep);
+        }
+    }
+    format::truncate(&joined(&parts), width)
+}
+
+/// Room for a pane title: the width minus corners and the padding spaces.
+pub(crate) fn title_width(area: Rect) -> usize {
+    usize::from(area.width).saturating_sub(4)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_short_breadcrumb_is_joined_whole() {
+        assert_eq!(
+            breadcrumb(&["Library", "Miles", "Kind of Blue"], 40),
+            "Library › Miles › Kind of Blue"
+        );
+    }
+
+    #[test]
+    fn middle_segments_shrink_before_the_last() {
+        let crumb = breadcrumb(&["Library", "Miles Davis Quintet", "Kind of Blue"], 30);
+        assert_eq!(crumb.chars().count(), 30);
+        assert!(crumb.starts_with("Library › "), "{crumb}");
+        assert!(crumb.ends_with(" › Kind of Blue"), "{crumb}");
+    }
+
+    #[test]
+    fn library_is_never_shortened() {
+        let crumb = breadcrumb(&["Library", "Miles", "Kind of Blue"], 16);
+        assert!(crumb.starts_with("Library"), "{crumb}");
+        assert!(crumb.chars().count() <= 16, "{crumb}");
     }
 }
