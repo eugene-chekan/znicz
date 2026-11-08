@@ -35,6 +35,10 @@ CREATE TABLE IF NOT EXISTS tracks (
 CREATE INDEX IF NOT EXISTS tracks_album_idx  ON tracks(album);
 CREATE INDEX IF NOT EXISTS tracks_artist_idx ON tracks(artist);
 CREATE INDEX IF NOT EXISTS tracks_title_idx  ON tracks(title);
+CREATE TABLE IF NOT EXISTS folders (
+    path     TEXT PRIMARY KEY,
+    added_at INTEGER NOT NULL
+);
 ";
 
 const FOLDED_COLUMNS: &[&str] = &[
@@ -531,6 +535,49 @@ impl Library {
         Ok(removed)
     }
 
+    /// Remember a scanned folder. Remembering it twice is a no-op.
+    pub fn remember_folder(&mut self, path: &Path) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO folders (path, added_at)
+             VALUES (?1, CAST(strftime('%s', 'now') AS INTEGER))",
+            params![path.to_string_lossy()],
+        )?;
+        Ok(())
+    }
+
+    /// Remembered folders, sorted.
+    pub fn folders(&self) -> Result<Vec<PathBuf>> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT path FROM folders ORDER BY path")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        Ok(rows
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .map(PathBuf::from)
+            .collect())
+    }
+
+    /// Like `remove_missing`, but only for files under one of `roots`.
+    pub fn remove_missing_under(&mut self, roots: &[PathBuf]) -> Result<usize> {
+        let paths: Vec<String> = {
+            let mut statement = self.conn.prepare("SELECT path FROM tracks")?;
+            let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let mut removed = 0;
+        let transaction = self.conn.transaction()?;
+        for path in paths {
+            let file = Path::new(&path);
+            if roots.iter().any(|root| file.starts_with(root)) && !file.exists() {
+                transaction.execute("DELETE FROM tracks WHERE path = ?1", params![path])?;
+                removed += 1;
+            }
+        }
+        transaction.commit()?;
+        Ok(removed)
+    }
+
     pub fn clear(&mut self) -> Result<()> {
         self.conn.execute("DELETE FROM tracks", [])?;
         Ok(())
@@ -716,6 +763,57 @@ fn display_album_artist(group: &AlbumGroup) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_db(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "znicz-store-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("library.db")
+    }
+
+    #[test]
+    fn remembered_folders_survive_a_reopen_and_ignore_duplicates() {
+        let db = temp_db("folders");
+        {
+            let mut library = Library::open(&db).unwrap();
+            library.remember_folder(Path::new("/music/b")).unwrap();
+            library.remember_folder(Path::new("/music/a")).unwrap();
+            library.remember_folder(Path::new("/music/a")).unwrap();
+        }
+        let library = Library::open(&db).unwrap();
+        assert_eq!(
+            library.folders().unwrap(),
+            [PathBuf::from("/music/a"), PathBuf::from("/music/b")]
+        );
+    }
+
+    #[test]
+    fn scoped_prune_only_touches_the_given_folders() {
+        let mut library = Library::open_in_memory().unwrap();
+        for path in ["/gone-a/x.flac", "/gone-b/y.flac"] {
+            library
+                .upsert_track_for_test(Path::new(path), "t", None, None, None)
+                .unwrap();
+        }
+        let removed = library
+            .remove_missing_under(&[PathBuf::from("/gone-a")])
+            .unwrap();
+        assert_eq!(removed, 1);
+        assert!(library
+            .get_by_path(Path::new("/gone-b/y.flac"))
+            .unwrap()
+            .is_some());
+        assert!(library
+            .get_by_path(Path::new("/gone-a/x.flac"))
+            .unwrap()
+            .is_none());
+    }
 
     #[test]
     fn like_wildcards_are_escaped() {
