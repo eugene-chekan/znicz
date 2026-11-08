@@ -1455,3 +1455,19 @@ fn another_modal_replacing_messages_ends_the_viewing() {
     app.toasts.error("x");
     assert!(app.toasts.unread_alerts().is_some());
 }
+
+#[test]
+fn tab_and_bracket_do_nothing_behind_a_modal() {
+    for modal_key in ['M', ',', 'i', 'P', 'R'] {
+        let mut app = new_app();
+        press_char(&mut app, modal_key);
+        let modal = app.modal;
+        assert_ne!(modal, Modal::None);
+        for key in [KeyCode::Tab, KeyCode::BackTab, KeyCode::Char(']')] {
+            press(&mut app, key);
+            assert!(!app.queue_open, "{key:?} behind {modal:?}");
+            assert_eq!(app.focus, Focus::Library, "{key:?} behind {modal:?}");
+            assert_eq!(app.modal, modal);
+        }
+    }
+}

@@ -784,6 +784,7 @@ impl App {
             KeyCode::Char('R') => self.toggle_radio_modal(),
             KeyCode::Char('M') => self.toggle_messages_modal(),
 
+            KeyCode::Char(']') if self.modal.blocks_list_focus() => {}
             KeyCode::Char(']') => {
                 if self.queue_open {
                     self.close_queue();
@@ -792,6 +793,7 @@ impl App {
                 }
             }
 
+            KeyCode::Tab if self.modal.blocks_list_focus() => {}
             KeyCode::Tab => {
                 let strip = self.library_strip();
                 if self.focus == Focus::Library
@@ -811,6 +813,7 @@ impl App {
                     self.swap_focus();
                 }
             }
+            KeyCode::BackTab if self.modal.blocks_list_focus() => {}
             KeyCode::BackTab => {
                 let strip = self.library_strip();
                 if self.focus == Focus::Library
