@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Result, ZniczError};
+use crate::library_host::{LibraryHost, LibraryOp, LibraryStatus};
 use crate::player::commands::Command;
 use crate::player::engine::{PlayerHandle, PlayerOps};
 use crate::player::state::{PlaybackStatus, PlayerState};
@@ -39,13 +40,21 @@ enum IpcRequest {
     State { token: String },
     Command { token: String, command: Command },
     Shutdown { token: String },
+    Library { token: String, op: LibraryOp },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum IpcResponse {
-    Ok { state: Box<PlayerState> },
-    Err { message: String },
+    Ok {
+        state: Box<PlayerState>,
+        /// The library writer's status, when this player hosts one.
+        #[serde(default)]
+        library: Option<LibraryStatus>,
+    },
+    Err {
+        message: String,
+    },
 }
 
 struct Shared {
@@ -56,6 +65,16 @@ struct Shared {
     idle: Duration,
     advertise: PathBuf,
     persist: Mutex<Option<SessionPersister>>,
+    library: Option<Arc<dyn LibraryHost>>,
+}
+
+impl Shared {
+    fn ok(&self) -> IpcResponse {
+        IpcResponse::Ok {
+            state: Box::new(self.player.state()),
+            library: self.library.as_ref().map(|host| host.status()),
+        }
+    }
 }
 
 fn random_token() -> String {
@@ -138,7 +157,7 @@ impl IpcServer {
         advertise: impl Into<PathBuf>,
         idle: Duration,
     ) -> Result<Self> {
-        Self::start_inner(player, advertise, idle, None)
+        Self::start_inner(player, advertise, idle, None, None)
     }
 
     pub fn start_with_session(
@@ -148,9 +167,31 @@ impl IpcServer {
         session_path: impl Into<PathBuf>,
         debounce: Duration,
     ) -> Result<Self> {
+        Self::start_with_session_and_library(player, advertise, idle, session_path, debounce, None)
+    }
+
+    /// A server whose clients can also write the library through `host`.
+    pub fn start_with_library(
+        player: PlayerHandle,
+        advertise: impl Into<PathBuf>,
+        idle: Duration,
+        host: Arc<dyn LibraryHost>,
+    ) -> Result<Self> {
+        Self::start_inner(player, advertise, idle, None, Some(host))
+    }
+
+    /// The `znicz player` setup: session persistence plus an optional library writer.
+    pub fn start_with_session_and_library(
+        player: PlayerHandle,
+        advertise: impl Into<PathBuf>,
+        idle: Duration,
+        session_path: impl Into<PathBuf>,
+        debounce: Duration,
+        host: Option<Arc<dyn LibraryHost>>,
+    ) -> Result<Self> {
         let mut persister = SessionPersister::new(session_path, debounce);
         persister.sync_from_player(&player);
-        Self::start_inner(player, advertise, idle, Some(persister))
+        Self::start_inner(player, advertise, idle, Some(persister), host)
     }
 
     fn start_inner(
@@ -158,6 +199,7 @@ impl IpcServer {
         advertise: impl Into<PathBuf>,
         idle: Duration,
         persist: Option<SessionPersister>,
+        library: Option<Arc<dyn LibraryHost>>,
     ) -> Result<Self> {
         let advertise = advertise.into();
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -183,6 +225,7 @@ impl IpcServer {
             idle,
             advertise: advertise.clone(),
             persist: Mutex::new(persist),
+            library,
         });
         let join = match thread::Builder::new()
             .name("znicz-ipc".into())
@@ -276,7 +319,11 @@ fn should_idle_exit(shared: &Shared, idle_since: &mut Option<Instant>) -> bool {
     }
     let stopped = shared.player.state().status == PlaybackStatus::Stopped;
     let no_ui = shared.ui_count.load(Ordering::SeqCst) == 0;
-    if stopped && no_ui {
+    let scanning = shared
+        .library
+        .as_ref()
+        .is_some_and(|host| host.status().busy());
+    if stopped && no_ui && !scanning {
         let since = idle_since.get_or_insert_with(Instant::now);
         since.elapsed() >= shared.idle
     } else {
@@ -314,12 +361,7 @@ fn handle_session(stream: TcpStream, shared: Arc<Shared>) {
         );
         return;
     }
-    let _ = write_json_line(
-        &mut writer,
-        &IpcResponse::Ok {
-            state: Box::new(shared.player.state()),
-        },
-    );
+    let _ = write_json_line(&mut writer, &shared.ok());
     let is_ui = role == ClientRole::Ui;
     if is_ui {
         shared.ui_count.fetch_add(1, Ordering::SeqCst);
@@ -336,7 +378,8 @@ fn handle_session(stream: TcpStream, shared: Arc<Shared>) {
             IpcRequest::Hello { token, .. }
             | IpcRequest::State { token }
             | IpcRequest::Command { token, .. }
-            | IpcRequest::Shutdown { token } => token.clone(),
+            | IpcRequest::Shutdown { token }
+            | IpcRequest::Library { token, .. } => token.clone(),
         };
         if req_token != shared.token {
             let _ = write_json_line(
@@ -357,32 +400,34 @@ fn handle_session(stream: TcpStream, shared: Arc<Shared>) {
                 );
             }
             IpcRequest::State { .. } => {
-                let _ = write_json_line(
-                    &mut writer,
-                    &IpcResponse::Ok {
-                        state: Box::new(shared.player.state()),
-                    },
-                );
+                let _ = write_json_line(&mut writer, &shared.ok());
             }
             IpcRequest::Command { command, .. } => {
                 let response = match shared.player.send_blocking(command) {
-                    Ok(()) => IpcResponse::Ok {
-                        state: Box::new(shared.player.state()),
-                    },
+                    Ok(()) => shared.ok(),
                     Err(e) => IpcResponse::Err {
                         message: e.to_string(),
                     },
                 };
                 let _ = write_json_line(&mut writer, &response);
             }
+            IpcRequest::Library { op, .. } => {
+                let response = match &shared.library {
+                    None => IpcResponse::Err {
+                        message: "no music library configured".into(),
+                    },
+                    Some(host) => match host.apply(op) {
+                        Ok(()) => shared.ok(),
+                        Err(e) => IpcResponse::Err {
+                            message: e.to_string(),
+                        },
+                    },
+                };
+                let _ = write_json_line(&mut writer, &response);
+            }
             IpcRequest::Shutdown { .. } => {
                 persist_flush(&shared);
-                let _ = write_json_line(
-                    &mut writer,
-                    &IpcResponse::Ok {
-                        state: Box::new(shared.player.state()),
-                    },
-                );
+                let _ = write_json_line(&mut writer, &shared.ok());
                 shared.stop.store(true, Ordering::SeqCst);
                 let _ = fs::remove_file(&shared.advertise);
                 break;
@@ -391,6 +436,28 @@ fn handle_session(stream: TcpStream, shared: Arc<Shared>) {
     }
     if is_ui {
         shared.ui_count.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+impl LibraryHost for IpcClient {
+    fn apply(&self, op: LibraryOp) -> Result<()> {
+        match self.rpc(|token| IpcRequest::Library {
+            token: token.to_string(),
+            op: op.clone(),
+        })? {
+            IpcResponse::Ok { .. } => Ok(()),
+            IpcResponse::Err { message } => Err(ZniczError::Library(message)),
+        }
+    }
+
+    /// Fresh from the player; default when it hosts no library or is unreachable.
+    fn status(&self) -> LibraryStatus {
+        match self.rpc(|token| IpcRequest::State {
+            token: token.to_string(),
+        }) {
+            Ok(IpcResponse::Ok { library, .. }) => library.unwrap_or_default(),
+            _ => LibraryStatus::default(),
+        }
     }
 }
 
@@ -556,7 +623,7 @@ impl IpcClient {
         match self.rpc(|token| IpcRequest::State {
             token: token.to_string(),
         })? {
-            IpcResponse::Ok { state } => Ok(*state),
+            IpcResponse::Ok { state, .. } => Ok(*state),
             IpcResponse::Err { message } => Err(ZniczError::Player(message)),
         }
     }
@@ -805,5 +872,81 @@ mod tests {
         thread::sleep(Duration::from_millis(50));
         let state = client.state().expect("ensure started host b");
         assert!((state.volume - 0.7).abs() < 0.001);
+    }
+
+    use crate::library_host::{LibraryHost, LibraryOp, LibraryStatus, ScanProgress};
+
+    #[derive(Default)]
+    struct FakeHost {
+        ops: Mutex<Vec<LibraryOp>>,
+        busy: AtomicBool,
+    }
+
+    impl LibraryHost for FakeHost {
+        fn apply(&self, op: LibraryOp) -> Result<()> {
+            if op == LibraryOp::Prune {
+                return Err(ZniczError::Library("refused".into()));
+            }
+            self.ops.lock().unwrap().push(op);
+            Ok(())
+        }
+        fn status(&self) -> LibraryStatus {
+            LibraryStatus {
+                scans_finished: self.ops.lock().unwrap().len() as u64,
+                scanning: self.busy.load(Ordering::SeqCst).then(ScanProgress::default),
+                ..LibraryStatus::default()
+            }
+        }
+    }
+
+    #[test]
+    fn library_ops_reach_the_host_and_status_comes_back() {
+        let path = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let host = Arc::new(FakeHost::default());
+        let _server = IpcServer::start_with_library(player, &path, Duration::ZERO, host.clone())
+            .expect("start ipc");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+
+        client
+            .apply(LibraryOp::AddFolder {
+                path: PathBuf::from("/music"),
+            })
+            .expect("apply");
+        assert_eq!(host.ops.lock().unwrap().len(), 1);
+        assert_eq!(client.status().scans_finished, 1);
+
+        let err = client.apply(LibraryOp::Prune).expect_err("host refused");
+        assert_eq!(err.to_string(), "refused");
+    }
+
+    #[test]
+    fn without_a_host_library_requests_fail() {
+        let path = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let _server = IpcServer::start(player, &path).expect("start ipc");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        let err = client.apply(LibraryOp::RescanAll).expect_err("no host");
+        assert!(err.to_string().contains("no music library"), "{err}");
+        assert_eq!(client.status(), LibraryStatus::default());
+    }
+
+    #[test]
+    fn a_running_scan_holds_off_idle_exit() {
+        let path = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let host = Arc::new(FakeHost::default());
+        host.busy.store(true, Ordering::SeqCst);
+        let _server =
+            IpcServer::start_with_library(player, &path, Duration::from_millis(80), host.clone())
+                .expect("start ipc");
+        thread::sleep(Duration::from_millis(500));
+        assert!(path.exists(), "must not idle-exit while scanning");
+        host.busy.store(false, Ordering::SeqCst);
+        let start = Instant::now();
+        while path.exists() && start.elapsed() < Duration::from_secs(3) {
+            thread::sleep(Duration::from_millis(50));
+        }
+        assert!(!path.exists(), "idles out once the scan is done");
     }
 }
