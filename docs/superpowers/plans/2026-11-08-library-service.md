@@ -28,7 +28,7 @@ Every commit message ends with a blank line then `Co-Authored-By: Claude Opus 5.
 - Create: `znicz-core/src/library_host.rs`
 - Modify: `znicz-core/src/lib.rs`, `znicz-core/src/error.rs`
 
-- [ ] **Step 1: Write the module with its failing tests**
+- [x] **Step 1: Write the module with its failing tests**
 
 Create `znicz-core/src/library_host.rs`:
 
@@ -208,12 +208,12 @@ mod tests {
 In `znicz-core/src/lib.rs` add `pub mod library_host;` and
 `pub use library_host::{wait_for_library, LibraryHost, LibraryOp, LibraryStatus, ScanProgress, ScanSummary};`.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `cargo test -p znicz-core --lib library_host`
 Expected: compile error, `no variant Library` on `ZniczError`.
 
-- [ ] **Step 3: Add the error variant**
+- [x] **Step 3: Add the error variant**
 
 In `znicz-core/src/error.rs`, add to `ZniczError`:
 
@@ -225,11 +225,11 @@ In `znicz-core/src/error.rs`, add to `ZniczError`:
 
 If a `match` over `ZniczError` elsewhere becomes non-exhaustive, add the arm next to `Player`.
 
-- [ ] **Step 4: Run and verify**
+- [x] **Step 4: Run and verify**
 
 Run: `cargo test -p znicz-core --lib library_host` — PASS. Then `cargo test -p znicz-core`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-core/src
@@ -243,7 +243,7 @@ git commit -m "Add the library host protocol"
 **Files:**
 - Modify: `znicz-core/src/player/ipc.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to the tests module of `znicz-core/src/player/ipc.rs`:
 
@@ -330,12 +330,12 @@ Add to the tests module of `znicz-core/src/player/ipc.rs`:
 
 (`Mutex`, `Arc`, `AtomicBool`, `Ordering`, `thread`, `Instant`, `PathBuf` come from the module's `use super::*;` — add explicit `use` lines in the tests module for any that are not in scope.)
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `cargo test -p znicz-core --lib ipc`
 Expected: compile errors (`start_with_library`, `LibraryHost` for `IpcClient`).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `znicz-core/src/player/ipc.rs`:
 
@@ -454,11 +454,11 @@ impl LibraryHost for IpcClient {
 }
 ```
 
-- [ ] **Step 4: Run and verify**
+- [x] **Step 4: Run and verify**
 
 Run: `cargo test -p znicz-core` and `cargo clippy -p znicz-core --all-targets -- -D warnings`. Expected: PASS, clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-core/src/player/ipc.rs
@@ -472,7 +472,7 @@ git commit -m "Carry library writes and status over the player IPC"
 **Files:**
 - Modify: `znicz-library/src/scan.rs`, `znicz-library/src/store.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to the tests module of `znicz-library/src/store.rs` (create `#[cfg(test)] mod tests { use super::*; … }` if absent):
 
@@ -560,11 +560,11 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `cargo test -p znicz-library --lib` — compile errors (`remember_folder`, `folders`, `remove_missing_under`, `scan_with_progress`).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `store.rs`:
 
@@ -647,11 +647,11 @@ CREATE TABLE IF NOT EXISTS folders (
 
 with the old body, plus: `progress(&report);` right after `let mut report = ScanReport::default();`; after the `match self.index_file(…)` block, `if report.seen % PROGRESS_EVERY == 0 { progress(&report); }`; and `progress(&report);` just before the final `Ok(report)`.
 
-- [ ] **Step 4: Run and verify**
+- [x] **Step 4: Run and verify**
 
 `cargo test -p znicz-library` — PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-library/src
@@ -666,7 +666,7 @@ git commit -m "Remember folders and report scan progress"
 - Create: `znicz-library/src/service.rs`
 - Modify: `znicz-library/src/lib.rs`
 
-- [ ] **Step 1: Write the service with failing tests**
+- [x] **Step 1: Write the service with failing tests**
 
 Create `znicz-library/src/service.rs`:
 
@@ -998,11 +998,11 @@ mod tests {
 
 In `znicz-library/src/lib.rs`: `mod service;` and `pub use service::LibraryService;`.
 
-- [ ] **Step 2: Run the tests**
+- [x] **Step 2: Run the tests**
 
 Run: `cargo test -p znicz-library --lib service`. Write the tests first with an empty `impl LibraryHost` (`todo!()` bodies) if you want to see them fail; the required evidence is that each test exercises the behaviour named in its title. Expected after implementation: PASS.
 
-- [ ] **Step 3: Lint and commit**
+- [x] **Step 3: Lint and commit**
 
 ```bash
 cargo clippy -p znicz-library --all-targets -- -D warnings
@@ -1018,7 +1018,7 @@ git commit -m "Add the library service: one writer with a scan queue"
 - Modify: `znicz/src/main.rs`
 - Create: `znicz/tests/scan_via_player.rs`
 
-- [ ] **Step 1: Write the failing integration test**
+- [x] **Step 1: Write the failing integration test**
 
 Create `znicz/tests/scan_via_player.rs`:
 
@@ -1123,12 +1123,12 @@ fn scanning_a_missing_folder_fails() {
 
 Check `--config` is a global flag accepted before the subcommand (it is `cli.config` in `main.rs`); if it must follow the subcommand, move `.arg("--config")…` after `.arg("scan")` in both tests.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `cargo test -p znicz --test scan_via_player`
 Expected: FAIL (the player hosts no library; `status().folders` is empty).
 
-- [ ] **Step 3: Host the service in `znicz player`**
+- [x] **Step 3: Host the service in `znicz player`**
 
 In `znicz/src/main.rs`:
 
@@ -1149,7 +1149,7 @@ In `znicz/src/main.rs`:
 
 and replace `IpcServer::start_with_session(player.clone(), ipc, idle, session_path()?, SESSION_SAVE_DEBOUNCE)` with `IpcServer::start_with_session_and_library(player.clone(), ipc, idle, session_path()?, SESSION_SAVE_DEBOUNCE, library)`.
 
-- [ ] **Step 4: `znicz scan` through the player**
+- [x] **Step 4: `znicz scan` through the player**
 
 Replace `fn scan_library` with:
 
@@ -1223,11 +1223,11 @@ fn run_library_job(
 
 Imports: `use znicz_core::{wait_for_library, LibraryHost, LibraryOp, ScanSummary};` (merge with the existing `znicz_core` import). Update the call site to `scan_library(library_path, &dirs, prune, cli.device.as_deref(), cli.config.as_deref())` — use whatever device/config variables the other `connect_agent` call sites use in `main`.
 
-- [ ] **Step 5: Run and verify**
+- [x] **Step 5: Run and verify**
 
 Run: `cargo test -p znicz` and `cargo clippy -p znicz --all-targets -- -D warnings`. Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add znicz/src/main.rs znicz/tests/scan_via_player.rs
@@ -1241,7 +1241,7 @@ git commit -m "Host the library service in the player and scan through it"
 **Files:**
 - Modify: `znicz-mcp/src/server.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In the tests module of `znicz-mcp/src/server.rs`, add a helper next to `hosted_player()`:
 
@@ -1319,11 +1319,11 @@ In the tests module of `znicz-mcp/src/server.rs`, add a helper next to `hosted_p
 
 Update the existing scan test (the one around the `scan_library(Parameters(ScanParams { path: … }))` call that asserts `report["added"] == 1`): build its server with `hosted_with_library(…)` instead of an in-memory library, keep its fixture folder and assertions, and add `wait: None` to its `ScanParams`.
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `cargo test -p znicz-mcp` — compile errors (`wait` field, `library_status`).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 - `ScanParams`: add
 
@@ -1397,11 +1397,11 @@ and a private helper in a plain `impl ZniczMcpServer` block:
 
 Imports: `use znicz_core::{wait_for_library, LibraryHost, LibraryOp, ScanSummary};`. If `json_result` requires `Serialize` and `LibraryStatus` is serialisable, `library_status` works as written. Keep the old `library_prune` tool name and description semantics. Remove now-unused imports.
 
-- [ ] **Step 4: Run and verify**
+- [x] **Step 4: Run and verify**
 
 `cargo test -p znicz-mcp` and clippy. Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-mcp/src
@@ -1416,7 +1416,7 @@ git commit -m "Scan and prune through the player from MCP; add library_status"
 - Create: `znicz-tui/src/folder_complete.rs`, `znicz-tui/src/scan_status.rs`
 - Modify: `znicz-tui/src/lib.rs`, `znicz-tui/Cargo.toml`
 
-- [ ] **Step 1: Write both modules with tests**
+- [x] **Step 1: Write both modules with tests**
 
 `znicz-tui/Cargo.toml` `[dependencies]`: add `dirs.workspace = true`.
 
@@ -1739,11 +1739,11 @@ mod tests {
 
 In `lib.rs` add `pub mod folder_complete;` and `pub mod scan_status;`.
 
-- [ ] **Step 2: Run and verify**
+- [x] **Step 2: Run and verify**
 
 `cargo test -p znicz-tui --lib folder_complete` and `--lib scan_status` — write the tests first and see them fail to compile, then PASS.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add znicz-tui/Cargo.toml znicz-tui/src Cargo.lock
@@ -1758,7 +1758,7 @@ git commit -m "Add folder completion and scan wording for the TUI"
 - Modify: `znicz-tui/src/app.rs`, `znicz-tui/src/keys.rs`, `znicz-tui/src/library_pane.rs`, `znicz-tui/src/views/mod.rs`
 - Test: `znicz-tui/tests/scan.rs` (new), `znicz-tui/src/keys.rs` tests
 
-- [ ] **Step 1: Write the failing integration tests**
+- [x] **Step 1: Write the failing integration tests**
 
 Create `znicz-tui/tests/scan.rs`:
 
@@ -1930,11 +1930,11 @@ fn the_folder_prompt_has_its_own_footer() {
 
 In `keys.rs` tests: add `Context::FolderPrompt` to `ALL_CONTEXTS` (size +1) and to the `None` list in `more_shows_only_where_question_mark_opens_help`; append `"F add folder"` before `"M messages"` in `library_hints_lead_with_pause_and_label_p_and_r`; raise the width bound in `every_context_fits_ninety_columns_with_more` to 110 and rename it `every_context_fits_a_wide_footer_with_more` (comment: later hints drop first on narrow terminals).
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 `cargo test -p znicz-tui --test scan` and `--lib keys` — compile errors (`library_host`, `folder_prompt`, `library_status`, `Context::FolderPrompt`).
 
-- [ ] **Step 3: Keymap**
+- [x] **Step 3: Keymap**
 
 In `keys.rs`:
 - `Context`: add `FolderPrompt,` (after `Search`).
@@ -1944,7 +1944,7 @@ In `keys.rs`:
 - `context_title`: `Context::FolderPrompt => None`.
 - `LIBRARY`: add `b("F", "add a music folder"),` and `b("U", "rescan music folders"),` after `J`.
 
-- [ ] **Step 4: Library pane helper and notice**
+- [x] **Step 4: Library pane helper and notice**
 
 In `library_pane.rs`:
 
@@ -1960,7 +1960,7 @@ In `library_pane.rs`:
 
 In `reload_browse`, change the empty-library notice to `"No music yet — press F to add a folder"`.
 
-- [ ] **Step 5: App state and keys**
+- [x] **Step 5: App state and keys**
 
 In `app.rs`:
 
@@ -2130,11 +2130,11 @@ fn default_folder_text() -> String {
 
 In `views/mod.rs` `render`, call `app.poll_library();` right after `app.refresh_playing(state);`.
 
-- [ ] **Step 6: Run and verify**
+- [x] **Step 6: Run and verify**
 
 `cargo test -p znicz-tui` (the rendering assertions in `tests/scan.rs` that need Task 10 — the welcome text and `folder: ` line — may still fail; if so, mark them `#[ignore = "drawn in Task 10"]` temporarily and remove the attribute in Task 10). Clippy clean.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add znicz-tui
@@ -2149,7 +2149,7 @@ git commit -m "Add folder prompt, F and U keys, and scan polling to the TUI"
 - Modify: `znicz-tui/src/views/library.rs`, `znicz-tui/src/views/now_playing.rs`
 - Test: `znicz-tui/tests/scan.rs`, `now_playing.rs` tests
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Remove any `#[ignore]` added in Task 9. In `now_playing.rs` tests, update existing `message_line(&toasts, N)` calls to `message_line(&toasts, None, N)` and add:
 
@@ -2203,11 +2203,11 @@ fn the_prompt_sits_on_top_when_the_library_has_music() {
 }
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 `cargo test -p znicz-tui --lib now_playing` (signature), `--test scan` (welcome text, top prompt).
 
-- [ ] **Step 3: Message row**
+- [x] **Step 3: Message row**
 
 In `now_playing.rs`, change `message_line` to
 
@@ -2235,7 +2235,7 @@ and between the live-message branch and the unread branch insert:
 
 Callers (`render_transport`, `render_stacked_chrome`) pass `app.library_status.scanning.as_ref()`; `render_stacked_chrome` gains a `scanning: Option<&ScanProgress>` parameter (clone the status into a local first if the borrow checker objects).
 
-- [ ] **Step 4: Library pane**
+- [x] **Step 4: Library pane**
 
 In `views/library.rs` `render`:
 
@@ -2292,11 +2292,11 @@ fn empty_body(app: &App, width: usize) -> Vec<Line<'static>> {
 
 and in `render_empty` use `Paragraph::new(empty_body(app, views::inner_width(area))).block(block)`.
 
-- [ ] **Step 5: Run and verify**
+- [x] **Step 5: Run and verify**
 
 `cargo test -p znicz-tui`, clippy, fmt. Look at `cargo run -q -p znicz-tui --example preview -- 100 30 2>/dev/null` (it has no library host, so no prompt — just check it still builds and draws).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add znicz-tui
@@ -2309,20 +2309,20 @@ git commit -m "Draw the folder prompt, welcome, and scan progress"
 
 **Files:** `Cargo.toml`, `Cargo.lock`, `README.md`, `wiki/Architecture/Overview.md`, `wiki/Architecture/Library.md`, `wiki/Architecture/MCP.md`, `wiki/Architecture/TUI.md`, `wiki/Plans/Roadmap.md`, `wiki/Rust/Cargo-Workspace.md`
 
-- [ ] **Step 1:** Version `0.7.0` → `0.8.0` in the root `Cargo.toml`; `cargo build -p znicz`; update the "currently" version in `wiki/Rust/Cargo-Workspace.md`.
-- [ ] **Step 2: README.** In the "Music library" section, say that the TUI offers to scan your music folder on first run, `F` adds a folder and `U` rescans remembered folders, and that `znicz scan` (and MCP `scan_library`) now run through the `znicz player` process, which remembers each folder. Add `F` and `U` rows to the key table.
-- [ ] **Step 3: Wiki.**
+- [x] **Step 1:** Version `0.7.0` → `0.8.0` in the root `Cargo.toml`; `cargo build -p znicz`; update the "currently" version in `wiki/Rust/Cargo-Workspace.md`.
+- [x] **Step 2: README.** In the "Music library" section, say that the TUI offers to scan your music folder on first run, `F` adds a folder and `U` rescans remembered folders, and that `znicz scan` (and MCP `scan_library`) now run through the `znicz player` process, which remembers each folder. Add `F` and `U` rows to the key table.
+- [x] **Step 3: Wiki.**
   - `Architecture/Overview.md`: the player process is also the single writer of `library.db` (`LibraryService`, reached through `LibraryHost` over IPC); TUI, MCP, and CLI read directly.
   - `Architecture/Library.md`: the service (one worker, job queue, `AddFolder` / `RescanAll` / `Prune`), the `folders` table, rescan rules (missing folders skipped and kept, prune only under scanned folders), progress every 100 files.
   - `Architecture/MCP.md`: `scan_library` (`wait`), `library_prune`, new `library_status`.
   - `Architecture/TUI.md`: first-run prompt, folder prompt keys and completion, `F` / `U`, progress on the message row and in the empty pane, finish messages, the `FolderPrompt` footer context; modules table gains `folder_complete.rs` and `scan_status.rs`.
   - `Plans/Roadmap.md`: part 3 → `**Done** in 0.8.0 ([spec](../../docs/superpowers/specs/2026-11-08-library-service-design.md))`.
-- [ ] **Step 4:** `cargo test --workspace`, `cargo fmt --all -- --check`; commit `Bump to 0.8.0 and document the library service`.
+- [x] **Step 4:** `cargo test --workspace`, `cargo fmt --all -- --check`; commit `Bump to 0.8.0 and document the library service`.
 
 ---
 
 ### Task 12: Verify and open the PR
 
-- [ ] **Step 1:** `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` — all clean.
-- [ ] **Step 2:** Tick every checkbox in this plan; commit `Mark library service plan complete`.
-- [ ] **Step 3:** Push `feat/library-service`; open a PR "Library service and in-TUI scanning (TUI rework part 3)" summarising the spec goals, ending with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+- [x] **Step 1:** `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` — all clean.
+- [x] **Step 2:** Tick every checkbox in this plan; commit `Mark library service plan complete`.
+- [x] **Step 3:** Push `feat/library-service`; open a PR "Library service and in-TUI scanning (TUI rework part 3)" summarising the spec goals, ending with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
