@@ -455,11 +455,15 @@ impl LibraryHost for IpcClient {
 
     /// Fresh from the player; default when it hosts no library or is unreachable.
     fn status(&self) -> LibraryStatus {
+        self.try_status().unwrap_or_default()
+    }
+
+    fn try_status(&self) -> Result<LibraryStatus> {
         match self.rpc(|token| IpcRequest::State {
             token: token.to_string(),
-        }) {
-            Ok(IpcResponse::Ok { library, .. }) => library.unwrap_or_default(),
-            _ => LibraryStatus::default(),
+        })? {
+            IpcResponse::Ok { library, .. } => Ok(library.unwrap_or_default()),
+            IpcResponse::Err { message } => Err(ZniczError::Library(message)),
         }
     }
 }

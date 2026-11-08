@@ -74,6 +74,11 @@ pub trait LibraryHost: Send + Sync {
     /// library); scan failures are reported in `LibraryStatus::last`.
     fn apply(&self, op: LibraryOp) -> Result<()>;
     fn status(&self) -> LibraryStatus;
+
+    /// Like `status`, but reports a host that cannot be reached.
+    fn try_status(&self) -> Result<LibraryStatus> {
+        Ok(self.status())
+    }
 }
 
 /// Poll `host` until at least `target` jobs have finished and nothing runs or
@@ -88,8 +93,15 @@ pub fn wait_for_library<H: LibraryHost + ?Sized>(
     mut on_poll: impl FnMut(&LibraryStatus),
 ) -> Result<LibraryStatus> {
     let start = Instant::now();
+    let mut first_seen: Option<u64> = None;
     loop {
-        let status = host.status();
+        let status = host.try_status()?;
+        let first = *first_seen.get_or_insert(status.scans_finished);
+        if status.scans_finished < first {
+            return Err(ZniczError::Library(
+                "the player restarted while scanning".into(),
+            ));
+        }
         on_poll(&status);
         if status.scans_finished >= target && !status.busy() {
             return Ok(status);
@@ -168,6 +180,61 @@ mod tests {
         let err = wait_for_library(&Stuck, 1, Some(Duration::from_millis(150)), |_| {})
             .expect_err("times out");
         assert!(err.to_string().contains("timed out"), "{err}");
+    }
+
+    /// Its player is gone: reading status fails.
+    struct Gone;
+
+    impl LibraryHost for Gone {
+        fn apply(&self, _op: LibraryOp) -> Result<()> {
+            Ok(())
+        }
+        fn status(&self) -> LibraryStatus {
+            LibraryStatus::default()
+        }
+        fn try_status(&self) -> Result<LibraryStatus> {
+            Err(ZniczError::Library("connection lost".into()))
+        }
+    }
+
+    #[test]
+    fn waiting_fails_when_the_player_goes_away() {
+        let err = wait_for_library(&Gone, 1, None, |_| {}).expect_err("fails");
+        assert!(err.to_string().contains("connection lost"), "{err}");
+    }
+
+    /// Reports a scripted sequence of finished counts, repeating the last.
+    struct Scripted {
+        counts: Mutex<Vec<u64>>,
+    }
+
+    impl LibraryHost for Scripted {
+        fn apply(&self, _op: LibraryOp) -> Result<()> {
+            Ok(())
+        }
+        fn status(&self) -> LibraryStatus {
+            let mut counts = self.counts.lock().unwrap();
+            let n = if counts.len() > 1 {
+                counts.remove(0)
+            } else {
+                counts[0]
+            };
+            LibraryStatus {
+                scans_finished: n,
+                queued: 1,
+                ..LibraryStatus::default()
+            }
+        }
+    }
+
+    #[test]
+    fn waiting_fails_when_the_player_restarts() {
+        let host = Scripted {
+            counts: Mutex::new(vec![3, 3, 0]),
+        };
+        let err = wait_for_library(&host, 4, Some(Duration::from_secs(5)), |_| {})
+            .expect_err("restart detected");
+        assert!(err.to_string().contains("restarted"), "{err}");
     }
 
     #[test]
