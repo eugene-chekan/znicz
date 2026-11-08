@@ -22,6 +22,16 @@ pub enum LibraryOp {
     Prune,
 }
 
+impl LibraryOp {
+    /// How to report that this job failed.
+    pub fn failure_text(&self, error: &str) -> String {
+        match self {
+            Self::AddFolder { .. } | Self::RescanAll => format!("scan failed: {error}"),
+            Self::Prune => format!("library job failed: {error}"),
+        }
+    }
+}
+
 /// The job running now.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScanProgress {
@@ -235,6 +245,20 @@ mod tests {
         let err = wait_for_library(&host, 4, Some(Duration::from_secs(5)), |_| {})
             .expect_err("restart detected");
         assert!(err.to_string().contains("restarted"), "{err}");
+    }
+
+    #[test]
+    fn failure_text_names_the_kind_of_job() {
+        let add = LibraryOp::AddFolder { path: "/m".into() };
+        assert_eq!(add.failure_text("boom"), "scan failed: boom");
+        assert_eq!(
+            LibraryOp::RescanAll.failure_text("boom"),
+            "scan failed: boom"
+        );
+        assert_eq!(
+            LibraryOp::Prune.failure_text("boom"),
+            "library job failed: boom"
+        );
     }
 
     #[test]

@@ -833,6 +833,7 @@ fn run_library_job(
     live: bool,
 ) -> color_eyre::Result<ScanSummary> {
     let start = player.status().scans_finished;
+    let failure = op.clone();
     player
         .apply(op)
         .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
@@ -851,7 +852,7 @@ fn run_library_job(
     }
     let summary = status.last.unwrap_or_default();
     if let Some(error) = &summary.error {
-        color_eyre::eyre::bail!("scan failed: {error}");
+        color_eyre::eyre::bail!("{}", failure.failure_text(error));
     }
     Ok(summary)
 }

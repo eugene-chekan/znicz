@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -89,23 +90,38 @@ impl ZniczMcpServer {
     }
 
     /// Send a library job to the player; with `wait`, return what it did.
-    fn run_library_job(&self, op: LibraryOp, wait: bool) -> Result<Option<ScanSummary>, McpError> {
-        let start = LibraryHost::status(&self.player).scans_finished;
-        LibraryHost::apply(&self.player, op)
+    /// Blocks while waiting, so callers run it off the async runtime.
+    fn run_library_job(
+        player: &IpcClient,
+        op: LibraryOp,
+        wait: bool,
+    ) -> Result<Option<ScanSummary>, McpError> {
+        let start = LibraryHost::status(player).scans_finished;
+        let failure = op.clone();
+        LibraryHost::apply(player, op)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         if !wait {
             return Ok(None);
         }
-        let status = wait_for_library(&self.player, start + 1, None, |_| {})
+        let status = wait_for_library(player, start + 1, None, |_| {})
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         let summary = status.last.unwrap_or_default();
         if let Some(error) = &summary.error {
-            return Err(McpError::internal_error(
-                format!("scan failed: {error}"),
-                None,
-            ));
+            return Err(McpError::internal_error(failure.failure_text(error), None));
         }
         Ok(Some(summary))
+    }
+
+    /// `run_library_job` on a blocking thread, so the server keeps answering.
+    async fn run_library_job_blocking(
+        &self,
+        op: LibraryOp,
+        wait: bool,
+    ) -> Result<Option<ScanSummary>, McpError> {
+        let player = self.player.clone();
+        tokio::task::spawn_blocking(move || Self::run_library_job(&player, op, wait))
+            .await
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?
     }
 
     fn json_result(value: &impl Serialize) -> Result<rmcp::model::CallToolResult, McpError> {
@@ -528,15 +544,16 @@ impl ZniczMcpServer {
     #[tool(
         description = "Scan a folder into the music library (through the player, which remembers the folder)"
     )]
-    fn scan_library(
+    async fn scan_library(
         &self,
         Parameters(params): Parameters<ScanParams>,
     ) -> Result<rmcp::model::CallToolResult, McpError> {
         let path = std::fs::canonicalize(&params.path).map_err(|_| {
             McpError::invalid_params(format!("not a folder: {}", params.path), None)
         })?;
-        let summary =
-            self.run_library_job(LibraryOp::AddFolder { path }, params.wait.unwrap_or(true))?;
+        let summary = self
+            .run_library_job_blocking(LibraryOp::AddFolder { path }, params.wait.unwrap_or(true))
+            .await?;
         match summary {
             None => Self::json_result(&serde_json::json!({ "queued": true })),
             Some(s) => Self::json_result(&serde_json::json!({
@@ -640,9 +657,10 @@ impl ZniczMcpServer {
     }
 
     #[tool(description = "Drop library entries whose files no longer exist")]
-    fn library_prune(&self) -> Result<rmcp::model::CallToolResult, McpError> {
+    async fn library_prune(&self) -> Result<rmcp::model::CallToolResult, McpError> {
         let summary = self
-            .run_library_job(LibraryOp::Prune, true)?
+            .run_library_job_blocking(LibraryOp::Prune, true)
+            .await?
             .unwrap_or_default();
         Self::json_result(&serde_json::json!({ "removed": summary.removed }))
     }
@@ -1125,8 +1143,8 @@ mod tests {
         (host, server, root)
     }
 
-    #[test]
-    fn scan_library_without_waiting_reports_queued() {
+    #[tokio::test]
+    async fn scan_library_without_waiting_reports_queued() {
         let (_host, server, root) = hosted_with_library("nowait");
         let music = root.join("music");
         std::fs::create_dir_all(&music).unwrap();
@@ -1135,13 +1153,14 @@ mod tests {
                 path: music.to_string_lossy().into_owned(),
                 wait: Some(false),
             }))
+            .await
             .expect("scan");
         let json: serde_json::Value = serde_json::from_str(&result_text(&result)).unwrap();
         assert_eq!(json["queued"], true);
     }
 
-    #[test]
-    fn library_status_lists_remembered_folders() {
+    #[tokio::test]
+    async fn library_status_lists_remembered_folders() {
         let (_host, server, root) = hosted_with_library("status");
         let music = std::fs::canonicalize({
             let m = root.join("music");
@@ -1154,14 +1173,15 @@ mod tests {
                 path: music.to_string_lossy().into_owned(),
                 wait: None,
             }))
+            .await
             .expect("scan");
         let status = server.library_status().expect("status");
         let json: serde_json::Value = serde_json::from_str(&result_text(&status)).unwrap();
         assert_eq!(json["folders"][0], music.to_string_lossy().as_ref());
     }
 
-    #[test]
-    fn library_prune_reports_removed_entries() {
+    #[tokio::test]
+    async fn library_prune_reports_removed_entries() {
         let (_host, server, root) = hosted_with_library("prune");
         Library::open(&root.join("library.db"))
             .unwrap()
@@ -1173,7 +1193,7 @@ mod tests {
                 None,
             )
             .unwrap();
-        let result = server.library_prune().expect("prune");
+        let result = server.library_prune().await.expect("prune");
         let json: serde_json::Value = serde_json::from_str(&result_text(&result)).unwrap();
         assert_eq!(json["removed"], 1);
     }
@@ -1430,8 +1450,8 @@ mod tests {
         assert!(result.is_err(), "expected an error, got {result:?}");
     }
 
-    #[test]
-    fn scan_indexes_and_then_search_finds_the_track() {
+    #[tokio::test]
+    async fn scan_indexes_and_then_search_finds_the_track() {
         let (_host, server, root) = hosted_with_library("scan");
 
         // Build a tiny folder with one real FLAC, if ffmpeg is around.
@@ -1462,6 +1482,7 @@ mod tests {
                 path: dir.to_string_lossy().into_owned(),
                 wait: None,
             }))
+            .await
             .expect("scan_library");
         let report: serde_json::Value =
             serde_json::from_str(&result_text(&scan)).expect("scan json");
