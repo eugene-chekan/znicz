@@ -548,9 +548,12 @@ impl ZniczMcpServer {
         &self,
         Parameters(params): Parameters<ScanParams>,
     ) -> Result<rmcp::model::CallToolResult, McpError> {
-        let path = std::fs::canonicalize(&params.path).map_err(|_| {
-            McpError::invalid_params(format!("not a folder: {}", params.path), None)
-        })?;
+        let path = std::path::absolute(&params.path)
+            .ok()
+            .filter(|p| p.is_dir())
+            .ok_or_else(|| {
+                McpError::invalid_params(format!("not a folder: {}", params.path), None)
+            })?;
         let summary = self
             .run_library_job_blocking(LibraryOp::AddFolder { path }, params.wait.unwrap_or(true))
             .await?;

@@ -804,7 +804,7 @@ fn scan_library(
     let live = std::io::IsTerminal::is_terminal(&std::io::stdout());
 
     for dir in dirs {
-        let folder = std::fs::canonicalize(dir)
+        let folder = std::path::absolute(dir)
             .ok()
             .filter(|p| p.is_dir())
             .ok_or_else(|| color_eyre::eyre::eyre!("not a folder: {}", dir.display()))?;

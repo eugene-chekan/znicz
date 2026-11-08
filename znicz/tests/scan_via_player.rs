@@ -63,7 +63,7 @@ impl Drop for Isolated {
 #[test]
 fn scan_goes_through_the_player_and_remembers_the_folder() {
     let iso = Isolated::new();
-    let music = fs::canonicalize(iso.dir.join("music")).unwrap();
+    let music = std::path::absolute(iso.dir.join("music")).unwrap();
 
     let output = iso
         .znicz()

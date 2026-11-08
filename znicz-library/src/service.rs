@@ -71,19 +71,28 @@ impl Drop for LibraryService {
 
 impl LibraryHost for LibraryService {
     fn apply(&self, op: LibraryOp) -> znicz_core::Result<()> {
+        // Disk work happens before the lock. Paths are kept as written (only
+        // made absolute): symlinks stay, so files indexed by older versions
+        // under the same path are not duplicated.
+        let folder = match &op {
+            LibraryOp::AddFolder { path } => Some(
+                std::path::absolute(path)
+                    .ok()
+                    .filter(|p| p.is_dir())
+                    .ok_or_else(|| {
+                        ZniczError::Library(format!("not a folder: {}", path.display()))
+                    })?,
+            ),
+            _ => None,
+        };
         let mut state = self
             .shared
             .state
             .lock()
             .map_err(|_| ZniczError::Library("library lock poisoned".into()))?;
         match op {
-            LibraryOp::AddFolder { path } => {
-                let folder = std::fs::canonicalize(&path)
-                    .ok()
-                    .filter(|p| p.is_dir())
-                    .ok_or_else(|| {
-                        ZniczError::Library(format!("not a folder: {}", path.display()))
-                    })?;
+            LibraryOp::AddFolder { .. } => {
+                let folder = folder.expect("folder resolved for AddFolder");
                 if !state.status.folders.contains(&folder) {
                     state.status.folders.push(folder.clone());
                     state.status.folders.sort();
@@ -320,6 +329,19 @@ mod tests {
         }
         let reopened = LibraryService::open(&db).unwrap();
         assert_eq!(reopened.status().folders, [jazz]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_folder_is_remembered_as_written() {
+        let root = temp_dir("symlink");
+        let real = music(&root, "real", 1);
+        let link = root.join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let service = LibraryService::open(&root.join("library.db")).unwrap();
+        add(&service, &link);
+        let status = wait(&service, 1);
+        assert_eq!(status.folders, [link]);
     }
 
     #[test]
