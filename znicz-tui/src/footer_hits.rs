@@ -1,5 +1,6 @@
 //! Where each footer hint lands, so a click can run that hint's key.
 
+use crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
 
 use crate::hit::FooterHit;
@@ -9,15 +10,31 @@ use crate::keys::Hint;
 pub const SEPARATOR: &str = " · ";
 const SEPARATOR_WIDTH: u16 = 3;
 
-/// A hint and the cells it occupies on the footer row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PlacedHint {
-    pub rect: Rect,
-    pub hint: Hint,
+/// What a footer hint says on screen, and the key a click sends.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FooterLabel {
+    pub text: String,
+    pub key: KeyEvent,
 }
 
-fn label_width(hint: &Hint) -> u16 {
-    hint.label.chars().count() as u16
+impl From<Hint> for FooterLabel {
+    fn from(hint: Hint) -> Self {
+        Self {
+            text: hint.label.to_string(),
+            key: hint.key,
+        }
+    }
+}
+
+/// A hint and the cells it occupies on the footer row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlacedHint {
+    pub rect: Rect,
+    pub label: FooterLabel,
+}
+
+fn label_width(label: &FooterLabel) -> u16 {
+    label.text.chars().count() as u16
 }
 
 /// Lay hints out left to right, keeping `more` right-aligned.
@@ -25,7 +42,11 @@ fn label_width(hint: &Hint) -> u16 {
 /// The space for `more` (plus one separator) is reserved first, so it is never
 /// pushed off by a long hint list. Hints that do not fit whole are dropped
 /// rather than cut.
-pub fn layout_footer(area: Rect, hints: &[Hint], more: Option<Hint>) -> Vec<PlacedHint> {
+pub fn layout_footer(
+    area: Rect,
+    labels: &[FooterLabel],
+    more: Option<FooterLabel>,
+) -> Vec<PlacedHint> {
     if area.width == 0 || area.height == 0 {
         return Vec::new();
     }
@@ -40,20 +61,20 @@ pub fn layout_footer(area: Rect, hints: &[Hint], more: Option<Hint>) -> Vec<Plac
 
     let mut placed = Vec::new();
     let mut x: u16 = 0;
-    for hint in hints {
+    for label in labels {
         let gap = if placed.is_empty() {
             0
         } else {
             SEPARATOR_WIDTH
         };
-        let width = label_width(hint);
+        let width = label_width(label);
         if u32::from(x) + u32::from(gap) + u32::from(width) > u32::from(budget) {
             break;
         }
         x += gap;
         placed.push(PlacedHint {
             rect: Rect::new(area.x + x, area.y, width, 1),
-            hint: *hint,
+            label: label.clone(),
         });
         x += width;
     }
@@ -62,7 +83,7 @@ pub fn layout_footer(area: Rect, hints: &[Hint], more: Option<Hint>) -> Vec<Plac
         let width = label_width(&more);
         placed.push(PlacedHint {
             rect: Rect::new(area.x + area.width - width, area.y, width, 1),
-            hint: more,
+            label: more,
         });
     }
     placed
@@ -74,7 +95,7 @@ pub fn footer_hits(placed: &[PlacedHint]) -> Vec<FooterHit> {
         .iter()
         .map(|p| FooterHit {
             rect: p.rect,
-            key: p.hint.key,
+            key: p.label.key,
         })
         .collect()
 }
@@ -84,15 +105,15 @@ mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    fn h(label: &'static str, c: char) -> Hint {
-        Hint {
-            label,
+    fn h(label: &str, c: char) -> FooterLabel {
+        FooterLabel {
+            text: label.to_string(),
             key: KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
         }
     }
 
-    fn labels(placed: &[PlacedHint]) -> Vec<&'static str> {
-        placed.iter().map(|p| p.hint.label).collect()
+    fn labels(placed: &[PlacedHint]) -> Vec<String> {
+        placed.iter().map(|p| p.label.text.clone()).collect()
     }
 
     #[test]
@@ -103,7 +124,7 @@ mod tests {
             &[h("/ search", '/'), h("a add", 'a')],
             Some(h("? more", '?')),
         );
-        assert_eq!(labels(&placed), ["/ search", "a add", "? more"]);
+        assert_eq!(labels(&placed), vec!["/ search", "a add", "? more"]);
         assert_eq!(placed[0].rect, Rect::new(0, 23, 8, 1));
         assert_eq!(placed[1].rect, Rect::new(11, 23, 5, 1));
         assert_eq!(placed[2].rect, Rect::new(34, 23, 6, 1));
@@ -117,7 +138,7 @@ mod tests {
             &[h("/ search", '/'), h("a add", 'a')],
             Some(h("? more", '?')),
         );
-        assert_eq!(labels(&placed), ["/ search", "? more"]);
+        assert_eq!(labels(&placed), vec!["/ search", "? more"]);
     }
 
     #[test]
@@ -127,7 +148,7 @@ mod tests {
             &[h("/ search", '/'), h("a add", 'a')],
             None,
         );
-        assert_eq!(labels(&placed), ["/ search", "a add"]);
+        assert_eq!(labels(&placed), vec!["/ search", "a add"]);
     }
 
     #[test]

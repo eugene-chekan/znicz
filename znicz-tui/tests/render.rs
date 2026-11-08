@@ -773,3 +773,13 @@ fn an_empty_messages_list_says_so() {
     let screen = draw(&mut app, 100, 30);
     assert!(screen.contains("No messages yet"), "{screen}");
 }
+
+#[test]
+fn the_footer_counts_unread_alerts() {
+    let mut app = App::with_library(player(), None);
+    app.toasts.warn("stream dropped");
+    app.toasts.error("device refused");
+    let screen = draw(&mut app, 120, 24);
+    let row = screen.lines().last().unwrap();
+    assert!(row.contains("M messages (2)"), "{row}");
+}
