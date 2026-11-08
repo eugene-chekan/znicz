@@ -74,7 +74,6 @@ fn music(root: &Path) -> PathBuf {
 }
 
 #[test]
-#[ignore = "drawn in Task 10"]
 fn an_empty_library_opens_the_folder_prompt() {
     let mut s = setup("first-run");
     let screen = draw(&mut s.app);
@@ -165,4 +164,29 @@ fn the_folder_prompt_has_its_own_footer() {
         footer.contains("Tab complete · Enter scan · Esc cancel"),
         "{footer}"
     );
+}
+
+#[test]
+fn the_prompt_sits_on_top_when_the_library_has_music() {
+    let mut s = setup("top");
+    Library::open(&s.root.join("library.db"))
+        .unwrap()
+        .upsert_track_for_test(
+            Path::new("/m/a.flac"),
+            "So What",
+            Some("Miles".into()),
+            Some("Kind of Blue".into()),
+            None,
+        )
+        .unwrap();
+    s.app.library.reload_browse();
+    s.app
+        .on_key(KeyEvent::new(KeyCode::Char('F'), KeyModifiers::NONE));
+    let screen = draw(&mut s.app);
+    let row = screen.lines().next().unwrap_or_default();
+    assert!(
+        row.contains("folder: "),
+        "prompt on the pane's first row:\n{screen}"
+    );
+    assert!(screen.contains("Miles"), "{screen}");
 }

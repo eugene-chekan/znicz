@@ -23,7 +23,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     app.hits.library_albums = None;
     app.hits.library_tracks = None;
 
-    let (prompt_area, list_area) = match app.library.is_typing() {
+    let folder_on_top = app.folder_prompt.is_some() && !app.library.has_no_music();
+    let (prompt_area, list_area) = match app.library.is_typing() || folder_on_top {
         true => {
             let parts = Layout::default()
                 .direction(Direction::Vertical)
@@ -41,6 +42,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 prompt_area,
             );
             app.hits.search_prompt = Some(prompt_area);
+        } else if let Some(edit) = app.folder_prompt.clone() {
+            frame.render_widget(
+                Paragraph::new(views::prompt_line("folder: ", &edit)),
+                prompt_area,
+            );
         }
     }
 
@@ -432,15 +438,38 @@ fn render_single_list(frame: &mut Frame, area: Rect, app: &mut App, strip: usize
 }
 
 fn render_empty(frame: &mut Frame, area: Rect, title: &str, focused: bool, app: &App) {
+    let block = views::pane_block(title, focused, None);
+    frame.render_widget(
+        Paragraph::new(empty_body(app, views::inner_width(area))).block(block),
+        area,
+    );
+}
+
+fn empty_body(app: &App, width: usize) -> Vec<Line<'static>> {
+    if app.library.has_no_music() {
+        if let Some(edit) = &app.folder_prompt {
+            return vec![
+                Line::from("No music yet. Which folder holds your music?"),
+                Line::from(""),
+                views::prompt_line("folder: ", edit),
+                Line::from(""),
+                views::placeholder("Tab completes · Enter scans · Esc skips"),
+            ];
+        }
+        if let Some(progress) = &app.library_status.scanning {
+            let home = dirs::home_dir();
+            return vec![views::placeholder(&crate::scan_status::progress_text(
+                progress,
+                home.as_deref(),
+                width,
+            ))];
+        }
+    }
     let notice = app
         .library
         .notice()
         .unwrap_or("Nothing here. Press / to search, or Esc to go back.");
-    let block = views::pane_block(title, focused, None);
-    frame.render_widget(
-        Paragraph::new(views::placeholder(notice)).block(block),
-        area,
-    );
+    vec![views::placeholder(notice)]
 }
 
 #[allow(clippy::too_many_arguments)]
