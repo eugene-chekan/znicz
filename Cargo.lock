@@ -4590,6 +4590,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "windows-sys 0.59.0",
  "znicz-core",
  "znicz-library",
  "znicz-mcp",

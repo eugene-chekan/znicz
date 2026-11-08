@@ -148,9 +148,58 @@ pub fn spawn_detached_player_exe(
     cmd.arg("player")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()?;
+        .stderr(std::process::Stdio::null());
+    without_inherited_stdio(|| cmd.spawn())?;
     Ok(())
+}
+
+/// Run `spawn` with this process's stdio handles marked non-inheritable.
+///
+/// Windows passes every inheritable handle to a child, not just the ones it is
+/// told to use. If this process's stdout is a pipe (a script or test capturing
+/// `znicz scan`), the long-lived player would hold that pipe open, and the
+/// reader would wait for EOF until the player idles out. Unix replaces fds
+/// 0–2 in the child, so nothing is needed there.
+#[cfg(windows)]
+fn without_inherited_stdio<T>(spawn: impl FnOnce() -> T) -> T {
+    use windows_sys::Win32::Foundation::{
+        GetHandleInformation, SetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+    };
+    use windows_sys::Win32::System::Console::{
+        GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+    };
+
+    let mut cleared = Vec::new();
+    for id in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        // SAFETY: plain Win32 calls on this process's own standard handles;
+        // invalid or missing handles are skipped.
+        unsafe {
+            let handle = GetStdHandle(id);
+            if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+                continue;
+            }
+            let mut flags = 0u32;
+            if GetHandleInformation(handle, &mut flags) != 0
+                && flags & HANDLE_FLAG_INHERIT != 0
+                && SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) != 0
+            {
+                cleared.push(handle);
+            }
+        }
+    }
+    let result = spawn();
+    for handle in cleared {
+        // SAFETY: restores the flag cleared above on the same handle.
+        unsafe {
+            SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+        }
+    }
+    result
+}
+
+#[cfg(not(windows))]
+fn without_inherited_stdio<T>(spawn: impl FnOnce() -> T) -> T {
+    spawn()
 }
 
 fn wait_until_up(ipc: &Path, timeout: Duration) -> bool {
