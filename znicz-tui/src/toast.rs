@@ -52,6 +52,8 @@ impl Toast {
 pub struct Toasts {
     items: Vec<Toast>,
     history: VecDeque<Entry>,
+    /// The Messages list is open: new alerts are seen as they arrive.
+    viewing: bool,
 }
 
 /// Beyond this, older messages are dropped rather than queueing up unseen.
@@ -97,7 +99,7 @@ impl Toasts {
             text: text.clone(),
             level,
             at: now,
-            unread: matches!(level, Level::Warn | Level::Error),
+            unread: matches!(level, Level::Warn | Level::Error) && !self.viewing,
             fresh: false,
         });
         self.history.truncate(HISTORY);
@@ -157,6 +159,7 @@ impl Toasts {
 
     /// The Messages list opened: unread rows become fresh, nothing stays unread.
     pub fn mark_read(&mut self) {
+        self.viewing = true;
         for entry in &mut self.history {
             entry.fresh = entry.unread;
             entry.unread = false;
@@ -165,6 +168,7 @@ impl Toasts {
 
     /// The Messages list closed.
     pub fn clear_fresh(&mut self) {
+        self.viewing = false;
         for entry in &mut self.history {
             entry.fresh = false;
         }
@@ -184,6 +188,15 @@ impl Toasts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn alerts_arriving_while_the_list_is_open_count_as_read() {
+        let mut toasts = Toasts::new();
+        toasts.mark_read();
+        toasts.error("late");
+        toasts.clear_fresh();
+        assert_eq!(toasts.unread_alerts(), None);
+    }
 
     #[test]
     fn the_newest_message_is_the_one_shown() {
