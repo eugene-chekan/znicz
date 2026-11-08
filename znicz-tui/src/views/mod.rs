@@ -27,6 +27,7 @@ use crate::toast::Level;
 
 pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
     app.hits = HitMap::default();
+    app.refresh_playing(state);
     let area = frame.area();
     let show_cover = app.tui.show_cover;
     let transport = crate::layout::transport_height(area.height, show_cover);

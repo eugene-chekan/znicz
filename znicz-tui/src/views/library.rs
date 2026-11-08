@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
@@ -12,6 +13,7 @@ use crate::app::{App, Focus};
 use crate::format;
 use crate::hit::ListHit;
 use crate::library_pane::{ColumnFocus, EffectiveLayout, LibraryPane, Mode, TreeRow};
+use crate::playing::PlayingRef;
 use crate::theme;
 use crate::views;
 
@@ -61,6 +63,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_columns(frame: &mut Frame, area: Rect, app: &mut App, focused: bool) {
+    let playing = app.playing.clone();
     let parts = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -95,7 +98,7 @@ fn render_columns(frame: &mut Frame, area: Rect, app: &mut App, focused: bool) {
             .iter()
             .map(|a| {
                 let strip = parts[0].width.saturating_sub(2) as usize;
-                artist_row(a, strip, 0)
+                artist_row(a, strip, 0, playing.as_ref())
             })
             .collect(),
         app.library.artists().len(),
@@ -113,7 +116,7 @@ fn render_columns(frame: &mut Frame, area: Rect, app: &mut App, focused: bool) {
             .iter()
             .map(|a| {
                 let strip = parts[1].width.saturating_sub(2) as usize;
-                album_row(a, strip, 0, true)
+                album_row(a, strip, 0, true, playing.as_ref())
             })
             .collect(),
         app.library.albums().len(),
@@ -131,7 +134,7 @@ fn render_columns(frame: &mut Frame, area: Rect, app: &mut App, focused: bool) {
             .iter()
             .map(|t| {
                 let strip = parts[2].width.saturating_sub(2) as usize;
-                track_row(t, strip, 0)
+                track_row(t, strip, 0, playing.as_ref())
             })
             .collect(),
         app.library.tracks().len(),
@@ -187,6 +190,7 @@ fn render_column_list(
 }
 
 fn render_tree(frame: &mut Frame, area: Rect, app: &mut App, strip: usize, focused: bool) {
+    let playing = app.playing.clone();
     let rows = app.library.tree_rows();
     let count = rows.len();
     // Resolve the selection once: asking per row rebuilds the tree for every
@@ -195,7 +199,15 @@ fn render_tree(frame: &mut Frame, area: Rect, app: &mut App, strip: usize, focus
     let items: Vec<ListItem> = rows
         .iter()
         .enumerate()
-        .map(|(i, row)| tree_row(app, row, strip, app.library.offset_for_row(i, selected)))
+        .map(|(i, row)| {
+            tree_row(
+                app,
+                row,
+                strip,
+                app.library.offset_for_row(i, selected),
+                playing.as_ref(),
+            )
+        })
         .collect();
     let crumbs = tree_crumbs(&rows, selected);
     let parts: Vec<&str> = std::iter::once("Library")
@@ -218,13 +230,23 @@ fn render_tree(frame: &mut Frame, area: Rect, app: &mut App, strip: usize, focus
     });
 }
 
-fn tree_row(app: &App, row: &TreeRow, strip: usize, offset: usize) -> ListItem<'static> {
+fn tree_row(
+    app: &App,
+    row: &TreeRow,
+    strip: usize,
+    offset: usize,
+    playing: Option<&PlayingRef>,
+) -> ListItem<'static> {
     match row {
         TreeRow::Artist { artist, expanded } => {
+            let mark = playing.is_some_and(|p| p.is_artist(artist));
             let marker = if *expanded { "▼ " } else { "▶ " };
-            let middle = format!("{marker}{}", LibraryPane::artist_middle(artist));
+            let middle = marked(
+                format!("{marker}{}", LibraryPane::artist_middle(artist)),
+                mark,
+            );
             let right = format!("{} · artist", tracks_label(artist.track_count));
-            list_item(&middle, &right, strip, offset)
+            list_item(&middle, &right, strip, offset, mark)
         }
         TreeRow::Album {
             album,
@@ -232,11 +254,15 @@ fn tree_row(app: &App, row: &TreeRow, strip: usize, offset: usize) -> ListItem<'
             depth,
             ..
         } => {
+            let mark = playing.is_some_and(|p| p.is_album(album));
             let indent = "  ".repeat(*depth);
             let marker = if *expanded { "▼ " } else { "▶ " };
-            let middle = format!("{indent}{marker}{}", LibraryPane::album_middle(album));
+            let middle = marked(
+                format!("{indent}{marker}{}", LibraryPane::album_middle(album)),
+                mark,
+            );
             let right = album_right(album);
-            list_item(&middle, &right, strip, offset)
+            list_item(&middle, &right, strip, offset, mark)
         }
         TreeRow::Track {
             album_key,
@@ -245,14 +271,16 @@ fn tree_row(app: &App, row: &TreeRow, strip: usize, offset: usize) -> ListItem<'
         } => {
             let indent = "  ".repeat(*depth);
             let track = app.library.tree_track_cache_get(album_key, *index);
+            let mark = track.is_some_and(|t| playing.is_some_and(|p| p.is_track(t)));
+            let lead = if mark { "▶ " } else { "" };
             let middle = match track {
-                Some(t) => format!("{indent}{}", LibraryPane::track_middle(t)),
+                Some(t) => format!("{indent}{lead}{}", LibraryPane::track_middle(t)),
                 None => format!("{indent}?"),
             };
             let right = track
                 .map(|t| format::duration_opt(t.duration_secs.map(Duration::from_secs_f64)))
                 .unwrap_or_default();
-            list_item(&middle, &right, strip, offset)
+            list_item(&middle, &right, strip, offset, mark)
         }
     }
 }
@@ -278,6 +306,7 @@ fn tree_crumbs(rows: &[TreeRow], selected: Option<usize>) -> Vec<String> {
 }
 
 fn render_paging(frame: &mut Frame, area: Rect, app: &mut App, strip: usize, focused: bool) {
+    let playing = app.playing.clone();
     let artist = app
         .library
         .selected_artist_index()
@@ -308,21 +337,29 @@ fn render_paging(frame: &mut Frame, area: Rect, app: &mut App, strip: usize, foc
             .artists()
             .iter()
             .enumerate()
-            .map(|(i, a)| artist_row(a, strip, app.library.offset_for(i, strip)))
+            .map(|(i, a)| artist_row(a, strip, app.library.offset_for(i, strip), playing.as_ref()))
             .collect(),
         ColumnFocus::Albums => app
             .library
             .albums()
             .iter()
             .enumerate()
-            .map(|(i, a)| album_row(a, strip, app.library.offset_for(i, strip), false))
+            .map(|(i, a)| {
+                album_row(
+                    a,
+                    strip,
+                    app.library.offset_for(i, strip),
+                    false,
+                    playing.as_ref(),
+                )
+            })
             .collect(),
         ColumnFocus::Tracks => app
             .library
             .tracks()
             .iter()
             .enumerate()
-            .map(|(i, t)| track_row(t, strip, app.library.offset_for(i, strip)))
+            .map(|(i, t)| track_row(t, strip, app.library.offset_for(i, strip), playing.as_ref()))
             .collect(),
     };
     let count = app.library.len(strip);
@@ -337,6 +374,7 @@ fn render_paging(frame: &mut Frame, area: Rect, app: &mut App, strip: usize, foc
 }
 
 fn render_single_list(frame: &mut Frame, area: Rect, app: &mut App, strip: usize, focused: bool) {
+    let playing = app.playing.clone();
     let search;
     let parts: Vec<&str> = match app.library.mode() {
         Mode::AllTracks => vec!["Library", "all tracks"],
@@ -359,14 +397,28 @@ fn render_single_list(frame: &mut Frame, area: Rect, app: &mut App, strip: usize
             .search_hits()
             .iter()
             .enumerate()
-            .map(|(i, hit)| hit_row(hit, strip, app.library.offset_for(i, strip)))
+            .map(|(i, hit)| {
+                hit_row(
+                    hit,
+                    strip,
+                    app.library.offset_for(i, strip),
+                    playing.as_ref(),
+                )
+            })
             .collect(),
         Mode::AllTracks | Mode::Browse => app
             .library
             .tracks()
             .iter()
             .enumerate()
-            .map(|(i, track)| track_row(track, strip, app.library.offset_for(i, strip)))
+            .map(|(i, track)| {
+                track_row(
+                    track,
+                    strip,
+                    app.library.offset_for(i, strip),
+                    playing.as_ref(),
+                )
+            })
             .collect(),
     };
     let count = app.library.len(strip);
@@ -432,54 +484,112 @@ fn search_summary(hits: &[SearchHit]) -> String {
     format!("{artists} artists · {albums} albums · {tracks} tracks")
 }
 
-fn hit_row(hit: &SearchHit, strip: usize, offset: usize) -> ListItem<'static> {
+fn hit_row(
+    hit: &SearchHit,
+    strip: usize,
+    offset: usize,
+    playing: Option<&PlayingRef>,
+) -> ListItem<'static> {
     match hit {
         SearchHit::Artist(artist) => {
+            let mark = playing.is_some_and(|p| p.is_artist(artist));
             let right = format!("{} · artist", tracks_label(artist.track_count));
-            list_item(&LibraryPane::artist_middle(artist), &right, strip, offset)
+            let middle = marked(LibraryPane::artist_middle(artist), mark);
+            list_item(&middle, &right, strip, offset, mark)
         }
         SearchHit::Album(album) => {
+            let mark = playing.is_some_and(|p| p.is_album(album));
             let right = format!("{} · album", album_right(album));
-            list_item(&LibraryPane::album_middle(album), &right, strip, offset)
+            let middle = marked(LibraryPane::album_middle(album), mark);
+            list_item(&middle, &right, strip, offset, mark)
         }
-        SearchHit::Track(track) => track_row(track, strip, offset),
+        SearchHit::Track(track) => track_row(track, strip, offset, playing),
     }
 }
 
-fn artist_row(artist: &ArtistSummary, strip: usize, offset: usize) -> ListItem<'static> {
+fn artist_row(
+    artist: &ArtistSummary,
+    strip: usize,
+    offset: usize,
+    playing: Option<&PlayingRef>,
+) -> ListItem<'static> {
+    let mark = playing.is_some_and(|p| p.is_artist(artist));
     let right = format!("{} · artist", tracks_label(artist.track_count));
-    list_item(&LibraryPane::artist_middle(artist), &right, strip, offset)
+    let middle = marked(LibraryPane::artist_middle(artist), mark);
+    list_item(&middle, &right, strip, offset, mark)
 }
 
-fn album_row(album: &AlbumSummary, strip: usize, offset: usize, short: bool) -> ListItem<'static> {
+fn album_row(
+    album: &AlbumSummary,
+    strip: usize,
+    offset: usize,
+    short: bool,
+    playing: Option<&PlayingRef>,
+) -> ListItem<'static> {
+    let mark = playing.is_some_and(|p| p.is_album(album));
     let middle = if short {
         let year = album.year.map(|y| format!(" ({y})")).unwrap_or_default();
         format!("{}{year}", album.album)
     } else {
         LibraryPane::album_middle(album)
     };
-    list_item(&middle, &album_right(album), strip, offset)
+    list_item(
+        &marked(middle, mark),
+        &album_right(album),
+        strip,
+        offset,
+        mark,
+    )
 }
 
-fn track_row(track: &Track, strip: usize, offset: usize) -> ListItem<'static> {
+fn track_row(
+    track: &Track,
+    strip: usize,
+    offset: usize,
+    playing: Option<&PlayingRef>,
+) -> ListItem<'static> {
+    let mark = playing.is_some_and(|p| p.is_track(track));
     let middle = LibraryPane::track_middle(track);
-    let number = track_number(track);
+    let number = if mark {
+        " ▶ ".to_string()
+    } else {
+        track_number(track)
+    };
     let time = format::duration_opt(track.duration_secs.map(Duration::from_secs_f64));
     let right = format!("{number}{time}");
-    list_item(&middle, &right, strip, offset)
+    list_item(&middle, &right, strip, offset, mark)
 }
 
-fn list_item(middle: &str, right: &str, strip: usize, offset: usize) -> ListItem<'static> {
+fn list_item(
+    middle: &str,
+    right: &str,
+    strip: usize,
+    offset: usize,
+    playing: bool,
+) -> ListItem<'static> {
     let right_w = right.chars().count();
     let middle_w = strip.saturating_sub(right_w.saturating_add(1));
     let shown = format::pan(middle, offset, middle_w);
     let pad = middle_w.saturating_sub(shown.chars().count());
-    let line = Line::from(vec![
-        Span::raw(shown),
+    let (middle_style, right_style) = if playing {
+        (theme::playing(), theme::playing())
+    } else {
+        (Style::default(), theme::dim())
+    };
+    ListItem::new(Line::from(vec![
+        Span::styled(shown, middle_style),
         Span::raw(" ".repeat(pad)),
-        Span::styled(format!(" {right}"), theme::dim()),
-    ]);
-    ListItem::new(line)
+        Span::styled(format!(" {right}"), right_style),
+    ]))
+}
+
+/// The row's name with ` ♪` appended when it stands for what is playing.
+fn marked(name: String, mark: bool) -> String {
+    if mark {
+        format!("{name} ♪")
+    } else {
+        name
+    }
 }
 
 fn album_right(album: &AlbumSummary) -> String {

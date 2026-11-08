@@ -1310,6 +1310,11 @@ pub enum EnterResult {
 }
 
 impl LibraryPane {
+    /// The library's row for a file, if it has one.
+    pub fn locate(&self, path: &std::path::Path) -> Option<Track> {
+        self.library.as_ref()?.get_by_path(path).ok().flatten()
+    }
+
     /// Seed album rows for integration tests (paging albums level).
     pub fn inject_albums_for_test(&mut self, albums: Vec<AlbumSummary>) {
         self.artists = vec![ArtistSummary {

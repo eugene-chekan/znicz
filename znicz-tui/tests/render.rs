@@ -897,3 +897,22 @@ fn paging_titles_show_the_path() {
     let screen = draw(&mut app, 50, 30);
     assert!(screen.contains("Library › Miles"), "{screen}");
 }
+
+#[test]
+fn the_library_marks_the_playing_track_album_and_artist() {
+    let mut app = library_app();
+    let screen = draw_with(&mut app, &playing_state(), 140, 30);
+    assert!(screen.contains("Portishead ♪"), "{screen}");
+    // Select Portishead so its albums and tracks show.
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    app.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+    let screen = draw_with(&mut app, &playing_state(), 140, 30);
+    assert!(screen.contains("Dummy ♪"), "{screen}");
+    assert!(
+        screen
+            .lines()
+            .any(|l| l.contains("Sour Times — Portishead") && l.contains('▶')),
+        "{screen}"
+    );
+    assert!(!screen.contains("Miles ♪"), "{screen}");
+}

@@ -276,6 +276,7 @@ pub struct App {
     pub picker: Option<ratatui_image::picker::Picker>,
     pub(crate) cover_image: Option<ratatui_image::protocol::StatefulProtocol>,
     pub(crate) cover_draw_key: Option<(String, u16, u16)>,
+    pub(crate) playing: Option<crate::playing::PlayingRef>,
     pub(crate) library_list_state: ratatui::widgets::ListState,
     pub(crate) queue_list_state: ratatui::widgets::ListState,
     pub(crate) device_list_state: ratatui::widgets::ListState,
@@ -305,6 +306,22 @@ impl Drop for MouseCapture {
 }
 
 impl App {
+    /// Re-resolve what is playing when the current file changes.
+    pub fn refresh_playing(&mut self, state: &PlayerState) {
+        let info = state.current_track.as_ref();
+        let path = info.and_then(|t| t.path.as_ref());
+        if self.playing.as_ref().map(|p| &p.path) == path {
+            return;
+        }
+        self.playing = info.and_then(|info| {
+            let path = info.path.as_ref()?;
+            self.library
+                .locate(path)
+                .map(|track| crate::playing::PlayingRef::from_track(&track))
+                .or_else(|| crate::playing::PlayingRef::from_info(info))
+        });
+    }
+
     pub fn new(player: PlayerHandle) -> Self {
         Self::with_library(player, None)
     }
@@ -353,6 +370,7 @@ impl App {
             picker: Some(ratatui_image::picker::Picker::halfblocks()),
             cover_image: None,
             cover_draw_key: None,
+            playing: None,
             library_list_state: ratatui::widgets::ListState::default(),
             queue_list_state: ratatui::widgets::ListState::default(),
             device_list_state: ratatui::widgets::ListState::default(),

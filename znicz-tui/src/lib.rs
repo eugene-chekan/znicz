@@ -17,6 +17,7 @@ pub mod layout;
 pub mod library_pane;
 pub mod line_edit;
 pub mod meta;
+pub mod playing;
 pub mod theme;
 pub mod toast;
 pub mod tui_config;
