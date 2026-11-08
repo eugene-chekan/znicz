@@ -50,8 +50,9 @@ Writes go through the player's [library service](Library.md#the-library-service)
   the usual JSON report; `wait: false` returns `{"queued":true}` at once. It
   runs off the async runtime, so the server stays responsive during a scan.
 - `library_prune` removes rows whose file is gone and returns `{"removed":N}`.
-- `library_status` reports the service state: idle or busy, progress, and the
-  last result.
+- `library_status` returns the service's `LibraryStatus`: remembered `folders`,
+  the running job's `scanning` progress (folder, seen, added, updated), `queued`
+  and `running`, the `last` finished job's summary, and `scans_finished`.
 
  Playlist tools (`list_playlists`,
 `import_playlist`, `save_playlist`, `play_playlist`, `rename_playlist`,
