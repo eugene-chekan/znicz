@@ -26,10 +26,12 @@ Available. The library is a SQLite index of local files, filled by scanning fold
 
 1. **Scan first.** `scan_library { "path": "/home/user/Music" }` walks the folder
    and reads tags. The report tells you how many files were added, updated,
-   unchanged, or failed. Check `library_status` first: if the folder is already
-   in `folders`, it is indexed and you can skip straight to searching.
+   unchanged, or failed. A folder appears in `folders` as soon as it is
+   queued, which does not prove it is indexed; check `last` and
+   `scans_finished` for a finished scan.
    For a big folder, pass `"wait": false` to get `{"queued": true}` at once,
-   then poll `library_status` until `scanning` is null and `queued` is 0.
+   then poll `library_status` until `scanning` is null, `queued` is 0 and
+   `running` is false.
 2. **Find something.** `search_library { "query": "portishead", "limit": 20 }`
    matches title, artist, album, and album artist. Matching is partial and
    case-insensitive.

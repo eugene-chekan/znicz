@@ -160,10 +160,18 @@ Remembered folders live in a `folders` table. Rescan rules:
 - A remembered folder that is missing is **skipped** and its tracks are kept
   (an unplugged drive does not empty the library). A folder that fails to scan
   is skipped too.
+- A folder that scans **empty** while the library has tracks under it is
+  treated as missing (an unmounted drive leaves an empty mount point) and kept.
+- Folder paths are stored as written, made absolute but not canonicalised, so
+  a symlinked `~/Music` keeps its path and older indexes are not duplicated.
+- A job that panics is reported as `library job crashed` and the worker goes on.
 - Prune after a rescan removes rows only under the folders that were scanned.
 - Progress is published at least every 100 files.
 - While a job runs the service is `busy()`, which holds off the player's idle
   exit.
+
+Known limitation: when several clients queue jobs at once, a waiting client
+reports whichever job finished last. Follow-up: per-job ids.
 
 Reads stay direct: the TUI browse and search, the MCP read tools, and the CLI
 track count open the database themselves. WAL mode lets them read while the
