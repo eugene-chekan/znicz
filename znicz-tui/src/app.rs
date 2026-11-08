@@ -233,7 +233,12 @@ impl Modal {
     pub(crate) fn blocks_list_focus(self) -> bool {
         matches!(
             self,
-            Self::Devices | Self::Inspector | Self::Playlists | Self::Radio | Self::Messages
+            Self::Help
+                | Self::Devices
+                | Self::Inspector
+                | Self::Playlists
+                | Self::Radio
+                | Self::Messages
         )
     }
 }

@@ -854,3 +854,14 @@ fn the_focused_selection_is_accent_and_others_stay_grey() {
         "artist stays visible, grey"
     );
 }
+
+#[test]
+fn the_library_behind_help_keeps_a_grey_selection() {
+    use ratatui::style::Color;
+
+    let mut app = library_app();
+    app.modal = Modal::Help;
+    // Help is at most 64 wide and centred, so column 2 of the first row is clear of it.
+    let screen = buffer(&mut app, 140, 30);
+    assert_eq!(screen[(2, 1)].bg, Color::DarkGray, "behind a modal: grey");
+}
