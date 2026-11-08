@@ -4,6 +4,7 @@ mod devices;
 mod help;
 mod inspector;
 mod library;
+mod messages;
 mod now_playing;
 mod playlists;
 mod queue;
@@ -86,6 +87,7 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
         Modal::Inspector => inspector::render(frame, list, app, state),
         Modal::Playlists => playlists::render_modal(frame, list, app),
         Modal::Radio => radio::render_modal(frame, list, app),
+        Modal::Messages => messages::render_modal(frame, list, app),
         Modal::None => {}
     }
 }
@@ -178,4 +180,13 @@ pub(crate) fn inner_width(area: Rect) -> usize {
 
 pub(crate) fn no_style() -> Style {
     Style::default()
+}
+
+/// Highlight for the selected row: strong when the list has focus.
+pub(crate) fn highlight(focused: bool) -> Style {
+    if focused {
+        theme::selected()
+    } else {
+        no_style()
+    }
 }

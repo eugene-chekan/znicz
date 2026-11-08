@@ -1324,3 +1324,47 @@ fn ctrl_c_quits_while_typing_a_help_filter() {
     press_ctrl(&mut app, 'c');
     assert!(app.should_quit);
 }
+
+#[test]
+fn capital_m_opens_and_closes_messages() {
+    let mut app = new_app();
+    press_char(&mut app, 'M');
+    assert_eq!(app.modal, Modal::Messages);
+    press_char(&mut app, 'M');
+    assert_eq!(app.modal, Modal::None);
+    press_char(&mut app, 'M');
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.modal, Modal::None);
+}
+
+#[test]
+fn opening_messages_marks_alerts_read() {
+    let mut app = new_app();
+    app.toasts.warn("stream dropped");
+    assert!(app.toasts.unread_alerts().is_some());
+    press_char(&mut app, 'M');
+    assert_eq!(app.toasts.unread_alerts(), None);
+}
+
+#[test]
+fn capital_c_clears_the_message_history() {
+    let mut app = new_app();
+    app.toasts.info("one");
+    app.toasts.info("two");
+    press_char(&mut app, 'M');
+    press_char(&mut app, 'C');
+    assert_eq!(app.toasts.history_len(), 0);
+    assert_eq!(app.modal, Modal::Messages);
+}
+
+#[test]
+fn j_and_k_move_through_messages() {
+    let mut app = new_app();
+    for i in 0..3 {
+        app.toasts.info(format!("m{i}"));
+    }
+    press_char(&mut app, 'M');
+    press_char(&mut app, 'j');
+    press_char(&mut app, 'j');
+    assert_eq!(app.message_cursor.selected(3), Some(2));
+}

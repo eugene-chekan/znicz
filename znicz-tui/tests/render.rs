@@ -730,6 +730,7 @@ fn no_modal_covers_the_transport_or_footer() {
         Modal::Inspector,
         Modal::Playlists,
         Modal::Radio,
+        Modal::Messages,
     ];
     for &(width, height) in &[(80u16, 24u16), (120, 40), (60, 18), (40, 12)] {
         let mut app = App::with_library(player(), None);
@@ -749,4 +750,26 @@ fn no_modal_covers_the_transport_or_footer() {
             );
         }
     }
+}
+
+#[test]
+fn the_messages_list_shows_history_newest_first() {
+    let mut app = App::with_library(player(), None);
+    app.toasts.info("added 4 tracks");
+    app.toasts.error("device refused 96 kHz");
+    app.modal = Modal::Messages;
+    let screen = draw(&mut app, 100, 30);
+    assert!(screen.contains("Messages"), "{screen}");
+    let error = screen.find("device refused 96 kHz").expect("error row");
+    let info = screen.find("added 4 tracks").expect("info row");
+    assert!(error < info, "newest first:\n{screen}");
+    assert!(screen.contains(" 0s"), "age column:\n{screen}");
+}
+
+#[test]
+fn an_empty_messages_list_says_so() {
+    let mut app = App::with_library(player(), None);
+    app.modal = Modal::Messages;
+    let screen = draw(&mut app, 100, 30);
+    assert!(screen.contains("No messages yet"), "{screen}");
 }
