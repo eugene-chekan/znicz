@@ -880,8 +880,11 @@ impl App {
     fn close_queue(&mut self) {
         self.queue_open = false;
         self.focus = Focus::Library;
-        self.library
-            .clamp_pan(self.title_slot(), self.library_strip());
+        self.library.clamp_pan(
+            self.title_slot(),
+            self.library_strip(),
+            self.playing.as_ref(),
+        );
     }
 
     /// What the footer and help describe right now.
@@ -1038,6 +1041,8 @@ impl App {
             }
             _ => {
                 self.library.reload_albums();
+                // Re-resolve from the reloaded library on the next frame.
+                self.playing = None;
                 self.toasts.success("library reloaded");
             }
         }
@@ -1760,8 +1765,12 @@ impl App {
         if self.focus == Focus::Queue && self.queue_open {
             self.pan_queue(dir);
         } else {
-            self.library
-                .pan(dir, self.title_slot(), self.library_strip());
+            self.library.pan(
+                dir,
+                self.title_slot(),
+                self.library_strip(),
+                self.playing.as_ref(),
+            );
         }
     }
 
@@ -2045,5 +2054,17 @@ mod tests {
             PlaybackStatus::Stopped,
             "adding must not start playback"
         );
+    }
+
+    #[test]
+    fn reloading_the_library_forgets_the_resolved_playing_row() {
+        let mut app = App::with_library(test_player(), None);
+        app.playing = Some(crate::playing::PlayingRef {
+            path: std::path::PathBuf::from("/music/a.flac"),
+            artist: Some("A".into()),
+            album: None,
+        });
+        app.on_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+        assert_eq!(app.playing, None, "the next frame must re-resolve");
     }
 }

@@ -10,6 +10,7 @@ use znicz_library::{AlbumSummary, ArtistSummary, Library, SearchHit, SearchLimit
 use crate::cursor::Cursor;
 use crate::layout;
 use crate::line_edit::LineEdit;
+use crate::playing::PlayingRef;
 use crate::tui_config::LibraryLayout;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -879,44 +880,85 @@ impl LibraryPane {
         }
     }
 
-    pub fn clamp_pan(&mut self, slot: usize, strip_inner: usize) {
-        let max = self.selected_middle_len(strip_inner).saturating_sub(slot);
+    pub fn clamp_pan(&mut self, slot: usize, strip_inner: usize, playing: Option<&PlayingRef>) {
+        let max = self
+            .selected_middle_len(strip_inner, playing)
+            .saturating_sub(slot);
         self.h_offset = self.h_offset.min(max);
     }
 
-    pub fn pan(&mut self, delta: isize, slot: usize, strip_inner: usize) {
-        let max = self.selected_middle_len(strip_inner).saturating_sub(slot) as isize;
+    pub fn pan(
+        &mut self,
+        delta: isize,
+        slot: usize,
+        strip_inner: usize,
+        playing: Option<&PlayingRef>,
+    ) {
+        let max = self
+            .selected_middle_len(strip_inner, playing)
+            .saturating_sub(slot) as isize;
         let next = self.h_offset as isize + delta;
         self.h_offset = next.clamp(0, max.max(0)) as usize;
     }
 
-    fn selected_middle_len(&self, strip_inner: usize) -> usize {
+    /// Columns a row's playing marker adds to its middle text: ` ♪` after an
+    /// artist or album name, `▶ ` before a tree track. Flat track rows mark
+    /// the right-hand number instead, so they add none.
+    fn marker_width(item: &Item, playing: Option<&PlayingRef>, tree: bool) -> usize {
+        let Some(p) = playing else {
+            return 0;
+        };
+        let hit = match item {
+            Item::Artist(a) => p.is_artist(a),
+            Item::Album(a) => p.is_album(a),
+            Item::Track(t) => tree && p.is_track(t),
+        };
+        if hit {
+            2
+        } else {
+            0
+        }
+    }
+
+    fn middle_len(item: &Item, playing: Option<&PlayingRef>, tree: bool) -> usize {
+        let text = match item {
+            Item::Artist(a) => Self::artist_middle(a),
+            Item::Album(a) => Self::album_middle(a),
+            Item::Track(t) => Self::track_middle(t),
+        };
+        text.chars().count() + Self::marker_width(item, playing, tree)
+    }
+
+    fn selected_middle_len(&self, strip_inner: usize, playing: Option<&PlayingRef>) -> usize {
+        let tree = self.is_tree(strip_inner);
         match self.selected(strip_inner) {
-            Some(Item::Artist(artist)) => Self::artist_middle(artist).chars().count(),
-            Some(Item::Album(album)) => Self::album_middle(album).chars().count(),
-            Some(Item::Track(track)) => Self::track_middle(track).chars().count(),
+            Some(item) => Self::middle_len(&item, playing, tree),
             None => 0,
         }
     }
 
-    pub fn longest_middle(&self, strip_inner: usize) -> usize {
+    fn is_tree(&self, strip_inner: usize) -> bool {
+        matches!(self.mode, Mode::Browse)
+            && self.effective_layout(strip_inner) == EffectiveLayout::Tree
+    }
+
+    pub fn longest_middle(&self, strip_inner: usize, playing: Option<&PlayingRef>) -> usize {
+        let len = |item: Item| Self::middle_len(&item, playing, false);
         match self.mode {
             Mode::Search(_) => self
                 .search_hits
                 .iter()
                 .map(|hit| match hit {
-                    SearchHit::Artist(artist) => Self::artist_middle(artist),
-                    SearchHit::Album(album) => Self::album_middle(album),
-                    SearchHit::Track(track) => Self::track_middle(track),
+                    SearchHit::Artist(artist) => len(Item::Artist(artist)),
+                    SearchHit::Album(album) => len(Item::Album(album)),
+                    SearchHit::Track(track) => len(Item::Track(track)),
                 })
-                .map(|s| s.chars().count())
                 .max()
                 .unwrap_or(0),
             Mode::AllTracks => self
                 .tracks
                 .iter()
-                .map(Self::track_middle)
-                .map(|s| s.chars().count())
+                .map(|t| len(Item::Track(t)))
                 .max()
                 .unwrap_or(0),
             Mode::Browse => match self.effective_layout(strip_inner) {
@@ -924,40 +966,36 @@ impl LibraryPane {
                     .tree_rows()
                     .iter()
                     .map(|row| match row {
-                        TreeRow::Artist { artist, .. } => Self::artist_middle(artist),
-                        TreeRow::Album { album, .. } => Self::album_middle(album),
+                        TreeRow::Artist { artist, .. } => len(Item::Artist(artist)),
+                        TreeRow::Album { album, .. } => len(Item::Album(album)),
                         TreeRow::Track {
                             album_key, index, ..
                         } => self
                             .tree_track_cache
                             .get(album_key)
                             .and_then(|tracks| tracks.get(*index))
-                            .map(Self::track_middle)
-                            .unwrap_or_default(),
+                            .map(|t| Self::middle_len(&Item::Track(t), playing, true))
+                            .unwrap_or(0),
                     })
-                    .map(|s| s.chars().count())
                     .max()
                     .unwrap_or(0),
                 _ => match self.column_focus {
                     ColumnFocus::Artists => self
                         .artists
                         .iter()
-                        .map(Self::artist_middle)
-                        .map(|s| s.chars().count())
+                        .map(|a| len(Item::Artist(a)))
                         .max()
                         .unwrap_or(0),
                     ColumnFocus::Albums => self
                         .albums
                         .iter()
-                        .map(Self::album_middle)
-                        .map(|s| s.chars().count())
+                        .map(|a| len(Item::Album(a)))
                         .max()
                         .unwrap_or(0),
                     ColumnFocus::Tracks => self
                         .tracks
                         .iter()
-                        .map(Self::track_middle)
-                        .map(|s| s.chars().count())
+                        .map(|t| len(Item::Track(t)))
                         .max()
                         .unwrap_or(0),
                 },
@@ -1440,7 +1478,7 @@ mod tests {
     #[test]
     fn empty_pane_pan_stays_at_zero() {
         let mut pane = LibraryPane::new(None);
-        pane.pan(5, 4, strip());
+        pane.pan(5, 4, strip(), None);
         assert_eq!(pane.h_offset(), 0);
     }
 
@@ -1448,7 +1486,7 @@ mod tests {
     fn pan_offset_applies_only_to_the_selected_row() {
         let mut pane = LibraryPane::new(None);
         pane.inject_albums_for_test(vec![long_album("a"), long_album("b")]);
-        pane.pan(3, 10, strip());
+        pane.pan(3, 10, strip(), None);
         assert_eq!(pane.offset_for(0, strip()), 3);
         assert_eq!(pane.offset_for(1, strip()), 0);
     }
@@ -1457,7 +1495,7 @@ mod tests {
     fn moving_the_cursor_resets_pan() {
         let mut pane = LibraryPane::new(None);
         pane.inject_albums_for_test(vec![long_album("a"), long_album("b")]);
-        pane.pan(4, 10, strip());
+        pane.pan(4, 10, strip(), None);
         pane.step(1, strip());
         assert_eq!(pane.offset_for(0, strip()), 0);
         assert_eq!(pane.h_offset(), 0);
@@ -1476,8 +1514,24 @@ mod tests {
             },
             long_album("long"),
         ]);
-        pane.pan(20, 40, strip());
+        pane.pan(20, 40, strip(), None);
         assert_eq!(pane.h_offset(), 0);
+    }
+
+    #[test]
+    fn a_playing_rows_marker_counts_towards_the_longest_middle() {
+        let mut pane = LibraryPane::new(None);
+        let album = long_album("x");
+        pane.inject_albums_for_test(vec![album.clone()]);
+        let playing = PlayingRef {
+            path: std::path::PathBuf::from("/music/a.flac"),
+            artist: None,
+            album: Some(album.album.clone()),
+        };
+        let plain = pane.longest_middle(strip(), None);
+        assert_eq!(pane.longest_middle(strip(), Some(&playing)), plain + 2);
+        pane.pan(1000, 10, strip(), Some(&playing));
+        assert_eq!(pane.h_offset(), plain + 2 - 10);
     }
 
     fn long_album(name: &str) -> AlbumSummary {
@@ -1501,10 +1555,10 @@ mod tests {
             total_secs: Some(125.0),
         }]);
         let slot = 20;
-        assert!(pane.longest_middle(strip()) > slot);
-        pane.pan(1, slot, strip());
+        assert!(pane.longest_middle(strip(), None) > slot);
+        pane.pan(1, slot, strip(), None);
         assert_eq!(pane.h_offset(), 1);
-        pane.pan(2, slot, strip());
+        pane.pan(2, slot, strip(), None);
         assert_eq!(pane.h_offset(), 3);
     }
 
@@ -1520,11 +1574,11 @@ mod tests {
         }]);
         let narrow = 10;
         let wide_slot = 30;
-        pane.pan(100, narrow, strip());
-        let max_narrow = pane.longest_middle(strip()).saturating_sub(narrow);
+        pane.pan(100, narrow, strip(), None);
+        let max_narrow = pane.longest_middle(strip(), None).saturating_sub(narrow);
         assert_eq!(pane.h_offset(), max_narrow);
-        pane.clamp_pan(wide_slot, strip());
-        let max_wide = pane.longest_middle(strip()).saturating_sub(wide_slot);
+        pane.clamp_pan(wide_slot, strip(), None);
+        let max_wide = pane.longest_middle(strip(), None).saturating_sub(wide_slot);
         assert_eq!(pane.h_offset(), max_wide);
         assert!(max_wide < max_narrow);
     }
@@ -1716,7 +1770,7 @@ mod tests {
     fn only_the_selected_row_gets_the_pan_offset_regardless_of_layout() {
         let mut pane = LibraryPane::new(None);
         pane.inject_albums_for_test(vec![long_album("a"), long_album("b")]);
-        pane.pan(4, 10, strip());
+        pane.pan(4, 10, strip(), None);
 
         assert_eq!(pane.offset_for_row(0, Some(0)), 4);
         assert_eq!(pane.offset_for_row(1, Some(0)), 0);

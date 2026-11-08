@@ -65,6 +65,7 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
     app.library.clamp_pan(
         app.title_slot,
         crate::layout::strip_inner(list, app.queue_open),
+        app.playing.as_ref(),
     );
 
     library::render(frame, list, app);
