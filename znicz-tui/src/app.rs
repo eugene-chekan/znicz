@@ -450,7 +450,10 @@ impl App {
             Modal::Devices => self.device_cursor.step(delta, self.devices.len()),
             Modal::Playlists => self.playlist_cursor.step(delta, self.playlists.len()),
             Modal::Radio => self.station_cursor.step(delta, self.stations.len()),
-            Modal::Messages => self.message_cursor.step(delta, self.toasts.history_len()),
+            Modal::Messages => {
+                self.message_cursor.step(delta, self.toasts.history_len());
+                self.message_h_offset = 0;
+            }
             Modal::Help => self.help.scroll_by(delta),
             Modal::Inspector => {}
             Modal::None => match self.focus {
@@ -567,7 +570,10 @@ impl App {
                     Modal::Devices => self.device_cursor.set(index, self.devices.len()),
                     Modal::Playlists => self.playlist_cursor.set(index, self.playlists.len()),
                     Modal::Radio => self.station_cursor.set(index, self.stations.len()),
-                    Modal::Messages => self.message_cursor.set(index, self.toasts.history_len()),
+                    Modal::Messages => {
+                        self.message_cursor.set(index, self.toasts.history_len());
+                        self.message_h_offset = 0;
+                    }
                     _ => {}
                 }
             }
@@ -635,7 +641,7 @@ impl App {
             return;
         }
 
-        if self.modal == Modal::Inspector {
+        if matches!(self.modal, Modal::Inspector | Modal::Messages) {
             return;
         }
 

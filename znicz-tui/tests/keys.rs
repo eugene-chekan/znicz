@@ -1368,3 +1368,27 @@ fn j_and_k_move_through_messages() {
     press_char(&mut app, 'j');
     assert_eq!(app.message_cursor.selected(3), Some(2));
 }
+
+#[test]
+fn library_and_queue_keys_stay_out_of_the_messages_list() {
+    let mut app = app_with_library_rows();
+    press_char(&mut app, 'M');
+    for c in ['a', '/', 'o'] {
+        press_char(&mut app, c);
+    }
+    press(&mut app, KeyCode::Enter);
+    assert!(app.player.state().queue.is_empty());
+    assert!(!app.library.is_typing());
+    assert_eq!(app.modal, Modal::Messages);
+}
+
+#[test]
+fn alt_arrow_pans_a_message_and_moving_resets_it() {
+    let mut app = new_app();
+    app.toasts.info("a very long message");
+    press_char(&mut app, 'M');
+    app.on_key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT));
+    assert_eq!(app.message_h_offset, 1);
+    press_char(&mut app, 'j');
+    assert_eq!(app.message_h_offset, 0);
+}
