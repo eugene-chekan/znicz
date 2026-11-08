@@ -15,24 +15,11 @@ use crate::hit::ListHit;
 use crate::theme;
 use crate::views;
 
-pub fn render_modal(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState) {
-    let popup = centered_modal(area);
+pub fn render_modal(frame: &mut Frame, list: Rect, app: &mut App, state: &PlayerState) {
+    let popup = crate::layout::list_modal_rect(list);
     app.hits.overlay = Some(popup);
     frame.render_widget(Clear, popup);
     render(frame, popup, app, state);
-}
-
-fn centered_modal(area: Rect) -> Rect {
-    let width = ((area.width as u32 * 70 / 100).max(40) as u16).min(area.width);
-    let height = ((area.height as u32 * 70 / 100).max(8) as u16).min(area.height);
-    let x = area.x + (area.width.saturating_sub(width)) / 2;
-    let y = area.y + (area.height.saturating_sub(height)) / 2;
-    Rect {
-        x,
-        y,
-        width,
-        height,
-    }
 }
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState) {

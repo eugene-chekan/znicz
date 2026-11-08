@@ -19,8 +19,8 @@ const MAX_WIDTH: u16 = 64;
 /// Fits the longest key label (`Shift-→ / Shift-←`) plus a gap.
 const KEY_COLUMN: usize = 19;
 
-pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    let popup = popup_rect(area);
+pub fn render(frame: &mut Frame, list: Rect, app: &mut App) {
+    let popup = crate::layout::modal_rect(list, MAX_WIDTH, list.height);
     app.hits.overlay = Some(popup);
     app.hits.close = crate::views::close_button_rect(popup);
 
@@ -109,23 +109,6 @@ fn split_prompt(inner: Rect, show_prompt: bool) -> (Rect, Option<Rect>) {
     (list, Some(prompt))
 }
 
-/// Centred, at most `MAX_WIDTH` wide, inset one row from the top and bottom
-/// so the footer stays visible.
-fn popup_rect(area: Rect) -> Rect {
-    let width = area
-        .width
-        .saturating_sub(4)
-        .max(area.width.min(20))
-        .min(MAX_WIDTH);
-    let height = area.height.saturating_sub(2).max(area.height.min(5));
-    Rect {
-        x: area.x + (area.width - width) / 2,
-        y: area.y + (area.height - height) / 2,
-        width,
-        height,
-    }
-}
-
 /// The bottom-left version title, or `None` when both titles cannot fit.
 ///
 /// The close hint is functional, so it keeps the row when a tiny popup has no
@@ -143,24 +126,6 @@ fn version_title(popup_width: u16) -> Option<Line<'static>> {
 mod tests {
     use super::*;
     use crate::keys::Context;
-
-    #[test]
-    fn the_popup_caps_its_width_and_keeps_the_footer_row_free() {
-        let screen = Rect::new(0, 0, 200, 60);
-        let popup = popup_rect(screen);
-        assert_eq!(popup.width, MAX_WIDTH);
-        assert_eq!(popup.height, 58);
-        assert!(popup.right() <= screen.right());
-        assert!(popup.bottom() < screen.bottom(), "footer row stays visible");
-    }
-
-    #[test]
-    fn a_tiny_screen_does_not_produce_an_oversized_box() {
-        for (w, h) in [(4, 3), (10, 3), (20, 5), (30, 8)] {
-            let popup = popup_rect(Rect::new(0, 0, w, h));
-            assert!(popup.width <= w && popup.height <= h, "{w}x{h}: {popup:?}");
-        }
-    }
 
     #[test]
     fn the_title_names_the_context() {

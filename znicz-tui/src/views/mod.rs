@@ -82,11 +82,11 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
     status::render_footer(frame, chunks[2], app);
 
     match app.modal {
-        Modal::Help => help::render(frame, area, app),
-        Modal::Devices => devices::render_modal(frame, area, app, state),
-        Modal::Inspector => inspector::render(frame, area, app, state),
-        Modal::Playlists => playlists::render_modal(frame, area, app),
-        Modal::Radio => radio::render_modal(frame, area, app),
+        Modal::Help => help::render(frame, list, app),
+        Modal::Devices => devices::render_modal(frame, list, app, state),
+        Modal::Inspector => inspector::render(frame, list, app, state),
+        Modal::Playlists => playlists::render_modal(frame, list, app),
+        Modal::Radio => radio::render_modal(frame, list, app),
         Modal::None => {}
     }
 

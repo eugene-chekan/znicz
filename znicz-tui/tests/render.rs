@@ -713,3 +713,41 @@ fn the_footer_while_typing_a_help_filter_offers_keep_and_clear() {
     assert!(row.contains("Enter keep · Esc clear"), "{row}");
     assert!(!row.contains("Esc close"), "{row}");
 }
+
+/// Rows from the top of the transport to the bottom of the screen.
+fn below_list(screen: &str, list_height: u16) -> Vec<String> {
+    screen
+        .lines()
+        .skip(usize::from(list_height))
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn no_modal_covers_the_transport_or_footer() {
+    let modals = [
+        Modal::Help,
+        Modal::Devices,
+        Modal::Inspector,
+        Modal::Playlists,
+        Modal::Radio,
+    ];
+    for &(width, height) in &[(80u16, 24u16), (120, 40), (60, 18), (40, 12)] {
+        let mut app = App::with_library(player(), None);
+        let plain = draw(&mut app, width, height);
+        let expected = below_list(&plain, app.list_height);
+        for modal in modals {
+            app.modal = modal;
+            let screen = draw(&mut app, width, height);
+            let rows = below_list(&screen, app.list_height);
+            // The footer row legitimately changes hints per modal; compare the
+            // transport rows only.
+            let transport = rows.len() - 1;
+            assert_eq!(
+                rows[..transport],
+                expected[..transport],
+                "{modal:?} at {width}x{height} covered the transport:\n{screen}"
+            );
+        }
+    }
+}
