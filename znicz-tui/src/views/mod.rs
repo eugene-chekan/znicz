@@ -94,7 +94,7 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
 }
 
 fn render_toasts(frame: &mut Frame, list: Rect, app: &App) {
-    let shown = app.toasts.visible();
+    let shown = &app.toasts.recent()[..app.toasts.recent().len().min(3)];
     if shown.is_empty() {
         return;
     }

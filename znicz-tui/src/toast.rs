@@ -1,9 +1,10 @@
-//! Short-lived messages shown in the status area.
+//! Messages: live ones for the transport row, and a history for the Messages list.
 //!
 //! Without these, a failed file or a finished action is invisible: the TUI owns
 //! the screen, so anything written to the log or to stdout never reaches the
 //! user. Every action and every player error becomes a toast instead.
 
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 /// How long a message stays on screen.
@@ -46,14 +47,29 @@ impl Toast {
     }
 }
 
-/// Holds the most recent messages, newest first.
+/// Live messages (newest first) and the history behind them.
 #[derive(Debug, Default)]
 pub struct Toasts {
     items: Vec<Toast>,
+    history: VecDeque<Entry>,
 }
 
 /// Beyond this, older messages are dropped rather than queueing up unseen.
 const MAX_KEPT: usize = 8;
+/// How many messages the Messages list remembers.
+const HISTORY: usize = 50;
+
+/// One remembered message.
+#[derive(Debug, Clone)]
+pub struct Entry {
+    pub text: String,
+    pub level: Level,
+    pub at: Instant,
+    /// A warning or error the user has not seen in the Messages list yet.
+    pub unread: bool,
+    /// Was unread when the Messages list opened; drawn bold until it closes.
+    pub fresh: bool,
+}
 
 impl Toasts {
     pub fn new() -> Self {
@@ -77,6 +93,14 @@ impl Toasts {
     }
 
     fn push(&mut self, text: String, level: Level, now: Instant) {
+        self.history.push_front(Entry {
+            text: text.clone(),
+            level,
+            at: now,
+            unread: matches!(level, Level::Warn | Level::Error),
+            fresh: false,
+        });
+        self.history.truncate(HISTORY);
         self.items.insert(0, Toast::new(text, level, now));
         self.items.truncate(MAX_KEPT);
     }
@@ -104,10 +128,56 @@ impl Toasts {
         &self.items
     }
 
-    /// Up to three newest messages for the toast overlay.
-    pub fn visible(&self) -> &[Toast] {
-        let n = self.recent().len().min(3);
-        &self.recent()[..n]
+    /// Live messages behind the newest one, for the `+N` on the message row.
+    pub fn live_extra(&self) -> usize {
+        self.items.len().saturating_sub(1)
+    }
+
+    /// Remembered messages, newest first.
+    pub fn history(&self) -> impl Iterator<Item = &Entry> {
+        self.history.iter()
+    }
+
+    pub fn history_len(&self) -> usize {
+        self.history.len()
+    }
+
+    /// Unread warnings and errors: how many, and the worst level.
+    pub fn unread_alerts(&self) -> Option<(usize, Level)> {
+        let mut count = 0;
+        let mut worst = Level::Warn;
+        for entry in self.history.iter().filter(|e| e.unread) {
+            count += 1;
+            if entry.level == Level::Error {
+                worst = Level::Error;
+            }
+        }
+        (count > 0).then_some((count, worst))
+    }
+
+    /// The Messages list opened: unread rows become fresh, nothing stays unread.
+    pub fn mark_read(&mut self) {
+        for entry in &mut self.history {
+            entry.fresh = entry.unread;
+            entry.unread = false;
+        }
+    }
+
+    /// The Messages list closed.
+    pub fn clear_fresh(&mut self) {
+        for entry in &mut self.history {
+            entry.fresh = false;
+        }
+    }
+
+    pub fn clear_history(&mut self) {
+        self.history.clear();
+    }
+
+    /// Expire every live message now, keeping the history.
+    #[doc(hidden)]
+    pub fn expire_live_for_test(&mut self) {
+        self.items.clear();
     }
 }
 
@@ -166,5 +236,68 @@ mod tests {
         let toast = toasts.current().unwrap();
         assert_eq!(toast.level, Level::Success);
         assert_eq!(toast.text, "queue cleared");
+    }
+
+    #[test]
+    fn history_keeps_fifty_messages_after_they_expire() {
+        let mut toasts = Toasts::new();
+        let now = Instant::now();
+        for i in 0..60 {
+            toasts.push(format!("m{i}"), Level::Info, now);
+        }
+        toasts.tick_at(now + ERROR_LIFETIME);
+        assert!(toasts.is_empty(), "live messages expired");
+        assert_eq!(toasts.history_len(), HISTORY);
+        assert_eq!(toasts.history().next().unwrap().text, "m59", "newest first");
+    }
+
+    #[test]
+    fn only_warnings_and_errors_are_unread() {
+        let mut toasts = Toasts::new();
+        toasts.info("added 4 tracks");
+        toasts.success("queue cleared");
+        assert_eq!(toasts.unread_alerts(), None);
+        toasts.warn("stream dropped");
+        assert_eq!(toasts.unread_alerts(), Some((1, Level::Warn)));
+        toasts.error("device refused 96 kHz");
+        assert_eq!(
+            toasts.unread_alerts(),
+            Some((2, Level::Error)),
+            "error is worst"
+        );
+    }
+
+    #[test]
+    fn marking_read_keeps_the_rows_fresh_until_cleared() {
+        let mut toasts = Toasts::new();
+        toasts.warn("stream dropped");
+        toasts.info("added");
+        toasts.mark_read();
+        assert_eq!(toasts.unread_alerts(), None);
+        let fresh: Vec<bool> = toasts.history().map(|e| e.fresh).collect();
+        assert_eq!(fresh, [false, true], "newest first: info, then the warning");
+        toasts.clear_fresh();
+        assert!(toasts.history().all(|e| !e.fresh));
+    }
+
+    #[test]
+    fn clearing_history_leaves_live_messages() {
+        let mut toasts = Toasts::new();
+        toasts.error("broke");
+        toasts.clear_history();
+        assert_eq!(toasts.history_len(), 0);
+        assert_eq!(toasts.unread_alerts(), None);
+        assert!(!toasts.is_empty());
+    }
+
+    #[test]
+    fn live_extra_counts_messages_behind_the_newest() {
+        let mut toasts = Toasts::new();
+        assert_eq!(toasts.live_extra(), 0);
+        toasts.info("a");
+        assert_eq!(toasts.live_extra(), 0);
+        toasts.info("b");
+        toasts.info("c");
+        assert_eq!(toasts.live_extra(), 2);
     }
 }
