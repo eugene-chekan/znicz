@@ -149,7 +149,7 @@ fn run_job(library: &mut Library, shared: &Shared, job: Job) -> ScanSummary {
     let result = match job {
         Job::Add(folder) => library
             .remember_folder(&folder)
-            .and_then(|()| scan_into(library, shared, &folder, &mut summary)),
+            .and_then(|()| scan_into(library, shared, &folder, &mut summary).map(drop)),
         Job::RescanAll => rescan_all(library, shared, &mut summary),
         Job::Prune => library
             .remove_missing()
@@ -167,7 +167,7 @@ fn scan_into(
     shared: &Shared,
     folder: &Path,
     summary: &mut ScanSummary,
-) -> Result<()> {
+) -> Result<usize> {
     set_progress(shared, folder, &ScanReport::default());
     let report = library.scan_with_progress(folder, |r| set_progress(shared, folder, r))?;
     summary.seen += report.seen;
@@ -175,7 +175,7 @@ fn scan_into(
     summary.updated += report.updated;
     summary.unchanged += report.unchanged;
     summary.failed += report.failed;
-    Ok(())
+    Ok(report.seen)
 }
 
 fn rescan_all(library: &mut Library, shared: &Shared, summary: &mut ScanSummary) -> Result<()> {
@@ -184,12 +184,14 @@ fn rescan_all(library: &mut Library, shared: &Shared, summary: &mut ScanSummary)
     })
 }
 
-/// Rescan every remembered folder with `scan`. A folder that is missing or
-/// fails to scan is reported as skipped and keeps its tracks; the others go on.
+/// Rescan every remembered folder with `scan`, which returns how many files it
+/// saw. A folder that is missing, fails to scan, or scans empty while the
+/// library has tracks under it (an unmounted drive leaves an empty mount
+/// point) is reported as skipped and keeps its tracks; the others go on.
 fn rescan_folders(
     library: &mut Library,
     summary: &mut ScanSummary,
-    mut scan: impl FnMut(&mut Library, &Path, &mut ScanSummary) -> Result<()>,
+    mut scan: impl FnMut(&mut Library, &Path, &mut ScanSummary) -> Result<usize>,
 ) -> Result<()> {
     let mut scanned = Vec::new();
     for folder in library.folders()? {
@@ -199,7 +201,11 @@ fn rescan_folders(
             continue;
         }
         match scan(library, &folder, summary) {
-            Ok(()) => scanned.push(folder),
+            Ok(0) if library.has_track_under(&folder)? => {
+                tracing::warn!(folder = %folder.display(), "folder scanned empty; keeping its tracks");
+                summary.skipped.push(folder);
+            }
+            Ok(_) => scanned.push(folder),
             Err(e) => {
                 tracing::warn!(folder = %folder.display(), error = %e, "folder rescan failed");
                 summary.skipped.push(folder);
@@ -305,7 +311,7 @@ mod tests {
     fn rescan_skips_missing_folders_and_prunes_only_what_it_scanned() {
         let root = temp_dir("rescan");
         let db = root.join("library.db");
-        let here = music(&root, "here", 0);
+        let here = music(&root, "here", 1);
         let away = music(&root, "away", 0);
         let service = LibraryService::open(&db).unwrap();
         add(&service, &here);
@@ -333,6 +339,29 @@ mod tests {
             .get_by_path(&here.join("deleted.flac"))
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn a_folder_that_scans_empty_keeps_its_tracks() {
+        let root = temp_dir("empty");
+        let db = root.join("library.db");
+        let nas = music(&root, "nas", 0);
+        let service = LibraryService::open(&db).unwrap();
+        add(&service, &nas);
+        wait(&service, 1);
+        let reader = {
+            let mut library = Library::open(&db).unwrap();
+            library
+                .upsert_track_for_test(&nas.join("x.flac"), "t", None, None, None)
+                .unwrap();
+            library
+        };
+
+        service.apply(LibraryOp::RescanAll).unwrap();
+        let last = wait(&service, 2).last.unwrap();
+        assert_eq!(last.skipped, std::slice::from_ref(&nas));
+        assert_eq!(last.removed, 0);
+        assert!(reader.get_by_path(&nas.join("x.flac")).unwrap().is_some());
     }
 
     #[test]
@@ -399,7 +428,7 @@ mod tests {
             if folder == bad {
                 Err(crate::error::LibraryError::NotADirectory("boom".into()))
             } else {
-                Ok(())
+                Ok(1)
             }
         })
         .unwrap();

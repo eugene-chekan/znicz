@@ -558,6 +558,18 @@ impl Library {
             .collect())
     }
 
+    /// Whether any track lives under `root` (compared by path components).
+    pub fn has_track_under(&self, root: &Path) -> Result<bool> {
+        let mut statement = self.conn.prepare("SELECT path FROM tracks")?;
+        let mut rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        for path in &mut rows {
+            if Path::new(&path?).starts_with(root) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Like `remove_missing`, but only for files under one of `roots`.
     pub fn remove_missing_under(&mut self, roots: &[PathBuf]) -> Result<usize> {
         let paths: Vec<String> = {
