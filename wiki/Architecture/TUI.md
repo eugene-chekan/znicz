@@ -50,7 +50,7 @@ cover    ▶ So What
          ━━━●━━━━  1:02 / 9:22  70%
          FLAC 24/96 → DAC  ● bit perfect
          ● added 4 tracks
-Space pause · / search · a add · ] queue · P playlists · R radio    ? more
+Space pause · / search · a add · ] queue · P playlists · R radio · M messages
 ```
 
 The library is the stage and always fills the list region. The queue is an
@@ -108,8 +108,8 @@ columns and wraps. `M` opens the messages list and `J` jumps to the playing
 track.
 
 The footer shows a short hint list for the current **context** (library,
-library tree, search prompt, queue, devices, inspector, playlists, radio, a
-name prompt, the station form, help, or the help filter), most important first,
+library tree, search prompt, queue, devices, inspector, playlists, radio, the
+Messages list, a name prompt, the station form, help, or the help filter), most important first,
 as many as fit. Wherever `?` opens help, ` ? more ` is right-aligned and always
 kept; search, the prompts, and help itself leave it out because `?` is typed
 text there or help is already open. Each hint carries the key it sends, so
@@ -312,13 +312,15 @@ every player error and every action becomes a short message (`toast.rs`) on the
 
 Messages live 4 s, errors 8 s. Hints on the bottom line are never replaced.
 
-Expired messages go into a **history of 50**, newest first. **Unread** means
+Every message enters a **history of 50** when it arrives, newest first, and stays there after it expires from the transport. **Unread** means
 warnings and errors only; info and success confirm what you just did. `M` opens
 the Messages list: a mark, an age (`12s`, `3m`, `1h`), and the text per row,
 with rows that were unread when it opened in bold until it closes. `C` clears
 the history; `Esc` or `M` closes; `Alt-←` / `Alt-→` pan the highlighted row.
-Opening it marks everything read. The footer hint reads `M messages (N)` while
-unread alerts exist.
+Opening it marks everything read, and alerts that arrive while it is open count as
+read too. The footer hint reads `M messages (N)` while unread alerts exist; on
+80-column terminals `M messages` is the first hint dropped, and the transport's
+unread marker still points to `M`.
 
 For this to work, key handlers use `send_blocking` rather than
 `send`: the engine's own result comes back, so a missing file or an unusable

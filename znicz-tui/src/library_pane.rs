@@ -1943,7 +1943,6 @@ mod tests {
         assert_eq!(pane.albums().len(), 1);
     }
 
-    /// Miles (one album, two tracks) sorts before Portishead (one track).
     fn freddie(pane: &LibraryPane) -> Track {
         pane.locate(Path::new("/music/a2.flac"))
             .expect("in library")
@@ -2005,6 +2004,7 @@ mod tests {
         assert!(!pane.reveal(&track, wide()));
     }
 
+    /// Miles (one album, two tracks) sorts before Portishead (one track).
     fn two_artist_library() -> Library {
         let mut library = Library::open_in_memory().expect("open");
         for (path, title, artist, album) in [
