@@ -16,6 +16,8 @@ enum Job {
     Add(PathBuf),
     RescanAll,
     Prune,
+    #[cfg(test)]
+    PanicForTest,
 }
 
 #[derive(Default)]
@@ -132,7 +134,16 @@ fn run(mut library: Library, shared: Arc<Shared>) {
                 };
             }
         };
-        let summary = run_job(&mut library, &shared, job);
+        let summary = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_job(&mut library, &shared, job)
+        }))
+        .unwrap_or_else(|_| {
+            tracing::error!("library job panicked");
+            ScanSummary {
+                error: Some("library job crashed".into()),
+                ..ScanSummary::default()
+            }
+        });
         let Ok(mut state) = shared.state.lock() else {
             return;
         };
@@ -154,6 +165,8 @@ fn run_job(library: &mut Library, shared: &Shared, job: Job) -> ScanSummary {
         Job::Prune => library
             .remove_missing()
             .map(|removed| summary.removed = removed),
+        #[cfg(test)]
+        Job::PanicForTest => panic!("injected library job panic"),
     };
     if let Err(e) = result {
         tracing::warn!(error = %e, "library job failed");
@@ -257,6 +270,31 @@ mod tests {
     fn wait(service: &LibraryService, target: u64) -> LibraryStatus {
         znicz_core::wait_for_library(service, target, Some(Duration::from_secs(10)), |_| {})
             .expect("job finished")
+    }
+
+    impl LibraryService {
+        fn apply_panic_for_test(&self) {
+            let mut state = self.shared.state.lock().unwrap();
+            state.queue.push_back(Job::PanicForTest);
+            state.status.queued = state.queue.len();
+            self.shared.wake.notify_all();
+        }
+    }
+
+    #[test]
+    fn a_crashing_job_is_reported_and_the_worker_lives_on() {
+        let root = temp_dir("panic");
+        let service = LibraryService::open(&root.join("library.db")).unwrap();
+        service.apply_panic_for_test();
+        let status = wait(&service, 1);
+        assert_eq!(
+            status.last.as_ref().unwrap().error.as_deref(),
+            Some("library job crashed")
+        );
+        assert!(!status.busy());
+        service.apply(LibraryOp::Prune).unwrap();
+        let last = wait(&service, 2).last.unwrap();
+        assert!(last.error.is_none());
     }
 
     fn add(service: &LibraryService, path: &Path) {
