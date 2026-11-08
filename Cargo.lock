@@ -4631,6 +4631,7 @@ dependencies = [
 name = "znicz-mcp"
 version = "0.8.0"
 dependencies = [
+ "dirs",
  "rmcp",
  "schemars",
  "serde",

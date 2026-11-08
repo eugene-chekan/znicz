@@ -548,7 +548,7 @@ impl ZniczMcpServer {
         &self,
         Parameters(params): Parameters<ScanParams>,
     ) -> Result<rmcp::model::CallToolResult, McpError> {
-        let path = std::path::absolute(&params.path)
+        let path = std::path::absolute(expand_home(&params.path, dirs::home_dir().as_deref()))
             .ok()
             .filter(|p| p.is_dir())
             .ok_or_else(|| {
@@ -1067,8 +1067,33 @@ fn prompt_meta(name: &str, description: &str) -> Prompt {
     }
 }
 
+/// Expand a leading `~` or `~/` against `home`; anything else is left alone.
+fn expand_home(path: &str, home: Option<&Path>) -> PathBuf {
+    match (home, path.strip_prefix('~')) {
+        (Some(home), Some("")) => home.to_path_buf(),
+        (Some(home), Some(rest)) if rest.starts_with('/') => home.join(&rest[1..]),
+        _ => PathBuf::from(path),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_leading_tilde_expands_to_home() {
+        let home = Path::new("/home/me");
+        assert_eq!(
+            super::expand_home("~/Music", Some(home)),
+            Path::new("/home/me/Music")
+        );
+        assert_eq!(super::expand_home("~", Some(home)), home);
+        assert_eq!(super::expand_home("~x/y", Some(home)), Path::new("~x/y"));
+        assert_eq!(
+            super::expand_home("/a/~/b", Some(home)),
+            Path::new("/a/~/b")
+        );
+        assert_eq!(super::expand_home("~/Music", None), Path::new("~/Music"));
+    }
+
     use super::*;
     use std::ops::{Deref, DerefMut};
     use std::time::Duration;
