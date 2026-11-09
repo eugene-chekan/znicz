@@ -120,7 +120,7 @@ in the same shape as `queue_remove`.
   nothing with library focus.
 - MCP: `queue_move` returns the reordered queue; out-of-range is an error.
 - `volume_bar`: 0 % all `▁`; 100 % all `█`; 50 % of 6 cells is `███▁▁▁`;
-  1/16 of 1 cell rounds to `▏` … (nearest eighth); output is always `cells`
+  1/8 of a 1-cell bar is `▏` and 3/8 is `▍`; output is always `cells`
   characters.
 - Volume keys: one press moves 0.01.
 - `GainRamp`: a 500 ms ramp at 48 kHz takes 24 000 frames and ends exactly on the
