@@ -134,3 +134,41 @@ fn stage_draws_at_every_size() {
         assert_eq!(screen.lines().count(), usize::from(h));
     }
 }
+
+fn app_with_library_rows() -> App {
+    let mut library = znicz_library::Library::open_in_memory().expect("open library");
+    for (path, title, artist, album) in [
+        ("/music/a1.flac", "So What", "Miles", "Kind of Blue"),
+        ("/music/b1.flac", "Roads", "Portishead", "Dummy"),
+    ] {
+        library
+            .upsert_track_for_test(
+                std::path::Path::new(path),
+                title,
+                Some(artist.into()),
+                Some(album.into()),
+                None,
+            )
+            .expect("insert track");
+    }
+    let (player, _thread) = spawn_player(AudioConfig::default());
+    App::with_library(player, Some(library))
+}
+
+#[test]
+fn tab_on_stage_does_not_move_the_hidden_library_columns() {
+    let mut app = app_with_library_rows();
+    let before = app.library.column_focus();
+    press(&mut app, 'v');
+    app.on_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(app.library.column_focus(), before);
+    assert!(app.queue_open);
+}
+
+#[test]
+fn alt_arrow_on_stage_does_not_pan_the_hidden_library() {
+    let mut app = app_with_library_rows();
+    press(&mut app, 'v');
+    app.on_key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT));
+    assert_eq!(app.library.h_offset(), 0);
+}

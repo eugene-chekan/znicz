@@ -1006,7 +1006,8 @@ impl App {
             KeyCode::Tab if self.modal.blocks_list_focus() => {}
             KeyCode::Tab => {
                 let strip = self.library_strip();
-                if self.focus == Focus::Library
+                if self.view == View::Browse
+                    && self.focus == Focus::Library
                     && matches!(self.library.mode(), Mode::Browse)
                     && self.library.effective_layout(strip) == EffectiveLayout::Columns
                     && !self.library.artists().is_empty()
@@ -1026,7 +1027,8 @@ impl App {
             KeyCode::BackTab if self.modal.blocks_list_focus() => {}
             KeyCode::BackTab => {
                 let strip = self.library_strip();
-                if self.focus == Focus::Library
+                if self.view == View::Browse
+                    && self.focus == Focus::Library
                     && matches!(self.library.mode(), Mode::Browse)
                     && self.library.effective_layout(strip) == EffectiveLayout::Columns
                     && !self.library.artists().is_empty()
@@ -2018,7 +2020,7 @@ impl App {
         }
         if self.focus == Focus::Queue && self.queue_open {
             self.pan_queue(dir);
-        } else {
+        } else if self.view == View::Browse {
             self.library.pan(
                 dir,
                 self.title_slot(),
