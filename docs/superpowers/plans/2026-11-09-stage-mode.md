@@ -30,7 +30,7 @@ Every commit message ends with a blank line then `Co-Authored-By: Claude Opus 5.
 - Create: `znicz-tui/src/marquee.rs`
 - Modify: `znicz-tui/src/lib.rs`, `znicz-tui/src/tui_config.rs`, `znicz/src/main.rs`
 
-- [ ] **Step 1: Write the module with its failing tests**
+- [x] **Step 1: Write the module with its failing tests**
 
 Create `znicz-tui/src/marquee.rs`:
 
@@ -150,9 +150,9 @@ mod tests {
 
 Add `pub mod marquee;` to `znicz-tui/src/lib.rs`.
 
-- [ ] **Step 2: Run to verify** — `cargo test -p znicz-tui --lib marquee` (write the tests first with `todo!()` bodies to see them fail), then PASS.
+- [x] **Step 2: Run to verify** — `cargo test -p znicz-tui --lib marquee` (write the tests first with `todo!()` bodies to see them fail), then PASS.
 
-- [ ] **Step 3: Config**
+- [x] **Step 3: Config**
 
 `znicz-tui/src/tui_config.rs`: add to `TuiConfig`
 
@@ -172,7 +172,7 @@ and `marquee: true,` in `Default`. Add a test:
 
 `znicz/src/main.rs`: `TuiSection` gains `marquee: Option<bool>,`; `tui_config` sets `marquee: config.tui.marquee.unwrap_or(true),`.
 
-- [ ] **Step 4:** `cargo test -p znicz-tui -p znicz`, clippy, fmt; commit `Add the marquee scroller and its setting`.
+- [x] **Step 4:** `cargo test -p znicz-tui -p znicz`, clippy, fmt; commit `Add the marquee scroller and its setting`.
 
 ---
 
@@ -181,7 +181,7 @@ and `marquee: true,` in `Default`. Add a test:
 **Files:**
 - Modify: `znicz-tui/src/layout.rs`
 
-- [ ] **Step 1: Write the failing tests** (in `layout.rs` tests)
+- [x] **Step 1: Write the failing tests** (in `layout.rs` tests)
 
 ```rust
     // Halfblocks report 10 × 20 px cells: a square cover is 2 columns per row.
@@ -228,9 +228,9 @@ and `marquee: true,` in `Default`. Add a test:
     }
 ```
 
-- [ ] **Step 2: Run** — compile error (`stage_layout`).
+- [x] **Step 2: Run** — compile error (`stage_layout`).
 
-- [ ] **Step 3: Implement** (in `layout.rs`, after `cover_width`)
+- [x] **Step 3: Implement** (in `layout.rs`, after `cover_width`)
 
 ```rust
 /// Stage needs this much room for the side-by-side layout.
@@ -300,7 +300,7 @@ pub fn stage_layout(area: Rect, font_w: u16, font_h: u16, show_cover: bool) -> S
 
 (`cover_width` caps at half the width; the wide test's `details.x == 62` follows from `cover_w = 60` plus the 2-column gap. If `cover_width` rounds differently, adjust the expected numbers to the function's actual output and keep the relations: cover ≤ half, details right of the gap.)
 
-- [ ] **Step 4:** run, clippy, fmt; commit `Lay out the stage view`.
+- [x] **Step 4:** run, clippy, fmt; commit `Lay out the stage view`.
 
 ---
 
@@ -311,7 +311,7 @@ pub fn stage_layout(area: Rect, font_w: u16, font_h: u16, show_cover: bool) -> S
 - Modify: `znicz-tui/src/app.rs`, `znicz-tui/src/views/mod.rs`, `znicz-tui/src/views/now_playing.rs`, `znicz-tui/src/lib.rs`
 - Test: `stage.rs` unit tests, `znicz-tui/tests/stage.rs` (new)
 
-- [ ] **Step 1: Write `stage.rs` line builders with failing tests**
+- [x] **Step 1: Write `stage.rs` line builders with failing tests**
 
 Create `znicz-tui/src/views/stage.rs`:
 
@@ -749,7 +749,7 @@ Add `pub mod stage;` (or `mod stage;` with `pub(crate)` items) in `views/mod.rs`
 
 Run `cargo test -p znicz-tui --lib stage` — red first (write tests before the builders, or with `todo!()`), then green.
 
-- [ ] **Step 2: `View` and `v`**
+- [x] **Step 2: `View` and `v`**
 
 `app.rs`:
 
@@ -786,7 +786,7 @@ pub enum View {
         }
 ```
 
-- [ ] **Step 3: Draw Stage**
+- [x] **Step 3: Draw Stage**
 
 `views/mod.rs` `render`: after computing `chunks`, `list`, and the hit/width bookkeeping, branch:
 
@@ -820,7 +820,7 @@ pub enum View {
 
 Keep the queue drawer, footer, and modal drawing after the branch so they work in both views (the drawer still uses `list`). Move the library-only lines (`title_slot`, `clamp_pan`, `library::render`, `render_transport`) into the `else` branch.
 
-- [ ] **Step 4: Integration tests**
+- [x] **Step 4: Integration tests**
 
 Create `znicz-tui/tests/stage.rs`:
 
@@ -944,7 +944,7 @@ fn stage_draws_at_every_size() {
 }
 ```
 
-- [ ] **Step 5:** `cargo test -p znicz-tui`, clippy, fmt, `cargo build -p znicz-tui --examples`; commit `Add the stage view on v`.
+- [x] **Step 5:** `cargo test -p znicz-tui`, clippy, fmt, `cargo build -p znicz-tui --examples`; commit `Add the stage view on v`.
 
 ---
 
@@ -955,7 +955,7 @@ fn stage_draws_at_every_size() {
 - Modify: `znicz-tui/src/app.rs`, `znicz-tui/src/keys.rs`, `znicz-tui/src/views/mod.rs`, `znicz-tui/src/views/help.rs`, `znicz-tui/examples/preview.rs`
 - Tests: `znicz-tui/tests/{keys,mouse,render,stage}.rs`, `keys.rs` tests
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/stage.rs`:
 
@@ -987,9 +987,9 @@ Replace the inspector tests in `tests/keys.rs` (around lines 150–190 and 1309)
 - mouse tests that set `Modal::Inspector` → use `Modal::Devices` (they test overlay clicks generally).
 - render: remove `Modal::Inspector` from size loops and the `no_modal_covers…` list; replace `the_signal_inspector_shows_the_device_sample_format` with a Stage render at 90×24 asserting `f32` and `Signal`.
 
-- [ ] **Step 2: Run** — compile errors (`Context::Stage`, `STAGE`) and failing toggle test.
+- [x] **Step 2: Run** — compile errors (`Context::Stage`, `STAGE`) and failing toggle test.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `keys.rs`:
 - `Context`: remove `Inspector`, add `Stage`.
@@ -1015,7 +1015,7 @@ Replace the inspector tests in `tests/keys.rs` (around lines 150–190 and 1309)
 
 `examples/preview.rs`: replace the inspector frame (`app.modal = Modal::Inspector`) with a Stage frame (`app.view = View::Stage`, label it "Stage").
 
-- [ ] **Step 4:** `cargo test -p znicz-tui`, clippy, fmt, examples build; commit `Fold the inspector into the stage view`.
+- [x] **Step 4:** `cargo test -p znicz-tui`, clippy, fmt, examples build; commit `Fold the inspector into the stage view`.
 
 ---
 
@@ -1025,7 +1025,7 @@ Replace the inspector tests in `tests/keys.rs` (around lines 150–190 and 1309)
 - Modify: `znicz-tui/src/layout.rs`, `znicz-tui/src/views/mod.rs`, `znicz-tui/src/views/now_playing.rs`
 - Test: `layout.rs` tests, `znicz-tui/tests/render.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `layout.rs` tests: delete `cover_uses_eight_rows_on_a_normal_window`, `the_cover_needs_a_24_row_window`, `cover_starts_on_the_library_left_border`; replace `transport_rows_include_the_message_row` with
 
@@ -1053,15 +1053,15 @@ fn browse_has_no_cover_even_when_show_cover_is_on() {
 
 and change `the_cover_slot_is_fully_painted_when_nothing_is_playing` to draw with `app.view = znicz_tui::View::Stage` and compute the cover rect with `znicz_tui::layout::stage_layout(Rect::new(0, 0, 80, 22), 10, 20, true)` (Stage area at 80×24 is 20 list rows + 3 transport − 1 message row = 22 rows), asserting every cell of that rect is painted.
 
-- [ ] **Step 2: Run** — FAIL (`list_height` 15; `transport_height` takes two args).
+- [x] **Step 2: Run** — FAIL (`list_height` 15; `transport_height` takes two args).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 - `layout.rs`: delete `COVER_MIN_WINDOW`, `COVER_ROWS`, `cover_enabled`, `cover_chrome_split`; `transport_height(window: u16) -> u16` returns 2 below `COMPACT_HEIGHT`, else 3. Keep `cover_width` (Stage uses it).
 - `views/mod.rs`: `transport_height(area.height)`; drop `show_cover` and `with_cover`; call `now_playing::render_transport(frame, chunks[1], app, state, !compact)`.
 - `now_playing.rs`: `render_transport(frame, area, app, state, show_signal)` keeps only the text-transport body (today's `if !with_cover { … }` block, unconditionally). Delete `render_stacked_chrome`, `title_row`, `artist_album_row`, `seek_row`, and the `render_cover` call and imports they needed.
 
-- [ ] **Step 4:** `cargo test -p znicz-tui`, clippy, fmt, examples build; commit `Drop the cover from the browse transport`.
+- [x] **Step 4:** `cargo test -p znicz-tui`, clippy, fmt, examples build; commit `Drop the cover from the browse transport`.
 
 ---
 
@@ -1070,7 +1070,7 @@ and change `the_cover_slot_is_fully_painted_when_nothing_is_playing` to draw wit
 **Files:**
 - Modify: `znicz-tui/src/app.rs`, `znicz-tui/src/views/now_playing.rs`, `znicz-tui/src/views/stage.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `now_playing.rs` tests:
 
@@ -1123,9 +1123,9 @@ Update every existing `chrome_line(state, width)` call (tests and `render_transp
 
 In `stage.rs` tests nothing changes (`detail_lines` already takes a fitted title).
 
-- [ ] **Step 2: Run** — compile errors on the new `chrome_line` signature.
+- [x] **Step 2: Run** — compile errors on the new `chrome_line` signature.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `app.rs`: fields `pub(crate) transport_marquee: crate::marquee::Marquee,` and `pub(crate) stage_marquee: crate::marquee::Marquee,` (both `Default::default()`).
 
@@ -1173,21 +1173,21 @@ Extract today's seek + times + volume + toggles span building at the end of `chr
     };
 ```
 
-- [ ] **Step 4:** `cargo test -p znicz-tui`, clippy, fmt; commit `Scroll long now-playing titles`.
+- [x] **Step 4:** `cargo test -p znicz-tui`, clippy, fmt; commit `Scroll long now-playing titles`.
 
 ---
 
 ### Task 8: Version and docs
 
-- [ ] **Step 1:** Root `Cargo.toml` version `0.8.0` → `0.9.0`; `cargo build -p znicz`; update the "currently" version in `wiki/Rust/Cargo-Workspace.md`.
-- [ ] **Step 2: README.** Key table: `v` / `i` — "Stage: full-screen now playing (cover, details, signal path)"; remove the inspector wording. Config: `show_cover` now means the Stage cover; `cover_protocol` applies to Stage; new `marquee = true`. Mention that long titles scroll.
-- [ ] **Step 3: Wiki.** `Architecture/TUI.md`: a "Views" section (Browse / Stage, keys, Esc order), the Stage layout (wide, stacked, no cover, streams, nothing playing), the marquee (timing, reset, config), Browse transport rows (3 / 2, no cover), signal path now on Stage (replace the inspector section); modules table: remove `views/inspector.rs`, add `views/stage.rs` and `marquee.rs`. `Plans/Roadmap.md`: part 4 → `**Done** in 0.9.0 ([spec](../../docs/superpowers/specs/2026-11-09-stage-mode-design.md))`; `wiki/Issues.md`: move #46 and #34 to Closed (fixed in 0.9.0). Grep README/wiki for stale "inspector", "transport cover", "8-row cover", "24 rows" statements and fix those describing current behaviour.
-- [ ] **Step 4:** `cargo test --workspace`, fmt; commit `Bump to 0.9.0 and document stage mode`.
+- [x] **Step 1:** Root `Cargo.toml` version `0.8.0` → `0.9.0`; `cargo build -p znicz`; update the "currently" version in `wiki/Rust/Cargo-Workspace.md`.
+- [x] **Step 2: README.** Key table: `v` / `i` — "Stage: full-screen now playing (cover, details, signal path)"; remove the inspector wording. Config: `show_cover` now means the Stage cover; `cover_protocol` applies to Stage; new `marquee = true`. Mention that long titles scroll.
+- [x] **Step 3: Wiki.** `Architecture/TUI.md`: a "Views" section (Browse / Stage, keys, Esc order), the Stage layout (wide, stacked, no cover, streams, nothing playing), the marquee (timing, reset, config), Browse transport rows (3 / 2, no cover), signal path now on Stage (replace the inspector section); modules table: remove `views/inspector.rs`, add `views/stage.rs` and `marquee.rs`. `Plans/Roadmap.md`: part 4 → `**Done** in 0.9.0 ([spec](../../docs/superpowers/specs/2026-11-09-stage-mode-design.md))`; `wiki/Issues.md`: move #46 and #34 to Closed (fixed in 0.9.0). Grep README/wiki for stale "inspector", "transport cover", "8-row cover", "24 rows" statements and fix those describing current behaviour.
+- [x] **Step 4:** `cargo test --workspace`, fmt; commit `Bump to 0.9.0 and document stage mode`.
 
 ---
 
 ### Task 9: Verify and open the PR
 
-- [ ] **Step 1:** fmt check, clippy `-D warnings`, `cargo test --workspace` — all clean.
-- [ ] **Step 2:** Tick every checkbox here; commit `Mark stage mode plan complete`.
-- [ ] **Step 3:** Push `feat/stage-mode`; open the PR "Stage mode (TUI rework part 4)" with `Closes #46` and `Closes #34`, ending with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+- [x] **Step 1:** fmt check, clippy `-D warnings`, `cargo test --workspace` — all clean.
+- [x] **Step 2:** Tick every checkbox here; commit `Mark stage mode plan complete`.
+- [x] **Step 3:** Push `feat/stage-mode`; open the PR "Stage mode (TUI rework part 4)" with `Closes #46` and `Closes #34`, ending with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
