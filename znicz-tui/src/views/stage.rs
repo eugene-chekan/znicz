@@ -32,7 +32,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState)
         render_cover(frame, cover, app, state);
     }
     let width = usize::from(layout.details.width);
-    let title = format::truncate(&title_text(state), width);
+    let full = title_text(state);
+    let title = if app.tui.marquee && full.chars().count() > width {
+        let offset = app
+            .stage_marquee
+            .offset(&full, width, std::time::Instant::now());
+        crate::marquee::window(&full, offset, width)
+    } else {
+        format::truncate(&full, width)
+    };
     let lines = detail_lines(state, title, width, usize::from(layout.details.height));
     frame.render_widget(Paragraph::new(lines), layout.details);
 }

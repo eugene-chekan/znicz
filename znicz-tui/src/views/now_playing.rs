@@ -29,9 +29,18 @@ pub fn render_transport(
         .constraints(vec![Constraint::Length(1); area.height as usize])
         .split(area);
     let last = rows.len().saturating_sub(1);
+    let marquee_on = app.tui.marquee;
     for (i, row) in rows.iter().enumerate() {
         let line = if i == 0 {
-            chrome_line(state, width)
+            chrome_line(
+                state,
+                width,
+                if marquee_on {
+                    Some((&mut app.transport_marquee, std::time::Instant::now()))
+                } else {
+                    None
+                },
+            )
         } else if i == last {
             message_line(&app.toasts, app.library_status.scanning.as_ref(), width)
         } else if show_signal {
@@ -90,7 +99,11 @@ pub(crate) fn message_line(
 }
 
 /// One-line transport chrome: symbol, title, subtitle, seek, times, volume, toggles.
-fn chrome_line(state: &PlayerState, width: usize) -> Line<'static> {
+fn chrome_line(
+    state: &PlayerState,
+    width: usize,
+    marquee: Option<(&mut crate::marquee::Marquee, std::time::Instant)>,
+) -> Line<'static> {
     if width == 0 {
         return Line::from("");
     }
@@ -208,6 +221,43 @@ fn chrome_line(state: &PlayerState, width: usize) -> Line<'static> {
     };
     let seek_prefix = if seek_len > 0 { 1 } else { 0 };
     let title_w = middle_budget.saturating_sub(sub_len + seek_prefix + seek_len);
+    let slot = middle_budget.saturating_sub(seek_prefix + seek_len);
+    let subtitle_text = if include_subtitle {
+        subtitle.clone().unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let segment = format!("{title}{subtitle_text}");
+    let overflows = segment.chars().count() > slot;
+    if let (true, Some((marquee, now))) = (overflows, marquee) {
+        let offset = marquee.offset(&segment, slot, now);
+        let shown = crate::marquee::window(&segment, offset, slot);
+        // Title style for the part that is still title, subtitle style after it.
+        let title_left = title.chars().count().saturating_sub(offset);
+        let title_part: String = shown.chars().take(title_left).collect();
+        let sub_part: String = shown.chars().skip(title_left).collect();
+        let pad = slot.saturating_sub(shown.chars().count());
+        let mut spans = vec![
+            Span::styled(sym, status_style),
+            Span::styled(title_part, theme::title()),
+            Span::styled(sub_part, theme::subtitle()),
+            Span::raw(" ".repeat(pad)),
+        ];
+        if seek_len > 0 {
+            spans.push(Span::raw(" "));
+        }
+        push_tail(
+            &mut spans,
+            state,
+            seek_len,
+            times,
+            include_volume,
+            &volume,
+            include_toggles,
+            &toggles,
+        );
+        return Line::from(spans);
+    }
     let truncated_title = format::truncate(title, title_w);
     let title_len = truncated_title.chars().count();
     middle_budget = middle_budget.saturating_sub(title_len);
@@ -227,7 +277,38 @@ fn chrome_line(state: &PlayerState, width: usize) -> Line<'static> {
         }
     }
 
-    if seek_len > 0 && middle_budget >= seek_prefix + seek_len {
+    let seek_drawn = if seek_len > 0 && middle_budget >= seek_prefix + seek_len {
+        seek_len
+    } else {
+        0
+    };
+    push_tail(
+        &mut spans,
+        state,
+        seek_drawn,
+        times,
+        include_volume,
+        &volume,
+        include_toggles,
+        &toggles,
+    );
+
+    Line::from(spans)
+}
+
+/// Seek bar, times, volume, and toggles: everything right of the title.
+#[allow(clippy::too_many_arguments)]
+fn push_tail(
+    spans: &mut Vec<Span<'static>>,
+    state: &PlayerState,
+    seek_len: usize,
+    times: String,
+    include_volume: bool,
+    volume: &Option<String>,
+    include_toggles: bool,
+    toggles: &Option<String>,
+) {
+    if seek_len > 0 {
         spans.push(Span::raw(" "));
         let (done, todo) = seek_bar_parts(state, seek_len);
         spans.push(Span::styled(done, theme::progress()));
@@ -275,8 +356,6 @@ fn chrome_line(state: &PlayerState, width: usize) -> Line<'static> {
             }
         }
     }
-
-    Line::from(spans)
 }
 
 fn seek_bar_parts(state: &PlayerState, width: usize) -> (String, String) {
@@ -458,5 +537,49 @@ mod tests {
         let progress = znicz_core::ScanProgress::default();
         let row = text(&message_line(&toasts, Some(&progress), 60));
         assert!(row.starts_with("● added 4 tracks"), "{row:?}");
+    }
+
+    fn long_state() -> PlayerState {
+        PlayerState {
+            status: PlaybackStatus::Playing,
+            current_track: Some(znicz_core::TrackInfo {
+                path: None,
+                url: None,
+                icy_stream_url: None,
+                title: "A Very Long Title That Will Never Fit In This Row".into(),
+                codec: "FLAC".into(),
+                sample_rate: 44_100,
+                channels: 2,
+                bits_per_sample: Some(16),
+                bitrate_kbps: None,
+                duration: Some(Duration::from_secs(200)),
+                tags: znicz_core::TrackTags::default(),
+            }),
+            ..PlayerState::default()
+        }
+    }
+
+    #[test]
+    fn without_a_marquee_a_long_title_is_cut() {
+        // At 100 columns the title gets 35 (the seek bar takes up to 40).
+        let row = text(&chrome_line(&long_state(), 100, None));
+        assert!(row.contains('…'), "{row:?}");
+    }
+
+    #[test]
+    fn with_a_marquee_a_long_title_scrolls() {
+        let state = long_state();
+        let mut m = crate::marquee::Marquee::default();
+        let t0 = std::time::Instant::now();
+        let start = text(&chrome_line(&state, 100, Some((&mut m, t0))));
+        assert!(start.contains("A Very"), "{start:?}");
+        assert!(!start.contains('…'), "{start:?}");
+        let later = text(&chrome_line(
+            &state,
+            100,
+            Some((&mut m, t0 + Duration::from_millis(2_000 + 5 * 200))),
+        ));
+        assert!(!later.contains("A Very"), "moved 5 columns: {later:?}");
+        assert!(later.contains("y Long Title"), "{later:?}");
     }
 }
