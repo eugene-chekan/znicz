@@ -114,6 +114,16 @@ impl PlayerOps for Engine {
     }
 }
 
+/// What fills the screen above the footer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum View {
+    /// Library, queue drawer, transport.
+    #[default]
+    Browse,
+    /// Full-screen now playing.
+    Stage,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     Library,
@@ -125,7 +135,6 @@ pub enum Modal {
     None,
     Help,
     Devices,
-    Inspector,
     Playlists,
     Radio,
     Messages,
@@ -234,12 +243,7 @@ impl Modal {
     pub(crate) fn blocks_list_focus(self) -> bool {
         matches!(
             self,
-            Self::Help
-                | Self::Devices
-                | Self::Inspector
-                | Self::Playlists
-                | Self::Radio
-                | Self::Messages
+            Self::Help | Self::Devices | Self::Playlists | Self::Radio | Self::Messages
         )
     }
 }
@@ -248,6 +252,9 @@ pub struct App {
     pub player: Engine,
     pub focus: Focus,
     pub queue_open: bool,
+    pub view: View,
+    pub(crate) transport_marquee: crate::marquee::Marquee,
+    pub(crate) stage_marquee: crate::marquee::Marquee,
     pub modal: Modal,
     pub help: HelpState,
     pub list_width: u16,
@@ -364,7 +371,8 @@ impl App {
     }
 
     fn wants_first_run_prompt(&self) -> bool {
-        !self.first_run_dismissed
+        self.view == View::Browse
+            && !self.first_run_dismissed
             && self.folder_prompt.is_none()
             && self.modal == Modal::None
             && self.playlist_prompt.is_none()
@@ -498,6 +506,9 @@ impl App {
             player,
             focus: Focus::Library,
             queue_open: false,
+            view: View::Browse,
+            transport_marquee: Default::default(),
+            stage_marquee: Default::default(),
             modal: Modal::None,
             help: HelpState::default(),
             list_width: 100,
@@ -570,6 +581,7 @@ impl App {
 
             // Wake up for input, or on the tick to move the seek bar along.
             if event::poll(TICK_RATE)? {
+                let overlay_before = self.modal != Modal::None || self.queue_open;
                 // Handle everything already queued before drawing again,
                 // so held keys do not lag a frame behind.
                 loop {
@@ -581,6 +593,10 @@ impl App {
                     if !event::poll(Duration::ZERO)? {
                         break;
                     }
+                }
+                let overlay_after = self.modal != Modal::None || self.queue_open;
+                if needs_full_redraw(self.view, overlay_before, overlay_after) {
+                    terminal.clear()?;
                 }
             }
 
@@ -647,9 +663,11 @@ impl App {
                 self.message_h_offset = 0;
             }
             Modal::Help => self.help.scroll_by(delta),
-            Modal::Inspector => {}
             Modal::None => match self.focus {
-                Focus::Library => self.library.step(delta, self.library_strip()),
+                Focus::Library if self.view == View::Browse => {
+                    self.library.step(delta, self.library_strip())
+                }
+                Focus::Library => {}
                 Focus::Queue if self.queue_open => {
                     let len = self.player.state().queue.len();
                     self.queue_cursor.step(delta, len);
@@ -841,7 +859,11 @@ impl App {
             return;
         }
 
-        if matches!(self.modal, Modal::Inspector | Modal::Messages) {
+        if self.modal == Modal::Messages {
+            return;
+        }
+
+        if self.view == View::Stage && self.focus == Focus::Library {
             return;
         }
 
@@ -851,14 +873,25 @@ impl App {
         }
     }
 
+    fn toggle_stage(&mut self) {
+        self.view = match self.view {
+            View::Browse => View::Stage,
+            View::Stage => View::Browse,
+        };
+        self.stage_marquee = Default::default();
+        self.transport_marquee = Default::default();
+    }
+
     fn on_esc(&mut self) {
         if matches!(
             self.modal,
-            Modal::Devices | Modal::Inspector | Modal::Playlists | Modal::Radio | Modal::Messages
+            Modal::Devices | Modal::Playlists | Modal::Radio | Modal::Messages
         ) {
             self.close_modal();
-        } else if self.focus == Focus::Queue && self.queue_open {
+        } else if self.queue_open && (self.focus == Focus::Queue || self.view == View::Stage) {
             self.close_queue();
+        } else if self.view == View::Stage {
+            self.view = View::Browse;
         } else {
             self.library.back();
         }
@@ -959,7 +992,8 @@ impl App {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('?') => self.open_help(),
             KeyCode::Char(',') => self.toggle_devices_modal(),
-            KeyCode::Char('i') => self.toggle_inspector_modal(),
+            KeyCode::Char('i') => self.toggle_stage(),
+            KeyCode::Char('v') => self.toggle_stage(),
             KeyCode::Char('P') => self.toggle_playlists_modal(),
             KeyCode::Char('R') => self.toggle_radio_modal(),
             KeyCode::Char('M') => self.toggle_messages_modal(),
@@ -976,7 +1010,8 @@ impl App {
             KeyCode::Tab if self.modal.blocks_list_focus() => {}
             KeyCode::Tab => {
                 let strip = self.library_strip();
-                if self.focus == Focus::Library
+                if self.view == View::Browse
+                    && self.focus == Focus::Library
                     && matches!(self.library.mode(), Mode::Browse)
                     && self.library.effective_layout(strip) == EffectiveLayout::Columns
                     && !self.library.artists().is_empty()
@@ -987,8 +1022,8 @@ impl App {
                 } else if !self.queue_open {
                     self.open_queue();
                     self.focus = Focus::Queue;
-                } else if layout::is_sheet(self.list_width, true) {
-                    // no-op in sheet mode
+                } else if layout::is_sheet(self.list_width, true) || self.view == View::Stage {
+                    // no-op in sheet mode, and on Stage (the library is hidden)
                 } else {
                     self.swap_focus();
                 }
@@ -996,7 +1031,8 @@ impl App {
             KeyCode::BackTab if self.modal.blocks_list_focus() => {}
             KeyCode::BackTab => {
                 let strip = self.library_strip();
-                if self.focus == Focus::Library
+                if self.view == View::Browse
+                    && self.focus == Focus::Library
                     && matches!(self.library.mode(), Mode::Browse)
                     && self.library.effective_layout(strip) == EffectiveLayout::Columns
                     && !self.library.artists().is_empty()
@@ -1006,8 +1042,8 @@ impl App {
                     self.library.cycle_column(false);
                 } else if !self.queue_open {
                     // no-op while drawer is closed
-                } else if layout::is_sheet(self.list_width, true) {
-                    // no-op in sheet mode
+                } else if layout::is_sheet(self.list_width, true) || self.view == View::Stage {
+                    // no-op in sheet mode, and on Stage (the library is hidden)
                 } else {
                     self.swap_focus();
                 }
@@ -1090,10 +1126,14 @@ impl App {
             Modal::Help if self.help.editing => Context::HelpFilter,
             Modal::Help => Context::Help,
             Modal::Devices => Context::Devices,
-            Modal::Inspector => Context::Inspector,
             Modal::Playlists => Context::Playlists,
             Modal::Radio => Context::Radio,
             Modal::Messages => Context::Messages,
+            Modal::None
+                if self.view == View::Stage && !(self.queue_open && self.focus == Focus::Queue) =>
+            {
+                Context::Stage
+            }
             Modal::None => match self.focus {
                 Focus::Queue => Context::Queue,
                 Focus::Library
@@ -1136,15 +1176,6 @@ impl App {
             Modal::None
         } else {
             Modal::Devices
-        };
-    }
-
-    fn toggle_inspector_modal(&mut self) {
-        self.leave_messages();
-        self.modal = if self.modal == Modal::Inspector {
-            Modal::None
-        } else {
-            Modal::Inspector
         };
     }
 
@@ -1234,6 +1265,7 @@ impl App {
                 self.toasts
                     .info(format!("{} devices found", self.devices.len()));
             }
+            _ if self.view == View::Stage => {}
             _ => {
                 self.library.reload_albums();
                 // Re-resolve from the reloaded library on the next frame.
@@ -1653,7 +1685,7 @@ impl App {
 
     /// `h` / `l`: move left or right in the library. Ignored anywhere else.
     fn library_horizontal(&mut self, forward: bool) {
-        if self.focus != Focus::Library || self.modal != Modal::None {
+        if self.view != View::Browse || self.focus != Focus::Library || self.modal != Modal::None {
             return;
         }
         let strip = self.library_strip();
@@ -1688,7 +1720,8 @@ impl App {
     /// Space (global) and `o` (library): expand/collapse tree parents.
     fn library_toggle_tree_expand(&mut self) -> bool {
         let strip = self.library_strip();
-        if self.focus != Focus::Library
+        if self.view != View::Browse
+            || self.focus != Focus::Library
             || !matches!(self.library.mode(), Mode::Browse)
             || self.modal != Modal::None
         {
@@ -1821,9 +1854,6 @@ impl App {
 
     fn step(&mut self, delta: isize) {
         let len = self.list_len();
-        if self.modal == Modal::Inspector {
-            return;
-        }
         if self.modal == Modal::Messages {
             self.message_cursor.step(delta, len);
             self.message_h_offset = 0;
@@ -1836,16 +1866,13 @@ impl App {
         } else if self.focus == Focus::Queue && self.queue_open {
             self.queue_cursor.step(delta, len);
             self.queue_h_offset = 0;
-        } else {
+        } else if self.view == View::Browse {
             self.library.step(delta, self.library_strip());
         }
     }
 
     fn page(&mut self, delta: isize) {
         let len = self.list_len();
-        if self.modal == Modal::Inspector {
-            return;
-        }
         if self.modal == Modal::Messages {
             self.message_cursor.page(delta, len);
             self.message_h_offset = 0;
@@ -1858,15 +1885,12 @@ impl App {
         } else if self.focus == Focus::Queue && self.queue_open {
             self.queue_cursor.page(delta, len);
             self.queue_h_offset = 0;
-        } else {
+        } else if self.view == View::Browse {
             self.library.page(delta, self.library_strip());
         }
     }
 
     fn go_first(&mut self) {
-        if self.modal == Modal::Inspector {
-            return;
-        }
         if self.modal == Modal::Messages {
             self.message_cursor.first();
             self.message_h_offset = 0;
@@ -1879,16 +1903,13 @@ impl App {
         } else if self.focus == Focus::Queue && self.queue_open {
             self.queue_cursor.first();
             self.queue_h_offset = 0;
-        } else {
+        } else if self.view == View::Browse {
             self.library.first(self.library_strip());
         }
     }
 
     fn go_last(&mut self) {
         let len = self.list_len();
-        if self.modal == Modal::Inspector {
-            return;
-        }
         if self.modal == Modal::Messages {
             self.message_cursor.last(len);
             self.message_h_offset = 0;
@@ -1901,7 +1922,7 @@ impl App {
         } else if self.focus == Focus::Queue && self.queue_open {
             self.queue_cursor.last(len);
             self.queue_h_offset = 0;
-        } else {
+        } else if self.view == View::Browse {
             self.library.last(self.library_strip());
         }
     }
@@ -1987,7 +2008,7 @@ impl App {
         }
         if self.focus == Focus::Queue && self.queue_open {
             self.pan_queue(dir);
-        } else {
+        } else if self.view == View::Browse {
             self.library.pan(
                 dir,
                 self.title_slot(),
@@ -2120,6 +2141,12 @@ fn entry_from_track(track: &Track) -> Entry {
 }
 
 /// Label for the repeat indicator in the status bar.
+/// Kitty and Sixel images paint outside the diff: when an overlay closes over
+/// the Stage cover, the cells it covered are never rewritten, so repaint all.
+pub(crate) fn needs_full_redraw(view: View, overlay_before: bool, overlay_after: bool) -> bool {
+    view == View::Stage && overlay_before && !overlay_after
+}
+
 pub fn repeat_label(mode: RepeatMode) -> &'static str {
     match mode {
         RepeatMode::Off => "repeat off",
@@ -2164,6 +2191,30 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn only_an_overlay_closing_over_the_stage_forces_a_repaint() {
+        assert!(needs_full_redraw(View::Stage, true, false));
+        assert!(!needs_full_redraw(View::Browse, true, false));
+        assert!(!needs_full_redraw(View::Stage, false, true));
+        assert!(!needs_full_redraw(View::Stage, true, true));
+    }
+
+    #[test]
+    fn toggling_the_view_restarts_both_marquees() {
+        let (player, _thread) = znicz_core::spawn_player(znicz_core::AudioConfig::default());
+        let mut app = App::with_library(player, None);
+        let t0 = std::time::Instant::now();
+        let text = "a long title that scrolls";
+        app.stage_marquee.offset(text, 5, t0);
+        app.transport_marquee.offset(text, 5, t0);
+        let later = t0 + std::time::Duration::from_millis(4_000);
+        assert!(app.stage_marquee.offset(text, 5, later) > 0);
+        app.toggle_stage();
+        app.toggle_stage();
+        assert_eq!(app.stage_marquee.offset(text, 5, later), 0);
+        assert_eq!(app.transport_marquee.offset(text, 5, later), 0);
+    }
 
     #[test]
     fn arrows_seek_five_seconds_and_shift_arrows_thirty() {

@@ -2,19 +2,19 @@
 
 mod devices;
 mod help;
-mod inspector;
 mod library;
 mod messages;
 mod now_playing;
 mod playlists;
 mod queue;
 mod radio;
+pub mod stage;
 mod status;
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 use znicz_core::PlayerState;
 
@@ -30,8 +30,7 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
     app.refresh_playing(state);
     app.poll_library();
     let area = frame.area();
-    let show_cover = app.tui.show_cover;
-    let transport = crate::layout::transport_height(area.height, show_cover);
+    let transport = crate::layout::transport_height(area.height);
     let compact = area.height < crate::layout::COMPACT_HEIGHT;
 
     let chunks = Layout::default()
@@ -46,32 +45,65 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
     let list = chunks[0];
     app.list_width = list.width;
     app.list_height = list.height;
-    app.hits.queue_toggle = list.width.checked_sub(1).map(|w| Rect {
-        x: list.x + w,
-        y: list.y,
-        width: 1,
-        height: list.height,
-    });
-    let lib_w = crate::layout::strip_width(list, app.queue_open);
-    app.hits.library_pane = Some(Rect {
-        x: list.x,
-        y: list.y,
-        width: lib_w,
-        height: list.height,
-    });
-    app.title_slot = library::title_slot(
-        &app.library,
-        crate::layout::strip_inner(list, app.queue_open),
-    );
-    app.library.clamp_pan(
-        app.title_slot,
-        crate::layout::strip_inner(list, app.queue_open),
-        app.playing.as_ref(),
-    );
+    if app.view == crate::app::View::Browse {
+        app.hits.queue_toggle = list.width.checked_sub(1).map(|w| Rect {
+            x: list.x + w,
+            y: list.y,
+            width: 1,
+            height: list.height,
+        });
+        let lib_w = crate::layout::strip_width(list, app.queue_open);
+        app.hits.library_pane = Some(Rect {
+            x: list.x,
+            y: list.y,
+            width: lib_w,
+            height: list.height,
+        });
+    }
+    // Stage covers the list and the transport minus its message row; the
+    // queue drawer must cover the same area.
+    let stage_area = Rect {
+        height: list.height + chunks[1].height.saturating_sub(1),
+        ..list
+    };
+    let drawer_area = if app.view == crate::app::View::Stage {
+        stage_area
+    } else {
+        list
+    };
+    if app.view == crate::app::View::Stage {
+        let transport = chunks[1];
+        let message_row = Rect {
+            y: transport.y + transport.height.saturating_sub(1),
+            height: transport.height.min(1),
+            ..transport
+        };
+        stage::render(frame, stage_area, app, state);
+        let scanning = app.library_status.scanning.clone();
+        frame.render_widget(
+            Paragraph::new(now_playing::message_line(
+                &app.toasts,
+                scanning.as_ref(),
+                usize::from(message_row.width),
+            )),
+            message_row,
+        );
+    } else {
+        app.title_slot = library::title_slot(
+            &app.library,
+            crate::layout::strip_inner(list, app.queue_open),
+        );
+        app.library.clamp_pan(
+            app.title_slot,
+            crate::layout::strip_inner(list, app.queue_open),
+            app.playing.as_ref(),
+        );
 
-    library::render(frame, list, app);
+        library::render(frame, list, app);
+        now_playing::render_transport(frame, chunks[1], app, state, !compact);
+    }
 
-    match crate::layout::drawer(list, app.queue_open) {
+    match crate::layout::drawer(drawer_area, app.queue_open) {
         crate::layout::Drawer::Overlay(rect) | crate::layout::Drawer::Sheet(rect) => {
             frame.render_widget(Clear, rect);
             app.queue_title_slot = queue::title_slot(app, state, crate::views::inner_width(rect));
@@ -81,14 +113,11 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
         crate::layout::Drawer::Closed => {}
     }
 
-    let with_cover = crate::layout::cover_enabled(area.height, show_cover);
-    now_playing::render_transport(frame, chunks[1], app, state, !compact, with_cover);
     status::render_footer(frame, chunks[2], app);
 
     match app.modal {
         Modal::Help => help::render(frame, list, app),
         Modal::Devices => devices::render_modal(frame, list, app, state),
-        Modal::Inspector => inspector::render(frame, list, app, state),
         Modal::Playlists => playlists::render_modal(frame, list, app),
         Modal::Radio => radio::render_modal(frame, list, app),
         Modal::Messages => messages::render_modal(frame, list, app),

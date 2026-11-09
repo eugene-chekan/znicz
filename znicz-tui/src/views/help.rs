@@ -153,7 +153,7 @@ mod tests {
             Search,
             Queue,
             Devices,
-            Inspector,
+            Stage,
             Playlists,
             Radio,
             Prompt,

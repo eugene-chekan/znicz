@@ -80,14 +80,18 @@ fn main() {
         height,
     );
 
-    app.modal = Modal::Inspector;
+    app.modal = Modal::None;
+    app.queue_open = false;
+    app.focus = znicz_tui::Focus::Library;
+    app.view = znicz_tui::View::Stage;
     show(
-        "Signal inspector",
+        "Stage",
         &mut app,
         &playing_state(&queue, true),
         width,
         height,
     );
+    app.view = znicz_tui::View::Browse;
 
     app.modal = Modal::Playlists;
     app.playlists = vec!["evening".into(), "weekend-jazz".into()];

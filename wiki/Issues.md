@@ -9,9 +9,7 @@ Parked TUI ideas (file, do not start unless asked):
 
 - [#5 Command palette](https://github.com/eugene-chekan/znicz/issues/5)
 - [#6 Settings screen overlay](https://github.com/eugene-chekan/znicz/issues/6)
-- [#34 Auto-pan now-playing text](https://github.com/eugene-chekan/znicz/issues/34) (marquee when artist / title does not fit)
 - [#36 Reorder list rows with Alt-↑ / Alt-↓](https://github.com/eugene-chekan/znicz/issues/36) (cursor stays on the moved item)
-- [#46 Full-screen Now Playing view](https://github.com/eugene-chekan/znicz/issues/46) (large cover and current-track info)
 - [#47 Finer volume control](https://github.com/eugene-chekan/znicz/issues/47) (more indicator steps; 1% key step)
 
 Playlists (file, do not start unless asked):
@@ -31,6 +29,18 @@ radio** (HLS, PLS, XSPF) are on the
 streams, including ICY now playing) is done.
 
 ## Closed
+
+### [#46 Full-screen Now Playing view](https://github.com/eugene-chekan/znicz/issues/46) and [#34 Auto-pan now-playing text](https://github.com/eugene-chekan/znicz/issues/34)
+
+- **Fixed:** 2026-11-09
+- **Component:** `znicz-tui`
+- **Status:** **Fixed** in 0.9.0
+
+`v` / `i` toggles Stage, a full-screen now playing view with a large cover,
+title, artist, album, seek, volume, repeat, shuffle, and the signal path (which
+replaces the signal inspector). Long now-playing titles scroll in the Browse
+transport and on Stage; `[tui] marquee = false` keeps `…` truncation. Browse
+transport lost its cover.
 
 ### [#22 Show the app version in the player](https://github.com/eugene-chekan/znicz/issues/22)
 

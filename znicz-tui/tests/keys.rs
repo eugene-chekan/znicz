@@ -10,7 +10,7 @@ use znicz_core::PlaybackStatus;
 use znicz_core::{spawn_player, AudioConfig, Command, PlayerHandle, QueueItem, RepeatMode};
 use znicz_tui::keys::Context;
 use znicz_tui::library_pane::ColumnFocus;
-use znicz_tui::{App, Focus, Modal, PlaylistPrompt, RadioPrompt, StationField};
+use znicz_tui::{App, Focus, Modal, PlaylistPrompt, RadioPrompt, StationField, View};
 
 fn player() -> PlayerHandle {
     let (player, _thread) = spawn_player(AudioConfig::default());
@@ -145,44 +145,37 @@ fn comma_toggles_the_devices_modal() {
 }
 
 #[test]
-fn i_toggles_the_signal_inspector() {
+fn i_toggles_stage() {
     let mut app = new_app();
-    assert_eq!(app.modal, Modal::None);
+    assert_eq!(app.view, View::Browse);
 
     press_char(&mut app, 'i');
-    assert_eq!(app.modal, Modal::Inspector);
+    assert_eq!(app.view, View::Stage);
 
     press_char(&mut app, 'i');
-    assert_eq!(app.modal, Modal::None);
+    assert_eq!(app.view, View::Browse);
 }
 
 #[test]
-fn esc_closes_the_inspector() {
+fn esc_leaves_stage() {
     let mut app = new_app();
     press_char(&mut app, 'i');
-    assert_eq!(app.modal, Modal::Inspector);
+    assert_eq!(app.view, View::Stage);
 
     press(&mut app, KeyCode::Esc);
-    assert_eq!(app.modal, Modal::None);
+    assert_eq!(app.view, View::Browse);
 }
 
 #[test]
-fn inspector_ignores_list_movement() {
-    let mut app = new_app();
-    press_char(&mut app, 'i');
+fn stage_ignores_list_movement() {
+    let mut app = app_with_library_rows();
+    let before = app.library.selected_artist_index();
+    app.view = View::Stage;
     press_char(&mut app, 'j');
     press_char(&mut app, 'k');
-    assert_eq!(app.modal, Modal::Inspector);
-}
-
-#[test]
-fn i_replaces_the_devices_modal() {
-    let mut app = new_app();
-    press_char(&mut app, ',');
-    assert_eq!(app.modal, Modal::Devices);
-
-    press_char(&mut app, 'i');
-    assert_eq!(app.modal, Modal::Inspector);
+    press_char(&mut app, 'j');
+    app.view = View::Browse;
+    assert_eq!(app.library.selected_artist_index(), before);
 }
 
 #[test]
@@ -1305,8 +1298,8 @@ fn space_pauses_instead_of_expanding_the_hidden_tree_under_a_modal() {
     app.tui.library_layout = znicz_tui::LibraryLayout::Tree;
     press_char(&mut app, 'k');
     assert_eq!(app.library.tree_rows().len(), 2, "two artists, collapsed");
-    press_char(&mut app, 'i');
-    assert_eq!(app.modal, Modal::Inspector);
+    press_char(&mut app, ',');
+    assert_eq!(app.modal, Modal::Devices);
     press_char(&mut app, ' ');
     assert_eq!(
         app.library.tree_rows().len(),
@@ -1458,7 +1451,7 @@ fn another_modal_replacing_messages_ends_the_viewing() {
 
 #[test]
 fn tab_and_bracket_do_nothing_behind_a_modal() {
-    for modal_key in ['M', ',', 'i', 'P', 'R'] {
+    for modal_key in ['M', ',', 'P', 'R'] {
         let mut app = new_app();
         press_char(&mut app, modal_key);
         let modal = app.modal;
@@ -1470,4 +1463,20 @@ fn tab_and_bracket_do_nothing_behind_a_modal() {
             assert_eq!(app.modal, modal);
         }
     }
+}
+
+#[test]
+fn playback_keys_are_not_swallowed_on_stage() {
+    // Enter on the queue plays a missing file and toasts an error; `n` skips to
+    // it the same way whether Browse or Stage is showing.
+    let toast_after = |view: View| {
+        let mut app = new_app();
+        queue(&mut app, 2);
+        app.view = view;
+        press_char(&mut app, 'n');
+        app.toasts.current().map(|t| t.text.clone())
+    };
+    let browse = toast_after(View::Browse);
+    assert_eq!(toast_after(View::Stage), browse);
+    assert!(browse.is_some(), "`n` onto a missing file should toast");
 }

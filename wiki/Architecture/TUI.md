@@ -11,11 +11,11 @@ experience lives. The interface is an **immediate-mode** loop:
 While the TUI is up it also **captures the mouse**. A left click on a visible
 library, queue, or overlay list row **selects** that row (it does not play or
 open). The wheel moves the focused list one row, like `j` / `k`. Help,
-inspector, devices, playlists, and radio close with the top-right **X**, or
+devices, playlists, and radio close with the top-right **X**, or
 with `Esc`, or a clickable footer hint — not by clicking outside. The queue
 drawer closes with the **X**, global `]`, or a clickable footer `] close` /
-`] queue` hint; `Esc` closes it only when the drawer has queue focus (with
-library focus, `Esc` goes back in the library). Footer hint segments are
+`] queue` hint; `Esc` closes it when the drawer has queue focus, or on Stage regardless
+of focus (with library focus in Browse, `Esc` goes back in the library). Footer hint segments are
 clickable and run that key action. Click the library pane's right-border column
 to open the queue drawer only. Library search and playlist/radio typing prompts
 still cancel on an outside click. Clicks on the transport and cover do nothing.
@@ -39,53 +39,51 @@ again. See [MCP](MCP.md).
 Ratatui does not keep widgets as a tree you mutate. You describe the layout
 **every frame**. That suits a player, where the position moves constantly.
 
+## Views
+
+Two views, toggled with `v` or `i`. The TUI always starts on **Browse**.
+
+- **Browse**: the library, the queue drawer (`]`), and the text transport.
+- **Stage**: full-screen now playing (see [Stage](#stage)).
+
+On Stage, `Esc` closes an open modal or the queue drawer first, then returns to
+Browse. Playback keys, `?`, `,`, `P`, `R`, `M`, `]`, and `q` work there. Library
+keys (`/`, `a`, `A`, `J`, `F`, `U`, `h` / `l`, `Tab` column cycling, list
+movement with library focus, Alt-arrow pan) do nothing. The Stage footer is
+`Space pause · n next · v browse · ] queue · ? more`.
+
 ## Layout
 
 ```
 ┌ Library ─────────────────────────────────────────────────┐
 │  tracks                                                  │
 └──────────────────────────────────────────────────────────┘
-cover    ▶ So What
-8 rows   Miles Davis — Kind of Blue
-         ━━━●━━━━  1:02 / 9:22  70%
-         FLAC 24/96 → DAC  ● bit perfect
-         ● added 4 tracks
+▶ So What  ━━━●━━━━  1:02 / 9:22  70%
+FLAC 24/96 → DAC  ● bit perfect
+● added 4 tracks
 Space pause · / search · a add · ] queue · P playlists · R radio · M messages
 ```
 
-The library is the stage and always fills the list region. The queue is an
+The library is the Browse view and always fills the list region. The queue is an
 overlay drawer on the right (`]` toggles it). Every modal (help, devices,
-inspector, playlists, radio, messages) opens **inside the list region**, so the
+playlists, radio, messages) opens **inside the list region**, so the
 transport and the footer are never covered. The transport ends in a message row;
 toasts no longer float over the list. Long titles pan horizontally with
 `Alt-←` and `Alt-→` on the highlighted row only. `<` and `>` are unbound.
-With cover on (default) and a window at least 24 rows tall, transport is a square cover slot on the left and
-stacked chrome on the right, with one empty cell between them. The cover
-widget starts on the same column as the library pane's left border and is
-pinned to the top of the slot so it meets the library's bottom edge. The
-bitmap is inset half a cell so its left edge matches the pane's `│` (box
-drawing does not sit on the cell's left edge). For files, missing embedded art
-keeps the slot and draws the bundled logo. For streams, the cover slot uses an ICY `StreamUrl` image when one decodes,
-else the AudioAddict current-song `art_url` (RadioTunes / DI.FM / RockRadio /
-JazzRadio / ClassicalRadio / ZenRadio), else the station `art` file, else the
-logo. The picture is letterboxed onto an opaque canvas the size of the slot, so
-a stream cannot leave the previous cover on screen.
-`show_cover = false`, or a window under 24 rows, uses the full-width text
-transport. Hints stay on their own line and are never replaced by a message. Config: `[tui]`
-in `config.toml` (`show_cover`, `cover_protocol`, `library_layout`).
+Browse transport is text only (no cover). Hints stay on their own line and are
+never replaced by a message. Config: `[tui]` in `config.toml` (`show_cover`,
+`cover_protocol`, `library_layout`, `marquee`).
 
 ### Responsive behaviour
 
 The list region is `Min(3)`; the footer is 1 row and the transport takes the
 rest of the fixed rows. The last transport row is always the message row.
 
-| Window height | Cover | Transport rows |
-| --- | --- | --- |
-| ≥ 24, `show_cover` on | 8-row cover | 8: title, artist — album, seek, signal, message beside the cover |
-| ≥ 20 (cover off or < 24) | none | 3: title + seek, signal, message |
-| < 20 | none | 2: title + seek, message |
+| Window height | Transport rows |
+| --- | --- |
+| ≥ 20 | 3: title + seek, signal, message |
+| < 20 | 2: title + seek, message |
 
-There is no shrinking cover: it is 8 rows or absent, so 48×14 keeps its list.
 When the list region is shorter than 10 rows, a modal takes the whole list
 region instead of 70 % of it (`layout::modal_rect`).
 
@@ -108,7 +106,7 @@ columns and wraps. `M` opens the messages list and `J` jumps to the playing
 track.
 
 The footer shows a short hint list for the current **context** (library,
-library tree, search prompt, folder prompt, queue, devices, inspector, playlists, radio, the
+library tree, search prompt, folder prompt, queue, devices, playlists, radio, the
 Messages list, a name prompt, the station form, help, or the help filter), most important first,
 as many as fit. Wherever `?` opens help, ` ? more ` is right-aligned and always
 kept; search, the prompts, and help itself leave it out because `?` is typed
@@ -120,7 +118,7 @@ then Playback and Navigation, then every other context dimmed. `j` / `k`,
 `Ctrl-d` / `Ctrl-u`, `g` / `G`, and the wheel scroll. `/` filters by key or
 action (case-insensitive); `Enter` keeps the filter, `Esc` clears it, and a
 second `Esc`, `?`, or `q` closes help (`q` does not quit from here). Closing
-returns to the modal help replaced (devices, inspector, playlists, radio, or
+returns to the modal help replaced (devices, playlists, radio, or
 messages), or to the library. While you type a filter the help border reads
 `Enter keep · Esc clear`; otherwise `/ filter · Esc close`. Other keys are
 ignored while help is open, and the selection behind help is grey like any
@@ -128,7 +126,7 @@ other modal.
 
 ## The signal path
 
-The second transport line is the audiophile part of the interface. It reads
+The second Browse transport line (and the Signal panel on Stage) is the audiophile part of the interface. It reads
 `file format → device stream`, then a badge. Example:
 
 `FLAC 96 kHz 24-bit 2882 kbps stereo → 96 kHz stereo  ● bit perfect`
@@ -136,7 +134,7 @@ The second transport line is the audiophile part of the interface. It reads
 Left of the arrow is the file (codec name, sample rate, bit depth when the
 codec has one, bitrate when known, channels). Right of the arrow is the stream
 the device actually opened (rate and channels). The device sample format (`f32`
-and similar) is kept off this line; press `i` for the [signal inspector](#signal-inspector).
+and similar) is kept off this line; the Stage view's Signal panel shows it.
 
 - `● bit perfect` — the device accepted the file's own sample rate and channel
   count, so nothing was converted
@@ -223,13 +221,40 @@ A centered modal (`,`). Lists the output devices and switches between them with
 `Enter`. The footer shows what the open stream actually settled on, which is the
 quickest way to find a device that will take your files unconverted.
 
-### Signal inspector
+### Stage
 
-A centered modal (`i`). The transport line is a summary; this overlay is the
-full path: file format, title, device name, the open stream **including sample
-format** (`f32` and similar), and whether playback is bit perfect or resampled.
-Nothing is invented when a field is missing — an unknown sample format shows as
-`--`. Esc or `i` closes it. Transport keys still work underneath.
+Full-screen now playing (`v` / `i`), drawn by `views/stage.rs` with the geometry
+in `layout::stage_layout`.
+
+- **Wide** (Stage area at least 70 x 14): a square cover on the left at full
+  height (capped at half the width), details on the right.
+- **Narrow**: cover on top (at most half the height), details below.
+- **No cover**: under 8 rows, or `show_cover = false`; details are centred (at
+  most 80 columns wide).
+
+For files, missing embedded art draws the bundled logo. For streams the cover
+is an ICY `StreamUrl` image when one decodes, else the AudioAddict current-song
+`art_url` (RadioTunes / DI.FM / RockRadio / JazzRadio / ClassicalRadio /
+ZenRadio), else the station `art` file, else the logo. The picture is
+letterboxed onto an opaque canvas the size of the cover area, so a stream cannot
+leave the previous cover on screen. `cover_protocol` applies here.
+
+Details, top to bottom: title (bold, scrolls), artist, `album · year · track N`,
+the seek line, volume / repeat / shuffle, and a **Signal** panel: `file` or
+`stream`, `device` with rate, channels and sample format, and `path` (`bit
+perfect` or `resampled`, with an explanation). Unknown fields show `--`. When
+height is short, lines drop in this order: the explanation, the Signal panel,
+volume. Streams show the station name and URL, and the seek line reads `● live`
+with the elapsed time. With nothing playing, Stage shows the logo, "Nothing
+playing", and a hint.
+
+### Marquee
+
+A now-playing title too long for its row (the Browse transport title segment,
+which includes artist — album, and the Stage title) holds 2 s, scrolls one
+column per 200 ms, holds 2 s at the end, then jumps back. The offset resets when
+the text or width changes and when the view switches. `[tui] marquee = false`
+keeps `…` truncation. Logic lives in `marquee.rs`.
 
 ### Playlists
 
@@ -367,12 +392,13 @@ top of the player.
 | File | Role |
 | --- | --- |
 | `app.rs` | state, event loop, key dispatch |
-| `layout.rs` | list region, drawer overlay, modal placement, transport height |
+| `layout.rs` | list region, drawer overlay, modal placement, transport height, Stage layout |
 | `views/` | drawing, one module per pane |
-| `views/now_playing.rs` | transport (cover slot + chrome, or two-/three-line text) and the message row |
+| `views/now_playing.rs` | Browse transport (two-/three-line text) and the message row |
 | `views/messages.rs` | Messages list (`M`) |
 | `playing.rs` | which rows stand for the playing track, album, and artist |
-| `views/inspector.rs` | full signal-path overlay (`i`) |
+| `views/stage.rs` | Stage view: cover, details, Signal panel |
+| `marquee.rs` | scrolling of long now-playing titles |
 | `views/playlists.rs` | saved M3U overlay (`P`) |
 | `views/radio.rs` | saved stations overlay (`R`) |
 | `views/status.rs` | footer hint line for the current context |
@@ -385,7 +411,7 @@ top of the player.
 | `line_edit.rs` | one-line prompt caret (search, playlist save, radio) |
 | `meta.rs` | background tag cache |
 | `cover.rs` | background cover cache + logo |
-| `tui_config.rs` | `show_cover` / `cover_protocol` / `library_layout` |
+| `tui_config.rs` | `show_cover` / `cover_protocol` / `library_layout` / `marquee` |
 | `toast.rs` | live messages and history |
 | `format.rs` | durations, rates, bars, truncation |
 | `library_pane.rs` | browsing state |

@@ -1,6 +1,6 @@
 //! Overlay vs full-width sheet, and the library strip the drawer leaves open.
 
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::Rect;
 
 pub const DRAWER_WIDTH: u16 = 41;
 pub const MIN_STRIP: u16 = 40;
@@ -14,21 +14,12 @@ pub fn columns_usable(strip_inner: usize) -> bool {
 
 /// Below this height the signal-path line is dropped to keep the lists usable.
 pub const COMPACT_HEIGHT: u16 = 20;
-/// The cover only shows on a window at least this tall; shorter ones keep the list.
-pub const COVER_MIN_WINDOW: u16 = 24;
-const COVER_ROWS: u16 = 8;
 /// Below this list-region height a modal takes the whole list region.
 pub const MODAL_FULL_BELOW: u16 = 10;
 
-pub fn cover_enabled(window: u16, show_cover: bool) -> bool {
-    show_cover && window >= COVER_MIN_WINDOW
-}
-
 /// Transport rows, including the message row.
-pub fn transport_height(window: u16, show_cover: bool) -> u16 {
-    if cover_enabled(window, show_cover) {
-        COVER_ROWS
-    } else if window < COMPACT_HEIGHT {
+pub fn transport_height(window: u16) -> u16 {
+    if window < COMPACT_HEIGHT {
         2
     } else {
         3
@@ -67,16 +58,68 @@ pub fn cover_width(cover_rows: u16, font_w: u16, font_h: u16, area_width: u16) -
     cols.min(area_width / 2).max(1)
 }
 
-pub fn cover_chrome_split(area: Rect, cover_w: u16) -> (Rect, Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(cover_w),
-            Constraint::Length(1),
-            Constraint::Min(1),
-        ])
-        .split(area);
-    (chunks[0], chunks[2])
+/// Stage needs this much room for the side-by-side layout.
+pub const STAGE_WIDE_MIN_W: u16 = 70;
+pub const STAGE_WIDE_MIN_H: u16 = 14;
+/// Below this many rows Stage shows no cover.
+const STAGE_COVER_MIN_H: u16 = 8;
+/// Details never get wider than this when centred without a cover.
+const STAGE_DETAILS_MAX_W: u16 = 80;
+
+/// Where Stage draws the cover (if any) and the details.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StageLayout {
+    pub cover: Option<Rect>,
+    pub details: Rect,
+}
+
+pub fn stage_layout(area: Rect, font_w: u16, font_h: u16, show_cover: bool) -> StageLayout {
+    if !show_cover || area.height < STAGE_COVER_MIN_H || area.width < 4 {
+        let width = area.width.saturating_sub(2).min(STAGE_DETAILS_MAX_W);
+        return StageLayout {
+            cover: None,
+            details: Rect {
+                x: area.x + (area.width - width) / 2,
+                y: area.y + area.height.min(1),
+                width,
+                height: area.height.saturating_sub(1),
+            },
+        };
+    }
+    if area.width >= STAGE_WIDE_MIN_W && area.height >= STAGE_WIDE_MIN_H {
+        let cover_w = cover_width(area.height, font_w, font_h, area.width);
+        let gap = 2;
+        return StageLayout {
+            cover: Some(Rect {
+                x: area.x,
+                y: area.y,
+                width: cover_w,
+                height: area.height,
+            }),
+            details: Rect {
+                x: area.x + cover_w + gap,
+                y: area.y,
+                width: area.width.saturating_sub(cover_w + gap),
+                height: area.height,
+            },
+        };
+    }
+    let cover_h = area.height / 2;
+    let cover_w = cover_width(cover_h, font_w, font_h, area.width);
+    StageLayout {
+        cover: Some(Rect {
+            x: area.x + (area.width - cover_w) / 2,
+            y: area.y,
+            width: cover_w,
+            height: cover_h,
+        }),
+        details: Rect {
+            x: area.x + 1,
+            y: area.y + cover_h + 1,
+            width: area.width.saturating_sub(2),
+            height: area.height - cover_h - 1,
+        },
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,6 +166,51 @@ pub fn is_sheet(list_width: u16, open: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Halfblocks report 10 × 20 px cells: a square cover is 2 columns per row.
+    const FW: u16 = 10;
+    const FH: u16 = 20;
+
+    #[test]
+    fn a_wide_stage_puts_the_cover_left_at_full_height() {
+        let area = Rect::new(0, 0, 120, 40);
+        let s = stage_layout(area, FW, FH, true);
+        let cover = s.cover.expect("cover");
+        assert_eq!((cover.x, cover.y, cover.height), (0, 0, 40));
+        assert_eq!(cover.width, 60, "80 wanted, capped at half the width");
+        assert_eq!(s.details.x, 62, "one blank column, then details");
+        assert_eq!(s.details.width, 58);
+    }
+
+    #[test]
+    fn a_narrow_stage_stacks_the_cover_on_top() {
+        let area = Rect::new(0, 0, 60, 30);
+        let s = stage_layout(area, FW, FH, true);
+        let cover = s.cover.expect("cover");
+        assert_eq!(cover.y, 0);
+        assert_eq!(cover.height, 15, "half the height");
+        assert!(cover.x > 0, "centred");
+        assert_eq!(s.details.y, 16);
+        assert_eq!(s.details.height, 14);
+    }
+
+    #[test]
+    fn a_short_wide_stage_also_stacks() {
+        let s = stage_layout(Rect::new(0, 0, 100, 12), FW, FH, true);
+        let cover = s.cover.expect("cover");
+        assert!(cover.height <= 6, "{cover:?}");
+    }
+
+    #[test]
+    fn a_tiny_stage_or_show_cover_off_has_no_cover() {
+        assert!(stage_layout(Rect::new(0, 0, 50, 7), FW, FH, true)
+            .cover
+            .is_none());
+        let s = stage_layout(Rect::new(0, 0, 120, 40), FW, FH, false);
+        assert!(s.cover.is_none());
+        assert!(s.details.width <= 80, "details centred, at most 80 wide");
+        assert!(s.details.x > 0);
+    }
 
     fn list(width: u16) -> Rect {
         Rect::new(0, 0, width, 20)
@@ -173,12 +261,6 @@ mod tests {
     }
 
     #[test]
-    fn cover_uses_eight_rows_on_a_normal_window() {
-        assert_eq!(transport_height(24, true), 8);
-        assert!(cover_enabled(24, true));
-    }
-
-    #[test]
     fn a_modal_is_centred_and_clamped_to_the_list_region() {
         let list = Rect::new(0, 0, 100, 30);
         assert_eq!(modal_rect(list, 40, 10), Rect::new(30, 10, 40, 10));
@@ -205,19 +287,11 @@ mod tests {
     }
 
     #[test]
-    fn the_cover_needs_a_24_row_window() {
-        assert!(cover_enabled(24, true));
-        assert!(!cover_enabled(23, true));
-        assert!(!cover_enabled(40, false));
-    }
-
-    #[test]
-    fn transport_rows_include_the_message_row() {
-        assert_eq!(transport_height(30, true), 8);
-        assert_eq!(transport_height(22, true), 3, "no cover below 24 rows");
-        assert_eq!(transport_height(15, true), 2);
-        assert_eq!(transport_height(30, false), 3);
-        assert_eq!(transport_height(15, false), 2);
+    fn the_transport_is_text_with_a_message_row() {
+        assert_eq!(transport_height(30), 3);
+        assert_eq!(transport_height(20), 3);
+        assert_eq!(transport_height(19), 2);
+        assert_eq!(transport_height(15), 2);
     }
 
     #[test]
@@ -225,19 +299,5 @@ mod tests {
         // 8×16 cells, 8 rows → 16 columns; never more than half the row.
         assert_eq!(cover_width(8, 8, 16, 80), 16);
         assert_eq!(cover_width(8, 8, 16, 20), 10);
-    }
-
-    #[test]
-    fn cover_starts_on_the_library_left_border() {
-        let area = Rect::new(0, 0, 80, 8);
-        let (cover, chrome) = cover_chrome_split(area, 16);
-        assert_eq!(cover.x, 0, "same column as the library pane's left border");
-        assert_eq!(cover.width, 16);
-        assert_eq!(
-            chrome.x,
-            cover.x + cover.width + 1,
-            "at least one empty cell between the cover and the playback text"
-        );
-        assert_eq!(cover.y, 0);
     }
 }

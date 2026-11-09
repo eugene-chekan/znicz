@@ -43,6 +43,7 @@ Znicz is a terminal player first, so the interface caught up with the engine:
   red error) inset from the pane border so they do not steal hints
   (replaced in 0.7.0 by the transport message row)
 - Signal inspector (`i`) for the full file → device path, including sample format
+  (replaced in 0.9.0 by the Stage Signal panel)
 - Horizontal pan of long titles with `Alt-←` and `Alt-→`
 - Library browsing and search from inside the player, not just the CLI
   (TUI search returns artist / album / title entity hits; MCP/CLI stay flat)
@@ -109,6 +110,7 @@ Inline album cover in the TUI. Spec:
 **[Album art in the TUI](../../docs/superpowers/specs/2026-09-02-album-art-design.md)**
 
 - Eight-row cover slot beside stacked transport chrome (`show_cover` / height rules)
+  (moved to the Stage view in 0.9.0)
 - Kitty / Sixel / half-blocks via `ratatui-image`; logo when missing
 - TUI reads embedded art from `TrackInfo.path` (no cover bytes on IPC)
 - **No Kitty install** and no `icat`
@@ -131,10 +133,10 @@ A five-part rework of the player experience. Each part has its own spec and PR.
 | 1 | Keymap and discoverability: `h` / `l` move, arrows seek, context footer, context-first help with a filter | **Done** in 0.6.0 ([spec](../../docs/superpowers/specs/2026-11-07-keymap-discoverability-design.md)) |
 | 2 | Space and layering: modals inside the list region, toasts in a transport slot with history, focus styling, breadcrumb, playing marker | **Done** in 0.7.0 ([spec](../../docs/superpowers/specs/2026-11-07-space-and-layering-design.md)) |
 | 3 | Empty-library onboarding: scan a folder from the TUI; the player process owns the library | **Done** in 0.8.0 ([spec](../../docs/superpowers/specs/2026-11-08-library-service-design.md)) |
-| 4 | Stage mode ([#46](https://github.com/eugene-chekan/znicz/issues/46)): full-screen now playing; the inspector folds in; marquee ([#34](https://github.com/eugene-chekan/znicz/issues/34)) | Planned |
+| 4 | Stage mode ([#46](https://github.com/eugene-chekan/znicz/issues/46)): full-screen now playing; the inspector folds in; marquee ([#34](https://github.com/eugene-chekan/znicz/issues/34)) | **Done** in 0.9.0 ([spec](../../docs/superpowers/specs/2026-11-09-stage-mode-design.md)) |
 | 5 | Reorder rows ([#36](https://github.com/eugene-chekan/znicz/issues/36)) and finer volume ([#47](https://github.com/eugene-chekan/znicz/issues/47)) | Planned |
 
-Once Stage exists, Browse drops the cover and gives the library the full height.
+Browse dropped the cover and gives the library the full height; the cover lives on Stage.
 
 ## Later TUI (parked)
 

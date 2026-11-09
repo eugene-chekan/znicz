@@ -17,6 +17,7 @@ pub mod keys;
 pub mod layout;
 pub mod library_pane;
 pub mod line_edit;
+pub mod marquee;
 pub mod meta;
 pub mod playing;
 pub mod scan_status;
@@ -25,5 +26,5 @@ pub mod toast;
 pub mod tui_config;
 pub mod views;
 
-pub use app::{App, Focus, Modal, PlaylistPrompt, RadioPrompt, StationField};
+pub use app::{App, Focus, Modal, PlaylistPrompt, RadioPrompt, StationField, View};
 pub use tui_config::{CoverProtocol, LibraryLayout, TuiConfig};
