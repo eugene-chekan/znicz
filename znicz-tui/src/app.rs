@@ -581,6 +581,7 @@ impl App {
 
             // Wake up for input, or on the tick to move the seek bar along.
             if event::poll(TICK_RATE)? {
+                let overlay_before = self.modal != Modal::None || self.queue_open;
                 // Handle everything already queued before drawing again,
                 // so held keys do not lag a frame behind.
                 loop {
@@ -592,6 +593,10 @@ impl App {
                     if !event::poll(Duration::ZERO)? {
                         break;
                     }
+                }
+                let overlay_after = self.modal != Modal::None || self.queue_open;
+                if needs_full_redraw(self.view, overlay_before, overlay_after) {
+                    terminal.clear()?;
                 }
             }
 
@@ -2135,6 +2140,12 @@ fn entry_from_track(track: &Track) -> Entry {
 }
 
 /// Label for the repeat indicator in the status bar.
+/// Kitty and Sixel images paint outside the diff: when an overlay closes over
+/// the Stage cover, the cells it covered are never rewritten, so repaint all.
+pub(crate) fn needs_full_redraw(view: View, overlay_before: bool, overlay_after: bool) -> bool {
+    view == View::Stage && overlay_before && !overlay_after
+}
+
 pub fn repeat_label(mode: RepeatMode) -> &'static str {
     match mode {
         RepeatMode::Off => "repeat off",
@@ -2179,6 +2190,14 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn only_an_overlay_closing_over_the_stage_forces_a_repaint() {
+        assert!(needs_full_redraw(View::Stage, true, false));
+        assert!(!needs_full_redraw(View::Browse, true, false));
+        assert!(!needs_full_redraw(View::Stage, false, true));
+        assert!(!needs_full_redraw(View::Stage, true, true));
+    }
 
     #[test]
     fn toggling_the_view_restarts_both_marquees() {
