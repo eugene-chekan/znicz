@@ -173,6 +173,7 @@ struct TuiSection {
     show_cover: Option<bool>,
     cover_protocol: Option<String>,
     library_layout: Option<String>,
+    marquee: Option<bool>,
 }
 
 fn tui_config(config: &Config) -> TuiConfig {
@@ -184,6 +185,7 @@ fn tui_config(config: &Config) -> TuiConfig {
         library_layout: znicz_tui::LibraryLayout::parse(
             config.tui.library_layout.as_deref().unwrap_or("columns"),
         ),
+        marquee: config.tui.marquee.unwrap_or(true),
     }
 }
 

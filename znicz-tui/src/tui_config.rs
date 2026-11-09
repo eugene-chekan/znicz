@@ -40,6 +40,8 @@ pub struct TuiConfig {
     pub show_cover: bool,
     pub cover_protocol: CoverProtocol,
     pub library_layout: LibraryLayout,
+    /// Scroll now-playing titles that do not fit (otherwise cut with `…`).
+    pub marquee: bool,
 }
 
 impl Default for TuiConfig {
@@ -48,6 +50,7 @@ impl Default for TuiConfig {
             show_cover: true,
             cover_protocol: CoverProtocol::Auto,
             library_layout: LibraryLayout::Columns,
+            marquee: true,
         }
     }
 }
@@ -55,6 +58,11 @@ impl Default for TuiConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn marquee_is_on_by_default() {
+        assert!(TuiConfig::default().marquee);
+    }
 
     #[test]
     fn unknown_protocol_is_auto() {

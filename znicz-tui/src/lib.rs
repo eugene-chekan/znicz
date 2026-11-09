@@ -17,6 +17,7 @@ pub mod keys;
 pub mod layout;
 pub mod library_pane;
 pub mod line_edit;
+pub mod marquee;
 pub mod meta;
 pub mod playing;
 pub mod scan_status;
