@@ -45,19 +45,21 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
     let list = chunks[0];
     app.list_width = list.width;
     app.list_height = list.height;
-    app.hits.queue_toggle = list.width.checked_sub(1).map(|w| Rect {
-        x: list.x + w,
-        y: list.y,
-        width: 1,
-        height: list.height,
-    });
-    let lib_w = crate::layout::strip_width(list, app.queue_open);
-    app.hits.library_pane = Some(Rect {
-        x: list.x,
-        y: list.y,
-        width: lib_w,
-        height: list.height,
-    });
+    if app.view == crate::app::View::Browse {
+        app.hits.queue_toggle = list.width.checked_sub(1).map(|w| Rect {
+            x: list.x + w,
+            y: list.y,
+            width: 1,
+            height: list.height,
+        });
+        let lib_w = crate::layout::strip_width(list, app.queue_open);
+        app.hits.library_pane = Some(Rect {
+            x: list.x,
+            y: list.y,
+            width: lib_w,
+            height: list.height,
+        });
+    }
     // Stage covers the list and the transport minus its message row; the
     // queue drawer must cover the same area.
     let stage_area = Rect {

@@ -202,3 +202,42 @@ fn the_queue_sheet_covers_the_whole_stage_area() {
     let last_stage_row = screen.lines().nth(21).unwrap();
     assert!(last_stage_row.contains('└'), "{screen}");
 }
+
+#[test]
+fn tab_keeps_focus_on_the_queue_while_on_stage() {
+    let mut app = app();
+    app.view = View::Stage;
+    draw_with(&mut app, &playing(), 120, 40);
+    app.on_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert!(app.queue_open, "Tab opens a closed drawer");
+    let focus = app.focus;
+    draw_with(&mut app, &playing(), 120, 40);
+    app.on_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert!(app.queue_open);
+    assert_eq!(app.focus, focus, "Tab: no swap to the hidden library");
+    app.on_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
+    assert_eq!(app.focus, focus, "BackTab: no swap to the hidden library");
+}
+
+#[test]
+fn r_does_not_reload_the_hidden_library_on_stage() {
+    let mut app = app();
+    app.view = View::Stage;
+    press(&mut app, 'r');
+    assert!(app.toasts.current().is_none());
+}
+
+#[test]
+fn clicking_the_right_edge_on_stage_does_not_open_the_queue() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let mut app = app();
+    app.view = View::Stage;
+    draw_with(&mut app, &playing(), 120, 40);
+    app.on_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 119,
+        row: 5,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(!app.queue_open);
+}

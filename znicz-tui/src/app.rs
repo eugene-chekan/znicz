@@ -1022,8 +1022,8 @@ impl App {
                 } else if !self.queue_open {
                     self.open_queue();
                     self.focus = Focus::Queue;
-                } else if layout::is_sheet(self.list_width, true) {
-                    // no-op in sheet mode
+                } else if layout::is_sheet(self.list_width, true) || self.view == View::Stage {
+                    // no-op in sheet mode, and on Stage (the library is hidden)
                 } else {
                     self.swap_focus();
                 }
@@ -1042,8 +1042,8 @@ impl App {
                     self.library.cycle_column(false);
                 } else if !self.queue_open {
                     // no-op while drawer is closed
-                } else if layout::is_sheet(self.list_width, true) {
-                    // no-op in sheet mode
+                } else if layout::is_sheet(self.list_width, true) || self.view == View::Stage {
+                    // no-op in sheet mode, and on Stage (the library is hidden)
                 } else {
                     self.swap_focus();
                 }
@@ -1265,6 +1265,7 @@ impl App {
                 self.toasts
                     .info(format!("{} devices found", self.devices.len()));
             }
+            _ if self.view == View::Stage => {}
             _ => {
                 self.library.reload_albums();
                 // Re-resolve from the reloaded library on the next frame.
