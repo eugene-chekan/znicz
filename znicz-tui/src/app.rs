@@ -873,6 +873,8 @@ impl App {
             View::Browse => View::Stage,
             View::Stage => View::Browse,
         };
+        self.stage_marquee = Default::default();
+        self.transport_marquee = Default::default();
     }
 
     fn on_esc(&mut self) {
@@ -2177,6 +2179,22 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn toggling_the_view_restarts_both_marquees() {
+        let (player, _thread) = znicz_core::spawn_player(znicz_core::AudioConfig::default());
+        let mut app = App::with_library(player, None);
+        let t0 = std::time::Instant::now();
+        let text = "a long title that scrolls";
+        app.stage_marquee.offset(text, 5, t0);
+        app.transport_marquee.offset(text, 5, t0);
+        let later = t0 + std::time::Duration::from_millis(4_000);
+        assert!(app.stage_marquee.offset(text, 5, later) > 0);
+        app.toggle_stage();
+        app.toggle_stage();
+        assert_eq!(app.stage_marquee.offset(text, 5, later), 0);
+        assert_eq!(app.transport_marquee.offset(text, 5, later), 0);
+    }
 
     #[test]
     fn arrows_seek_five_seconds_and_shift_arrows_thirty() {

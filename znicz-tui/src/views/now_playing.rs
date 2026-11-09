@@ -243,9 +243,6 @@ fn chrome_line(
             Span::styled(sub_part, theme::subtitle()),
             Span::raw(" ".repeat(pad)),
         ];
-        if seek_len > 0 {
-            spans.push(Span::raw(" "));
-        }
         push_tail(
             &mut spans,
             state,
@@ -581,5 +578,26 @@ mod tests {
         ));
         assert!(!later.contains("A Very"), "moved 5 columns: {later:?}");
         assert!(later.contains("y Long Title"), "{later:?}");
+    }
+
+    fn line_width(line: &Line) -> usize {
+        line.spans.iter().map(|s| s.content.chars().count()).sum()
+    }
+
+    #[test]
+    fn a_scrolling_title_fills_the_row_exactly() {
+        // Long enough to overflow even at 140 columns.
+        let mut state = long_state();
+        if let Some(track) = state.current_track.as_mut() {
+            track.title = "Very Long Title ".repeat(12);
+        }
+        for width in [80, 100, 140] {
+            let mut m = crate::marquee::Marquee::default();
+            let t0 = std::time::Instant::now();
+            let line = chrome_line(&state, width, Some((&mut m, t0)));
+            assert_eq!(line_width(&line), width, "scrolling at {width}");
+            let plain = chrome_line(&state, width, None);
+            assert!(line_width(&plain) <= width, "normal at {width}");
+        }
     }
 }

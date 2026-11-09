@@ -81,6 +81,8 @@ fn main() {
     );
 
     app.modal = Modal::None;
+    app.queue_open = false;
+    app.focus = znicz_tui::Focus::Library;
     app.view = znicz_tui::View::Stage;
     show(
         "Stage",

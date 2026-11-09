@@ -33,16 +33,29 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState)
     }
     let width = usize::from(layout.details.width);
     let full = title_text(state);
-    let title = if app.tui.marquee && full.chars().count() > width {
-        let offset = app
-            .stage_marquee
-            .offset(&full, width, std::time::Instant::now());
-        crate::marquee::window(&full, offset, width)
-    } else {
-        format::truncate(&full, width)
-    };
+    let scroll = app
+        .tui
+        .marquee
+        .then(|| (&mut app.stage_marquee, std::time::Instant::now()));
+    let title = stage_title(&full, width, scroll);
     let lines = detail_lines(state, title, width, usize::from(layout.details.height));
     frame.render_widget(Paragraph::new(lines), layout.details);
+}
+
+/// The title fitted to `width`: scrolled when a marquee is given and the
+/// title overflows, else cut with an ellipsis.
+pub(crate) fn stage_title(
+    full: &str,
+    width: usize,
+    scroll: Option<(&mut crate::marquee::Marquee, std::time::Instant)>,
+) -> String {
+    match scroll {
+        Some((marquee, now)) if full.chars().count() > width => {
+            let offset = marquee.offset(full, width, now);
+            crate::marquee::window(full, offset, width)
+        }
+        _ => format::truncate(full, width),
+    }
 }
 
 /// What the title line says: the track (or ICY) title, or `Nothing playing`.
@@ -474,6 +487,23 @@ mod tests {
             }],
             ..PlayerState::default()
         }
+    }
+
+    #[test]
+    fn a_long_stage_title_scrolls_with_the_marquee() {
+        let full = "A Very Long Title That Will Never Fit In This Row";
+        let mut m = crate::marquee::Marquee::default();
+        let t0 = std::time::Instant::now();
+        assert_eq!(
+            stage_title(full, 20, Some((&mut m, t0))),
+            "A Very Long Title Th"
+        );
+        let later = t0 + Duration::from_millis(2_000 + 5 * 200);
+        assert_eq!(
+            stage_title(full, 20, Some((&mut m, later))),
+            "y Long Title That Wi"
+        );
+        assert!(stage_title(full, 20, None).ends_with('…'));
     }
 
     #[test]
