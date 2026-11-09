@@ -9,12 +9,13 @@ mod now_playing;
 mod playlists;
 mod queue;
 mod radio;
+pub mod stage;
 mod status;
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 use znicz_core::PlayerState;
 
@@ -59,17 +60,42 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
         width: lib_w,
         height: list.height,
     });
-    app.title_slot = library::title_slot(
-        &app.library,
-        crate::layout::strip_inner(list, app.queue_open),
-    );
-    app.library.clamp_pan(
-        app.title_slot,
-        crate::layout::strip_inner(list, app.queue_open),
-        app.playing.as_ref(),
-    );
+    if app.view == crate::app::View::Stage {
+        let transport = chunks[1];
+        let message_row = Rect {
+            y: transport.y + transport.height.saturating_sub(1),
+            height: transport.height.min(1),
+            ..transport
+        };
+        let stage_area = Rect {
+            height: list.height + transport.height.saturating_sub(1),
+            ..list
+        };
+        stage::render(frame, stage_area, app, state);
+        let scanning = app.library_status.scanning.clone();
+        frame.render_widget(
+            Paragraph::new(now_playing::message_line(
+                &app.toasts,
+                scanning.as_ref(),
+                usize::from(message_row.width),
+            )),
+            message_row,
+        );
+    } else {
+        app.title_slot = library::title_slot(
+            &app.library,
+            crate::layout::strip_inner(list, app.queue_open),
+        );
+        app.library.clamp_pan(
+            app.title_slot,
+            crate::layout::strip_inner(list, app.queue_open),
+            app.playing.as_ref(),
+        );
 
-    library::render(frame, list, app);
+        library::render(frame, list, app);
+        let with_cover = crate::layout::cover_enabled(area.height, show_cover);
+        now_playing::render_transport(frame, chunks[1], app, state, !compact, with_cover);
+    }
 
     match crate::layout::drawer(list, app.queue_open) {
         crate::layout::Drawer::Overlay(rect) | crate::layout::Drawer::Sheet(rect) => {
@@ -81,8 +107,6 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
         crate::layout::Drawer::Closed => {}
     }
 
-    let with_cover = crate::layout::cover_enabled(area.height, show_cover);
-    now_playing::render_transport(frame, chunks[1], app, state, !compact, with_cover);
     status::render_footer(frame, chunks[2], app);
 
     match app.modal {

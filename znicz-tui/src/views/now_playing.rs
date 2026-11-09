@@ -1,6 +1,5 @@
 //! The transport: what is playing, how far in, and how it reaches the speakers.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -8,14 +7,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use ratatui_image::picker::Picker;
-use ratatui_image::{Resize, StatefulImage};
 use znicz_core::{PlaybackStatus, PlayerState, RepeatMode};
 
 use crate::app::{repeat_label, App};
-use crate::cover::{pick_stream_cover, CoverKey, CoverReady};
 use crate::format;
 use crate::theme;
-use crate::tui_config::CoverProtocol;
 
 pub fn render_transport(
     frame: &mut Frame,
@@ -55,7 +51,7 @@ pub fn render_transport(
     let font = picker.font_size();
     let cover_w = crate::layout::cover_width(area.height, font.width, font.height, area.width);
     let (cover, chrome) = crate::layout::cover_chrome_split(area, cover_w);
-    render_cover(frame, cover, app, state);
+    crate::views::stage::render_cover(frame, cover, app, state);
     let scanning = app.library_status.scanning.clone();
     render_stacked_chrome(
         frame,
@@ -65,78 +61,6 @@ pub fn render_transport(
         scanning.as_ref(),
         show_signal,
     );
-}
-
-fn cover_draw_label(ready: &CoverReady) -> String {
-    match ready {
-        CoverReady::Pending => "pending".into(),
-        CoverReady::Logo => "logo".into(),
-        CoverReady::Embedded(img) => format!("{:p}", Arc::as_ptr(img)),
-    }
-}
-
-fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState) {
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
-
-    let use_logo_only = app.tui.cover_protocol == CoverProtocol::Off;
-    let ready = match (use_logo_only, state.current_track.as_ref()) {
-        (true, _) | (_, None) => CoverReady::Logo,
-        (false, Some(track)) => {
-            if let Some(p) = track.path.as_deref() {
-                app.covers.get(CoverKey::File(p.to_path_buf()))
-            } else {
-                let icy_ready = match track.icy_stream_url.as_deref() {
-                    Some(u) if u.starts_with("http://") || u.starts_with("https://") => {
-                        app.covers.get(CoverKey::Url(u.to_string()))
-                    }
-                    _ => CoverReady::Logo,
-                };
-                let aa_ready = match track
-                    .url
-                    .as_deref()
-                    .and_then(znicz_core::parse_audioaddict_channel)
-                {
-                    Some((network, channel)) => {
-                        app.covers.get(CoverKey::AudioAddict { network, channel })
-                    }
-                    None => CoverReady::Logo,
-                };
-                let station_ready = app
-                    .stations
-                    .iter()
-                    .find(|s| Some(s.url.as_str()) == track.url.as_deref())
-                    .and_then(|s| s.art.clone())
-                    .map(|p| app.covers.get(CoverKey::ImageFile(p)))
-                    .unwrap_or(CoverReady::Logo);
-                pick_stream_cover(icy_ready, aa_ready, station_ready)
-            }
-        }
-    };
-
-    let key = cover_draw_label(&ready);
-    let draw_key = (key, area.width, area.height);
-    if app.cover_draw_key.as_ref() != Some(&draw_key) {
-        let image = match ready {
-            CoverReady::Embedded(img) => img.as_ref().clone(),
-            CoverReady::Pending | CoverReady::Logo => app.covers.logo_image().clone(),
-        };
-        let picker = app.picker.get_or_insert_with(Picker::halfblocks);
-        let font = picker.font_size();
-        let image =
-            crate::cover::fill_cover_slot(&image, area.width, area.height, font.width, font.height);
-        app.cover_image = Some(picker.new_resize_protocol(image));
-        app.cover_draw_key = Some(draw_key);
-    }
-
-    if let Some(protocol) = app.cover_image.as_mut() {
-        frame.render_stateful_widget(
-            StatefulImage::new().resize(Resize::Fit(None)),
-            area,
-            protocol,
-        );
-    }
 }
 
 fn render_stacked_chrome(
