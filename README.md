@@ -124,19 +124,21 @@ are a modal (`,`), `P` opens saved playlists, and `R` opens radio stations.
 Those two overlays share a keymap: `n` new, `e` edit, `c` copy, `d` delete.
 While they are open, `n` and `e` are not next/repeat; close with Esc to get
 the global keys back.
-`i` opens a signal inspector
-with the full file → device path, including the device sample format that stays
-off the transport line.
-Transport sits at the bottom. With cover on (default) and a window at least 24 rows tall, an eight-row slot on
-the left shows embedded album art for files; streams use an ICY image when one
-decodes, else an AudioAddict song cover on those networks, else station art,
-else the Znicz logo;
-chrome stacks to the right. With `show_cover = false` or a shorter window, transport is two or
-three full-width lines. Example signal path:
+`v` (or `i`) switches between two views. **Browse** is the library with the queue drawer and a
+text transport; **Stage** is full-screen now playing: cover, title, artist, album, seek bar, volume,
+repeat and shuffle, and a Signal panel with the full file → device path, including the device sample
+format and whether the path is bit perfect. The TUI always starts on Browse. In Stage, `Esc` closes
+an open modal or the queue first, then returns to Browse; library keys do nothing there.
+
+Browse transport has no cover: three lines (title + seek, signal, message) on windows at least 20
+rows tall, two below that. Example signal path:
 `FLAC 96 kHz 24-bit 2882 kbps stereo → 96 kHz stereo  ● bit perfect`.
 When the device will not take the file's own rate the badge reads `▲ resampled`,
-so a silent conversion never goes unnoticed. Messages appear on the transport's last row rather than over the list. Long titles pan with
-`Alt-←` / `Alt-→` on the highlighted row.
+so a silent conversion never goes unnoticed. Messages appear on the transport's last row rather than over the list.
+On Stage the cover sits left of the details on a wide terminal and above them on a narrow one; streams
+use an ICY image when one decodes, else an AudioAddict song cover on those networks, else station art,
+else the Znicz logo. Long now-playing titles scroll (set `marquee = false` to truncate with `…`).
+Long list titles pan with `Alt-←` / `Alt-→` on the highlighted row.
 
 Press `?` in the player for the keymap: the keys for where you are come first,
 and `/` filters by key or action. The overlay footer shows the running version.
@@ -169,7 +171,7 @@ The essentials:
 | Tab | Next column when three-column browse is active; otherwise library ↔ queue |
 | Shift-Tab | Previous column (or queue focus when the drawer is open) |
 | Alt-← / Alt-→ | Pan a long title |
-| i | Signal inspector |
+| v / i | Stage: full-screen now playing (cover, details, signal path); again to return to Browse |
 | , | Devices |
 | ? / q | Help / quit TUI (`s` stops playback) |
 
@@ -204,9 +206,10 @@ idle_secs = 900
 path = "~/.local/share/znicz/library.db"
 
 [tui]
-show_cover = true
-cover_protocol = "auto"   # auto | kitty | sixel | halfblocks | off
+show_cover = true         # cover on the Stage view
+cover_protocol = "auto"   # Stage cover: auto | kitty | sixel | halfblocks | off
 library_layout = "columns"  # columns | tree
+marquee = true            # scroll long now-playing titles; false truncates with …
 ```
 
 The last queue (and volume, mute, repeat, shuffle) is

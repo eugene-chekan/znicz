@@ -124,7 +124,7 @@ the decoded PCM rate (1411 kbps for CD-shape WAV). Icecast `StreamTitle`
 replaces the now-playing title (and `tags.title`) when the station sends it.
 An empty title falls back to the station name. Queue rows stay the station
 name. Icecast `StreamUrl` may point at a cover image; when it decodes, the TUI
-cover slot shows that picture instead of station `art` or the logo.
+Stage cover shows that picture instead of station `art` or the logo.
 RadioTunes, DI.FM, RockRadio, JazzRadio, ClassicalRadio, and ZenRadio do not
 send `StreamUrl`. For those hosts the TUI looks up the channel from the stream
 URL and uses AudioAddict `art_url` as the song cover.
