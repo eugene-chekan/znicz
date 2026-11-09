@@ -1,0 +1,7 @@
+[[station]]
+name = "One"
+url = "https://example.com/one"
+
+[[station]]
+name = "Two"
+url = "http://example.com/two"

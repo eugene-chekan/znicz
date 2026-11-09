@@ -58,16 +58,23 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
         width: lib_w,
         height: list.height,
     });
+    // Stage covers the list and the transport minus its message row; the
+    // queue drawer must cover the same area.
+    let stage_area = Rect {
+        height: list.height + chunks[1].height.saturating_sub(1),
+        ..list
+    };
+    let drawer_area = if app.view == crate::app::View::Stage {
+        stage_area
+    } else {
+        list
+    };
     if app.view == crate::app::View::Stage {
         let transport = chunks[1];
         let message_row = Rect {
             y: transport.y + transport.height.saturating_sub(1),
             height: transport.height.min(1),
             ..transport
-        };
-        let stage_area = Rect {
-            height: list.height + transport.height.saturating_sub(1),
-            ..list
         };
         stage::render(frame, stage_area, app, state);
         let scanning = app.library_status.scanning.clone();
@@ -94,7 +101,7 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
         now_playing::render_transport(frame, chunks[1], app, state, !compact);
     }
 
-    match crate::layout::drawer(list, app.queue_open) {
+    match crate::layout::drawer(drawer_area, app.queue_open) {
         crate::layout::Drawer::Overlay(rect) | crate::layout::Drawer::Sheet(rect) => {
             frame.render_widget(Clear, rect);
             app.queue_title_slot = queue::title_slot(app, state, crate::views::inner_width(rect));

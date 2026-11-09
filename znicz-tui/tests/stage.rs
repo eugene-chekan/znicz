@@ -191,3 +191,14 @@ fn the_stage_footer_offers_browse() {
     assert!(footer.contains("v browse"), "{footer}");
     assert!(footer.contains("Space pause"), "{footer}");
 }
+
+#[test]
+fn the_queue_sheet_covers_the_whole_stage_area() {
+    let mut app = app();
+    app.view = View::Stage;
+    app.queue_open = true;
+    let screen = draw_with(&mut app, &playing(), 60, 24);
+    // Stage spans rows 0..22 (20 list + 3 transport - the message row).
+    let last_stage_row = screen.lines().nth(21).unwrap();
+    assert!(last_stage_row.contains('└'), "{screen}");
+}
