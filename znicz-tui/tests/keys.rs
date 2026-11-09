@@ -1464,3 +1464,19 @@ fn tab_and_bracket_do_nothing_behind_a_modal() {
         }
     }
 }
+
+#[test]
+fn playback_keys_are_not_swallowed_on_stage() {
+    // Enter on the queue plays a missing file and toasts an error; `n` skips to
+    // it the same way whether Browse or Stage is showing.
+    let toast_after = |view: View| {
+        let mut app = new_app();
+        queue(&mut app, 2);
+        app.view = view;
+        press_char(&mut app, 'n');
+        app.toasts.current().map(|t| t.text.clone())
+    };
+    let browse = toast_after(View::Browse);
+    assert_eq!(toast_after(View::Stage), browse);
+    assert!(browse.is_some(), "`n` onto a missing file should toast");
+}

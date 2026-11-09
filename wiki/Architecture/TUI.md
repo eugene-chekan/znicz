@@ -14,8 +14,8 @@ open). The wheel moves the focused list one row, like `j` / `k`. Help,
 devices, playlists, and radio close with the top-right **X**, or
 with `Esc`, or a clickable footer hint — not by clicking outside. The queue
 drawer closes with the **X**, global `]`, or a clickable footer `] close` /
-`] queue` hint; `Esc` closes it only when the drawer has queue focus (with
-library focus, `Esc` goes back in the library). Footer hint segments are
+`] queue` hint; `Esc` closes it when the drawer has queue focus, or on Stage regardless
+of focus (with library focus in Browse, `Esc` goes back in the library). Footer hint segments are
 clickable and run that key action. Click the library pane's right-border column
 to open the queue drawer only. Library search and playlist/radio typing prompts
 still cancel on an outside click. Clicks on the transport and cover do nothing.

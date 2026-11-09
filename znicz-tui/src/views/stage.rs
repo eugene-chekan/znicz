@@ -98,7 +98,7 @@ pub(crate) fn detail_lines(
     head.push(seek_line(state, width));
 
     let volume = volume_line(state);
-    let (mut signal, mut explanation) = signal_lines(state);
+    let (mut signal, mut explanation) = signal_lines(state, width);
 
     let needed = |signal: &[Line], explanation: &Option<Line>, volume: bool| {
         head.len()
@@ -260,7 +260,10 @@ fn volume_line(state: &PlayerState) -> Line<'static> {
 }
 
 /// The signal panel and, separately, the path explanation (dropped first).
-pub(crate) fn signal_lines(state: &PlayerState) -> (Vec<Line<'static>>, Option<Line<'static>>) {
+pub(crate) fn signal_lines(
+    state: &PlayerState,
+    width: usize,
+) -> (Vec<Line<'static>>, Option<Line<'static>>) {
     let Some(track) = state.current_track.as_ref() else {
         return (Vec::new(), None);
     };
@@ -271,6 +274,7 @@ pub(crate) fn signal_lines(state: &PlayerState) -> (Vec<Line<'static>>, Option<L
         "file"
     };
     lines.push(labelled(
+        width,
         source_label,
         track.format_description(),
         theme::text(),
@@ -283,9 +287,10 @@ pub(crate) fn signal_lines(state: &PlayerState) -> (Vec<Line<'static>>, Option<L
         Some(output) => format!("{device} · {}", device_stream(output)),
         None => format!("{device} · no stream open"),
     };
-    lines.push(labelled("device", device, theme::text()));
+    lines.push(labelled(width, "device", device, theme::text()));
     let Some(output) = state.output.as_ref() else {
         lines.push(labelled(
+            width,
             "path",
             "nothing to compare until a stream opens".to_string(),
             theme::dim(),
@@ -293,10 +298,20 @@ pub(crate) fn signal_lines(state: &PlayerState) -> (Vec<Line<'static>>, Option<L
         return (lines, None);
     };
     let explanation = if output.bit_perfect {
-        lines.push(labelled("path", "● bit perfect".to_string(), theme::good()));
+        lines.push(labelled(
+            width,
+            "path",
+            "● bit perfect".to_string(),
+            theme::good(),
+        ));
         "the device took the file's own rate and channels".to_string()
     } else {
-        lines.push(labelled("path", "▲ resampled".to_string(), theme::warn()));
+        lines.push(labelled(
+            width,
+            "path",
+            "▲ resampled".to_string(),
+            theme::warn(),
+        ));
         format!(
             "file {} {} → device {} {}",
             format::khz(track.sample_rate),
@@ -307,18 +322,26 @@ pub(crate) fn signal_lines(state: &PlayerState) -> (Vec<Line<'static>>, Option<L
     };
     let explanation = Line::from(vec![
         Span::raw(" ".repeat(LABEL)),
-        Span::styled(explanation, theme::dim()),
+        Span::styled(
+            format::truncate(&explanation, width.saturating_sub(LABEL)),
+            theme::dim(),
+        ),
     ]);
     (lines, Some(explanation))
 }
 
-fn labelled(label: &str, value: String, style: ratatui::style::Style) -> Line<'static> {
+fn labelled(
+    width: usize,
+    label: &str,
+    value: String,
+    style: ratatui::style::Style,
+) -> Line<'static> {
     Line::from(vec![
         Span::styled(
             format!("  {label:<width$}", width = LABEL - 2),
             theme::dim(),
         ),
-        Span::styled(value, style),
+        Span::styled(format::truncate(&value, width.saturating_sub(LABEL)), style),
     ])
 }
 
@@ -504,6 +527,23 @@ mod tests {
             "y Long Title That Wi"
         );
         assert!(stage_title(full, 20, None).ends_with('…'));
+    }
+
+    #[test]
+    fn narrow_signal_values_are_cut_to_the_width() {
+        let width = 24;
+        let (lines, explanation) = signal_lines(&playing(false), width);
+        for line in lines.iter().chain(explanation.iter()) {
+            let w: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+            assert!(
+                w <= width,
+                "{w} > {width}: {}",
+                text(std::slice::from_ref(line))
+            );
+        }
+        let t = text(&lines);
+        assert!(t.contains('…'), "{t}");
+        assert!(text(&[explanation.unwrap()]).ends_with('…'));
     }
 
     #[test]

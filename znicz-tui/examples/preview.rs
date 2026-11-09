@@ -91,6 +91,7 @@ fn main() {
         width,
         height,
     );
+    app.view = znicz_tui::View::Browse;
 
     app.modal = Modal::Playlists;
     app.playlists = vec!["evening".into(), "weekend-jazz".into()];
