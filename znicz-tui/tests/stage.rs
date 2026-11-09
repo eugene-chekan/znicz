@@ -172,3 +172,22 @@ fn alt_arrow_on_stage_does_not_pan_the_hidden_library() {
     app.on_key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT));
     assert_eq!(app.library.h_offset(), 0);
 }
+
+#[test]
+fn i_toggles_stage_too() {
+    let mut app = app();
+    press(&mut app, 'i');
+    assert_eq!(app.view, View::Stage);
+    press(&mut app, 'i');
+    assert_eq!(app.view, View::Browse);
+}
+
+#[test]
+fn the_stage_footer_offers_browse() {
+    let mut app = app();
+    app.view = View::Stage;
+    let screen = draw_with(&mut app, &playing(), 100, 30);
+    let footer = screen.lines().last().unwrap();
+    assert!(footer.contains("v browse"), "{footer}");
+    assert!(footer.contains("Space pause"), "{footer}");
+}

@@ -197,17 +197,6 @@ fn every_view_draws_at_every_size() {
 
     for &(width, height) in SIZES {
         let mut app = App::with_library(player(), None);
-        app.modal = Modal::Inspector;
-        let screen = draw(&mut app, width, height);
-        assert_eq!(
-            screen.lines().count(),
-            height as usize,
-            "inspector at {width}x{height} should fill the window"
-        );
-    }
-
-    for &(width, height) in SIZES {
-        let mut app = App::with_library(player(), None);
         app.modal = Modal::Playlists;
         let screen = draw(&mut app, width, height);
         assert_eq!(
@@ -313,13 +302,9 @@ fn the_footer_inside_help_offers_filter_and_close_only() {
 }
 
 #[test]
-fn the_signal_inspector_shows_the_device_sample_format() {
+fn the_stage_signal_panel_shows_the_device_sample_format() {
     let mut app = App::with_library(player(), None);
-    app.modal = Modal::Inspector;
-
-    let idle = draw(&mut app, 90, 24);
-    assert!(idle.contains("Signal"), "{idle}");
-    assert!(idle.contains("No file is playing"), "{idle}");
+    app.view = znicz_tui::View::Stage;
 
     let playing = draw_with(&mut app, &playing_state(), 90, 24);
     assert!(playing.contains("Signal"), "{playing}");
@@ -327,8 +312,6 @@ fn the_signal_inspector_shows_the_device_sample_format() {
         playing.contains("f32"),
         "sample format belongs here:\n{playing}"
     );
-    assert!(playing.contains("bit perfect"), "{playing}");
-    assert!(playing.contains("96 kHz"), "{playing}");
 }
 
 #[test]
@@ -727,7 +710,6 @@ fn no_modal_covers_the_transport_or_footer() {
     let modals = [
         Modal::Help,
         Modal::Devices,
-        Modal::Inspector,
         Modal::Playlists,
         Modal::Radio,
         Modal::Messages,

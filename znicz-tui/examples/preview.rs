@@ -80,9 +80,10 @@ fn main() {
         height,
     );
 
-    app.modal = Modal::Inspector;
+    app.modal = Modal::None;
+    app.view = znicz_tui::View::Stage;
     show(
-        "Signal inspector",
+        "Stage",
         &mut app,
         &playing_state(&queue, true),
         width,

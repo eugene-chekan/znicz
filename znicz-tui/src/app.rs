@@ -135,7 +135,6 @@ pub enum Modal {
     None,
     Help,
     Devices,
-    Inspector,
     Playlists,
     Radio,
     Messages,
@@ -244,12 +243,7 @@ impl Modal {
     pub(crate) fn blocks_list_focus(self) -> bool {
         matches!(
             self,
-            Self::Help
-                | Self::Devices
-                | Self::Inspector
-                | Self::Playlists
-                | Self::Radio
-                | Self::Messages
+            Self::Help | Self::Devices | Self::Playlists | Self::Radio | Self::Messages
         )
     }
 }
@@ -660,7 +654,6 @@ impl App {
                 self.message_h_offset = 0;
             }
             Modal::Help => self.help.scroll_by(delta),
-            Modal::Inspector => {}
             Modal::None => match self.focus {
                 Focus::Library if self.view == View::Browse => {
                     self.library.step(delta, self.library_strip())
@@ -857,7 +850,7 @@ impl App {
             return;
         }
 
-        if matches!(self.modal, Modal::Inspector | Modal::Messages) {
+        if self.modal == Modal::Messages {
             return;
         }
 
@@ -881,7 +874,7 @@ impl App {
     fn on_esc(&mut self) {
         if matches!(
             self.modal,
-            Modal::Devices | Modal::Inspector | Modal::Playlists | Modal::Radio | Modal::Messages
+            Modal::Devices | Modal::Playlists | Modal::Radio | Modal::Messages
         ) {
             self.close_modal();
         } else if self.queue_open && (self.focus == Focus::Queue || self.view == View::Stage) {
@@ -988,7 +981,7 @@ impl App {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('?') => self.open_help(),
             KeyCode::Char(',') => self.toggle_devices_modal(),
-            KeyCode::Char('i') => self.toggle_inspector_modal(),
+            KeyCode::Char('i') => self.toggle_stage(),
             KeyCode::Char('v') => self.toggle_stage(),
             KeyCode::Char('P') => self.toggle_playlists_modal(),
             KeyCode::Char('R') => self.toggle_radio_modal(),
@@ -1122,10 +1115,14 @@ impl App {
             Modal::Help if self.help.editing => Context::HelpFilter,
             Modal::Help => Context::Help,
             Modal::Devices => Context::Devices,
-            Modal::Inspector => Context::Inspector,
             Modal::Playlists => Context::Playlists,
             Modal::Radio => Context::Radio,
             Modal::Messages => Context::Messages,
+            Modal::None
+                if self.view == View::Stage && !(self.queue_open && self.focus == Focus::Queue) =>
+            {
+                Context::Stage
+            }
             Modal::None => match self.focus {
                 Focus::Queue => Context::Queue,
                 Focus::Library
@@ -1168,15 +1165,6 @@ impl App {
             Modal::None
         } else {
             Modal::Devices
-        };
-    }
-
-    fn toggle_inspector_modal(&mut self) {
-        self.leave_messages();
-        self.modal = if self.modal == Modal::Inspector {
-            Modal::None
-        } else {
-            Modal::Inspector
         };
     }
 
@@ -1854,9 +1842,6 @@ impl App {
 
     fn step(&mut self, delta: isize) {
         let len = self.list_len();
-        if self.modal == Modal::Inspector {
-            return;
-        }
         if self.modal == Modal::Messages {
             self.message_cursor.step(delta, len);
             self.message_h_offset = 0;
@@ -1876,9 +1861,6 @@ impl App {
 
     fn page(&mut self, delta: isize) {
         let len = self.list_len();
-        if self.modal == Modal::Inspector {
-            return;
-        }
         if self.modal == Modal::Messages {
             self.message_cursor.page(delta, len);
             self.message_h_offset = 0;
@@ -1897,9 +1879,6 @@ impl App {
     }
 
     fn go_first(&mut self) {
-        if self.modal == Modal::Inspector {
-            return;
-        }
         if self.modal == Modal::Messages {
             self.message_cursor.first();
             self.message_h_offset = 0;
@@ -1919,9 +1898,6 @@ impl App {
 
     fn go_last(&mut self) {
         let len = self.list_len();
-        if self.modal == Modal::Inspector {
-            return;
-        }
         if self.modal == Modal::Messages {
             self.message_cursor.last(len);
             self.message_h_offset = 0;

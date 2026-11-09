@@ -25,7 +25,7 @@ pub enum Context {
     FolderPrompt,
     Queue,
     Devices,
-    Inspector,
+    Stage,
     Playlists,
     Radio,
     Messages,
@@ -54,6 +54,8 @@ const SPACE_PAUSE: Hint = hint("Space pause", KeyCode::Char(' '));
 const SEARCH: Hint = hint("/ search", KeyCode::Char('/'));
 const ADD: Hint = hint("a add", KeyCode::Char('a'));
 const EXPAND: Hint = hint("o expand", KeyCode::Char('o'));
+const NEXT: Hint = hint("n next", KeyCode::Char('n'));
+const BROWSE: Hint = hint("v browse", KeyCode::Char('v'));
 const QUEUE_OPEN: Hint = hint("] queue", KeyCode::Char(']'));
 const QUEUE_CLOSE: Hint = hint("] close", KeyCode::Char(']'));
 const PLAYLISTS_OPEN: Hint = hint("P playlists", KeyCode::Char('P'));
@@ -113,7 +115,7 @@ pub fn context_hints(context: Context) -> &'static [Hint] {
         Context::FolderPrompt => &[TAB_COMPLETE, ENTER_SCAN, CANCEL],
         Context::Queue => &[ENTER_PLAY, REMOVE, JUMP, CLEAR, QUEUE_CLOSE],
         Context::Devices => &[SELECT, RESCAN, CLOSE],
-        Context::Inspector => &[SPACE_PAUSE, CLOSE],
+        Context::Stage => &[SPACE_PAUSE, NEXT, BROWSE, QUEUE_OPEN],
         Context::Playlists | Context::Radio => &[ENTER_PLAY, ADD, NEW, EDIT, DELETE, CLOSE],
         Context::Messages => &[CLEAR, CLOSE],
         Context::Prompt => &[ENTER_SAVE, CANCEL],
@@ -156,7 +158,7 @@ pub const GLOBAL: &[Binding] = &[
     b("Tab", "library ↔ queue (or next column)"),
     b("Shift-Tab", "previous column / queue focus"),
     b("Alt-← / Alt-→", "pan titles"),
-    b("i", "signal inspector"),
+    b("v / i", "now playing (stage)"),
     b(",", "devices"),
     b("M", "messages"),
     b("?", "this help"),
@@ -219,7 +221,7 @@ pub const RADIO: &[Binding] = &[
     b("Esc", "close"),
 ];
 
-pub const INSPECTOR: &[Binding] = &[b("Esc / i", "close")];
+pub const STAGE: &[Binding] = &[b("v / i / Esc", "back to browse")];
 
 pub const MESSAGES: &[Binding] = &[b("C", "clear the history"), b("Esc / M", "close")];
 
@@ -239,7 +241,7 @@ const CONTEXT_SECTIONS: &[(&str, &[Binding])] = &[
     ("Playlists", PLAYLISTS),
     ("Radio", RADIO),
     ("Devices", DEVICES),
-    ("Inspector", INSPECTOR),
+    ("Stage", STAGE),
     ("Messages", MESSAGES),
 ];
 
@@ -250,7 +252,7 @@ pub fn context_title(context: Context) -> Option<&'static str> {
         Context::FolderPrompt => None,
         Context::Queue => Some("Queue"),
         Context::Devices => Some("Devices"),
-        Context::Inspector => Some("Inspector"),
+        Context::Stage => Some("Stage"),
         Context::Playlists => Some("Playlists"),
         Context::Radio => Some("Radio"),
         Context::Messages => Some("Messages"),
@@ -326,7 +328,7 @@ mod tests {
     #[test]
     fn every_binding_documents_both_a_key_and_an_action() {
         let tables = [
-            GLOBAL, NAVIGATION, QUEUE, LIBRARY, DEVICES, PLAYLISTS, RADIO, INSPECTOR, MESSAGES,
+            GLOBAL, NAVIGATION, QUEUE, LIBRARY, DEVICES, PLAYLISTS, RADIO, STAGE, MESSAGES,
         ];
         for table in tables {
             for binding in table {
@@ -343,7 +345,7 @@ mod tests {
         Context::FolderPrompt,
         Context::Queue,
         Context::Devices,
-        Context::Inspector,
+        Context::Stage,
         Context::Playlists,
         Context::Radio,
         Context::Messages,
@@ -455,7 +457,7 @@ mod tests {
                 "Playlists",
                 "Radio",
                 "Devices",
-                "Inspector",
+                "Stage",
                 "Messages"
             ]
         );
@@ -516,7 +518,7 @@ mod tests {
             Context::LibraryTree,
             Context::Queue,
             Context::Devices,
-            Context::Inspector,
+            Context::Stage,
             Context::Playlists,
             Context::Radio,
             Context::Messages,
@@ -552,7 +554,7 @@ mod tests {
         assert!(has("R", "radio"));
         assert!(has("e", "repeat"));
         assert!(has("r", "reload"));
-        assert!(has("i", "inspector"));
+        assert!(has("v / i", "now playing"));
         assert!(GLOBAL.iter().any(|b| b.keys.contains("Alt-→")));
         assert!(GLOBAL.iter().all(|b| !b.keys.contains('N')));
         assert!(GLOBAL

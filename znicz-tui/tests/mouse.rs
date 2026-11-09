@@ -261,12 +261,12 @@ fn a_click_inside_help_does_not_close_it() {
 }
 
 #[test]
-fn a_click_outside_inspector_does_not_close_it() {
+fn a_click_outside_the_devices_overlay_does_not_close_it() {
     let mut app = new_app();
-    app.modal = Modal::Inspector;
+    app.modal = Modal::Devices;
     app.hits.overlay = Some(Rect::new(20, 4, 40, 12));
     app.on_mouse(left_click(0, 0));
-    assert_eq!(app.modal, Modal::Inspector);
+    assert_eq!(app.modal, Modal::Devices);
 }
 
 #[test]
@@ -594,7 +594,7 @@ fn a_footer_add_hit_queues_the_selected_track() {
 #[test]
 fn a_footer_hit_runs_while_an_overlay_is_open() {
     let mut app = new_app();
-    app.modal = Modal::Inspector;
+    app.modal = Modal::Devices;
     app.hits.overlay = Some(Rect::new(20, 4, 40, 12));
     app.hits.footer_hints = vec![FooterHit {
         rect: Rect::new(0, 23, 7, 1),

@@ -2,7 +2,6 @@
 
 mod devices;
 mod help;
-mod inspector;
 mod library;
 mod messages;
 mod now_playing;
@@ -112,7 +111,6 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
     match app.modal {
         Modal::Help => help::render(frame, list, app),
         Modal::Devices => devices::render_modal(frame, list, app, state),
-        Modal::Inspector => inspector::render(frame, list, app, state),
         Modal::Playlists => playlists::render_modal(frame, list, app),
         Modal::Radio => radio::render_modal(frame, list, app),
         Modal::Messages => messages::render_modal(frame, list, app),
