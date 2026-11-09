@@ -30,8 +30,7 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
     app.refresh_playing(state);
     app.poll_library();
     let area = frame.area();
-    let show_cover = app.tui.show_cover;
-    let transport = crate::layout::transport_height(area.height, show_cover);
+    let transport = crate::layout::transport_height(area.height);
     let compact = area.height < crate::layout::COMPACT_HEIGHT;
 
     let chunks = Layout::default()
@@ -92,8 +91,7 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
         );
 
         library::render(frame, list, app);
-        let with_cover = crate::layout::cover_enabled(area.height, show_cover);
-        now_playing::render_transport(frame, chunks[1], app, state, !compact, with_cover);
+        now_playing::render_transport(frame, chunks[1], app, state, !compact);
     }
 
     match crate::layout::drawer(list, app.queue_open) {

@@ -6,7 +6,6 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
-use ratatui_image::picker::Picker;
 use znicz_core::{PlaybackStatus, PlayerState, RepeatMode};
 
 use crate::app::{repeat_label, App};
@@ -19,59 +18,8 @@ pub fn render_transport(
     app: &mut App,
     state: &PlayerState,
     show_signal: bool,
-    with_cover: bool,
 ) {
     if area.height == 0 || area.width == 0 {
-        return;
-    }
-
-    if !with_cover {
-        let width = area.width as usize;
-        let rows = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(vec![Constraint::Length(1); area.height as usize])
-            .split(area);
-        let last = rows.len().saturating_sub(1);
-        for (i, row) in rows.iter().enumerate() {
-            let line = if i == 0 {
-                chrome_line(state, width)
-            } else if i == last {
-                message_line(&app.toasts, app.library_status.scanning.as_ref(), width)
-            } else if show_signal {
-                signal_line(state, width)
-            } else {
-                Line::from("")
-            };
-            frame.render_widget(Paragraph::new(line), *row);
-        }
-        return;
-    }
-
-    let picker = app.picker.get_or_insert_with(Picker::halfblocks);
-    let font = picker.font_size();
-    let cover_w = crate::layout::cover_width(area.height, font.width, font.height, area.width);
-    let (cover, chrome) = crate::layout::cover_chrome_split(area, cover_w);
-    crate::views::stage::render_cover(frame, cover, app, state);
-    let scanning = app.library_status.scanning.clone();
-    render_stacked_chrome(
-        frame,
-        chrome,
-        state,
-        &app.toasts,
-        scanning.as_ref(),
-        show_signal,
-    );
-}
-
-fn render_stacked_chrome(
-    frame: &mut Frame,
-    area: Rect,
-    state: &PlayerState,
-    toasts: &crate::toast::Toasts,
-    scanning: Option<&znicz_core::ScanProgress>,
-    show_signal: bool,
-) {
-    if area.width == 0 || area.height == 0 {
         return;
     }
 
@@ -80,15 +28,16 @@ fn render_stacked_chrome(
         .direction(Direction::Vertical)
         .constraints(vec![Constraint::Length(1); area.height as usize])
         .split(area);
-
+    let last = rows.len().saturating_sub(1);
     for (i, row) in rows.iter().enumerate() {
-        let line = match i {
-            0 => title_row(state, width),
-            1 => artist_album_row(state, width),
-            2 => seek_row(state, width),
-            3 if show_signal => signal_line(state, width),
-            4 => message_line(toasts, scanning, width),
-            _ => Line::from(""),
+        let line = if i == 0 {
+            chrome_line(state, width)
+        } else if i == last {
+            message_line(&app.toasts, app.library_status.scanning.as_ref(), width)
+        } else if show_signal {
+            signal_line(state, width)
+        } else {
+            Line::from("")
         };
         frame.render_widget(Paragraph::new(line), *row);
     }
@@ -138,173 +87,6 @@ pub(crate) fn message_line(
         return Line::from(vec![Span::raw(" ".repeat(pad)), Span::styled(label, style)]);
     }
     Line::from(" ".repeat(width))
-}
-
-fn title_row(state: &PlayerState, width: usize) -> Line<'static> {
-    if width == 0 {
-        return Line::from("");
-    }
-    let status_style = status_style(state.status);
-    let sym = status_marker(state.status);
-    let title = state
-        .current_track
-        .as_ref()
-        .map(|t| t.title.as_str())
-        .unwrap_or("Nothing playing");
-    let sym_len = sym.chars().count();
-    if width <= sym_len {
-        return Line::from(Span::styled(format::truncate(&sym, width), status_style));
-    }
-    let title_w = width.saturating_sub(sym_len);
-    Line::from(vec![
-        Span::styled(sym, status_style),
-        Span::styled(format::truncate(title, title_w), theme::title()),
-    ])
-}
-
-fn artist_album_row(state: &PlayerState, width: usize) -> Line<'static> {
-    let text = state
-        .current_track
-        .as_ref()
-        .and_then(|t| t.artist_album())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_default();
-    if text.is_empty() || width == 0 {
-        return Line::from("");
-    }
-    Line::from(Span::styled(
-        format::truncate(&text, width),
-        theme::subtitle(),
-    ))
-}
-
-fn seek_row(state: &PlayerState, width: usize) -> Line<'static> {
-    if width == 0 {
-        return Line::from("");
-    }
-
-    let total = state.current_track.as_ref().and_then(|t| t.duration);
-    let times = format!(
-        " {} / {}",
-        format::duration(state.position),
-        format::duration_opt(total)
-    );
-    let times_len = times.chars().count();
-
-    let volume = if state.muted {
-        Some(" muted".to_string())
-    } else {
-        Some(format!(
-            " {} {:>3.0}%",
-            format::volume_bar(state.volume, 4),
-            state.volume * 100.0
-        ))
-    };
-
-    let mut toggle_text = String::new();
-    if state.repeat != RepeatMode::Off {
-        toggle_text.push_str(repeat_label(state.repeat));
-    }
-    if state.shuffle {
-        if !toggle_text.is_empty() {
-            toggle_text.push_str("  ");
-        }
-        toggle_text.push_str("shuffle");
-    }
-    let toggles = if toggle_text.is_empty() {
-        None
-    } else {
-        Some(format!(" {toggle_text}"))
-    };
-
-    let mut include_volume = volume.is_some();
-    let mut include_toggles = toggles.is_some();
-    let mut include_seek = true;
-
-    let volume_len = || volume.as_ref().map(|s| s.chars().count()).unwrap_or(0);
-    let toggles_len = || toggles.as_ref().map(|s| s.chars().count()).unwrap_or(0);
-
-    loop {
-        let tail = if include_volume { volume_len() } else { 0 }
-            + if include_toggles { toggles_len() } else { 0 };
-        let middle_extra = if include_seek { 1 + 4 } else { 0 };
-        if times_len + tail + middle_extra <= width {
-            break;
-        }
-        if include_toggles {
-            include_toggles = false;
-        } else if include_volume {
-            include_volume = false;
-        } else if include_seek {
-            include_seek = false;
-        } else {
-            break;
-        }
-    }
-
-    let tail_len = if include_volume { volume_len() } else { 0 }
-        + if include_toggles { toggles_len() } else { 0 };
-    let mut middle_budget = width.saturating_sub(times_len + tail_len);
-
-    let seek_len = if include_seek && middle_budget > 1 {
-        (middle_budget.saturating_sub(1)).min(40)
-    } else {
-        0
-    };
-
-    let mut spans = Vec::new();
-    if seek_len > 0 {
-        spans.push(Span::raw(" "));
-        let (done, todo) = seek_bar_parts(state, seek_len);
-        spans.push(Span::styled(done, theme::progress()));
-        spans.push(Span::styled(todo, theme::progress_track()));
-        middle_budget = middle_budget.saturating_sub(1 + seek_len);
-    }
-    let _ = middle_budget;
-
-    spans.push(Span::styled(times, theme::text()));
-
-    if include_volume {
-        if let Some(vol) = &volume {
-            spans.push(Span::styled(
-                vol.clone(),
-                if state.muted {
-                    theme::warn()
-                } else {
-                    theme::text()
-                },
-            ));
-        }
-    }
-
-    if include_toggles {
-        if let Some(tog) = &toggles {
-            let repeat_style = if state.repeat == RepeatMode::Off {
-                theme::toggle_off()
-            } else {
-                theme::toggle_on()
-            };
-            let shuffle_style = if state.shuffle {
-                theme::toggle_on()
-            } else {
-                theme::toggle_off()
-            };
-            if state.shuffle && state.repeat != RepeatMode::Off {
-                spans.push(Span::styled(
-                    format!(" {}", repeat_label(state.repeat)),
-                    repeat_style,
-                ));
-                spans.push(Span::raw("  "));
-                spans.push(Span::styled("shuffle".to_string(), shuffle_style));
-            } else if state.shuffle {
-                spans.push(Span::styled(tog.clone(), shuffle_style));
-            } else {
-                spans.push(Span::styled(tog.clone(), repeat_style));
-            }
-        }
-    }
-
-    Line::from(spans)
 }
 
 /// One-line transport chrome: symbol, title, subtitle, seek, times, volume, toggles.

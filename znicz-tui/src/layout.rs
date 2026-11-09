@@ -1,6 +1,6 @@
 //! Overlay vs full-width sheet, and the library strip the drawer leaves open.
 
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::Rect;
 
 pub const DRAWER_WIDTH: u16 = 41;
 pub const MIN_STRIP: u16 = 40;
@@ -14,21 +14,12 @@ pub fn columns_usable(strip_inner: usize) -> bool {
 
 /// Below this height the signal-path line is dropped to keep the lists usable.
 pub const COMPACT_HEIGHT: u16 = 20;
-/// The cover only shows on a window at least this tall; shorter ones keep the list.
-pub const COVER_MIN_WINDOW: u16 = 24;
-const COVER_ROWS: u16 = 8;
 /// Below this list-region height a modal takes the whole list region.
 pub const MODAL_FULL_BELOW: u16 = 10;
 
-pub fn cover_enabled(window: u16, show_cover: bool) -> bool {
-    show_cover && window >= COVER_MIN_WINDOW
-}
-
 /// Transport rows, including the message row.
-pub fn transport_height(window: u16, show_cover: bool) -> u16 {
-    if cover_enabled(window, show_cover) {
-        COVER_ROWS
-    } else if window < COMPACT_HEIGHT {
+pub fn transport_height(window: u16) -> u16 {
+    if window < COMPACT_HEIGHT {
         2
     } else {
         3
@@ -129,18 +120,6 @@ pub fn stage_layout(area: Rect, font_w: u16, font_h: u16, show_cover: bool) -> S
             height: area.height - cover_h - 1,
         },
     }
-}
-
-pub fn cover_chrome_split(area: Rect, cover_w: u16) -> (Rect, Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(cover_w),
-            Constraint::Length(1),
-            Constraint::Min(1),
-        ])
-        .split(area);
-    (chunks[0], chunks[2])
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -282,12 +261,6 @@ mod tests {
     }
 
     #[test]
-    fn cover_uses_eight_rows_on_a_normal_window() {
-        assert_eq!(transport_height(24, true), 8);
-        assert!(cover_enabled(24, true));
-    }
-
-    #[test]
     fn a_modal_is_centred_and_clamped_to_the_list_region() {
         let list = Rect::new(0, 0, 100, 30);
         assert_eq!(modal_rect(list, 40, 10), Rect::new(30, 10, 40, 10));
@@ -314,19 +287,11 @@ mod tests {
     }
 
     #[test]
-    fn the_cover_needs_a_24_row_window() {
-        assert!(cover_enabled(24, true));
-        assert!(!cover_enabled(23, true));
-        assert!(!cover_enabled(40, false));
-    }
-
-    #[test]
-    fn transport_rows_include_the_message_row() {
-        assert_eq!(transport_height(30, true), 8);
-        assert_eq!(transport_height(22, true), 3, "no cover below 24 rows");
-        assert_eq!(transport_height(15, true), 2);
-        assert_eq!(transport_height(30, false), 3);
-        assert_eq!(transport_height(15, false), 2);
+    fn the_transport_is_text_with_a_message_row() {
+        assert_eq!(transport_height(30), 3);
+        assert_eq!(transport_height(20), 3);
+        assert_eq!(transport_height(19), 2);
+        assert_eq!(transport_height(15), 2);
     }
 
     #[test]
@@ -334,19 +299,5 @@ mod tests {
         // 8×16 cells, 8 rows → 16 columns; never more than half the row.
         assert_eq!(cover_width(8, 8, 16, 80), 16);
         assert_eq!(cover_width(8, 8, 16, 20), 10);
-    }
-
-    #[test]
-    fn cover_starts_on_the_library_left_border() {
-        let area = Rect::new(0, 0, 80, 8);
-        let (cover, chrome) = cover_chrome_split(area, 16);
-        assert_eq!(cover.x, 0, "same column as the library pane's left border");
-        assert_eq!(cover.width, 16);
-        assert_eq!(
-            chrome.x,
-            cover.x + cover.width + 1,
-            "at least one empty cell between the cover and the playback text"
-        );
-        assert_eq!(cover.y, 0);
     }
 }

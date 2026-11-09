@@ -98,13 +98,11 @@ fn dump(terminal: &Terminal<TestBackend>) -> String {
 }
 
 #[test]
-fn library_keeps_most_of_the_window_when_cover_is_on() {
+fn browse_has_no_cover_even_when_show_cover_is_on() {
     let mut app = App::with_library(player(), None);
     app.tui.show_cover = true;
-    let screen = draw(&mut app, 80, 24);
-    assert_eq!(screen.lines().count(), 24);
-    assert_eq!(app.list_height, 15);
-    assert!(screen.contains("Nothing playing"), "{screen}");
+    draw(&mut app, 80, 24);
+    assert_eq!(app.list_height, 20, "24 - 3 transport - 1 footer");
 }
 
 #[test]
@@ -113,17 +111,20 @@ fn the_cover_slot_is_fully_painted_when_nothing_is_playing() {
 
     let mut app = App::with_library(player(), None);
     app.tui.show_cover = true;
+    app.view = znicz_tui::View::Stage;
     let mut terminal = ratatui::Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
     let state = app.state();
     terminal
         .draw(|frame| views::render(frame, &mut app, &state))
         .expect("draw");
     let buf = terminal.backend().buffer();
-    let cover_w = znicz_tui::layout::cover_width(8, 10, 20, 80);
-    let y0 = app.list_height;
+    let cover =
+        znicz_tui::layout::stage_layout(ratatui::layout::Rect::new(0, 0, 80, 22), 10, 20, true)
+            .cover
+            .expect("a cover at 80x22");
     let mut painted = 0u16;
-    for y in y0..y0 + 8 {
-        for x in 0..cover_w {
+    for y in cover.y..cover.y + cover.height {
+        for x in cover.x..cover.x + cover.width {
             let cell = buf.cell((x, y)).expect("cell");
             if cell.bg != Color::Reset || cell.symbol() != " " {
                 painted += 1;
@@ -132,7 +133,7 @@ fn the_cover_slot_is_fully_painted_when_nothing_is_playing() {
     }
     assert_eq!(
         painted,
-        cover_w * 8,
+        cover.width * cover.height,
         "every cover cell must be painted so a previous Kitty image cannot remain"
     );
 }
