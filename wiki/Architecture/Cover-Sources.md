@@ -13,8 +13,9 @@ The TUI asks for it through `CoverKey::Stream` (see [TUI](TUI.md#stage)).
 | 1 | `IcyUrlSource` | `icy_url` | The ICY `StreamUrl` when it is an image URL |
 | 2 | `AudioAddictSource` | `audioaddict` | Song `art_url` for RadioTunes, DI.FM, RockRadio, JazzRadio, ClassicalRadio, ZenRadio |
 | 3 | `DeezerSource` | `deezer` | Artist / title search on Deezer |
-| 4 | `MusicBrainzSource` | `musicbrainz` | Artist / title search on MusicBrainz, then the Cover Art Archive |
-| 5 | `StationArtSource` | `station_art` | The station's local `art` file |
+| 4 | `ItunesSource` | `itunes` | Artist / title search on the iTunes Search API |
+| 5 | `MusicBrainzSource` | `musicbrainz` | Artist / title search on MusicBrainz, then the Cover Art Archive |
+| 6 | `StationArtSource` | `station_art` | The station's local `art` file |
 
 When every source is empty the TUI draws the Znicz logo.
 
@@ -28,10 +29,23 @@ Notes on each source:
   `artist:"…" track:"…"` syntax returns nothing now. Hits are kept only when the
   artist name matches. A `200` body with an `error` field, HTTP 429 and 5xx are
   *unavailable*. Other 4xx are *not found*.
+- **iTunes.** `GET https://itunes.apple.com/search?term=…&entity=song&limit=5`.
+  The first result whose artist matches and that has `artworkUrl100` is used.
+  The artwork URL is changed from `/100x100bb.` to `/1000x1000bb.`, because
+  Apple serves the requested size. HTTP 403 (iTunes rate limit), 429 and 5xx are
+  *unavailable*. Other 4xx are *not found*.
 - **MusicBrainz.** Lucene query `artist:"…" AND recording:"…"`. A hit needs
   score 90 or more and a matching artist. The first 3 releases are probed at the
   Cover Art Archive `front-500` size.
 - **Station art.** A readable local file. A missing file is *not found*.
+
+**Long credits.** A credit such as `A & Friends with B` often finds nothing
+when searched whole. Deezer, iTunes and MusicBrainz then search again with the
+lead artist, which is the credit up to the first joiner (` & `, ` and `,
+` with `, ` feat. `, ` feat `, ` ft. `, ` featuring `, `, `, ` x `, ` + `). A
+credit with no joiner is searched once. Hits are still matched against the full
+credit, so `Pat Metheny` still counts for `Anna Maria Jopek & Friends with Pat
+Metheny`.
 
 ## Types
 
@@ -76,7 +90,7 @@ that source, and the chain moves on.
 ## Switches
 
 - `config.toml`: `[covers] search = true` (default on). Turns off the artist /
-  title search (Deezer, MusicBrainz) for every stream.
+  title search (Deezer, iTunes, MusicBrainz) for every stream.
 - `stations.toml`: `cover_search = false` on one station. Same effect for that
   station only. The ICY URL, AudioAddict and station art still apply.
 
@@ -85,7 +99,8 @@ Both values are wired through `TuiConfig.cover_search` in `znicz/src/main.rs`.
 ## Privacy
 
 With search on, the playing stream's ICY title (artist and track) is sent to
-Deezer and, when Deezer has no match, to MusicBrainz. Set `search = false` or
+Deezer, then to Apple (iTunes) and MusicBrainz when the earlier sources find
+nothing. Set `search = false` or
 `cover_search = false` to keep titles on the device.
 
 ## MusicBrainz etiquette

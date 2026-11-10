@@ -1,6 +1,6 @@
 # iTunes Cover Source Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add an iTunes Search cover source and make every search source retry with the lead artist of a multi-artist credit.
 
@@ -18,7 +18,7 @@
 
 **Files:** Modify `znicz-core/src/cover/title.rs`
 
-- [ ] **Step 1: Failing tests** (add to the `tests` module)
+- [x] **Step 1: Failing tests** (add to the `tests` module)
 
 ```rust
     #[test]
@@ -49,9 +49,9 @@
     }
 ```
 
-- [ ] **Step 2:** `cargo test -p znicz-core --lib cover::title` → compile errors (functions missing).
+- [x] **Step 2:** `cargo test -p znicz-core --lib cover::title` → compile errors (functions missing).
 
-- [ ] **Step 3: Implement** (above `#[cfg(test)]`)
+- [x] **Step 3: Implement** (above `#[cfg(test)]`)
 
 ```rust
 /// What joins several artists in one credit (`A & B`, `A feat. B`, …).
@@ -83,8 +83,8 @@ pub(crate) fn artist_attempts(credit: &str) -> Vec<&str> {
 }
 ```
 
-- [ ] **Step 4:** `cargo test -p znicz-core --lib cover::title` → all pass.
-- [ ] **Step 5:** Commit `Add lead-artist attempts for cover search`.
+- [x] **Step 4:** `cargo test -p znicz-core --lib cover::title` → all pass.
+- [x] **Step 5:** Commit `Add lead-artist attempts for cover search`.
 
 ---
 
@@ -92,7 +92,7 @@ pub(crate) fn artist_attempts(credit: &str) -> Vec<&str> {
 
 **Files:** Modify `znicz-core/src/cover/deezer.rs`, `znicz-core/src/cover/musicbrainz.rs`
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 `deezer.rs` tests:
 
@@ -148,9 +148,9 @@ pub(crate) fn artist_attempts(credit: &str) -> Vec<&str> {
     }
 ```
 
-- [ ] **Step 2:** `cargo test -p znicz-core --lib cover::` → the new tests fail (one request only / NotFound).
+- [x] **Step 2:** `cargo test -p znicz-core --lib cover::` → the new tests fail (one request only / NotFound).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Deezer: move the single search into a helper and loop over attempts. The hit filter still matches against the **full** credit.
 
@@ -247,8 +247,8 @@ MusicBrainz: same shape. Keep `release_ids(json, artist)` matching the full cred
     }
 ```
 
-- [ ] **Step 4:** `cargo test -p znicz-core --lib cover::` → all pass. `cargo clippy -p znicz-core --all-targets -- -D warnings` clean.
-- [ ] **Step 5:** Commit `Retry Deezer and MusicBrainz cover searches with the lead artist`.
+- [x] **Step 4:** `cargo test -p znicz-core --lib cover::` → all pass. `cargo clippy -p znicz-core --all-targets -- -D warnings` clean.
+- [x] **Step 5:** Commit `Retry Deezer and MusicBrainz cover searches with the lead artist`.
 
 ---
 
@@ -256,7 +256,7 @@ MusicBrainz: same shape. Keep `release_ids(json, artist)` matching the full cred
 
 **Files:** Create `znicz-core/src/cover/itunes.rs`; modify `cover/mod.rs` (`pub mod itunes;`, `default_sources`, chain-order test)
 
-- [ ] **Step 1: Failing tests** — `itunes.rs`:
+- [x] **Step 1: Failing tests** — `itunes.rs`:
 
 ```rust
 //! Apple's iTunes Search API by artist and title. No key; Apple serves the
@@ -350,9 +350,9 @@ Update the chain-order test in `cover/mod.rs` to
 
 The local test server's status reasons: add `403 => "Forbidden"` to the match in `http.rs` `test_server::serve` if it only knows 200/404/503.
 
-- [ ] **Step 2:** `cargo test -p znicz-core --lib cover::` → compile errors (`ItunesSource` missing).
+- [x] **Step 2:** `cargo test -p znicz-core --lib cover::` → compile errors (`ItunesSource` missing).
 
-- [ ] **Step 3: Implement** (above the tests in `itunes.rs`)
+- [x] **Step 3: Implement** (above the tests in `itunes.rs`)
 
 ```rust
 use serde_json::Value;
@@ -448,8 +448,8 @@ impl CoverSource for ItunesSource {
 
 `cover/mod.rs`: `pub mod itunes;`, and in `default_sources()` insert `Box::new(itunes::ItunesSource::new()),` after the Deezer line. Update the `default_sources` doc comment to mention iTunes.
 
-- [ ] **Step 4:** `cargo test -p znicz-core --lib cover::` → all pass; clippy clean.
-- [ ] **Step 5:** Commit `Add the iTunes Search cover source`.
+- [x] **Step 4:** `cargo test -p znicz-core --lib cover::` → all pass; clippy clean.
+- [x] **Step 5:** Commit `Add the iTunes Search cover source`.
 
 ---
 
@@ -457,8 +457,8 @@ impl CoverSource for ItunesSource {
 
 **Files:** `Cargo.toml`, `README.md`, `wiki/Architecture/Cover-Sources.md`, `wiki/Architecture/TUI.md`, `wiki/Domain/Formats-and-Metadata.md`, `znicz-core/tests/cover_live.rs`, this plan
 
-- [ ] **Step 1:** Version `0.12.0` in the root `Cargo.toml`.
-- [ ] **Step 2:** Docs: everywhere the chain order is listed (README features bullet and Stage sentence, `Cover-Sources.md`, `TUI.md`, `Formats-and-Metadata.md`), add iTunes after Deezer. `Cover-Sources.md`: an iTunes section (endpoint, 1000 px artwork, 403 = rate limit) and a "Long credits" paragraph (lead-artist retry, joiners list, matching against the full credit). README privacy sentence: titles go to Deezer, then Apple (iTunes) and MusicBrainz when earlier sources find nothing. `[covers] search` comment: `(Deezer, iTunes, MusicBrainz)`.
-- [ ] **Step 3:** Live test: in `znicz-core/tests/cover_live.rs`, add a third query (FluxFM station, icy_title `Anna Maria Jopek & Friends with Pat Metheny - Przypływ, odpływ`) to `live_covers_for_known_stations`, asserting `Resolution::Found` with an image mime. Run `cargo test -p znicz-core --test cover_live -- --ignored --nocapture` and report.
-- [ ] **Step 4:** `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`.
-- [ ] **Step 5:** Tick this plan's boxes; commit `Document the iTunes cover source; bump to 0.12.0`.
+- [x] **Step 1:** Version `0.12.0` in the root `Cargo.toml`.
+- [x] **Step 2:** Docs: everywhere the chain order is listed (README features bullet and Stage sentence, `Cover-Sources.md`, `TUI.md`, `Formats-and-Metadata.md`), add iTunes after Deezer. `Cover-Sources.md`: an iTunes section (endpoint, 1000 px artwork, 403 = rate limit) and a "Long credits" paragraph (lead-artist retry, joiners list, matching against the full credit). README privacy sentence: titles go to Deezer, then Apple (iTunes) and MusicBrainz when earlier sources find nothing. `[covers] search` comment: `(Deezer, iTunes, MusicBrainz)`.
+- [x] **Step 3:** Live test: in `znicz-core/tests/cover_live.rs`, add a third query (FluxFM station, icy_title `Anna Maria Jopek & Friends with Pat Metheny - Przypływ, odpływ`) to `live_covers_for_known_stations`, asserting `Resolution::Found` with an image mime. Run `cargo test -p znicz-core --test cover_live -- --ignored --nocapture` and report.
+- [x] **Step 4:** `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`.
+- [x] **Step 5:** Tick this plan's boxes; commit `Document the iTunes cover source; bump to 0.12.0`.
