@@ -144,3 +144,4 @@ Browse dropped the cover and gives the library the full height; the cover lives 
 Not in phases 3–6. Tracked as GitHub issues; see [Issues](../Issues.md).
 
 - Settings overlay — [#6](https://github.com/eugene-chekan/znicz/issues/6)
+- Colour themes for light and Solarized palettes — [#68](https://github.com/eugene-chekan/znicz/issues/68)

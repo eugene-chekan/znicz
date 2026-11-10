@@ -8,6 +8,7 @@ This page is an index plus write-ups that never had a GitHub ticket.
 Parked TUI ideas (file, do not start unless asked):
 
 - [#6 Settings screen overlay](https://github.com/eugene-chekan/znicz/issues/6) (also the home for fade settings and music folders)
+- [#68 Colour themes](https://github.com/eugene-chekan/znicz/issues/68) (light and Solarized palettes are hard to read; a few built-in themes)
 
 Playlists (file, do not start unless asked):
 
