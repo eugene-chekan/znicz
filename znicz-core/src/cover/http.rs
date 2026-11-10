@@ -55,7 +55,6 @@ pub(crate) fn get_json(url: &str, query: &[(&str, &str)]) -> Fetched {
 }
 
 /// Status of a GET, body unread. `None` on a transport failure.
-#[allow(dead_code)] // used by the search sources (Task 4, 5)
 pub(crate) fn probe(url: &str) -> Option<u16> {
     match agent().get(url).call() {
         Ok(response) => Some(response.status().as_u16()),

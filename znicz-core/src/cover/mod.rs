@@ -4,6 +4,7 @@ pub mod audioaddict;
 pub mod deezer;
 pub(crate) mod http;
 pub mod icy_url;
+pub mod musicbrainz;
 pub mod station_art;
 pub mod title;
 
