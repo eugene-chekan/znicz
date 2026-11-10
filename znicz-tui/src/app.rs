@@ -1058,8 +1058,18 @@ impl App {
             KeyCode::Char('n') => self.skip_track(false),
             KeyCode::Char('p') => self.skip_track(true),
 
-            KeyCode::Up if key.modifiers.contains(KeyModifiers::ALT) => self.move_queue_row(-1),
-            KeyCode::Down if key.modifiers.contains(KeyModifiers::ALT) => self.move_queue_row(1),
+            // Alt-↑/↓ belong to the queue drawer only; elsewhere they fall
+            // through and move the cursor like ↑/↓.
+            KeyCode::Up
+                if key.modifiers.contains(KeyModifiers::ALT) && self.queue_reorder_active() =>
+            {
+                self.move_queue_row(-1)
+            }
+            KeyCode::Down
+                if key.modifiers.contains(KeyModifiers::ALT) && self.queue_reorder_active() =>
+            {
+                self.move_queue_row(1)
+            }
             KeyCode::Right if key.modifiers.contains(KeyModifiers::ALT) => {
                 self.pan_titles(1);
             }
@@ -2002,8 +2012,12 @@ impl App {
     }
 
     /// `Alt-↑` / `Alt-↓`: move the highlighted queue row; the cursor follows it.
+    fn queue_reorder_active(&self) -> bool {
+        self.modal == Modal::None && self.queue_open && self.focus == Focus::Queue
+    }
+
     fn move_queue_row(&mut self, delta: isize) {
-        if self.modal != Modal::None || !self.queue_open || self.focus != Focus::Queue {
+        if !self.queue_reorder_active() {
             return;
         }
         let len = self.player.state().queue.len();

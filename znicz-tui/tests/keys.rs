@@ -1562,3 +1562,21 @@ fn alt_arrows_do_nothing_with_a_modal_open() {
         znicz_core::QueueItem::file("/music/track-0.flac")
     );
 }
+
+#[test]
+fn alt_arrows_move_a_list_overlay_cursor_like_plain_arrows() {
+    let mut app = new_app();
+    queue(&mut app, 3);
+    open_queue(&mut app);
+    app.modal = Modal::Playlists;
+    app.playlists = vec!["a".into(), "b".into(), "c".into()];
+    press_alt(&mut app, KeyCode::Down);
+    assert_eq!(app.playlist_cursor.selected(3), Some(1));
+    press_alt(&mut app, KeyCode::Up);
+    assert_eq!(app.playlist_cursor.selected(3), Some(0));
+    assert_eq!(
+        app.state().queue[0],
+        znicz_core::QueueItem::file("/music/track-0.flac"),
+        "the queue must not move"
+    );
+}

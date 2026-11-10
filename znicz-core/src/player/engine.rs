@@ -261,12 +261,17 @@ impl PlayerEngine {
             Command::Seek(pos) => self.seek(pos)?,
             Command::SetVolume(vol) => {
                 let v = vol.clamp(0.0, 1.0);
-                let effective = {
+                let (before, effective) = {
                     let mut state = self.state.write().unwrap();
+                    let before = state.effective_volume();
                     state.volume = v;
-                    state.effective_volume()
+                    (before, state.effective_volume())
                 };
-                self.output.set_volume(effective);
+                // Unchanged (volume keys while muted): leave a running mute
+                // fade alone instead of cutting it short with a 20 ms ramp.
+                if effective != before {
+                    self.output.set_volume(effective);
+                }
                 self.emit_state_changed();
             }
             Command::SetMuted(muted) => {
