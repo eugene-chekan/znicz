@@ -224,6 +224,11 @@ With search on, the playing stream's ICY title is sent to Deezer and, when
 Deezer has no match, to MusicBrainz. Set `search = false` to keep titles local.
 See [Stream covers](wiki/Architecture/Cover-Sources.md).
 
+**Colours.** The interface uses your terminal's 16 ANSI colours and is tuned
+for dark palettes. On light palettes, and on some dark ones such as Solarized
+Dark, body text or dim hints can be hard to read. Selectable themes are planned
+([#68](https://github.com/eugene-chekan/znicz/issues/68)).
+
 The last queue (and volume, mute, repeat, shuffle) is
 `~/.local/share/znicz/session.toml`. Override with `ZNICZ_SESSION_PATH`.
 The player process writes it after those fields settle, and on exit.

@@ -423,7 +423,7 @@ top of the player.
 | `views/help.rs` | help overlay: context first, scroll, filter row |
 | `help_state.rs` | help context, scroll, and filter text |
 | `footer_hits.rs` | footer hint placement and click targets |
-| `theme.rs` | every colour, in one place |
+| `theme.rs` | every colour, in one place (16 ANSI colours, tuned for dark palettes; themes: [#68](https://github.com/eugene-chekan/znicz/issues/68)) |
 | `keys.rs` | the keymap as data |
 | `cursor.rs` | list cursor movement |
 | `line_edit.rs` | one-line prompt caret (search, playlist save, radio) |
