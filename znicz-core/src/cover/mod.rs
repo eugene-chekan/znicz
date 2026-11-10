@@ -1,5 +1,9 @@
 //! Cover art for radio streams: a chain of sources tried in order.
 
+pub mod audioaddict;
+pub(crate) mod http;
+pub mod icy_url;
+pub mod station_art;
 pub mod title;
 
 use std::collections::{HashMap, VecDeque};
