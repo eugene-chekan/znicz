@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -9,6 +9,7 @@ use rtrb::{Consumer, Producer};
 
 use crate::audio::buffer;
 use crate::audio::feeder::SampleSink;
+use crate::audio::gain::{GainControl, GainRamp, VOLUME_RAMP};
 use crate::error::{Result, ZniczError};
 use crate::player::state::AudioDeviceInfo;
 
@@ -20,7 +21,7 @@ pub struct AudioOutput {
     sample_format: Option<String>,
     device_name: Option<String>,
     paused: Arc<AtomicBool>,
-    volume_bits: Arc<AtomicU32>,
+    gain: Arc<GainControl>,
     flush: Arc<AtomicBool>,
 }
 
@@ -40,7 +41,7 @@ impl AudioOutput {
             sample_format: None,
             device_name: None,
             paused: Arc::new(AtomicBool::new(false)),
-            volume_bits: Arc::new(AtomicU32::new(1.0f32.to_bits())),
+            gain: Arc::new(GainControl::new(1.0)),
             flush: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -49,9 +50,14 @@ impl AudioOutput {
         self.paused.store(paused, Ordering::Relaxed);
     }
 
+    /// Move the output gain to `target` over `ramp`.
+    pub fn set_gain(&self, target: f32, ramp: Duration) {
+        self.gain.set(target, ramp);
+    }
+
+    /// A volume change: a short ramp so it does not click.
     pub fn set_volume(&self, volume: f32) {
-        let v = volume.clamp(0.0, 1.0);
-        self.volume_bits.store(v.to_bits(), Ordering::Relaxed);
+        self.set_gain(volume, VOLUME_RAMP);
     }
 
     pub fn sample_rate(&self) -> u32 {
@@ -164,7 +170,7 @@ impl AudioOutput {
 
         let (producer, consumer) = buffer::new_pair();
         let paused = self.paused.clone();
-        let volume_bits = self.volume_bits.clone();
+        let gain = self.gain.clone();
         let flush = self.flush.clone();
 
         let stream = build_stream(
@@ -173,7 +179,7 @@ impl AudioOutput {
             sample_format,
             consumer,
             paused,
-            volume_bits,
+            gain,
             flush,
         )?;
         stream
@@ -284,10 +290,15 @@ fn build_stream(
     sample_format: SampleFormat,
     consumer: Consumer<f32>,
     paused: Arc<AtomicBool>,
-    volume_bits: Arc<AtomicU32>,
+    gain: Arc<GainControl>,
     flush: Arc<AtomicBool>,
 ) -> Result<Stream> {
     let err_fn = |err| tracing::error!("audio stream error: {err}");
+
+    let (target, _, generation) = gain.snapshot();
+    let mut ramp = GainRamp::new(target, generation);
+    let channels = usize::from(config.channels.max(1));
+    let rate = config.sample_rate.0;
 
     let stream = match sample_format {
         SampleFormat::I16 => {
@@ -295,7 +306,16 @@ fn build_stream(
             device.build_output_stream(
                 config,
                 move |data: &mut [i16], _| {
-                    fill_i16(data, &mut consumer, &paused, &volume_bits, &flush);
+                    fill_i16(
+                        data,
+                        &mut consumer,
+                        &paused,
+                        &gain,
+                        &mut ramp,
+                        channels,
+                        rate,
+                        &flush,
+                    );
                 },
                 err_fn,
                 None,
@@ -306,7 +326,16 @@ fn build_stream(
             device.build_output_stream(
                 config,
                 move |data: &mut [u16], _| {
-                    fill_u16(data, &mut consumer, &paused, &volume_bits, &flush);
+                    fill_u16(
+                        data,
+                        &mut consumer,
+                        &paused,
+                        &gain,
+                        &mut ramp,
+                        channels,
+                        rate,
+                        &flush,
+                    );
                 },
                 err_fn,
                 None,
@@ -317,7 +346,16 @@ fn build_stream(
             device.build_output_stream(
                 config,
                 move |data: &mut [f32], _| {
-                    fill_f32(data, &mut consumer, &paused, &volume_bits, &flush);
+                    fill_f32(
+                        data,
+                        &mut consumer,
+                        &paused,
+                        &gain,
+                        &mut ramp,
+                        channels,
+                        rate,
+                        &flush,
+                    );
                 },
                 err_fn,
                 None,
@@ -343,50 +381,71 @@ fn next_sample(consumer: &mut Consumer<f32>, volume: f32, paused: bool) -> f32 {
     consumer.pop().map(|s| s * volume).unwrap_or(0.0)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn fill_f32(
     data: &mut [f32],
     consumer: &mut Consumer<f32>,
     paused: &AtomicBool,
-    volume_bits: &AtomicU32,
+    gain: &GainControl,
+    ramp: &mut GainRamp,
+    channels: usize,
+    sample_rate: u32,
     flush: &AtomicBool,
 ) {
     drain_if_flushing(consumer, flush);
     let paused = paused.load(Ordering::Relaxed);
-    let volume = f32::from_bits(volume_bits.load(Ordering::Relaxed));
-    for out in data.iter_mut() {
-        *out = next_sample(consumer, volume, paused);
+    ramp.follow(gain, sample_rate);
+    for frame in data.chunks_mut(channels) {
+        let g = ramp.next_frame_gain();
+        for out in frame.iter_mut() {
+            *out = next_sample(consumer, g, paused);
+        }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn fill_i16(
     data: &mut [i16],
     consumer: &mut Consumer<f32>,
     paused: &AtomicBool,
-    volume_bits: &AtomicU32,
+    gain: &GainControl,
+    ramp: &mut GainRamp,
+    channels: usize,
+    sample_rate: u32,
     flush: &AtomicBool,
 ) {
     drain_if_flushing(consumer, flush);
     let paused = paused.load(Ordering::Relaxed);
-    let volume = f32::from_bits(volume_bits.load(Ordering::Relaxed));
-    for out in data.iter_mut() {
-        let sample = next_sample(consumer, volume, paused).clamp(-1.0, 1.0);
-        *out = (sample * i16::MAX as f32) as i16;
+    ramp.follow(gain, sample_rate);
+    for frame in data.chunks_mut(channels) {
+        let g = ramp.next_frame_gain();
+        for out in frame.iter_mut() {
+            let sample = next_sample(consumer, g, paused).clamp(-1.0, 1.0);
+            *out = (sample * i16::MAX as f32) as i16;
+        }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn fill_u16(
     data: &mut [u16],
     consumer: &mut Consumer<f32>,
     paused: &AtomicBool,
-    volume_bits: &AtomicU32,
+    gain: &GainControl,
+    ramp: &mut GainRamp,
+    channels: usize,
+    sample_rate: u32,
     flush: &AtomicBool,
 ) {
     drain_if_flushing(consumer, flush);
     let paused = paused.load(Ordering::Relaxed);
-    let volume = f32::from_bits(volume_bits.load(Ordering::Relaxed));
-    for out in data.iter_mut() {
-        let sample = next_sample(consumer, volume, paused).clamp(-1.0, 1.0);
-        *out = ((sample * 0.5 + 0.5) * u16::MAX as f32) as u16;
+    ramp.follow(gain, sample_rate);
+    for frame in data.chunks_mut(channels) {
+        let g = ramp.next_frame_gain();
+        for out in frame.iter_mut() {
+            let sample = next_sample(consumer, g, paused).clamp(-1.0, 1.0);
+            *out = ((sample * 0.5 + 0.5) * u16::MAX as f32) as u16;
+        }
     }
 }
 

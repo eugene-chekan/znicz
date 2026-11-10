@@ -6,6 +6,7 @@ use crossbeam_channel::{bounded, unbounded, Receiver, RecvTimeoutError, Sender};
 
 use crate::audio::convert::{adapt_channels, RateConverter};
 use crate::audio::feeder::{DecodeStep, Feeder, PumpOutcome};
+use crate::audio::gain::MUTE_FADE;
 use crate::audio::http::HttpStreamSource;
 use crate::audio::icy::{apply_icy_to_track, apply_icy_url_to_track, IcyTitle, IcyUrl};
 use crate::audio::output::AudioOutput;
@@ -274,7 +275,7 @@ impl PlayerEngine {
                     state.muted = muted;
                     state.effective_volume()
                 };
-                self.output.set_volume(effective);
+                self.output.set_gain(effective, MUTE_FADE);
                 self.emit_state_changed();
             }
             Command::NextTrack => self.next_track()?,
