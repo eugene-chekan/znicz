@@ -33,14 +33,41 @@ struct Advertise {
     token: String,
 }
 
+/// Names one change request so a resend after a lost reply is answered from
+/// memory instead of being applied twice. `client` is random per [`IpcClient`];
+/// `seq` counts that client's requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct RequestId {
+    client: u64,
+    seq: u64,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum IpcRequest {
-    Hello { token: String, role: ClientRole },
-    State { token: String },
-    Command { token: String, command: Command },
-    Shutdown { token: String },
-    Library { token: String, op: LibraryOp },
+    Hello {
+        token: String,
+        role: ClientRole,
+    },
+    State {
+        token: String,
+    },
+    Command {
+        token: String,
+        command: Command,
+        /// Absent from older clients; those requests are never deduplicated.
+        #[serde(default)]
+        id: Option<RequestId>,
+    },
+    Shutdown {
+        token: String,
+    },
+    Library {
+        token: String,
+        op: LibraryOp,
+        #[serde(default)]
+        id: Option<RequestId>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -66,6 +93,7 @@ struct Shared {
     advertise: PathBuf,
     persist: Mutex<Option<SessionPersister>>,
     library: Option<Arc<dyn LibraryHost>>,
+    recent: Mutex<RecentOutcomes>,
 }
 
 impl Shared {
@@ -75,6 +103,68 @@ impl Shared {
             library: self.library.as_ref().map(|host| host.status()),
         }
     }
+
+    /// Run a change request once per id. A resend of the last id from the
+    /// same client gets the stored outcome instead of running `apply` again.
+    ///
+    /// The lock is held while `apply` runs, so a resend that arrives while the
+    /// first attempt is still running waits for it rather than racing it.
+    fn apply_once(&self, id: Option<RequestId>, apply: impl FnOnce() -> Result<()>) -> IpcResponse {
+        let outcome = match id {
+            None => apply().map_err(|e| e.to_string()),
+            Some(id) => {
+                let mut recent = self
+                    .recent
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                match recent.get(id) {
+                    Some(outcome) => outcome,
+                    None => {
+                        let outcome = apply().map_err(|e| e.to_string());
+                        recent.record(id, outcome.clone());
+                        outcome
+                    }
+                }
+            }
+        };
+        match outcome {
+            Ok(()) => self.ok(),
+            Err(message) => IpcResponse::Err { message },
+        }
+    }
+}
+
+/// How many clients' last outcomes the player remembers.
+const RECENT_CLIENTS: usize = 64;
+
+/// The last change request's outcome per client, oldest client first.
+#[derive(Default)]
+struct RecentOutcomes {
+    entries: std::collections::VecDeque<(RequestId, std::result::Result<(), String>)>,
+}
+
+impl RecentOutcomes {
+    fn get(&self, id: RequestId) -> Option<std::result::Result<(), String>> {
+        self.entries
+            .iter()
+            .find(|(seen, _)| *seen == id)
+            .map(|(_, outcome)| outcome.clone())
+    }
+
+    fn record(&mut self, id: RequestId, outcome: std::result::Result<(), String>) {
+        self.entries.retain(|(seen, _)| seen.client != id.client);
+        self.entries.push_back((id, outcome));
+        if self.entries.len() > RECENT_CLIENTS {
+            self.entries.pop_front();
+        }
+    }
+}
+
+fn random_u64() -> u64 {
+    use std::hash::{BuildHasher, Hasher, RandomState};
+    let mut hasher = RandomState::new().build_hasher();
+    hasher.write_u64(std::process::id() as u64);
+    hasher.finish()
 }
 
 fn random_token() -> String {
@@ -226,6 +316,7 @@ impl IpcServer {
             advertise: advertise.clone(),
             persist: Mutex::new(persist),
             library,
+            recent: Mutex::default(),
         });
         let join = match thread::Builder::new()
             .name("znicz-ipc".into())
@@ -405,26 +496,16 @@ fn handle_session(stream: TcpStream, shared: Arc<Shared>) {
             IpcRequest::State { .. } => {
                 let _ = write_json_line(&mut writer, &shared.ok());
             }
-            IpcRequest::Command { command, .. } => {
-                let response = match shared.player.send_blocking(command) {
-                    Ok(()) => shared.ok(),
-                    Err(e) => IpcResponse::Err {
-                        message: e.to_string(),
-                    },
-                };
+            IpcRequest::Command { command, id, .. } => {
+                let response = shared.apply_once(id, || shared.player.send_blocking(command));
                 let _ = write_json_line(&mut writer, &response);
             }
-            IpcRequest::Library { op, .. } => {
+            IpcRequest::Library { op, id, .. } => {
                 let response = match &shared.library {
                     None => IpcResponse::Err {
                         message: "no music library configured".into(),
                     },
-                    Some(host) => match host.apply(op) {
-                        Ok(()) => shared.ok(),
-                        Err(e) => IpcResponse::Err {
-                            message: e.to_string(),
-                        },
-                    },
+                    Some(host) => shared.apply_once(id, || host.apply(op)),
                 };
                 let _ = write_json_line(&mut writer, &response);
             }
@@ -487,10 +568,12 @@ fn command_result(response: std::result::Result<IpcResponse, RpcFailure>) -> Res
 
 impl LibraryHost for IpcClient {
     fn apply(&self, op: LibraryOp) -> Result<()> {
+        let id = self.next_request_id();
         match self
             .rpc_detailed(|token| IpcRequest::Library {
                 token: token.to_string(),
                 op: op.clone(),
+                id: Some(id),
             })
             .map_err(RpcFailure::into_error)?
         {
@@ -544,6 +627,10 @@ struct IpcInner {
     role: ClientRole,
     live: Mutex<Live>,
     ensure: Option<EnsureFn>,
+    /// Names this client in [`RequestId`]s; random so restarts and other
+    /// processes do not collide.
+    client: u64,
+    next_seq: std::sync::atomic::AtomicU64,
 }
 
 fn open_stream(advertise_path: &Path, role: ClientRole) -> Result<Live> {
@@ -619,8 +706,18 @@ impl IpcClient {
                 role,
                 live: Mutex::new(live),
                 ensure,
+                client: random_u64(),
+                next_seq: std::sync::atomic::AtomicU64::new(1),
             }),
         })
+    }
+
+    /// A fresh id for one change request; a resend of it reuses the same id.
+    fn next_request_id(&self) -> RequestId {
+        RequestId {
+            client: self.inner.client,
+            seq: self.inner.next_seq.fetch_add(1, Ordering::Relaxed),
+        }
     }
 
     fn lock_live(&self) -> Result<std::sync::MutexGuard<'_, Live>> {
@@ -674,9 +771,11 @@ impl IpcClient {
     }
 
     pub fn send_blocking(&self, command: Command) -> Result<()> {
+        let id = self.next_request_id();
         command_result(self.rpc_detailed(|token| IpcRequest::Command {
             token: token.to_string(),
             command: command.clone(),
+            id: Some(id),
         }))
     }
 
@@ -775,6 +874,136 @@ mod tests {
     }
 
     #[test]
+    fn recent_outcomes_keep_the_last_request_per_client_and_cap_the_clients() {
+        let mut recent = RecentOutcomes::default();
+        let id = |client, seq| RequestId { client, seq };
+
+        recent.record(id(1, 1), Ok(()));
+        recent.record(id(1, 2), Err("queue index out of range".into()));
+        assert_eq!(recent.get(id(1, 1)), None, "only the last request is kept");
+        assert_eq!(
+            recent.get(id(1, 2)),
+            Some(Err("queue index out of range".into()))
+        );
+
+        for client in 2..=RECENT_CLIENTS as u64 + 1 {
+            recent.record(id(client, 1), Ok(()));
+        }
+        assert_eq!(recent.get(id(1, 2)), None, "the oldest client is dropped");
+        assert_eq!(recent.get(id(2, 1)), Some(Ok(())));
+        assert_eq!(recent.entries.len(), RECENT_CLIENTS);
+    }
+
+    fn queue_add(token: &str, id: RequestId) -> IpcRequest {
+        IpcRequest::Command {
+            token: token.to_string(),
+            command: Command::QueueAdd(vec![crate::QueueItem::File {
+                path: PathBuf::from("/nowhere/a.flac"),
+            }]),
+            id: Some(id),
+        }
+    }
+
+    #[test]
+    fn a_resent_command_is_answered_without_applying_it_again() {
+        let path = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let _server = IpcServer::start(player.clone(), &path).expect("start ipc");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        let token = load_advertise(&path).expect("advertise").token;
+        let id = RequestId { client: 7, seq: 1 };
+
+        for _ in 0..2 {
+            let reply = client.rpc_raw(queue_add(&token, id)).expect("rpc");
+            assert!(matches!(reply, IpcResponse::Ok { .. }), "{reply:?}");
+        }
+
+        assert_eq!(player.state().queue.len(), 1);
+    }
+
+    #[test]
+    fn a_new_request_id_is_applied() {
+        let path = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let _server = IpcServer::start(player.clone(), &path).expect("start ipc");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        let token = load_advertise(&path).expect("advertise").token;
+
+        client
+            .rpc_raw(queue_add(&token, RequestId { client: 7, seq: 1 }))
+            .expect("first");
+        client
+            .rpc_raw(queue_add(&token, RequestId { client: 7, seq: 2 }))
+            .expect("second");
+        client
+            .rpc_raw(queue_add(&token, RequestId { client: 8, seq: 1 }))
+            .expect("other client");
+
+        assert_eq!(player.state().queue.len(), 3);
+    }
+
+    /// A fake player: answers the hello, then hands back the requests it reads.
+    fn accept_session(listener: &TcpListener) -> (TcpStream, BufReader<TcpStream>) {
+        let (stream, _) = listener.accept().expect("accept");
+        let mut writer = stream.try_clone().expect("clone");
+        let mut reader = BufReader::new(stream);
+        let _hello: IpcRequest = read_json_line(&mut reader).expect("hello");
+        write_json_line(&mut writer, &fake_ok()).expect("hello reply");
+        (writer, reader)
+    }
+
+    fn fake_ok() -> IpcResponse {
+        IpcResponse::Ok {
+            state: Box::default(),
+            library: None,
+        }
+    }
+
+    fn request_id(request: IpcRequest) -> Option<RequestId> {
+        match request {
+            IpcRequest::Command { id, .. } | IpcRequest::Library { id, .. } => id,
+            other => panic!("expected a change request, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_resend_after_a_lost_reply_carries_the_same_id() {
+        let path = advertise_path();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let advertise = Advertise {
+            port: listener.local_addr().expect("addr").port(),
+            token: "t".into(),
+        };
+        save_advertise(&path, &advertise).expect("advertise");
+
+        let fake = thread::spawn(move || {
+            let mut ids = Vec::new();
+            // First session: read the request, then drop the connection
+            // without replying, as if the reply were lost.
+            let (_writer, mut reader) = accept_session(&listener);
+            ids.push(request_id(read_json_line(&mut reader).expect("request")));
+            drop((_writer, reader));
+            // Second session: answer the resend and one more request.
+            let (mut writer, mut reader) = accept_session(&listener);
+            for _ in 0..2 {
+                ids.push(request_id(read_json_line(&mut reader).expect("request")));
+                write_json_line(&mut writer, &fake_ok()).expect("reply");
+            }
+            ids
+        });
+
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        client.send_blocking(Command::QueueClear).expect("resent");
+        client.send_blocking(Command::QueueClear).expect("next");
+        let ids = fake.join().expect("fake player");
+        let _ = fs::remove_file(&path);
+
+        assert!(ids[0].is_some(), "commands carry a request id: {ids:?}");
+        assert_eq!(ids[0], ids[1], "the resend reuses the id");
+        assert_ne!(ids[1], ids[2], "the next request gets a new id");
+    }
+
+    #[test]
     fn missing_advertise_is_an_error() {
         let path = advertise_path();
         let _ = fs::remove_file(&path);
@@ -794,6 +1023,7 @@ mod tests {
                 .rpc_raw(IpcRequest::Command {
                     token,
                     command: Command::SetVolume(0.2),
+                    id: None,
                 })
                 .expect("rpc");
             match err {

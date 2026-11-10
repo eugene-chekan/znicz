@@ -5,10 +5,6 @@ This page is an index plus write-ups that never had a GitHub ticket.
 
 ## Open
 
-Bugs:
-
-- [#63 IPC retry can apply a command twice when the reply is lost](https://github.com/eugene-chekan/znicz/issues/63)
-
 Parked TUI ideas (file, do not start unless asked):
 
 - [#6 Settings screen overlay](https://github.com/eugene-chekan/znicz/issues/6) (also the home for fade settings and music folders)
@@ -30,6 +26,17 @@ radio** (HLS, PLS, XSPF) are on the
 streams, including ICY now playing) is done.
 
 ## Closed
+
+### [#63 IPC retry can apply a command twice when the reply is lost](https://github.com/eugene-chekan/znicz/issues/63)
+
+- **Component:** `znicz-core`
+- **Status:** **Fixed** in 0.10.1
+
+`IpcClient` resent a request once after any failure, including a reply lost
+after the player had already applied it, so `QueueAdd`, `QueueRemove`, and
+`QueueMove` could run twice. Change requests now carry a request id (client
+number and counter); the player answers a repeat of a client's last id from
+memory. See [Overview](Architecture/Overview.md).
 
 ### [#5 Command palette](https://github.com/eugene-chekan/znicz/issues/5)
 
