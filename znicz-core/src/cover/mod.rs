@@ -195,6 +195,18 @@ impl StreamCovers {
     }
 }
 
+/// The built-in chain: the station's own image URL, the AudioAddict API,
+/// artist / title search (Deezer, then MusicBrainz), the station's local art.
+pub fn default_sources() -> Vec<Box<dyn CoverSource>> {
+    vec![
+        Box::new(icy_url::IcyUrlSource),
+        Box::new(audioaddict::AudioAddictSource::new()),
+        Box::new(deezer::DeezerSource::new()),
+        Box::new(musicbrainz::MusicBrainzSource::new()),
+        Box::new(station_art::StationArtSource),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -393,6 +405,21 @@ mod tests {
             calls.load(Ordering::SeqCst),
             before + 1,
             "the oldest answer was dropped"
+        );
+    }
+
+    #[test]
+    fn the_default_chain_runs_in_the_documented_order() {
+        let names: Vec<&str> = default_sources().iter().map(|s| s.name()).collect();
+        assert_eq!(
+            names,
+            [
+                "icy_url",
+                "audioaddict",
+                "deezer",
+                "musicbrainz",
+                "station_art"
+            ]
         );
     }
 }

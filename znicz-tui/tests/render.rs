@@ -214,6 +214,7 @@ fn every_view_draws_at_every_size() {
             name: "Example FM".into(),
             url: "https://example.com/stream".into(),
             art: None,
+            cover_search: true,
         }];
         let screen = draw(&mut app, width, height);
         assert_eq!(
@@ -549,6 +550,7 @@ fn the_focused_view_is_the_one_shown() {
         name: "Example FM".into(),
         url: "https://example.com/stream".into(),
         art: None,
+        cover_search: true,
     }];
     let screen = draw(&mut app, 90, 24);
     assert!(screen.contains("Radio"), "{screen}");

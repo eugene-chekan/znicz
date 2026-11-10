@@ -244,6 +244,7 @@ fn failed_station_play_does_not_keep_the_old_file() {
             name: "Bad".into(),
             url,
             art: None,
+            cover_search: true,
         },
         false,
     );
