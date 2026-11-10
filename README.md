@@ -137,7 +137,7 @@ When the device will not take the file's own rate the badge reads `▲ resampled
 so a silent conversion never goes unnoticed. Messages appear on the transport's last row rather than over the list.
 On Stage the cover sits left of the details on a wide terminal and above them on a narrow one; streams
 use an ICY image when one decodes, else an AudioAddict song cover on those networks, else station art,
-else the Znicz logo. Long now-playing titles scroll (set `marquee = false` to truncate with `…`).
+else the Znicz logo. The cover area takes your terminal's background colour when the terminal reports it. Long now-playing titles scroll (set `marquee = false` to truncate with `…`).
 Long list titles pan with `Alt-←` / `Alt-→` on the highlighted row.
 
 Press `?` in the player for the keymap: the keys for where you are come first,

@@ -8,9 +8,24 @@ use image::{imageops, imageops::FilterType, DynamicImage, ImageBuffer, Rgba};
 const MAX_EDGE: u32 = 512;
 const CACHE_CAP: usize = 16;
 const LOGO_PNG: &[u8] = include_bytes!("../assets/logo.png");
-/// Opaque fill for letterboxing. Transparent pad leaves the previous Kitty
-/// image in those cells.
+/// Opaque fill for letterboxing when the terminal does not report its own
+/// background. Transparent pad leaves the previous Kitty image in those cells.
 const SLOT_BG: Rgba<u8> = Rgba([0x28, 0x2c, 0x34, 0xff]);
+
+/// The cover slot's fill: the terminal's background colour when it answered
+/// the OSC 11 query, else [`SLOT_BG`]. The transparent logo then blends into
+/// the terminal.
+pub fn slot_background(capabilities: &[ratatui_image::picker::Capability]) -> Rgba<u8> {
+    capabilities
+        .iter()
+        .find_map(|capability| match capability {
+            ratatui_image::picker::Capability::Background(r, g, b) => {
+                Some(Rgba([*r, *g, *b, 0xff]))
+            }
+            _ => None,
+        })
+        .unwrap_or(SLOT_BG)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CoverKey {
@@ -258,7 +273,7 @@ fn resolve_cover(key: &CoverKey) -> ResolveResult {
 }
 
 /// Scale `image` (up or down) to fit inside the cover cells, then paint it
-/// onto an opaque canvas the size of the slot. Box-drawing `│` sits in the
+/// onto an opaque `background` canvas the size of the slot. Box-drawing `│` sits in the
 /// middle of a cell; graphics fill the cell, so the bitmap is inset by half a
 /// cell and pinned to the top. Every cell gets a pixel so a previous
 /// graphics-protocol image cannot remain.
@@ -268,11 +283,12 @@ pub fn fill_cover_slot(
     rows: u16,
     font_w: u16,
     font_h: u16,
+    background: Rgba<u8>,
 ) -> DynamicImage {
     let font_w = font_w.max(1);
     let width = (u32::from(cols) * u32::from(font_w)).max(1);
     let height = (u32::from(rows) * u32::from(font_h.max(1))).max(1);
-    let mut canvas: DynamicImage = ImageBuffer::from_pixel(width, height, SLOT_BG).into();
+    let mut canvas: DynamicImage = ImageBuffer::from_pixel(width, height, background).into();
     if image.width() == 0 || image.height() == 0 {
         return canvas;
     }
@@ -307,9 +323,38 @@ mod tests {
     }
 
     #[test]
+    fn bundled_logo_has_a_transparent_background() {
+        let cache = CoverCache::new();
+        let logo = cache.logo_image();
+        assert_eq!(logo.get_pixel(0, 0)[3], 0, "corner should be transparent");
+        let (w, h) = (logo.width(), logo.height());
+        assert!(
+            (0..w).any(|x| logo.get_pixel(x, h / 2)[3] == 255),
+            "the candle itself stays opaque"
+        );
+    }
+
+    #[test]
+    fn the_slot_takes_the_terminal_background_when_reported() {
+        use ratatui_image::picker::Capability;
+        let caps = [Capability::Kitty, Capability::Background(10, 20, 30)];
+        assert_eq!(slot_background(&caps), Rgba([10, 20, 30, 0xff]));
+        assert_eq!(slot_background(&[Capability::Kitty]), SLOT_BG);
+    }
+
+    #[test]
+    fn transparent_pixels_show_the_slot_background() {
+        let src = DynamicImage::new_rgba8(4, 4);
+        let bg = Rgba([10, 20, 30, 0xff]);
+        let out = fill_cover_slot(&src, 4, 4, 8, 16, bg);
+        let pad = 8 / 2;
+        assert_eq!(out.get_pixel(pad + 1, 1), bg);
+    }
+
+    #[test]
     fn even_a_one_pixel_source_fills_the_cover_slot() {
         let src = DynamicImage::new_rgb8(1, 1);
-        let out = fill_cover_slot(&src, 16, 8, 8, 16);
+        let out = fill_cover_slot(&src, 16, 8, 8, 16, SLOT_BG);
         assert_eq!(out.width(), 16 * 8);
         assert_eq!(out.height(), 8 * 16);
     }
@@ -323,7 +368,7 @@ mod tests {
             }
         }
         let font_w = 8;
-        let out = fill_cover_slot(&src, 16, 8, font_w, 16);
+        let out = fill_cover_slot(&src, 16, 8, font_w, 16, SLOT_BG);
         let pad = u32::from(font_w) / 2;
         let left = out.get_pixel(0, 0);
         assert_eq!(
