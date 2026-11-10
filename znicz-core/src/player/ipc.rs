@@ -449,6 +449,15 @@ fn outdated_player_hint(e: impl std::fmt::Display) -> ZniczError {
     ))
 }
 
+/// Map a command rpc outcome: transport failures get the outdated-player hint,
+/// the player's own errors pass through verbatim.
+fn command_result(response: Result<IpcResponse>) -> Result<()> {
+    match response.map_err(outdated_player_hint)? {
+        IpcResponse::Ok { .. } => Ok(()),
+        IpcResponse::Err { message } => Err(ZniczError::Player(message)),
+    }
+}
+
 impl LibraryHost for IpcClient {
     fn apply(&self, op: LibraryOp) -> Result<()> {
         match self
@@ -627,13 +636,10 @@ impl IpcClient {
     }
 
     pub fn send_blocking(&self, command: Command) -> Result<()> {
-        match self.rpc(|token| IpcRequest::Command {
+        command_result(self.rpc(|token| IpcRequest::Command {
             token: token.to_string(),
             command: command.clone(),
-        })? {
-            IpcResponse::Ok { .. } => Ok(()),
-            IpcResponse::Err { message } => Err(ZniczError::Player(message)),
-        }
+        }))
     }
 
     pub fn state(&self) -> Result<PlayerState> {
@@ -671,6 +677,23 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn command_transport_errors_get_the_hint_and_player_errors_stay_verbatim() {
+        let transport = command_result(Err(ZniczError::Player("broken pipe".into())))
+            .unwrap_err()
+            .to_string();
+        assert!(transport.contains("broken pipe"), "{transport}");
+        assert!(transport.contains("znicz player stop"), "{transport}");
+
+        let player = command_result(Ok(IpcResponse::Err {
+            message: "queue index out of range".into(),
+        }))
+        .unwrap_err()
+        .to_string();
+        assert!(player.contains("queue index out of range"), "{player}");
+        assert!(!player.contains("znicz player stop"), "{player}");
+    }
 
     #[test]
     fn a_transport_failure_suggests_restarting_the_player() {

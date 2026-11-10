@@ -1534,3 +1534,31 @@ fn alt_arrows_do_nothing_with_library_focus() {
         znicz_core::QueueItem::file("/music/track-0.flac")
     );
 }
+
+#[test]
+fn alt_arrows_move_rows_with_the_drawer_focused_on_stage() {
+    let mut app = new_app();
+    queue(&mut app, 3);
+    app.view = View::Stage;
+    open_queue(&mut app);
+    press_alt(&mut app, KeyCode::Down);
+    assert_eq!(
+        app.state().queue[1],
+        znicz_core::QueueItem::file("/music/track-0.flac")
+    );
+    assert_eq!(app.queue_cursor.index(), 1);
+}
+
+#[test]
+fn alt_arrows_do_nothing_with_a_modal_open() {
+    let mut app = new_app();
+    queue(&mut app, 3);
+    open_queue(&mut app);
+    press_char(&mut app, '?');
+    assert_ne!(app.modal, Modal::None, "help should be open");
+    press_alt(&mut app, KeyCode::Down);
+    assert_eq!(
+        app.state().queue[0],
+        znicz_core::QueueItem::file("/music/track-0.flac")
+    );
+}

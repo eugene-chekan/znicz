@@ -431,9 +431,8 @@ fn moving_a_row_reorders_the_queue_and_keeps_the_playing_index() {
         .expect("move");
 
     let state = player.state();
-    let names: Vec<_> = state.queue.iter().map(|i| format!("{i:?}")).collect();
-    assert!(names[3].contains("track-0"), "{names:?}");
-    assert!(names[0].contains("track-1"), "{names:?}");
+    assert_eq!(state.queue[3], QueueItem::file("/music/track-0.flac"));
+    assert_eq!(state.queue[0], QueueItem::file("/music/track-1.flac"));
     assert_eq!(state.queue_position, 1, "track-2 is now at index 1");
 }
 

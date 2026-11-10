@@ -817,6 +817,22 @@ mod tests {
     }
 
     #[test]
+    fn edges_and_adjacent_swaps() {
+        // Playing row first.
+        assert_eq!(moved_position(0, 3, 0), 1);
+        assert_eq!(moved_position(0, 0, 3), 3);
+        assert_eq!(moved_position(0, 2, 4), 0);
+        // Playing row last (index 4).
+        assert_eq!(moved_position(4, 0, 4), 3);
+        assert_eq!(moved_position(4, 4, 0), 0);
+        assert_eq!(moved_position(4, 1, 3), 4);
+        // The row just above moves down onto the playing row.
+        assert_eq!(moved_position(2, 1, 2), 1);
+        // The row just below moves up onto the playing row.
+        assert_eq!(moved_position(2, 3, 2), 3);
+    }
+
+    #[test]
     fn rows_that_do_not_cross_leave_it_alone() {
         assert_eq!(moved_position(2, 0, 1), 2);
         assert_eq!(moved_position(2, 3, 4), 2);

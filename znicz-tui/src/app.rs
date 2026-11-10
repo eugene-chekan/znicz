@@ -2015,9 +2015,13 @@ impl App {
             return;
         }
         let to = to as usize;
-        self.apply(Command::QueueMove { from, to }, None);
-        self.queue_cursor.set(to, len);
-        self.queue_h_offset = 0;
+        match self.player.send_blocking(Command::QueueMove { from, to }) {
+            Ok(()) => {
+                self.queue_cursor.set(to, len);
+                self.queue_h_offset = 0;
+            }
+            Err(e) => self.toasts.error(e.to_string()),
+        }
     }
 
     fn pan_titles(&mut self, dir: isize) {

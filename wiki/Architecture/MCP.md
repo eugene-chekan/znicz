@@ -61,9 +61,10 @@ files; see [Formats and metadata](../Domain/Formats-and-Metadata.md#playlists-ph
 Playlists may contain http(s) stream rows; `save_playlist` writes those URLs
 (and `#EXTINF` when named). `queue_add` takes file paths and `http(s)` URLs
 in the same `paths` list (a URL becomes a stream row; the name is the URL).
-`queue_remove` drops one row by 0-based index (same engine command as TUI `d`). `queue_move` takes 0-based `from` and `to`
-and moves one row (TUI `Alt-↑` / `Alt-↓`); the playing track keeps playing and
-an out-of-range index is an error.
+`queue_remove` drops one row by 0-based index (same engine command as TUI
+`d`). `queue_move` takes 0-based `from` and `to` and moves one row (TUI
+`Alt-↑` / `Alt-↓`); the playing track keeps playing and an out-of-range index
+is an error.
 
 Radio tools talk to `stations.toml`: `list_stations`, `add_radio_station`,
 `play_station` (clears the queue and starts the stream by default; `append: true` adds without starting), `rename_radio_station`,
