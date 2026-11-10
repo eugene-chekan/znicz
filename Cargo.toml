@@ -10,6 +10,7 @@ authors = ["Eugene"]
 rust-version = "1.85"
 
 [workspace.dependencies]
+unicode-normalization = "0.1"
 ureq = "3"
 symphonia = { version = "0.5", features = ["all"] }
 cpal = "0.15"

@@ -1,5 +1,6 @@
 pub mod audio;
 mod audioaddict;
+pub mod cover;
 mod cover_fetch;
 pub mod error;
 pub mod library_host;
