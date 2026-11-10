@@ -95,6 +95,7 @@ pub(crate) mod test_server {
                 let (status, body) = handler(&line);
                 let reason = match status {
                     200 => "OK",
+                    403 => "Forbidden",
                     404 => "Not Found",
                     503 => "Service Unavailable",
                     _ => "Internal Server Error",

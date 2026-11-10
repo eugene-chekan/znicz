@@ -4,6 +4,7 @@ pub mod audioaddict;
 pub mod deezer;
 pub(crate) mod http;
 pub mod icy_url;
+pub mod itunes;
 pub mod musicbrainz;
 pub mod station_art;
 pub mod title;
@@ -196,12 +197,14 @@ impl StreamCovers {
 }
 
 /// The built-in chain: the station's own image URL, the AudioAddict API,
-/// artist / title search (Deezer, then MusicBrainz), the station's local art.
+/// artist / title search (Deezer, then iTunes, then MusicBrainz), the
+/// station's local art.
 pub fn default_sources() -> Vec<Box<dyn CoverSource>> {
     vec![
         Box::new(icy_url::IcyUrlSource),
         Box::new(audioaddict::AudioAddictSource::new()),
         Box::new(deezer::DeezerSource::new()),
+        Box::new(itunes::ItunesSource::new()),
         Box::new(musicbrainz::MusicBrainzSource::new()),
         Box::new(station_art::StationArtSource),
     ]
@@ -417,6 +420,7 @@ mod tests {
                 "icy_url",
                 "audioaddict",
                 "deezer",
+                "itunes",
                 "musicbrainz",
                 "station_art"
             ]
