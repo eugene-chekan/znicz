@@ -9,7 +9,8 @@ use image::{imageops, imageops::FilterType, DynamicImage, ImageBuffer, Rgba};
 const MAX_EDGE: u32 = 512;
 const CACHE_CAP: usize = 16;
 /// How often a stream without ICY titles is looked up again (the AudioAddict
-/// channel map lifetime), so its cover follows the playing track.
+/// channel map lifetime), so its cover follows the playing track. Also the
+/// wait before retrying a lookup that came back unsure (a source was down).
 const STREAM_REFRESH: Duration = Duration::from_secs(15);
 const LOGO_PNG: &[u8] = include_bytes!("../assets/lantern-icon-1024.png");
 /// Opaque fill for letterboxing when the terminal does not report its own

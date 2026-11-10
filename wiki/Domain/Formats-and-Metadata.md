@@ -96,6 +96,8 @@ Stations live in `stations.toml` beside the library database:
 Override with `ZNICZ_STATIONS_PATH`. Names must be unique. A URL must start
 with `http://` or `https://`. Optional `art` is a **local image file** path
 (not `http://` or `https://`); omit or leave empty for no station picture.
+Optional `cover_search = false` stops artist / title cover lookups for that
+station.
 Playing a station **clears the queue** and starts that stream.
 
 Open the list in the player with `R`. Same list from the CLI and MCP:
