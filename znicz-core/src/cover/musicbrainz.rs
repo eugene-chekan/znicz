@@ -6,9 +6,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use crate::cover::deezer::{search_key, searchable};
-use crate::cover::http::{get_json, probe, Fetched};
-use crate::cover::title::artist_matches;
+use crate::cover::http::{get_json, probe, retryable, Fetched};
+use crate::cover::title::{artist_matches, search_key, searchable};
 use crate::cover::{CoverSource, Found, StreamQuery};
 
 const MUSICBRAINZ: &str = "https://musicbrainz.org";
@@ -59,6 +58,11 @@ impl Default for MusicBrainzSource {
     }
 }
 
+/// Escape `\` and `"` so a title like `Say "Hi"` stays one quoted phrase.
+fn quoted(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 /// Release ids of well-scored recordings by `artist`, in order, deduplicated.
 fn release_ids(json: &Value, artist: &str) -> Vec<String> {
     let mut ids: Vec<String> = Vec::new();
@@ -102,14 +106,22 @@ impl CoverSource for MusicBrainzSource {
         let Some((artist, title)) = searchable(query) else {
             return Found::NotFound;
         };
-        let search = format!("artist:\"{artist}\" AND recording:\"{title}\"");
+        let search = format!(
+            "artist:\"{}\" AND recording:\"{}\"",
+            quoted(artist),
+            quoted(title)
+        );
         self.wait_turn();
         let url = format!("{}/ws/2/recording/", self.musicbrainz);
         let json = match get_json(&url, &[("query", &search), ("fmt", "json"), ("limit", "5")]) {
             Fetched::Json(json) => json,
             Fetched::Status(code) => {
                 tracing::debug!(source = "musicbrainz", code, "cover search refused");
-                return Found::Unavailable;
+                return if retryable(code) {
+                    Found::Unavailable
+                } else {
+                    Found::NotFound
+                };
             }
             Fetched::Failed => return Found::Unavailable,
         };
@@ -117,6 +129,7 @@ impl CoverSource for MusicBrainzSource {
             let front = format!("{}/release/{id}/front-500", self.cover_art);
             match probe(&front) {
                 Some(200) => return Found::Url(front),
+                Some(code) if retryable(code) => return Found::Unavailable,
                 Some(_) => {}
                 None => return Found::Unavailable,
             }
@@ -201,6 +214,33 @@ mod tests {
             source.find(&query("Serotonal - Memory Leaves")),
             Found::Unavailable
         );
+    }
+
+    #[test]
+    fn a_bad_request_is_not_found() {
+        let (mb, _) = serve(|_line: &str| (400, Vec::new()));
+        let source = MusicBrainzSource::at(&mb, "http://127.0.0.1:9", Duration::ZERO);
+        assert_eq!(
+            source.find(&query("Serotonal - Memory Leaves")),
+            Found::NotFound
+        );
+    }
+
+    #[test]
+    fn a_busy_cover_archive_is_unavailable() {
+        let (mb, _) = serve(|_line: &str| (200, SEROTONAL.as_bytes().to_vec()));
+        let (caa, _) = serve(|_line: &str| (503, Vec::new()));
+        let source = MusicBrainzSource::at(&mb, &caa, Duration::ZERO);
+        assert_eq!(
+            source.find(&query("Serotonal - Memory Leaves")),
+            Found::Unavailable
+        );
+    }
+
+    #[test]
+    fn quoted_escapes_backslash_and_quote() {
+        assert_eq!(quoted(r#"Say "Hi""#), r#"Say \"Hi\""#);
+        assert_eq!(quoted(r"a\b"), r"a\\b");
     }
 
     #[test]

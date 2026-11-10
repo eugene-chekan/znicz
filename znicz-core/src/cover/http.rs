@@ -54,6 +54,11 @@ pub(crate) fn get_json(url: &str, query: &[(&str, &str)]) -> Fetched {
     }
 }
 
+/// Rate limits and server trouble are worth retrying; other refusals are not.
+pub(crate) fn retryable(status: u16) -> bool {
+    status == 429 || status >= 500
+}
+
 /// Status of a GET, body unread. `None` on a transport failure.
 pub(crate) fn probe(url: &str) -> Option<u16> {
     match agent().get(url).call() {

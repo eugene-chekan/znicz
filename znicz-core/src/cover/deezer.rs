@@ -2,8 +2,8 @@
 
 use serde_json::Value;
 
-use crate::cover::http::{get_json, Fetched};
-use crate::cover::title::{artist_matches, fold, split_icy_title};
+use crate::cover::http::{get_json, retryable, Fetched};
+use crate::cover::title::{artist_matches, search_key, searchable};
 use crate::cover::{CoverSource, Found, StreamQuery};
 
 const ORIGIN: &str = "https://api.deezer.com";
@@ -31,20 +31,6 @@ impl Default for DeezerSource {
     }
 }
 
-/// `(artist, title)` when search is allowed and the ICY title splits.
-pub(crate) fn searchable(query: &StreamQuery) -> Option<(&str, &str)> {
-    if !query.search {
-        return None;
-    }
-    split_icy_title(query.icy_title.as_deref()?, &query.station_name)
-}
-
-/// `artist|title`, folded: the cache key shared by the search sources.
-pub(crate) fn search_key(query: &StreamQuery) -> Option<String> {
-    let (artist, title) = searchable(query)?;
-    Some(format!("{}|{}", fold(artist), fold(title)))
-}
-
 fn cover_of(hit: &Value) -> Option<String> {
     let album = hit.get("album")?;
     ["cover_xl", "cover_big"]
@@ -67,7 +53,7 @@ impl CoverSource for DeezerSource {
         let Some((artist, title)) = searchable(query) else {
             return Found::NotFound;
         };
-        let q = format!("artist:\"{artist}\" track:\"{title}\"");
+        let q = format!("{artist} {title}");
         let json = match get_json(
             &format!("{}/search", self.origin),
             &[("q", &q), ("limit", "5")],
@@ -75,11 +61,19 @@ impl CoverSource for DeezerSource {
             Fetched::Json(json) => json,
             Fetched::Status(code) => {
                 tracing::debug!(source = "deezer", code, "cover search refused");
-                return Found::Unavailable;
+                return if retryable(code) {
+                    Found::Unavailable
+                } else {
+                    Found::NotFound
+                };
             }
             Fetched::Failed => return Found::Unavailable,
         };
+        // Deezer reports errors (quota, bad query) as HTTP 200 with an `error` key.
         let hits = json.get("data").and_then(Value::as_array);
+        if json.get("error").is_some() || hits.is_none() {
+            return Found::Unavailable;
+        }
         hits.into_iter()
             .flatten()
             .filter(|hit| {
@@ -128,7 +122,20 @@ mod tests {
         );
         let request = seen.lock().unwrap()[0].clone();
         assert!(request.starts_with("GET /search?"), "{request}");
-        assert!(request.contains("Webster"), "{request}");
+        assert!(request.contains("q=Ben"), "{request}");
+        assert!(request.contains("limit=5"), "{request}");
+        assert!(!request.contains("artist%3A"), "{request}");
+    }
+
+    #[test]
+    fn an_error_body_is_unavailable() {
+        let (origin, _) = serve(body(
+            r#"{"error":{"type":"Exception","message":"Quota limit exceeded","code":4}}"#,
+        ));
+        assert_eq!(
+            DeezerSource::at(&origin).find(&query(Some(WEBSTER), true)),
+            Found::Unavailable
+        );
     }
 
     #[test]

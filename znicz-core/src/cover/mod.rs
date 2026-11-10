@@ -104,6 +104,11 @@ impl Answers {
     }
 }
 
+/// Download `url` and keep it only if it is an image (by header or magic bytes).
+fn fetch_image(url: &str) -> Option<CoverArt> {
+    crate::cover_fetch::fetch_cover(url).filter(|art| art.mime.starts_with("image/"))
+}
+
 /// Tries cover sources in order and remembers their answers.
 pub struct StreamCovers {
     sources: Vec<Box<dyn CoverSource>>,
@@ -113,7 +118,7 @@ pub struct StreamCovers {
 
 impl StreamCovers {
     pub fn new(sources: Vec<Box<dyn CoverSource>>) -> Self {
-        Self::with_fetcher(sources, crate::cover_fetch::fetch_cover)
+        Self::with_fetcher(sources, fetch_image)
     }
 
     /// Like [`StreamCovers::new`] with a different image downloader (tests).
@@ -346,6 +351,31 @@ mod tests {
             Resolution::Found(art(3))
         );
         assert_eq!(broken_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn an_html_page_is_not_a_cover() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/page", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 2048];
+            let _ = stream.read(&mut buf);
+            let body = b"<html></html>";
+            let _ = stream.write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .as_bytes(),
+            );
+            let _ = stream.write_all(body);
+        });
+
+        assert!(fetch_image(&url).is_none());
     }
 
     #[test]

@@ -57,6 +57,14 @@ mod tests {
     }
 
     #[test]
+    fn a_stream_url_with_spaces_is_trimmed() {
+        assert_eq!(
+            IcyUrlSource.find(&query(Some("  https://img/x.jpg "))),
+            Found::Url("https://img/x.jpg".into())
+        );
+    }
+
+    #[test]
     fn no_or_non_http_stream_url_does_not_apply() {
         assert_eq!(IcyUrlSource.key(&query(None)), None);
         assert_eq!(IcyUrlSource.key(&query(Some("www.example.com"))), None);

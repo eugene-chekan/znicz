@@ -3,6 +3,8 @@
 use unicode_normalization::char::is_combining_mark;
 use unicode_normalization::UnicodeNormalization;
 
+use crate::cover::StreamQuery;
+
 const SEPARATORS: [&str; 2] = [" - ", " – "];
 
 /// Split an ICY title into `(artist, title)` on the first ` - ` or ` – `.
@@ -38,6 +40,20 @@ pub fn fold(text: &str) -> String {
 pub fn artist_matches(wanted: &str, found: &str) -> bool {
     let (wanted, found) = (fold(wanted), fold(found));
     !wanted.is_empty() && !found.is_empty() && (wanted.contains(&found) || found.contains(&wanted))
+}
+
+/// `(artist, title)` when search is allowed and the ICY title splits.
+pub(crate) fn searchable(query: &StreamQuery) -> Option<(&str, &str)> {
+    if !query.search {
+        return None;
+    }
+    split_icy_title(query.icy_title.as_deref()?, &query.station_name)
+}
+
+/// `artist|title`, folded: the cache key shared by the search sources.
+pub(crate) fn search_key(query: &StreamQuery) -> Option<String> {
+    let (artist, title) = searchable(query)?;
+    Some(format!("{}|{}", fold(artist), fold(title)))
 }
 
 #[cfg(test)]
