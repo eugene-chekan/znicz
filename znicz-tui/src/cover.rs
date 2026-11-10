@@ -7,7 +7,7 @@ use image::{imageops, imageops::FilterType, DynamicImage, ImageBuffer, Rgba};
 
 const MAX_EDGE: u32 = 512;
 const CACHE_CAP: usize = 16;
-const LOGO_PNG: &[u8] = include_bytes!("../assets/logo.png");
+const LOGO_PNG: &[u8] = include_bytes!("../assets/lantern-icon-1024.png");
 /// Opaque fill for letterboxing when the terminal does not report its own
 /// background. Transparent pad leaves the previous Kitty image in those cells.
 const SLOT_BG: Rgba<u8> = Rgba([0x28, 0x2c, 0x34, 0xff]);
