@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="znicz-tui/assets/logo-glass.png" alt="Znicz logo: a candle in a glass whose flame holds a play symbol" width="160">
+  <img src="znicz-tui/assets/logo-glass.png" alt="Znicz logo: a candle in a glass whose flame holds a play symbol" width="512">
 </p>
 
 <h1 align="center">Znicz</h1>
