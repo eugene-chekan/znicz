@@ -383,7 +383,8 @@ pub(crate) fn stream_query(
         _ => String::new(),
     };
     let station = stations.iter().find(|s| s.url == stream_url);
-    let icy_title = Some(track.title.clone()).filter(|title| *title != station_name);
+    let icy_title = Some(track.title.clone())
+        .filter(|title| !title.trim().is_empty() && *title != station_name);
     znicz_core::StreamQuery {
         icy_title,
         icy_url: track.icy_stream_url.clone(),
@@ -423,9 +424,13 @@ pub(crate) fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, state: 
 
     let use_logo_only = app.tui.cover_protocol == CoverProtocol::Off;
     let ready = match (use_logo_only, state.current_track.as_ref()) {
-        (true, _) | (_, None) => CoverReady::Logo,
+        (true, _) | (_, None) => {
+            app.last_stream_cover = None;
+            CoverReady::Logo
+        }
         (false, Some(track)) => {
             if let Some(p) = track.path.as_deref() {
+                app.last_stream_cover = None;
                 app.covers.get(CoverKey::File(p.to_path_buf()))
             } else {
                 let query = stream_query(state, track, &app.stations, app.tui.cover_search);
@@ -653,6 +658,16 @@ mod tests {
     #[test]
     fn a_title_that_is_the_station_name_is_no_icy_title() {
         let state = stream_titled("Jazz Radio");
+        let track = state.current_track.as_ref().unwrap();
+        assert_eq!(stream_query(&state, track, &[], true).icy_title, None);
+    }
+
+    #[test]
+    fn an_empty_title_is_no_icy_title() {
+        let state = stream_titled("");
+        let track = state.current_track.as_ref().unwrap();
+        assert_eq!(stream_query(&state, track, &[], true).icy_title, None);
+        let state = stream_titled("   ");
         let track = state.current_track.as_ref().unwrap();
         assert_eq!(stream_query(&state, track, &[], true).icy_title, None);
     }

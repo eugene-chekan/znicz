@@ -60,6 +60,8 @@ struct Slot {
     ready: CoverReady,
     refreshing: bool,
     resolved_at: Instant,
+    /// The last answer was unsure, so the next refresh interval retries it.
+    retry: bool,
 }
 
 type Map = Arc<Mutex<(HashMap<CoverKey, Slot>, VecDeque<CoverKey>)>>;
@@ -93,7 +95,12 @@ impl CoverCache {
         std::thread::Builder::new()
             .name("znicz-cover".into())
             .spawn(move || {
-                while let Ok(key) = incoming.recv() {
+                while let Ok(mut key) = incoming.recv() {
+                    // Only the newest queued request is worth resolving now.
+                    let mut skipped = Vec::new();
+                    while let Ok(newer) = incoming.try_recv() {
+                        skipped.push(std::mem::replace(&mut key, newer));
+                    }
                     let result = resolve_cover(&key, &streams);
                     let mut guard = worker_map.lock().unwrap();
                     let (cache, order) = &mut *guard;
@@ -105,6 +112,7 @@ impl CoverCache {
                                     ready,
                                     refreshing: false,
                                     resolved_at: Instant::now(),
+                                    retry: false,
                                 },
                             );
                         }
@@ -112,13 +120,24 @@ impl CoverCache {
                             if let Some(slot) = cache.get_mut(&key) {
                                 slot.refreshing = false;
                                 slot.resolved_at = Instant::now();
-                                if matches!(slot.ready, CoverReady::Pending) {
-                                    slot.ready = CoverReady::Logo;
-                                }
+                                slot.retry = true;
                             }
                         }
                     }
-                    if !order.iter().any(|k| k == &key) {
+                    for stale in skipped.iter().filter(|k| **k != key) {
+                        let pending = matches!(
+                            cache.get(stale),
+                            Some(slot) if matches!(slot.ready, CoverReady::Pending)
+                        );
+                        if pending {
+                            // Never answered: forget it so the next lookup asks again.
+                            cache.remove(stale);
+                            order.retain(|k| k != stale);
+                        } else if let Some(slot) = cache.get_mut(stale) {
+                            slot.refreshing = false;
+                        }
+                    }
+                    if cache.contains_key(&key) && !order.iter().any(|k| k == &key) {
                         order.push_back(key);
                     }
                     while order.len() > CACHE_CAP {
@@ -151,9 +170,13 @@ impl CoverCache {
         let mut guard = self.map.lock().unwrap();
         let (cache, _) = &mut *guard;
         if let Some(slot) = cache.get_mut(&key) {
-            let refresh = matches!(&key, CoverKey::Stream(query) if query.icy_title.is_none())
-                && !slot.refreshing
-                && slot.resolved_at.elapsed() >= self.stream_refresh;
+            // A title-less stream follows its track; a pending lookup is never
+            // re-sent; an unsure answer is retried once per interval.
+            let untitled_stream = matches!(&key, CoverKey::Stream(query) if query.icy_title.is_none())
+                && !matches!(slot.ready, CoverReady::Pending);
+            let refresh = !slot.refreshing
+                && slot.resolved_at.elapsed() >= self.stream_refresh
+                && (slot.retry || untitled_stream);
             if refresh {
                 slot.refreshing = true;
                 let ready = slot.ready.clone();
@@ -169,6 +192,7 @@ impl CoverCache {
                 ready: CoverReady::Pending,
                 refreshing: false,
                 resolved_at: Instant::now(),
+                retry: false,
             },
         );
         drop(guard);
@@ -442,27 +466,182 @@ mod tests {
         assert!(matches!(wait_ready(&cache, &key), CoverReady::Embedded(_)));
     }
 
+    /// Waits (bounded) until the source has been called `want` times.
+    fn wait_for_calls(
+        calls: &std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        want: usize,
+    ) -> usize {
+        let start = std::time::Instant::now();
+        loop {
+            let n = calls.load(std::sync::atomic::Ordering::SeqCst);
+            if n >= want || start.elapsed() > Duration::from_secs(5) {
+                return n;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     #[test]
     fn only_streams_without_a_title_are_refreshed() {
         let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let streams = znicz_core::StreamCovers::new(vec![Box::new(Counting(calls.clone()))]);
         let cache =
-            CoverCache::with_streams(streams).with_stream_refresh(Duration::from_millis(200));
+            CoverCache::with_streams(streams).with_stream_refresh(Duration::from_millis(100));
         let titled = CoverKey::Stream(stream_query(Some("A - B")));
         let untitled = CoverKey::Stream(stream_query(None));
         wait_ready(&cache, &titled);
         wait_ready(&cache, &untitled);
-        let after_first = calls.load(std::sync::atomic::Ordering::SeqCst);
-        assert_eq!(after_first, 2);
+        assert_eq!(wait_for_calls(&calls, 2), 2);
 
-        std::thread::sleep(Duration::from_millis(250));
-        assert!(matches!(cache.get(titled.clone()), CoverReady::Embedded(_)));
-        assert!(
-            matches!(cache.get(untitled.clone()), CoverReady::Embedded(_)),
-            "a refreshing entry keeps its image"
+        // Poll the untitled stream until its interval has passed and it refreshes.
+        let start = std::time::Instant::now();
+        while calls.load(std::sync::atomic::Ordering::SeqCst) < 3
+            && start.elapsed() < Duration::from_secs(5)
+        {
+            assert!(
+                matches!(cache.get(untitled.clone()), CoverReady::Embedded(_)),
+                "a refreshing entry keeps its image"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(wait_for_calls(&calls, 3), 3);
+
+        // The titled stream never re-requests, however long it is polled.
+        let start = std::time::Instant::now();
+        while start.elapsed() < Duration::from_millis(250) {
+            assert!(matches!(cache.get(titled.clone()), CoverReady::Embedded(_)));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            3,
+            "only the untitled stream was refreshed"
         );
-        std::thread::sleep(Duration::from_millis(300));
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    /// Finds nothing useful on the first lookup (unreachable), art after that.
+    struct Flaky(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    impl znicz_core::CoverSource for Flaky {
+        fn name(&self) -> &'static str {
+            "flaky"
+        }
+        fn key(&self, query: &znicz_core::StreamQuery) -> Option<String> {
+            Some(query.icy_title.clone().unwrap_or_default())
+        }
+        fn find(&self, _query: &znicz_core::StreamQuery) -> znicz_core::Found {
+            let before = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if before == 0 {
+                znicz_core::Found::Unavailable
+            } else {
+                znicz_core::Found::Art(znicz_core::CoverArt {
+                    mime: "image/png".into(),
+                    bytes: PNG_1X1.to_vec(),
+                })
+            }
+        }
+        fn remembers(&self) -> bool {
+            false
+        }
+    }
+
+    /// Takes `pause` per lookup, then finds the 1×1 PNG.
+    struct Slow {
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        pause: Duration,
+    }
+
+    impl znicz_core::CoverSource for Slow {
+        fn name(&self) -> &'static str {
+            "slow"
+        }
+        fn key(&self, query: &znicz_core::StreamQuery) -> Option<String> {
+            Some(query.icy_title.clone().unwrap_or_default())
+        }
+        fn find(&self, _query: &znicz_core::StreamQuery) -> znicz_core::Found {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            std::thread::sleep(self.pause);
+            znicz_core::Found::Art(znicz_core::CoverArt {
+                mime: "image/png".into(),
+                bytes: PNG_1X1.to_vec(),
+            })
+        }
+        fn remembers(&self) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn an_unsure_answer_is_retried_after_the_interval() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let streams = znicz_core::StreamCovers::new(vec![Box::new(Flaky(calls.clone()))]);
+        let cache =
+            CoverCache::with_streams(streams).with_stream_refresh(Duration::from_millis(100));
+        let key = CoverKey::Stream(stream_query(Some("A - B")));
+
+        assert_eq!(cache.get(key.clone()), CoverReady::Pending);
+        assert_eq!(wait_for_calls(&calls, 1), 1);
+        assert_eq!(
+            cache.get(key.clone()),
+            CoverReady::Pending,
+            "an unsure answer keeps the slot pending"
+        );
+
+        assert!(matches!(wait_ready(&cache, &key), CoverReady::Embedded(_)));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_pending_stream_is_not_requested_twice() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let slow = Slow {
+            calls: calls.clone(),
+            pause: Duration::from_millis(300),
+        };
+        let streams = znicz_core::StreamCovers::new(vec![Box::new(slow)]);
+        let cache =
+            CoverCache::with_streams(streams).with_stream_refresh(Duration::from_millis(50));
+        let key = CoverKey::Stream(stream_query(None));
+
+        assert_eq!(cache.get(key.clone()), CoverReady::Pending);
+        let start = std::time::Instant::now();
+        while start.elapsed() < Duration::from_millis(250) {
+            cache.get(key.clone());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert!(matches!(wait_ready(&cache, &key), CoverReady::Embedded(_)));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn only_the_newest_queued_request_is_resolved() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let slow = Slow {
+            calls: calls.clone(),
+            pause: Duration::from_millis(200),
+        };
+        let cache = CoverCache::with_streams(znicz_core::StreamCovers::new(vec![Box::new(slow)]));
+        let key = |title: &str| CoverKey::Stream(stream_query(Some(title)));
+        let (a, b, c, d) = (key("a"), key("b"), key("c"), key("d"));
+
+        assert_eq!(cache.get(a), CoverReady::Pending);
+        assert_eq!(cache.get(b.clone()), CoverReady::Pending);
+        assert_eq!(cache.get(c), CoverReady::Pending);
+        assert_eq!(cache.get(d.clone()), CoverReady::Pending);
+
+        assert!(matches!(wait_ready(&cache, &d), CoverReady::Embedded(_)));
+        assert!(
+            calls.load(std::sync::atomic::Ordering::SeqCst) <= 2,
+            "A and D only; B and C were superseded"
+        );
+
+        assert_eq!(
+            cache.get(b.clone()),
+            CoverReady::Pending,
+            "a skipped request is requested again on the next lookup"
+        );
+        assert!(matches!(wait_ready(&cache, &b), CoverReady::Embedded(_)));
     }
 
     #[test]
