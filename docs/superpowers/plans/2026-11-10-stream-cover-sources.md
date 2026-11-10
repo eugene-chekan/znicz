@@ -46,7 +46,7 @@
 
 ### Task 0: Branch up to date
 
-- [ ] **Step 1: Rebase on main**
+- [x] **Step 1: Rebase on main**
 
 PRs #65 and #66 change `ipc.rs`, `cover.rs` (`fill_cover_slot` takes a background and `see_through`), and `stage.rs`. This branch only has the spec and plan commits.
 
