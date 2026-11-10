@@ -3,7 +3,7 @@
 use serde_json::Value;
 
 use crate::cover::http::{get_json, retryable, Fetched};
-use crate::cover::title::{artist_matches, search_key, searchable};
+use crate::cover::title::{artist_attempts, artist_matches, search_key, searchable};
 use crate::cover::{CoverSource, Found, StreamQuery};
 
 const ORIGIN: &str = "https://api.deezer.com";
@@ -31,6 +31,42 @@ impl Default for DeezerSource {
     }
 }
 
+impl DeezerSource {
+    /// One search: `Ok(Some(url))` on a matching hit, `Ok(None)` when nothing
+    /// matches, `Err(found)` when the source must stop with `found`.
+    fn search(&self, text: &str, credit: &str) -> Result<Option<String>, Found> {
+        let json = match get_json(
+            &format!("{}/search", self.origin),
+            &[("q", text), ("limit", "5")],
+        ) {
+            Fetched::Json(json) => json,
+            Fetched::Status(code) => {
+                tracing::debug!(source = "deezer", code, "cover search refused");
+                return Err(if retryable(code) {
+                    Found::Unavailable
+                } else {
+                    Found::NotFound
+                });
+            }
+            Fetched::Failed => return Err(Found::Unavailable),
+        };
+        // Deezer reports errors (quota, bad query) as HTTP 200 with an `error` key.
+        let hits = json.get("data").and_then(Value::as_array);
+        if json.get("error").is_some() || hits.is_none() {
+            return Err(Found::Unavailable);
+        }
+        Ok(hits
+            .into_iter()
+            .flatten()
+            .filter(|hit| {
+                hit.pointer("/artist/name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| artist_matches(credit, name))
+            })
+            .find_map(cover_of))
+    }
+}
+
 fn cover_of(hit: &Value) -> Option<String> {
     let album = hit.get("album")?;
     ["cover_xl", "cover_big"]
@@ -53,36 +89,14 @@ impl CoverSource for DeezerSource {
         let Some((artist, title)) = searchable(query) else {
             return Found::NotFound;
         };
-        let q = format!("{artist} {title}");
-        let json = match get_json(
-            &format!("{}/search", self.origin),
-            &[("q", &q), ("limit", "5")],
-        ) {
-            Fetched::Json(json) => json,
-            Fetched::Status(code) => {
-                tracing::debug!(source = "deezer", code, "cover search refused");
-                return if retryable(code) {
-                    Found::Unavailable
-                } else {
-                    Found::NotFound
-                };
+        for attempt in artist_attempts(artist) {
+            match self.search(&format!("{attempt} {title}"), artist) {
+                Ok(Some(url)) => return Found::Url(url),
+                Ok(None) => {}
+                Err(found) => return found,
             }
-            Fetched::Failed => return Found::Unavailable,
-        };
-        // Deezer reports errors (quota, bad query) as HTTP 200 with an `error` key.
-        let hits = json.get("data").and_then(Value::as_array);
-        if json.get("error").is_some() || hits.is_none() {
-            return Found::Unavailable;
         }
-        hits.into_iter()
-            .flatten()
-            .filter(|hit| {
-                hit.pointer("/artist/name")
-                    .and_then(Value::as_str)
-                    .is_some_and(|name| artist_matches(artist, name))
-            })
-            .find_map(cover_of)
-            .map_or(Found::NotFound, Found::Url)
+        Found::NotFound
     }
 }
 
@@ -180,5 +194,35 @@ mod tests {
         assert_eq!(source.key(&query(Some(WEBSTER), false)), None);
         assert_eq!(source.key(&query(Some("Jazz all night"), true)), None);
         assert_eq!(source.key(&query(None, true)), None);
+    }
+
+    const JOPEK: &str = "Anna Maria Jopek & Friends with Pat Metheny - Przypływ, odpływ";
+
+    #[test]
+    fn a_long_credit_is_retried_with_the_lead_artist() {
+        let (origin, seen) = serve(|line: &str| {
+            if line.contains("Friends") {
+                (200, br#"{"data":[]}"#.to_vec())
+            } else {
+                (
+                    200,
+                    br#"{"data":[{"artist":{"name":"Pat Metheny"},
+                    "album":{"cover_xl":"https://cdn/upojenie.jpg"}}]}"#
+                        .to_vec(),
+                )
+            }
+        });
+        let found = DeezerSource::at(&origin).find(&query(Some(JOPEK), true));
+        assert_eq!(found, Found::Url("https://cdn/upojenie.jpg".into()));
+        let requests = seen.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(!requests[1].lines().next().unwrap().contains("Friends"));
+    }
+
+    #[test]
+    fn a_single_artist_is_searched_once() {
+        let (origin, seen) = serve(body(r#"{"data":[]}"#));
+        DeezerSource::at(&origin).find(&query(Some(WEBSTER), true));
+        assert_eq!(seen.lock().unwrap().len(), 1);
     }
 }

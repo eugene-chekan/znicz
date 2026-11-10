@@ -84,8 +84,6 @@ pub fn lead_artist(credit: &str) -> &str {
 
 /// Artist texts to search with, in order: the full credit, then its lead
 /// artist when that differs.
-// Used by the search sources in the next commit.
-#[allow(dead_code)]
 pub(crate) fn artist_attempts(credit: &str) -> Vec<&str> {
     let lead = lead_artist(credit);
     if lead.is_empty() || lead == credit {
