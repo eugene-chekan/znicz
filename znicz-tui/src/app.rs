@@ -65,7 +65,7 @@ const TICK_RATE: Duration = Duration::from_millis(200);
 /// Seek step for arrows, and for Shift + arrows.
 const SEEK_SMALL: i64 = 5;
 const SEEK_LARGE: i64 = 30;
-const VOLUME_STEP: f32 = 0.05;
+const VOLUME_STEP: f32 = 0.01;
 
 /// Local tests and preview keep an in-process engine. Production talks to
 /// `znicz player` over IPC.
@@ -1965,7 +1965,7 @@ impl App {
 
     fn adjust_volume(&mut self, delta: f32) {
         let state = self.player.state();
-        let volume = (state.volume + delta).clamp(0.0, 1.0);
+        let volume = (((state.volume + delta) * 100.0).round() / 100.0).clamp(0.0, 1.0);
         self.apply(Command::SetVolume(volume), None);
     }
 

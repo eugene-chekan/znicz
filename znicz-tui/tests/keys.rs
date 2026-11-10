@@ -223,16 +223,16 @@ fn volume_keys_move_in_steps_and_stop_at_the_ends() {
     press_char(&mut app, '-');
     let after_one = app.state().volume;
     assert!(
-        (after_one - 0.95).abs() < 0.001,
+        (after_one - 0.99).abs() < 0.0001,
         "one press should be one step, got {after_one}"
     );
 
-    for _ in 0..40 {
+    for _ in 0..120 {
         press_char(&mut app, '-');
     }
     assert_eq!(app.state().volume, 0.0, "volume must not go negative");
 
-    for _ in 0..40 {
+    for _ in 0..120 {
         press_char(&mut app, '+');
     }
     assert_eq!(app.state().volume, 1.0, "volume must not exceed full");

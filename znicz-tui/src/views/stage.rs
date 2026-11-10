@@ -241,7 +241,7 @@ fn volume_line(state: &PlayerState) -> Line<'static> {
         vec![Span::styled(
             format!(
                 "{} {:>3.0}%",
-                format::volume_bar(state.volume, 4),
+                format::volume_bar(state.volume, 10),
                 state.volume * 100.0
             ),
             theme::text(),
