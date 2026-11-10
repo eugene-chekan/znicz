@@ -427,6 +427,7 @@ pub(crate) fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, state: 
             font.width,
             font.height,
             background,
+            crate::cover::slot_is_see_through(picker.protocol_type()),
         );
         app.cover_image = Some(picker.new_resize_protocol(image));
         app.cover_draw_key = Some(draw_key);

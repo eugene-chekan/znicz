@@ -272,11 +272,28 @@ fn resolve_cover(key: &CoverKey) -> ResolveResult {
     }
 }
 
+/// Whether the cover slot should leave uncovered pixels transparent.
+///
+/// Sixel stores colours as whole percentages, so no fill can match the
+/// terminal background exactly (`#282c34` comes back as `#262b33`). Leaving
+/// those pixels undrawn shows the terminal's own colour instead. That is safe
+/// because the Sixel renderer erases the cells before drawing. Kitty does not
+/// erase, so a transparent pixel would show the previous cover; Kitty and
+/// half-blocks keep an opaque fill, which they show exactly.
+pub fn slot_is_see_through(protocol: ratatui_image::picker::ProtocolType) -> bool {
+    protocol == ratatui_image::picker::ProtocolType::Sixel
+}
+
 /// Scale `image` (up or down) to fit inside the cover cells, then paint it
-/// onto an opaque `background` canvas the size of the slot. Box-drawing `│` sits in the
+/// onto a `background` canvas the size of the slot. Box-drawing `│` sits in the
 /// middle of a cell; graphics fill the cell, so the bitmap is inset by half a
-/// cell and pinned to the top. Every cell gets a pixel so a previous
-/// graphics-protocol image cannot remain.
+/// cell and pinned to the top.
+///
+/// The canvas is opaque, so every cell gets a pixel and a previous
+/// graphics-protocol image cannot remain. With `see_through`, pixels the image
+/// does not cover at all (letterbox and fully transparent art) are left
+/// transparent instead; partly covered pixels stay blended onto `background`
+/// and opaque, so soft edges do not turn jagged.
 pub fn fill_cover_slot(
     image: &DynamicImage,
     cols: u16,
@@ -284,18 +301,30 @@ pub fn fill_cover_slot(
     font_w: u16,
     font_h: u16,
     background: Rgba<u8>,
+    see_through: bool,
 ) -> DynamicImage {
     let font_w = font_w.max(1);
     let width = (u32::from(cols) * u32::from(font_w)).max(1);
     let height = (u32::from(rows) * u32::from(font_h.max(1))).max(1);
-    let mut canvas: DynamicImage = ImageBuffer::from_pixel(width, height, background).into();
-    if image.width() == 0 || image.height() == 0 {
-        return canvas;
-    }
+    let mut canvas = ImageBuffer::from_pixel(width, height, background);
     let pad_x = u32::from(font_w) / 2;
-    let fitted = image.resize(width, height, FilterType::Triangle);
-    imageops::overlay(&mut canvas, &fitted, i64::from(pad_x), 0);
-    canvas
+    let fitted = (image.width() > 0 && image.height() > 0)
+        .then(|| image.resize(width, height, FilterType::Triangle).to_rgba8());
+    if let Some(fitted) = &fitted {
+        imageops::overlay(&mut canvas, fitted, i64::from(pad_x), 0);
+    }
+    // Blending can round alpha down to 254; set it outright.
+    for (x, y, pixel) in canvas.enumerate_pixels_mut() {
+        let covered = || {
+            fitted
+                .as_ref()
+                .filter(|_| x >= pad_x)
+                .and_then(|fitted| fitted.get_pixel_checked(x - pad_x, y))
+                .is_some_and(|source| source[3] > 0)
+        };
+        pixel[3] = if see_through && !covered() { 0 } else { 0xff };
+    }
+    canvas.into()
 }
 
 fn decode_capped(bytes: &[u8]) -> Option<DynamicImage> {
@@ -346,15 +375,51 @@ mod tests {
     fn transparent_pixels_show_the_slot_background() {
         let src = DynamicImage::new_rgba8(4, 4);
         let bg = Rgba([10, 20, 30, 0xff]);
-        let out = fill_cover_slot(&src, 4, 4, 8, 16, bg);
+        let out = fill_cover_slot(&src, 4, 4, 8, 16, bg, false);
         let pad = 8 / 2;
         assert_eq!(out.get_pixel(pad + 1, 1), bg);
     }
 
     #[test]
+    fn only_sixel_slots_are_see_through() {
+        use ratatui_image::picker::ProtocolType;
+        assert!(slot_is_see_through(ProtocolType::Sixel));
+        assert!(!slot_is_see_through(ProtocolType::Kitty));
+        assert!(!slot_is_see_through(ProtocolType::Halfblocks));
+    }
+
+    #[test]
+    fn a_see_through_slot_leaves_uncovered_pixels_transparent() {
+        let src = DynamicImage::new_rgba8(4, 4);
+        let out = fill_cover_slot(&src, 4, 4, 8, 16, SLOT_BG, true);
+        assert_eq!(out.get_pixel(0, 0)[3], 0, "letterbox pad");
+        assert_eq!(out.get_pixel(8 / 2 + 1, 1)[3], 0, "transparent source");
+    }
+
+    #[test]
+    fn a_see_through_slot_blends_soft_edges_onto_the_background() {
+        let src: DynamicImage = ImageBuffer::from_pixel(4, 4, Rgba([255u8, 0, 0, 128])).into();
+        let bg = Rgba([0, 0, 255, 0xff]);
+        let out = fill_cover_slot(&src, 4, 4, 8, 16, bg, true);
+        let px = out.get_pixel(8 / 2 + 1, 1);
+        assert_eq!(px[3], 0xff, "a partly covered pixel is drawn solid");
+        assert!(
+            px[0] > 100 && px[2] > 100,
+            "red blended onto blue, got {px:?}"
+        );
+    }
+
+    #[test]
+    fn a_see_through_slot_keeps_opaque_art() {
+        let src: DynamicImage = ImageBuffer::from_pixel(4, 4, Rgba([255u8, 0, 0, 255])).into();
+        let out = fill_cover_slot(&src, 4, 4, 8, 16, SLOT_BG, true);
+        assert_eq!(out.get_pixel(8 / 2 + 1, 1), Rgba([255, 0, 0, 255]));
+    }
+
+    #[test]
     fn even_a_one_pixel_source_fills_the_cover_slot() {
         let src = DynamicImage::new_rgb8(1, 1);
-        let out = fill_cover_slot(&src, 16, 8, 8, 16, SLOT_BG);
+        let out = fill_cover_slot(&src, 16, 8, 8, 16, SLOT_BG, false);
         assert_eq!(out.width(), 16 * 8);
         assert_eq!(out.height(), 8 * 16);
     }
@@ -368,7 +433,7 @@ mod tests {
             }
         }
         let font_w = 8;
-        let out = fill_cover_slot(&src, 16, 8, font_w, 16, SLOT_BG);
+        let out = fill_cover_slot(&src, 16, 8, font_w, 16, SLOT_BG, false);
         let pad = u32::from(font_w) / 2;
         let left = out.get_pixel(0, 0);
         assert_eq!(
