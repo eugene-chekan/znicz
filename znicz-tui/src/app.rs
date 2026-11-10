@@ -39,12 +39,18 @@ fn load_output_devices() -> Vec<AudioDeviceInfo> {
 }
 
 fn make_picker(protocol: CoverProtocol) -> ratatui_image::picker::Picker {
+    use ratatui_image::picker::cap_parser::QueryStdioOptions;
     use ratatui_image::picker::{Picker, ProtocolType};
 
     let mut picker = match protocol {
         CoverProtocol::Halfblocks | CoverProtocol::Off => Picker::halfblocks(),
         CoverProtocol::Auto | CoverProtocol::Kitty | CoverProtocol::Sixel => {
-            Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks())
+            // Also ask for the background colour so the cover slot can match it.
+            Picker::from_query_stdio_with_options(QueryStdioOptions {
+                terminal_background_color_osc: true,
+                ..QueryStdioOptions::default()
+            })
+            .unwrap_or_else(|_| Picker::halfblocks())
         }
     };
     match protocol {

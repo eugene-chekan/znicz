@@ -419,8 +419,16 @@ pub(crate) fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, state: 
         };
         let picker = app.picker.get_or_insert_with(Picker::halfblocks);
         let font = picker.font_size();
-        let image =
-            crate::cover::fill_cover_slot(&image, area.width, area.height, font.width, font.height);
+        let background = crate::cover::slot_background(picker.capabilities());
+        let image = crate::cover::fill_cover_slot(
+            &image,
+            area.width,
+            area.height,
+            font.width,
+            font.height,
+            background,
+            crate::cover::slot_is_see_through(picker.protocol_type()),
+        );
         app.cover_image = Some(picker.new_resize_protocol(image));
         app.cover_draw_key = Some(draw_key);
     }

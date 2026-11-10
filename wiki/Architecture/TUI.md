@@ -243,7 +243,15 @@ is an ICY `StreamUrl` image when one decodes, else the AudioAddict current-song
 `art_url` (RadioTunes / DI.FM / RockRadio / JazzRadio / ClassicalRadio /
 ZenRadio), else the station `art` file, else the logo. The picture is
 letterboxed onto an opaque canvas the size of the cover area, so a stream cannot
-leave the previous cover on screen. `cover_protocol` applies here.
+leave the previous cover on screen. The canvas takes the terminal's background
+colour when the terminal answers the OSC 11 query at startup (asked with the
+Kitty / Sixel probe), else a dark slate. The logo is transparent, so it sits
+directly on the terminal colour. With Sixel (Windows Terminal, foot, …) the
+uncovered pixels are left transparent instead: Sixel colours are whole
+percentages, so a fill can never match the terminal exactly, and the Sixel
+renderer erases the cells before drawing, so nothing old shows through. Kitty
+keeps the opaque fill because it does not erase the cells. `cover_protocol`
+applies here.
 
 Details, top to bottom: title (bold, scrolls), artist, `album · year · track N`,
 the seek line, volume / repeat / shuffle, and a **Signal** panel: `file` or
