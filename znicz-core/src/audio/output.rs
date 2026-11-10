@@ -452,7 +452,63 @@ fn fill_u16(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::gain::MUTE_FADE;
     use cpal::{SampleRate, SupportedBufferSize};
+
+    fn run_f32(
+        input: &[f32],
+        control: &GainControl,
+        ramp: &mut GainRamp,
+        consumer: &mut Consumer<f32>,
+    ) -> Vec<f32> {
+        let mut out = vec![0.0f32; input.len()];
+        fill_f32(
+            &mut out,
+            consumer,
+            &AtomicBool::new(false),
+            control,
+            ramp,
+            2,
+            48_000,
+            &AtomicBool::new(false),
+        );
+        out
+    }
+
+    #[test]
+    fn full_gain_passes_samples_through_untouched() {
+        let (mut producer, mut consumer) = buffer::new_pair();
+        let input: Vec<f32> = (0..512).map(|i| (i as f32 * 0.37).sin() * 0.9).collect();
+        for s in &input {
+            producer.push(*s).unwrap();
+        }
+        let control = GainControl::new(1.0);
+        let (target, _, generation) = control.snapshot();
+        let mut ramp = GainRamp::new(target, generation);
+        let out = run_f32(&input, &control, &mut ramp, &mut consumer);
+        assert_eq!(out, input, "bit-for-bit at gain 1.0");
+    }
+
+    #[test]
+    fn a_fade_applies_one_gain_per_frame_and_never_rises() {
+        let (mut producer, mut consumer) = buffer::new_pair();
+        let input = vec![1.0f32; 2 * 2_000];
+        for s in &input {
+            producer.push(*s).unwrap();
+        }
+        let control = GainControl::new(1.0);
+        let (target, _, generation) = control.snapshot();
+        let mut ramp = GainRamp::new(target, generation);
+        control.set(0.0, MUTE_FADE);
+        let out = run_f32(&input, &control, &mut ramp, &mut consumer);
+        let mut last = 1.0f32;
+        for frame in out.chunks(2) {
+            assert_eq!(frame[0], frame[1], "both channels share the frame gain");
+            assert!(frame[0] <= last, "gain never rises while fading down");
+            last = frame[0];
+        }
+        assert!(last < 1.0, "the fade actually moved");
+    }
 
     fn range(
         channels: u16,
