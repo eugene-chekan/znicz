@@ -7,15 +7,14 @@ This page is an index plus write-ups that never had a GitHub ticket.
 
 Parked TUI ideas (file, do not start unless asked):
 
-- [#5 Command palette](https://github.com/eugene-chekan/znicz/issues/5)
-- [#6 Settings screen overlay](https://github.com/eugene-chekan/znicz/issues/6)
+- [#6 Settings screen overlay](https://github.com/eugene-chekan/znicz/issues/6) (also the home for fade settings and music folders)
 
 Playlists (file, do not start unless asked):
 
-- [#18 Browse and edit saved playlist contents](https://github.com/eugene-chekan/znicz/issues/18) (view, delete rows, reorder; keys in [#36](https://github.com/eugene-chekan/znicz/issues/36))
+- [#18 Browse and edit saved playlist contents](https://github.com/eugene-chekan/znicz/issues/18) (view, delete rows, reorder with the queue's `Alt-↑` / `Alt-↓` and `d`)
 - [#19 Add a library item to a saved playlist](https://github.com/eugene-chekan/znicz/issues/19)
 
-Performance follow-ups (filed after the 0.5.1 tree fix):
+Performance follow-ups (filed after the 0.5.1 tree fix, label `performance`):
 
 - [#55 Render only visible rows in library and queue lists](https://github.com/eugene-chekan/znicz/issues/55) (per-frame list builds grow with queue and library size)
 - [#56 Cache album attribution instead of re-scanning tracks per artist step](https://github.com/eugene-chekan/znicz/issues/56) (full tracks scan on column and paging selection changes)
@@ -27,6 +26,23 @@ radio** (HLS, PLS, XSPF) are on the
 streams, including ICY now playing) is done.
 
 ## Closed
+
+### [#63 IPC retry can apply a command twice when the reply is lost](https://github.com/eugene-chekan/znicz/issues/63)
+
+- **Component:** `znicz-core`
+- **Status:** **Fixed** in 0.10.1
+
+`IpcClient` resent a request once after any failure, including a reply lost
+after the player had already applied it, so `QueueAdd`, `QueueRemove`, and
+`QueueMove` could run twice. Change requests now carry a request id (client
+number and counter); the player answers a repeat of a client's last id from
+memory. See [Overview](Architecture/Overview.md).
+
+### [#5 Command palette](https://github.com/eugene-chekan/znicz/issues/5)
+
+Closed as not planned (2026-11-10). The context footer and the context-first,
+filterable help (`?`, then `/`) from the 0.6.0 keymap rework cover finding
+actions by name.
 
 ### [#36 Reorder list rows with Alt-↑ / Alt-↓](https://github.com/eugene-chekan/znicz/issues/36) and [#47 Finer volume control](https://github.com/eugene-chekan/znicz/issues/47)
 

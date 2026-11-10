@@ -23,6 +23,14 @@ The first TUI or MCP start **autostarts** the player process if it is not
 running. Only that process calls `spawn_player` and opens the DAC.
 [#27](https://github.com/eugene-chekan/znicz/issues/27).
 
+IPC clients reconnect and resend a request once when a connection fails
+([#32](https://github.com/eugene-chekan/znicz/issues/32)). Change requests (`Command`, `Library`) carry an id: a
+random client number plus a counter. The player remembers the last id and
+outcome per client (up to 64 clients), so a resend after a lost reply gets the
+stored answer instead of adding, removing, or moving a queue row twice
+([#63](https://github.com/eugene-chekan/znicz/issues/63)). Requests without an
+id, from older clients, are applied as before.
+
 ## Why split crates?
 
 - **Compile faster** in the long run (you change UI without always rebuilding decoders)
