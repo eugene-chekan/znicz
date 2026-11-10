@@ -9,8 +9,6 @@ Parked TUI ideas (file, do not start unless asked):
 
 - [#5 Command palette](https://github.com/eugene-chekan/znicz/issues/5)
 - [#6 Settings screen overlay](https://github.com/eugene-chekan/znicz/issues/6)
-- [#36 Reorder list rows with Alt-↑ / Alt-↓](https://github.com/eugene-chekan/znicz/issues/36) (cursor stays on the moved item)
-- [#47 Finer volume control](https://github.com/eugene-chekan/znicz/issues/47) (more indicator steps; 1% key step)
 
 Playlists (file, do not start unless asked):
 
@@ -29,6 +27,16 @@ radio** (HLS, PLS, XSPF) are on the
 streams, including ICY now playing) is done.
 
 ## Closed
+
+### [#36 Reorder list rows with Alt-↑ / Alt-↓](https://github.com/eugene-chekan/znicz/issues/36) and [#47 Finer volume control](https://github.com/eugene-chekan/znicz/issues/47)
+
+- **Fixed:** 2026-11-10
+- **Component:** `znicz-core`, `znicz-tui`, `znicz-mcp`
+- **Status:** **Fixed** in 0.10.0
+
+`Alt-↑` / `Alt-↓` move queue rows (`Command::QueueMove`, MCP `queue_move`).
+Volume keys step 1 %, and the bar has eighth-cell resolution. Mute and unmute
+fade over 500 ms; other gain changes ramp over 20 ms.
 
 ### [#46 Full-screen Now Playing view](https://github.com/eugene-chekan/znicz/issues/46) and [#34 Auto-pan now-playing text](https://github.com/eugene-chekan/znicz/issues/34)
 

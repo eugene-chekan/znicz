@@ -48,6 +48,12 @@ pub enum Command {
     QueuePlayIndex(usize),
     /// Drop one queue entry.
     QueueRemove(usize),
+    /// Move one queue row to another index (both 0-based, as the queue is
+    /// before the move). The playing row stays the playing row.
+    QueueMove {
+        from: usize,
+        to: usize,
+    },
     /// Replace the queue and index without starting playback.
     ReplaceQueue {
         items: Vec<QueueItem>,

@@ -6,6 +6,7 @@ use crossbeam_channel::{bounded, unbounded, Receiver, RecvTimeoutError, Sender};
 
 use crate::audio::convert::{adapt_channels, RateConverter};
 use crate::audio::feeder::{DecodeStep, Feeder, PumpOutcome};
+use crate::audio::gain::MUTE_FADE;
 use crate::audio::http::HttpStreamSource;
 use crate::audio::icy::{apply_icy_to_track, apply_icy_url_to_track, IcyTitle, IcyUrl};
 use crate::audio::output::AudioOutput;
@@ -260,12 +261,17 @@ impl PlayerEngine {
             Command::Seek(pos) => self.seek(pos)?,
             Command::SetVolume(vol) => {
                 let v = vol.clamp(0.0, 1.0);
-                let effective = {
+                let (before, effective) = {
                     let mut state = self.state.write().unwrap();
+                    let before = state.effective_volume();
                     state.volume = v;
-                    state.effective_volume()
+                    (before, state.effective_volume())
                 };
-                self.output.set_volume(effective);
+                // Unchanged (volume keys while muted): leave a running mute
+                // fade alone instead of cutting it short with a 20 ms ramp.
+                if effective != before {
+                    self.output.set_volume(effective);
+                }
                 self.emit_state_changed();
             }
             Command::SetMuted(muted) => {
@@ -274,7 +280,7 @@ impl PlayerEngine {
                     state.muted = muted;
                     state.effective_volume()
                 };
-                self.output.set_volume(effective);
+                self.output.set_gain(effective, MUTE_FADE);
                 self.emit_state_changed();
             }
             Command::NextTrack => self.next_track()?,
@@ -294,6 +300,7 @@ impl PlayerEngine {
             }
             Command::QueuePlayIndex(index) => self.play_queue_index(index)?,
             Command::QueueRemove(index) => self.remove_from_queue(index)?,
+            Command::QueueMove { from, to } => self.move_in_queue(from, to)?,
             Command::ReplaceQueue { items, position } => self.replace_queue(items, position)?,
             Command::SetRepeat(mode) => {
                 self.state.write().unwrap().repeat = mode;
@@ -550,6 +557,25 @@ impl PlayerEngine {
         Ok(())
     }
 
+    fn move_in_queue(&mut self, from: usize, to: usize) -> Result<()> {
+        {
+            let mut state = self.state.write().unwrap();
+            let len = state.queue.len();
+            if from >= len || to >= len {
+                return Err(ZniczError::Player("queue index out of range".into()));
+            }
+            if from == to {
+                return Ok(());
+            }
+            let item = state.queue.remove(from);
+            state.queue.insert(to, item);
+            state.queue_position = moved_position(state.queue_position, from, to);
+        }
+        self.event_tx.send(PlayerEvent::QueueChanged).ok();
+        self.emit_state_changed();
+        Ok(())
+    }
+
     fn remove_from_queue(&mut self, index: usize) -> Result<()> {
         let playing_removed = {
             let mut state = self.state.write().unwrap();
@@ -760,5 +786,61 @@ impl PlayerEngine {
 
     fn emit_error(&self, message: String) {
         self.event_tx.send(PlayerEvent::Error(message)).ok();
+    }
+}
+
+/// Where the playing row sits after the row at `from` moves to `to`.
+pub(crate) fn moved_position(position: usize, from: usize, to: usize) -> usize {
+    if from == position {
+        to
+    } else if from < position && to >= position {
+        position - 1
+    } else if from > position && to <= position {
+        position + 1
+    } else {
+        position
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::moved_position;
+
+    #[test]
+    fn the_playing_row_follows_itself() {
+        assert_eq!(moved_position(2, 2, 0), 0);
+        assert_eq!(moved_position(2, 2, 4), 4);
+    }
+
+    #[test]
+    fn rows_crossing_the_playing_row_shift_it() {
+        // A row from above moves to or below the playing row: it shifts up.
+        assert_eq!(moved_position(2, 0, 2), 1);
+        assert_eq!(moved_position(2, 1, 4), 1);
+        // A row from below moves to or above it: it shifts down.
+        assert_eq!(moved_position(2, 4, 2), 3);
+        assert_eq!(moved_position(2, 3, 0), 3);
+    }
+
+    #[test]
+    fn edges_and_adjacent_swaps() {
+        // Playing row first.
+        assert_eq!(moved_position(0, 3, 0), 1);
+        assert_eq!(moved_position(0, 0, 3), 3);
+        assert_eq!(moved_position(0, 2, 4), 0);
+        // Playing row last (index 4).
+        assert_eq!(moved_position(4, 0, 4), 3);
+        assert_eq!(moved_position(4, 4, 0), 0);
+        assert_eq!(moved_position(4, 1, 3), 4);
+        // The row just above moves down onto the playing row.
+        assert_eq!(moved_position(2, 1, 2), 1);
+        // The row just below moves up onto the playing row.
+        assert_eq!(moved_position(2, 3, 2), 3);
+    }
+
+    #[test]
+    fn rows_that_do_not_cross_leave_it_alone() {
+        assert_eq!(moved_position(2, 0, 1), 2);
+        assert_eq!(moved_position(2, 3, 4), 2);
     }
 }

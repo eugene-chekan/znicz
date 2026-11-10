@@ -223,16 +223,16 @@ fn volume_keys_move_in_steps_and_stop_at_the_ends() {
     press_char(&mut app, '-');
     let after_one = app.state().volume;
     assert!(
-        (after_one - 0.95).abs() < 0.001,
+        (after_one - 0.99).abs() < 0.0001,
         "one press should be one step, got {after_one}"
     );
 
-    for _ in 0..40 {
+    for _ in 0..120 {
         press_char(&mut app, '-');
     }
     assert_eq!(app.state().volume, 0.0, "volume must not go negative");
 
-    for _ in 0..40 {
+    for _ in 0..120 {
         press_char(&mut app, '+');
     }
     assert_eq!(app.state().volume, 1.0, "volume must not exceed full");
@@ -1479,4 +1479,104 @@ fn playback_keys_are_not_swallowed_on_stage() {
     let browse = toast_after(View::Browse);
     assert_eq!(toast_after(View::Stage), browse);
     assert!(browse.is_some(), "`n` onto a missing file should toast");
+}
+
+fn press_alt(app: &mut App, code: KeyCode) {
+    app.on_key(KeyEvent::new(code, KeyModifiers::ALT));
+}
+
+#[test]
+fn alt_down_moves_the_highlighted_queue_row_and_the_cursor() {
+    let mut app = new_app();
+    queue(&mut app, 3);
+    open_queue(&mut app);
+    press_alt(&mut app, KeyCode::Down);
+    let state = app.state();
+    assert_eq!(
+        state.queue[1],
+        znicz_core::QueueItem::file("/music/track-0.flac")
+    );
+    assert_eq!(app.queue_cursor.index(), 1, "the cursor follows the row");
+    press_alt(&mut app, KeyCode::Up);
+    assert_eq!(
+        app.state().queue[0],
+        znicz_core::QueueItem::file("/music/track-0.flac")
+    );
+    assert_eq!(app.queue_cursor.index(), 0);
+}
+
+#[test]
+fn alt_arrows_stop_at_the_ends() {
+    let mut app = new_app();
+    queue(&mut app, 2);
+    open_queue(&mut app);
+    press_alt(&mut app, KeyCode::Up);
+    assert_eq!(
+        app.state().queue[0],
+        znicz_core::QueueItem::file("/music/track-0.flac")
+    );
+    press_char(&mut app, 'G');
+    press_alt(&mut app, KeyCode::Down);
+    assert_eq!(
+        app.state().queue[1],
+        znicz_core::QueueItem::file("/music/track-1.flac")
+    );
+    assert!(app.toasts.is_empty(), "no error at the ends");
+}
+
+#[test]
+fn alt_arrows_do_nothing_with_library_focus() {
+    let mut app = new_app();
+    queue(&mut app, 2);
+    press_alt(&mut app, KeyCode::Down);
+    assert_eq!(
+        app.state().queue[0],
+        znicz_core::QueueItem::file("/music/track-0.flac")
+    );
+}
+
+#[test]
+fn alt_arrows_move_rows_with_the_drawer_focused_on_stage() {
+    let mut app = new_app();
+    queue(&mut app, 3);
+    app.view = View::Stage;
+    open_queue(&mut app);
+    press_alt(&mut app, KeyCode::Down);
+    assert_eq!(
+        app.state().queue[1],
+        znicz_core::QueueItem::file("/music/track-0.flac")
+    );
+    assert_eq!(app.queue_cursor.index(), 1);
+}
+
+#[test]
+fn alt_arrows_do_nothing_with_a_modal_open() {
+    let mut app = new_app();
+    queue(&mut app, 3);
+    open_queue(&mut app);
+    press_char(&mut app, '?');
+    assert_ne!(app.modal, Modal::None, "help should be open");
+    press_alt(&mut app, KeyCode::Down);
+    assert_eq!(
+        app.state().queue[0],
+        znicz_core::QueueItem::file("/music/track-0.flac")
+    );
+}
+
+#[test]
+fn alt_arrows_move_a_list_overlay_cursor_like_plain_arrows() {
+    let mut app = new_app();
+    queue(&mut app, 3);
+    open_queue(&mut app);
+    app.modal = Modal::Playlists;
+    app.playlists = vec!["a".into(), "b".into(), "c".into()];
+    press_alt(&mut app, KeyCode::Down);
+    assert_eq!(app.playlist_cursor.selected(3), Some(1));
+    press_alt(&mut app, KeyCode::Up);
+    assert_eq!(app.playlist_cursor.selected(3), Some(0));
+    assert_eq!(
+        app.state().queue[0],
+        znicz_core::QueueItem::file("/music/track-0.flac"),
+        "the queue must not move"
+    );
 }

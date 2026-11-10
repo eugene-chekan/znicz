@@ -65,7 +65,7 @@ const TICK_RATE: Duration = Duration::from_millis(200);
 /// Seek step for arrows, and for Shift + arrows.
 const SEEK_SMALL: i64 = 5;
 const SEEK_LARGE: i64 = 30;
-const VOLUME_STEP: f32 = 0.05;
+const VOLUME_STEP: f32 = 0.01;
 
 /// Local tests and preview keep an in-process engine. Production talks to
 /// `znicz player` over IPC.
@@ -1058,6 +1058,18 @@ impl App {
             KeyCode::Char('n') => self.skip_track(false),
             KeyCode::Char('p') => self.skip_track(true),
 
+            // Alt-↑/↓ belong to the queue drawer only; elsewhere they fall
+            // through and move the cursor like ↑/↓.
+            KeyCode::Up
+                if key.modifiers.contains(KeyModifiers::ALT) && self.queue_reorder_active() =>
+            {
+                self.move_queue_row(-1)
+            }
+            KeyCode::Down
+                if key.modifiers.contains(KeyModifiers::ALT) && self.queue_reorder_active() =>
+            {
+                self.move_queue_row(1)
+            }
             KeyCode::Right if key.modifiers.contains(KeyModifiers::ALT) => {
                 self.pan_titles(1);
             }
@@ -1963,7 +1975,7 @@ impl App {
 
     fn adjust_volume(&mut self, delta: f32) {
         let state = self.player.state();
-        let volume = (state.volume + delta).clamp(0.0, 1.0);
+        let volume = (((state.volume + delta) * 100.0).round() / 100.0).clamp(0.0, 1.0);
         self.apply(Command::SetVolume(volume), None);
     }
 
@@ -1997,6 +2009,33 @@ impl App {
                 "shuffle off".into()
             }),
         );
+    }
+
+    /// `Alt-↑` / `Alt-↓`: move the highlighted queue row; the cursor follows it.
+    fn queue_reorder_active(&self) -> bool {
+        self.modal == Modal::None && self.queue_open && self.focus == Focus::Queue
+    }
+
+    fn move_queue_row(&mut self, delta: isize) {
+        if !self.queue_reorder_active() {
+            return;
+        }
+        let len = self.player.state().queue.len();
+        let Some(from) = self.queue_cursor.selected(len) else {
+            return;
+        };
+        let to = from as isize + delta;
+        if to < 0 || to as usize >= len {
+            return;
+        }
+        let to = to as usize;
+        match self.player.send_blocking(Command::QueueMove { from, to }) {
+            Ok(()) => {
+                self.queue_cursor.set(to, len);
+                self.queue_h_offset = 0;
+            }
+            Err(e) => self.toasts.error(e.to_string()),
+        }
     }
 
     fn pan_titles(&mut self, dir: isize) {

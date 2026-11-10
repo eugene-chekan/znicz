@@ -36,12 +36,22 @@ pub fn channel_name(channels: u16) -> String {
     }
 }
 
-/// A volume meter built from block characters, e.g. `████▁▁▁▁`.
-pub fn volume_bar(volume: f32, width: usize) -> String {
-    let filled = (volume.clamp(0.0, 1.0) * width as f32).round() as usize;
-    let mut bar = String::with_capacity(width * 3);
-    for i in 0..width {
-        bar.push(if i < filled { '█' } else { '▁' });
+/// A volume bar `cells` wide with eighth-cell resolution: full blocks, at
+/// most one partial block, then low blocks for the rest.
+pub fn volume_bar(volume: f32, cells: usize) -> String {
+    const PARTIAL: [char; 7] = ['▏', '▎', '▍', '▌', '▋', '▊', '▉'];
+    let eighths = (volume.clamp(0.0, 1.0) * (cells * 8) as f32).round() as usize;
+    let full = eighths / 8;
+    let rest = eighths % 8;
+    let mut bar = String::with_capacity(cells * 3);
+    for _ in 0..full {
+        bar.push('█');
+    }
+    if full < cells {
+        bar.push(if rest > 0 { PARTIAL[rest - 1] } else { '▁' });
+        for _ in full + 1..cells {
+            bar.push('▁');
+        }
     }
     bar
 }
@@ -116,6 +126,19 @@ mod tests {
         assert_eq!(volume_bar(0.0, 4), "▁▁▁▁");
         assert_eq!(volume_bar(1.0, 4), "████");
         assert_eq!(volume_bar(0.5, 4), "██▁▁");
+    }
+
+    #[test]
+    fn the_volume_bar_has_eighth_cell_resolution() {
+        assert_eq!(volume_bar(0.0, 6), "▁▁▁▁▁▁");
+        assert_eq!(volume_bar(1.0, 6), "██████");
+        assert_eq!(volume_bar(0.5, 6), "███▁▁▁");
+        assert_eq!(volume_bar(1.0 / 8.0, 1), "▏");
+        assert_eq!(volume_bar(3.0 / 8.0, 1), "▍");
+        assert_eq!(volume_bar(0.52, 6), "███▏▁▁", "25 of 48 eighths");
+        for v in [0.0, 0.01, 0.33, 0.77, 0.99, 1.0] {
+            assert_eq!(volume_bar(v, 10).chars().count(), 10, "{v}");
+        }
     }
 
     #[test]

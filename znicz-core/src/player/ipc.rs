@@ -449,14 +449,50 @@ fn outdated_player_hint(e: impl std::fmt::Display) -> ZniczError {
     ))
 }
 
+/// A failed rpc, and whether a connection was open when it failed.
+struct RpcFailure {
+    error: ZniczError,
+    /// The request was sent (or tried) on an open connection. Errors from
+    /// (re)opening the connection, such as "connection refused", are not.
+    mid_request: bool,
+}
+
+impl RpcFailure {
+    fn connect(error: ZniczError) -> Self {
+        Self {
+            error,
+            mid_request: false,
+        }
+    }
+
+    /// The outdated-player hint only fits a request that died on an open
+    /// connection; a player that is simply not running stays a plain error.
+    fn into_error(self) -> ZniczError {
+        if self.mid_request {
+            outdated_player_hint(self.error)
+        } else {
+            self.error
+        }
+    }
+}
+
+/// Map a command rpc outcome: a request that dies on an open connection gets
+/// the outdated-player hint, the player's own errors pass through verbatim.
+fn command_result(response: std::result::Result<IpcResponse, RpcFailure>) -> Result<()> {
+    match response.map_err(RpcFailure::into_error)? {
+        IpcResponse::Ok { .. } => Ok(()),
+        IpcResponse::Err { message } => Err(ZniczError::Player(message)),
+    }
+}
+
 impl LibraryHost for IpcClient {
     fn apply(&self, op: LibraryOp) -> Result<()> {
         match self
-            .rpc(|token| IpcRequest::Library {
+            .rpc_detailed(|token| IpcRequest::Library {
                 token: token.to_string(),
                 op: op.clone(),
             })
-            .map_err(outdated_player_hint)?
+            .map_err(RpcFailure::into_error)?
         {
             IpcResponse::Ok { .. } => Ok(()),
             IpcResponse::Err { message } => Err(ZniczError::Library(message)),
@@ -595,7 +631,14 @@ impl IpcClient {
     }
 
     fn rpc(&self, make: impl Fn(&str) -> IpcRequest) -> Result<IpcResponse> {
-        let mut live = self.lock_live()?;
+        self.rpc_detailed(make).map_err(|f| f.error)
+    }
+
+    fn rpc_detailed(
+        &self,
+        make: impl Fn(&str) -> IpcRequest,
+    ) -> std::result::Result<IpcResponse, RpcFailure> {
+        let mut live = self.lock_live().map_err(RpcFailure::connect)?;
         let request = make(&live.token);
         match rpc_on(&mut live, &request) {
             Ok(response) => Ok(response),
@@ -604,9 +647,13 @@ impl IpcClient {
                     &self.inner.advertise,
                     self.inner.role,
                     self.inner.ensure.as_ref(),
-                )?;
+                )
+                .map_err(RpcFailure::connect)?;
                 let request = make(&live.token);
-                rpc_on(&mut live, &request)
+                rpc_on(&mut live, &request).map_err(|error| RpcFailure {
+                    error,
+                    mid_request: true,
+                })
             }
         }
     }
@@ -627,13 +674,10 @@ impl IpcClient {
     }
 
     pub fn send_blocking(&self, command: Command) -> Result<()> {
-        match self.rpc(|token| IpcRequest::Command {
+        command_result(self.rpc_detailed(|token| IpcRequest::Command {
             token: token.to_string(),
             command: command.clone(),
-        })? {
-            IpcResponse::Ok { .. } => Ok(()),
-            IpcResponse::Err { message } => Err(ZniczError::Player(message)),
-        }
+        }))
     }
 
     pub fn state(&self) -> Result<PlayerState> {
@@ -671,6 +715,35 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn command_transport_errors_get_the_hint_and_player_errors_stay_verbatim() {
+        let transport = command_result(Err(RpcFailure {
+            error: ZniczError::Player("broken pipe".into()),
+            mid_request: true,
+        }))
+        .unwrap_err()
+        .to_string();
+        assert!(transport.contains("broken pipe"), "{transport}");
+        assert!(transport.contains("znicz player stop"), "{transport}");
+
+        let connect = command_result(Err(RpcFailure {
+            error: ZniczError::Player("ipc connect: connection refused".into()),
+            mid_request: false,
+        }))
+        .unwrap_err()
+        .to_string();
+        assert!(connect.contains("connection refused"), "{connect}");
+        assert!(!connect.contains("znicz player stop"), "{connect}");
+
+        let player = command_result(Ok(IpcResponse::Err {
+            message: "queue index out of range".into(),
+        }))
+        .unwrap_err()
+        .to_string();
+        assert!(player.contains("queue index out of range"), "{player}");
+        assert!(!player.contains("znicz player stop"), "{player}");
+    }
 
     #[test]
     fn a_transport_failure_suggests_restarting_the_player() {

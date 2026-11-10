@@ -233,7 +233,7 @@ fn seek_line(state: &PlayerState, width: usize) -> Line<'static> {
     ])
 }
 
-/// `▆▆▆▁ 70%   repeat all   shuffle`.
+/// `███████▁▁▁  70%   repeat all   shuffle` (a 10-cell volume bar).
 fn volume_line(state: &PlayerState) -> Line<'static> {
     let mut spans = if state.muted {
         vec![Span::styled("muted", theme::warn())]
@@ -241,7 +241,7 @@ fn volume_line(state: &PlayerState) -> Line<'static> {
         vec![Span::styled(
             format!(
                 "{} {:>3.0}%",
-                format::volume_bar(state.volume, 4),
+                format::volume_bar(state.volume, 10),
                 state.volume * 100.0
             ),
             theme::text(),

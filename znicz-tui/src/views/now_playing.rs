@@ -152,7 +152,7 @@ fn chrome_line(
     } else {
         Some(format!(
             " {} {:>3.0}%",
-            format::volume_bar(state.volume, 4),
+            format::volume_bar(state.volume, 6),
             state.volume * 100.0
         ))
     };
