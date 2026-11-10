@@ -215,6 +215,14 @@ struct QueueRemoveParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+struct QueueMoveParams {
+    /// 0-based index of the row to move.
+    from: usize,
+    /// 0-based index it should end up at (as the queue is before the move).
+    to: usize,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 struct DeviceParams {
     device_id: String,
 }
@@ -489,6 +497,19 @@ impl ZniczMcpServer {
         Parameters(params): Parameters<QueueRemoveParams>,
     ) -> Result<rmcp::model::CallToolResult, McpError> {
         self.apply(Command::QueueRemove(params.index))
+    }
+
+    #[tool(
+        description = "Move one queue row to another 0-based index; the playing track keeps playing"
+    )]
+    fn queue_move(
+        &self,
+        Parameters(params): Parameters<QueueMoveParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        self.apply(Command::QueueMove {
+            from: params.from,
+            to: params.to,
+        })
     }
 
     #[tool(description = "Clear the playback queue")]
@@ -1370,6 +1391,46 @@ mod tests {
             queue[0]["path"].as_str().unwrap().ends_with("b.flac"),
             "row 0 should slide up; got {queue:?}"
         );
+    }
+
+    #[test]
+    fn queue_move_reorders_and_returns_the_new_queue() {
+        let server = server();
+        server
+            .queue_add(Parameters(QueueAddParams {
+                paths: vec![
+                    "/music/a.flac".into(),
+                    "/music/b.flac".into(),
+                    "/music/c.flac".into(),
+                ],
+            }))
+            .expect("queue_add");
+        let result = server
+            .queue_move(Parameters(QueueMoveParams { from: 2, to: 0 }))
+            .expect("queue_move");
+        let state: serde_json::Value = serde_json::from_str(&result_text(&result)).unwrap();
+        let queue = state["queue"].as_array().expect("queue");
+        assert!(
+            queue[0]["path"].as_str().unwrap().ends_with("c.flac"),
+            "{queue:?}"
+        );
+        assert!(
+            queue[2]["path"].as_str().unwrap().ends_with("b.flac"),
+            "{queue:?}"
+        );
+    }
+
+    #[test]
+    fn queue_move_out_of_range_is_an_error() {
+        let server = server();
+        server
+            .queue_add(Parameters(QueueAddParams {
+                paths: vec!["/music/a.flac".into()],
+            }))
+            .expect("queue_add");
+        assert!(server
+            .queue_move(Parameters(QueueMoveParams { from: 0, to: 3 }))
+            .is_err());
     }
 
     /// A failing command must surface as an error, not a silent stale snapshot.

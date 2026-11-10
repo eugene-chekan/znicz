@@ -213,7 +213,8 @@ no duration (`—`).
 
 `Enter` plays a row, `d` removes one, `C` clears, `o` jumps back to whatever is
 playing. `d` on the playing row starts the next remaining one, or stops if
-that was the last row.
+that was the last row. `Alt-↑` / `Alt-↓` move the highlighted row (the cursor
+follows it, the playing track keeps playing, and the ends do nothing).
 
 ### Devices
 
