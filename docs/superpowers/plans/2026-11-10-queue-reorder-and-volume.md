@@ -30,7 +30,7 @@ Every commit message ends with a blank line then `Co-Authored-By: Claude Opus 5.
 - Modify: `znicz-core/src/player/commands.rs`, `znicz-core/src/player/engine.rs`
 - Test: `znicz-core/src/player/engine.rs` (new tests module), `znicz-core/tests/queue.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 At the bottom of `znicz-core/src/player/engine.rs`:
 
@@ -114,9 +114,9 @@ fn moving_a_row_onto_itself_does_nothing() {
 
 (If `QueueItem` has no `Debug` that shows the path, compare with `QueueItem::file("/music/track-0.flac")` directly instead of the `format!`.)
 
-- [ ] **Step 2: Run** — `cargo test -p znicz-core moved_position` and `--test queue moving` — compile errors (`QueueMove`, `moved_position`).
+- [x] **Step 2: Run** — `cargo test -p znicz-core moved_position` and `--test queue moving` — compile errors (`QueueMove`, `moved_position`).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `commands.rs`, in `enum Command` after `QueueRemove(usize),`:
 
@@ -170,7 +170,7 @@ pub(crate) fn moved_position(position: usize, from: usize, to: usize) -> usize {
 
 (Use whatever error type/constructor the engine already uses for command errors; `ZniczError::Player` is the existing pattern.)
 
-- [ ] **Step 4:** `cargo test -p znicz-core`, clippy, fmt; commit `Move queue rows in the engine`.
+- [x] **Step 4:** `cargo test -p znicz-core`, clippy, fmt; commit `Move queue rows in the engine`.
 
 ---
 
@@ -180,7 +180,7 @@ pub(crate) fn moved_position(position: usize, from: usize, to: usize) -> usize {
 - Modify: `znicz-tui/src/app.rs`, `znicz-tui/src/keys.rs`
 - Test: `znicz-tui/tests/keys.rs`
 
-- [ ] **Step 1: Write the failing tests** (in `tests/keys.rs`; helpers `new_app`, `queue`, `open_queue`, `press_char` exist)
+- [x] **Step 1: Write the failing tests** (in `tests/keys.rs`; helpers `new_app`, `queue`, `open_queue`, `press_char` exist)
 
 ```rust
 fn press_alt(app: &mut App, code: KeyCode) {
@@ -223,9 +223,9 @@ fn alt_arrows_do_nothing_with_library_focus() {
 }
 ```
 
-- [ ] **Step 2: Run** — FAIL (Alt-↓ currently falls into the plain `Down` arm and just moves the cursor).
+- [x] **Step 2: Run** — FAIL (Alt-↓ currently falls into the plain `Down` arm and just moves the cursor).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `app.rs` `on_global_key`: **before** the `KeyCode::Down | KeyCode::Char('j')` and `KeyCode::Up | KeyCode::Char('k')` arms (and next to the existing Alt-Left/Right pan arms), add
 
@@ -259,7 +259,7 @@ and the method:
 
 `keys.rs` `QUEUE`: add `b("Alt-↑ / Alt-↓", "move the row up / down"),` after the `o` row.
 
-- [ ] **Step 4:** `cargo test -p znicz-tui`, clippy, fmt; commit `Move queue rows with Alt-arrows`.
+- [x] **Step 4:** `cargo test -p znicz-tui`, clippy, fmt; commit `Move queue rows with Alt-arrows`.
 
 ---
 
@@ -268,7 +268,7 @@ and the method:
 **Files:**
 - Modify: `znicz-mcp/src/server.rs`, `znicz-mcp/skills/*/SKILL.md` (whichever lists queue tools)
 
-- [ ] **Step 1: Write the failing tests** (next to `queue_remove_drops_one_row_and_returns_the_new_queue`)
+- [x] **Step 1: Write the failing tests** (next to `queue_remove_drops_one_row_and_returns_the_new_queue`)
 
 ```rust
     #[test]
@@ -302,9 +302,9 @@ and the method:
     }
 ```
 
-- [ ] **Step 2: Run** — compile error.
+- [x] **Step 2: Run** — compile error.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 After `QueueRemoveParams`:
 
@@ -335,7 +335,7 @@ struct QueueMoveParams {
 
 Add `queue_move` to the MCP skill that lists the queue tools (grep `queue_remove` in `znicz-mcp/skills`).
 
-- [ ] **Step 4:** `cargo test -p znicz-mcp`, clippy, fmt; commit `Add the queue_move MCP tool`.
+- [x] **Step 4:** `cargo test -p znicz-mcp`, clippy, fmt; commit `Add the queue_move MCP tool`.
 
 ---
 
@@ -345,7 +345,7 @@ Add `queue_move` to the MCP skill that lists the queue tools (grep `queue_remove
 - Modify: `znicz-tui/src/app.rs`, `znicz-tui/src/format.rs`, `znicz-tui/src/views/now_playing.rs`, `znicz-tui/src/views/stage.rs`
 - Test: `format.rs` tests, `znicz-tui/tests/keys.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `format.rs` tests (keep the existing 4-cell assertions):
 
@@ -366,9 +366,9 @@ Add `queue_move` to the MCP skill that lists the queue tools (grep `queue_remove
 
 `tests/keys.rs`: replace the body of `volume_keys_move_in_steps_and_stop_at_the_ends` so one press is `0.99` (within 0.0001), and the loops are 120 presses each way (still ending exactly at `0.0` and `1.0`).
 
-- [ ] **Step 2: Run** — FAIL (`0.52` gives `███▁▁▁`; one press gives 0.95).
+- [x] **Step 2: Run** — FAIL (`0.52` gives `███▁▁▁`; one press gives 0.95).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `format.rs`:
 
@@ -402,7 +402,7 @@ pub fn volume_bar(volume: f32, cells: usize) -> String {
 
 `now_playing.rs`: the transport's `format::volume_bar(state.volume, 4)` → `6`. `stage.rs`: `volume_bar(state.volume, 4)` → `10`.
 
-- [ ] **Step 4:** `cargo test -p znicz-tui`, clippy, fmt; commit `Step volume by 1% and draw a finer bar`.
+- [x] **Step 4:** `cargo test -p znicz-tui`, clippy, fmt; commit `Step volume by 1% and draw a finer bar`.
 
 ---
 
@@ -412,7 +412,7 @@ pub fn volume_bar(volume: f32, cells: usize) -> String {
 - Create: `znicz-core/src/audio/gain.rs`
 - Modify: `znicz-core/src/audio/mod.rs` (or wherever `output` is declared), `znicz-core/src/audio/output.rs`, `znicz-core/src/player/engine.rs`
 
-- [ ] **Step 1: Write `gain.rs` with failing tests**
+- [x] **Step 1: Write `gain.rs` with failing tests**
 
 ```rust
 //! Gain changes as short ramps, applied per frame in the audio callback.
@@ -599,9 +599,9 @@ mod tests {
 
 Declare it next to `output` (`pub mod gain;` in the audio module) and re-export nothing new from the crate root unless the engine needs it (`crate::audio::gain::{MUTE_FADE, VOLUME_RAMP}`).
 
-- [ ] **Step 2: Run** — `cargo test -p znicz-core --lib gain` (write tests first with `todo!()` bodies for `retarget`/`next_frame_gain` to see them fail), then PASS.
+- [x] **Step 2: Run** — `cargo test -p znicz-core --lib gain` (write tests first with `todo!()` bodies for `retarget`/`next_frame_gain` to see them fail), then PASS.
 
-- [ ] **Step 3: Wire it into the output**
+- [x] **Step 3: Wire it into the output**
 
 `output.rs`:
 - `AudioOutput.volume_bits: Arc<AtomicU32>` → `gain: Arc<GainControl>` (init `Arc::new(GainControl::new(1.0))`).
@@ -644,25 +644,25 @@ and give each closure `&mut ramp`, `&gain`, `channels`, `rate` (move `ramp` into
 
 `engine.rs`: `Command::SetMuted` calls `self.output.set_gain(effective, MUTE_FADE)` instead of `set_volume`. `SetVolume` keeps `set_volume` (now a 20 ms ramp).
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 `cargo test -p znicz-core` (hardware playback tests skip under `CI` / without a device), `cargo test --workspace`, clippy, fmt. If a sound device is available locally, play a file in the TUI and press `m` twice to hear the fade.
 
-- [ ] **Step 5:** Commit `Fade mute and ramp volume changes in the audio callback`.
+- [x] **Step 5:** Commit `Fade mute and ramp volume changes in the audio callback`.
 
 ---
 
 ### Task 7: Version and docs
 
-- [ ] **Step 1:** Root `Cargo.toml` `0.9.0` → `0.10.0`; `cargo build -p znicz`; update the "currently" version in `wiki/Rust/Cargo-Workspace.md`.
-- [ ] **Step 2: README:** key table — `+` / `-` step 1 %, `m` mute fades in / out over half a second, `Alt-↑` / `Alt-↓` move a queue row (note: some terminals, e.g. macOS Terminal without "Use Option as Meta", do not send Alt-arrows); MCP tool list gains `queue_move` if the README lists tools.
-- [ ] **Step 3: Wiki:** `Architecture/TUI.md` (queue keys, volume bar 6 / 10 cells with eighths, 1 % steps); `Architecture/MCP.md` (`queue_move`); `Architecture/Core-Engine.md` (`QueueMove` and how the playing index follows) and `Architecture/Audio-Threading.md` (gain control and per-frame ramps, 500 ms mute fade, 20 ms volume ramp, exact landing for bit-perfect); `Plans/Roadmap.md` part 5 done in 0.10.0 — the rework is complete; `Issues.md` #36 and #47 to Closed (fixed in 0.10.0).
-- [ ] **Step 4:** `cargo test --workspace`, fmt; commit `Bump to 0.10.0 and document reordering, volume steps, and mute fades`.
+- [x] **Step 1:** Root `Cargo.toml` `0.9.0` → `0.10.0`; `cargo build -p znicz`; update the "currently" version in `wiki/Rust/Cargo-Workspace.md`.
+- [x] **Step 2: README:** key table — `+` / `-` step 1 %, `m` mute fades in / out over half a second, `Alt-↑` / `Alt-↓` move a queue row (note: some terminals, e.g. macOS Terminal without "Use Option as Meta", do not send Alt-arrows); MCP tool list gains `queue_move` if the README lists tools.
+- [x] **Step 3: Wiki:** `Architecture/TUI.md` (queue keys, volume bar 6 / 10 cells with eighths, 1 % steps); `Architecture/MCP.md` (`queue_move`); `Architecture/Core-Engine.md` (`QueueMove` and how the playing index follows) and `Architecture/Audio-Threading.md` (gain control and per-frame ramps, 500 ms mute fade, 20 ms volume ramp, exact landing for bit-perfect); `Plans/Roadmap.md` part 5 done in 0.10.0 — the rework is complete; `Issues.md` #36 and #47 to Closed (fixed in 0.10.0).
+- [x] **Step 4:** `cargo test --workspace`, fmt; commit `Bump to 0.10.0 and document reordering, volume steps, and mute fades`.
 
 ---
 
 ### Task 8: Verify and open the PR
 
-- [ ] **Step 1:** fmt check, clippy `-D warnings`, `cargo test --workspace` — all clean.
-- [ ] **Step 2:** Tick every checkbox here; commit `Mark queue reorder and volume plan complete`.
-- [ ] **Step 3:** Push `feat/queue-reorder-and-volume`; open the PR "Queue reordering, finer volume, and mute fades (TUI rework part 5)" with `Closes #36` and `Closes #47`, ending with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+- [x] **Step 1:** fmt check, clippy `-D warnings`, `cargo test --workspace` — all clean.
+- [x] **Step 2:** Tick every checkbox here; commit `Mark queue reorder and volume plan complete`.
+- [x] **Step 3:** Push `feat/queue-reorder-and-volume`; open the PR "Queue reordering, finer volume, and mute fades (TUI rework part 5)" with `Closes #36` and `Closes #47`, ending with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
