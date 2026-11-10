@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use crate::cover::http::{get_json, probe, retryable, Fetched};
-use crate::cover::title::{artist_matches, search_key, searchable};
+use crate::cover::title::{artist_attempts, artist_matches, search_key, searchable};
 use crate::cover::{CoverSource, Found, StreamQuery};
 
 const MUSICBRAINZ: &str = "https://musicbrainz.org";
@@ -106,33 +106,41 @@ impl CoverSource for MusicBrainzSource {
         let Some((artist, title)) = searchable(query) else {
             return Found::NotFound;
         };
-        let search = format!(
-            "artist:\"{}\" AND recording:\"{}\"",
-            quoted(artist),
-            quoted(title)
-        );
-        self.wait_turn();
-        let url = format!("{}/ws/2/recording/", self.musicbrainz);
-        let json = match get_json(&url, &[("query", &search), ("fmt", "json"), ("limit", "5")]) {
-            Fetched::Json(json) => json,
-            Fetched::Status(code) => {
-                tracing::debug!(source = "musicbrainz", code, "cover search refused");
-                return if retryable(code) {
-                    Found::Unavailable
-                } else {
-                    Found::NotFound
-                };
+        for attempt in artist_attempts(artist) {
+            let search = format!(
+                "artist:\"{}\" AND recording:\"{}\"",
+                quoted(attempt),
+                quoted(title)
+            );
+            self.wait_turn();
+            let url = format!("{}/ws/2/recording/", self.musicbrainz);
+            let json = match get_json(&url, &[("query", &search), ("fmt", "json"), ("limit", "5")])
+            {
+                Fetched::Json(json) => json,
+                Fetched::Status(code) => {
+                    tracing::debug!(source = "musicbrainz", code, "cover search refused");
+                    return if retryable(code) {
+                        Found::Unavailable
+                    } else {
+                        Found::NotFound
+                    };
+                }
+                Fetched::Failed => return Found::Unavailable,
+            };
+            let ids = release_ids(&json, artist);
+            if ids.is_empty() {
+                continue;
             }
-            Fetched::Failed => return Found::Unavailable,
-        };
-        for id in release_ids(&json, artist).into_iter().take(MAX_RELEASES) {
-            let front = format!("{}/release/{id}/front-500", self.cover_art);
-            match probe(&front) {
-                Some(200) => return Found::Url(front),
-                Some(code) if retryable(code) => return Found::Unavailable,
-                Some(_) => {}
-                None => return Found::Unavailable,
+            for id in ids.into_iter().take(MAX_RELEASES) {
+                let front = format!("{}/release/{id}/front-500", self.cover_art);
+                match probe(&front) {
+                    Some(200) => return Found::Url(front),
+                    Some(code) if retryable(code) => return Found::Unavailable,
+                    Some(_) => {}
+                    None => return Found::Unavailable,
+                }
             }
+            return Found::NotFound;
         }
         Found::NotFound
     }
@@ -261,5 +269,29 @@ mod tests {
         source.find(&query("A - B"));
         source.find(&query("C - D"));
         assert!(start.elapsed() >= Duration::from_millis(300));
+    }
+
+    #[test]
+    fn a_long_credit_is_retried_with_the_lead_artist() {
+        let (mb, seen) = serve(|line: &str| {
+            if line.contains("Friends") {
+                (200, br#"{"recordings":[]}"#.to_vec())
+            } else {
+                (
+                    200,
+                    br#"{"recordings":[{"score":100,
+                    "artist-credit":[{"name":"Anna Maria Jopek"}],
+                    "releases":[{"id":"upojenie"}]}]}"#
+                        .to_vec(),
+                )
+            }
+        });
+        let (caa, _) = serve(|_line: &str| (200, b"img".to_vec()));
+        let source = MusicBrainzSource::at(&mb, &caa, Duration::ZERO);
+        let found = source.find(&query(
+            "Anna Maria Jopek & Friends with Pat Metheny - Przypływ, odpływ",
+        ));
+        assert!(matches!(found, Found::Url(url) if url.ends_with("/release/upojenie/front-500")));
+        assert_eq!(seen.lock().unwrap().len(), 2);
     }
 }

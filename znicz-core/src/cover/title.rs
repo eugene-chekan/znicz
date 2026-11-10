@@ -56,6 +56,43 @@ pub(crate) fn search_key(query: &StreamQuery) -> Option<String> {
     Some(format!("{}|{}", fold(artist), fold(title)))
 }
 
+/// What joins several artists in one credit (`A & B`, `A feat. B`, …).
+const CREDIT_JOINERS: [&str; 10] = [
+    " & ",
+    " and ",
+    " with ",
+    " feat. ",
+    " feat ",
+    " ft. ",
+    " featuring ",
+    ", ",
+    " x ",
+    " + ",
+];
+
+/// The first artist of a multi-artist credit: the text up to the earliest
+/// joiner, case-insensitive. A credit without joiners is returned whole.
+pub fn lead_artist(credit: &str) -> &str {
+    // ASCII lowercasing keeps byte offsets, so positions map back to `credit`.
+    let lower = credit.to_ascii_lowercase();
+    CREDIT_JOINERS
+        .iter()
+        .filter_map(|joiner| lower.find(joiner))
+        .min()
+        .map_or(credit, |at| credit[..at].trim())
+}
+
+/// Artist texts to search with, in order: the full credit, then its lead
+/// artist when that differs.
+pub(crate) fn artist_attempts(credit: &str) -> Vec<&str> {
+    let lead = lead_artist(credit);
+    if lead.is_empty() || lead == credit {
+        vec![credit]
+    } else {
+        vec![credit, lead]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -98,5 +135,41 @@ mod tests {
         assert!(artist_matches("Ben Webster Quartet", "Ben Webster"));
         assert!(!artist_matches("Serotonal", "Stereo Total"));
         assert!(!artist_matches("", "Anyone"));
+    }
+
+    #[test]
+    fn the_lead_artist_is_the_credit_up_to_the_first_joiner() {
+        assert_eq!(
+            lead_artist("Anna Maria Jopek & Friends with Pat Metheny"),
+            "Anna Maria Jopek"
+        );
+        assert_eq!(
+            lead_artist("Nils Landgren With Esbjörn Svensson"),
+            "Nils Landgren"
+        );
+        assert_eq!(
+            lead_artist("Lizz Wright FEAT. Gregory Porter"),
+            "Lizz Wright"
+        );
+        assert_eq!(lead_artist("A ft. B"), "A");
+        assert_eq!(lead_artist("A featuring B"), "A");
+        assert_eq!(lead_artist("A feat B"), "A");
+        assert_eq!(lead_artist("Chick Corea and Gary Burton"), "Chick Corea");
+        assert_eq!(lead_artist("Trio X, Guest"), "Trio X");
+        assert_eq!(lead_artist("A x B"), "A");
+        assert_eq!(lead_artist("A + B"), "A");
+        assert_eq!(lead_artist("Ben Webster"), "Ben Webster");
+    }
+
+    #[test]
+    fn attempts_are_the_credit_then_the_lead_artist() {
+        assert_eq!(
+            artist_attempts("Anna Maria Jopek & Friends with Pat Metheny"),
+            vec![
+                "Anna Maria Jopek & Friends with Pat Metheny",
+                "Anna Maria Jopek"
+            ]
+        );
+        assert_eq!(artist_attempts("Ben Webster"), vec!["Ben Webster"]);
     }
 }

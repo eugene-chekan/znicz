@@ -1,4 +1,4 @@
-//! Live check of the stream cover chain against Deezer and MusicBrainz.
+//! Live check of the stream cover chain against Deezer, iTunes and MusicBrainz.
 //!
 //! Needs network access, so it is ignored by default:
 //! `cargo test -p znicz-core --test cover_live -- --ignored --nocapture`
@@ -6,7 +6,7 @@
 use znicz_core::{default_sources, Resolution, StreamCovers, StreamQuery};
 
 #[test]
-#[ignore = "hits Deezer and MusicBrainz"]
+#[ignore = "hits Deezer, iTunes and MusicBrainz"]
 fn live_covers_for_known_stations() {
     let covers = StreamCovers::new(default_sources());
     let queries = [
@@ -22,6 +22,16 @@ fn live_covers_for_known_stations() {
             stream_url: "http://stream.heavy-music.net:8176/stream".into(),
             station_name: "HEAVY-MUSIC.NET".into(),
             icy_title: Some("Serotonal - Memory Leaves".into()),
+            icy_url: None,
+            station_art: None,
+            search: true,
+        },
+        StreamQuery {
+            stream_url: "https://channels.fluxfm.de/jazz-schwarzenstein/stream.mp3".into(),
+            station_name: "FluxFM - Jazzradio Schwarzenstein".into(),
+            icy_title: Some(
+                "Anna Maria Jopek & Friends with Pat Metheny - Przypływ, odpływ".into(),
+            ),
             icy_url: None,
             station_art: None,
             search: true,
