@@ -42,6 +42,8 @@ pub struct TuiConfig {
     pub library_layout: LibraryLayout,
     /// Scroll now-playing titles that do not fit (otherwise cut with `…`).
     pub marquee: bool,
+    /// Look stream covers up by artist and title (Deezer, MusicBrainz).
+    pub cover_search: bool,
 }
 
 impl Default for TuiConfig {
@@ -51,6 +53,7 @@ impl Default for TuiConfig {
             cover_protocol: CoverProtocol::Auto,
             library_layout: LibraryLayout::Columns,
             marquee: true,
+            cover_search: true,
         }
     }
 }

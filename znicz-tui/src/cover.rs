@@ -1,12 +1,16 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{unbounded, Sender};
 use image::{imageops, imageops::FilterType, DynamicImage, ImageBuffer, Rgba};
 
 const MAX_EDGE: u32 = 512;
 const CACHE_CAP: usize = 16;
+/// How often a stream without ICY titles is looked up again (the AudioAddict
+/// channel map lifetime), so its cover follows the playing track.
+const STREAM_REFRESH: Duration = Duration::from_secs(15);
 const LOGO_PNG: &[u8] = include_bytes!("../assets/lantern-icon-1024.png");
 /// Opaque fill for letterboxing when the terminal does not report its own
 /// background. Transparent pad leaves the previous Kitty image in those cells.
@@ -29,13 +33,10 @@ pub fn slot_background(capabilities: &[ratatui_image::picker::Capability]) -> Rg
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CoverKey {
+    /// A local file's embedded picture.
     File(PathBuf),
-    ImageFile(PathBuf),
-    Url(String),
-    AudioAddict {
-        network: znicz_core::AudioAddictNetwork,
-        channel: String,
-    },
+    /// A radio stream, resolved through the cover source chain.
+    Stream(znicz_core::StreamQuery),
 }
 
 #[derive(Debug, Clone)]
@@ -58,31 +59,16 @@ impl PartialEq for CoverReady {
 struct Slot {
     ready: CoverReady,
     refreshing: bool,
+    resolved_at: Instant,
 }
 
-type Map = Arc<Mutex<(HashMap<CoverKey, Slot>, VecDeque<CoverKey>, HashSet<String>)>>;
+type Map = Arc<Mutex<(HashMap<CoverKey, Slot>, VecDeque<CoverKey>)>>;
 
 pub struct CoverCache {
     map: Map,
     requests: Sender<CoverKey>,
     logo: Arc<DynamicImage>,
-}
-
-pub fn pick_stream_cover(
-    icy: CoverReady,
-    audioaddict: CoverReady,
-    station: CoverReady,
-) -> CoverReady {
-    if let CoverReady::Embedded(_) = &icy {
-        return icy;
-    }
-    if let CoverReady::Embedded(_) = &audioaddict {
-        return audioaddict;
-    }
-    if let CoverReady::Embedded(_) = &station {
-        return station;
-    }
-    CoverReady::Logo
+    stream_refresh: Duration,
 }
 
 impl Default for CoverCache {
@@ -93,39 +79,42 @@ impl Default for CoverCache {
 
 impl CoverCache {
     pub fn new() -> Self {
+        Self::with_streams(znicz_core::StreamCovers::new(znicz_core::default_sources()))
+    }
+
+    /// A cache whose streams resolve through `streams`.
+    pub fn with_streams(streams: znicz_core::StreamCovers) -> Self {
         let logo = Arc::new(
             image::load_from_memory(LOGO_PNG).unwrap_or_else(|_| DynamicImage::new_rgb8(1, 1)),
         );
-        let map: Map = Arc::new(Mutex::new((
-            HashMap::new(),
-            VecDeque::new(),
-            HashSet::new(),
-        )));
+        let map: Map = Arc::new(Mutex::new((HashMap::new(), VecDeque::new())));
         let (requests, incoming) = unbounded::<CoverKey>();
         let worker_map = map.clone();
         std::thread::Builder::new()
             .name("znicz-cover".into())
             .spawn(move || {
                 while let Ok(key) = incoming.recv() {
-                    let result = resolve_cover(&key);
+                    let result = resolve_cover(&key, &streams);
                     let mut guard = worker_map.lock().unwrap();
-                    let (cache, order, failed) = &mut *guard;
+                    let (cache, order) = &mut *guard;
                     match result {
-                        ResolveResult::Update { ready, failed_url } => {
-                            if let Some(url) = failed_url {
-                                failed.insert(url);
-                            }
+                        ResolveResult::Update { ready } => {
                             cache.insert(
                                 key.clone(),
                                 Slot {
                                     ready,
                                     refreshing: false,
+                                    resolved_at: Instant::now(),
                                 },
                             );
                         }
                         ResolveResult::KeepPrevious => {
                             if let Some(slot) = cache.get_mut(&key) {
                                 slot.refreshing = false;
+                                slot.resolved_at = Instant::now();
+                                if matches!(slot.ready, CoverReady::Pending) {
+                                    slot.ready = CoverReady::Logo;
+                                }
                             }
                         }
                     }
@@ -144,7 +133,14 @@ impl CoverCache {
             map,
             requests,
             logo,
+            stream_refresh: STREAM_REFRESH,
         }
+    }
+
+    /// Use another refresh interval for title-less streams (tests).
+    pub fn with_stream_refresh(mut self, every: Duration) -> Self {
+        self.stream_refresh = every;
+        self
     }
 
     pub fn logo_image(&self) -> &DynamicImage {
@@ -152,24 +148,18 @@ impl CoverCache {
     }
 
     pub fn get(&self, key: CoverKey) -> CoverReady {
-        let audioaddict_stale = matches!(&key, CoverKey::AudioAddict { network, .. } if !znicz_core::audioaddict_cache_fresh(*network));
         let mut guard = self.map.lock().unwrap();
-        let (cache, _, failed) = &mut *guard;
-        if let CoverKey::Url(url) = &key {
-            if failed.contains(url) {
-                return CoverReady::Logo;
-            }
-        }
+        let (cache, _) = &mut *guard;
         if let Some(slot) = cache.get_mut(&key) {
-            if let CoverKey::AudioAddict { .. } = &key {
-                if audioaddict_stale && !slot.refreshing {
-                    slot.refreshing = true;
-                    let ready = slot.ready.clone();
-                    let key = key.clone();
-                    drop(guard);
-                    self.requests.send(key).ok();
-                    return ready;
-                }
+            let refresh = matches!(&key, CoverKey::Stream(query) if query.icy_title.is_none())
+                && !slot.refreshing
+                && slot.resolved_at.elapsed() >= self.stream_refresh;
+            if refresh {
+                slot.refreshing = true;
+                let ready = slot.ready.clone();
+                drop(guard);
+                self.requests.send(key).ok();
+                return ready;
             }
             return slot.ready.clone();
         }
@@ -178,6 +168,7 @@ impl CoverCache {
             Slot {
                 ready: CoverReady::Pending,
                 refreshing: false,
+                resolved_at: Instant::now(),
             },
         );
         drop(guard);
@@ -187,88 +178,28 @@ impl CoverCache {
 }
 
 enum ResolveResult {
-    Update {
-        ready: CoverReady,
-        failed_url: Option<String>,
-    },
+    Update { ready: CoverReady },
     KeepPrevious,
 }
 
-fn resolve_cover(key: &CoverKey) -> ResolveResult {
+fn resolve_cover(key: &CoverKey, streams: &znicz_core::StreamCovers) -> ResolveResult {
+    let ready = |bytes: &[u8]| match decode_capped(bytes) {
+        Some(img) => CoverReady::Embedded(Arc::new(img)),
+        None => CoverReady::Logo,
+    };
     match key {
         CoverKey::File(path) => ResolveResult::Update {
-            ready: match znicz_core::read_cover(path) {
-                Some(art) => match decode_capped(&art.bytes) {
-                    Some(img) => CoverReady::Embedded(Arc::new(img)),
-                    None => CoverReady::Logo,
-                },
-                None => CoverReady::Logo,
-            },
-            failed_url: None,
+            ready: znicz_core::read_cover(path).map_or(CoverReady::Logo, |art| ready(&art.bytes)),
         },
-        CoverKey::ImageFile(path) => ResolveResult::Update {
-            ready: match std::fs::read(path) {
-                Ok(bytes) => match decode_capped(&bytes) {
-                    Some(img) => CoverReady::Embedded(Arc::new(img)),
-                    None => {
-                        tracing::debug!(path = %path.display(), "station art did not decode");
-                        CoverReady::Logo
-                    }
-                },
-                Err(e) => {
-                    tracing::debug!(path = %path.display(), error = %e, "station art unreadable");
-                    CoverReady::Logo
-                }
+        CoverKey::Stream(query) => match streams.resolve(query) {
+            znicz_core::Resolution::Found(art) => ResolveResult::Update {
+                ready: ready(&art.bytes),
             },
-            failed_url: None,
-        },
-        CoverKey::Url(url) => match znicz_core::fetch_cover(url) {
-            Some(art) => match decode_capped(&art.bytes) {
-                Some(img) => ResolveResult::Update {
-                    ready: CoverReady::Embedded(Arc::new(img)),
-                    failed_url: None,
-                },
-                None => {
-                    tracing::debug!(url, "ICY cover URL did not decode as an image");
-                    ResolveResult::Update {
-                        ready: CoverReady::Logo,
-                        failed_url: Some(url.clone()),
-                    }
-                }
-            },
-            None => ResolveResult::Update {
+            znicz_core::Resolution::Nothing => ResolveResult::Update {
                 ready: CoverReady::Logo,
-                failed_url: Some(url.clone()),
             },
+            znicz_core::Resolution::Unsure => ResolveResult::KeepPrevious,
         },
-        CoverKey::AudioAddict { network, channel } => {
-            match znicz_core::audioaddict_cover_lookup(*network, channel) {
-                znicz_core::AudioAddictLookup::Found(url) => match znicz_core::fetch_cover(&url) {
-                    Some(art) => match decode_capped(&art.bytes) {
-                        Some(img) => ResolveResult::Update {
-                            ready: CoverReady::Embedded(Arc::new(img)),
-                            failed_url: None,
-                        },
-                        None => {
-                            tracing::debug!(url, "AudioAddict cover did not decode");
-                            ResolveResult::Update {
-                                ready: CoverReady::Logo,
-                                failed_url: Some(url),
-                            }
-                        }
-                    },
-                    None => ResolveResult::Update {
-                        ready: CoverReady::Logo,
-                        failed_url: Some(url),
-                    },
-                },
-                znicz_core::AudioAddictLookup::NoArt => ResolveResult::Update {
-                    ready: CoverReady::Logo,
-                    failed_url: None,
-                },
-                znicz_core::AudioAddictLookup::RefreshFailed => ResolveResult::KeepPrevious,
-            }
-        }
     }
 }
 
@@ -450,94 +381,88 @@ mod tests {
         );
     }
 
-    #[test]
-    fn no_path_is_the_logo() {
-        assert_eq!(
-            pick_stream_cover(CoverReady::Logo, CoverReady::Logo, CoverReady::Logo),
-            CoverReady::Logo
-        );
-    }
+    const PNG_1X1: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90,
+        0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08, 0xD7, 0x63, 0xF8,
+        0xCF, 0xC0, 0x00, 0x00, 0x00, 0x03, 0x00, 0x01, 0x67, 0xF0, 0xF7, 0xE7, 0x00, 0x00, 0x00,
+        0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
 
-    #[test]
-    fn pick_stream_cover_prefers_icy_then_audioaddict_then_station() {
-        let icy_img = Arc::new(DynamicImage::new_rgb8(2, 2));
-        let aa_img = Arc::new(DynamicImage::new_rgb8(4, 4));
-        let station_img = Arc::new(DynamicImage::new_rgb8(3, 3));
-        let icy = CoverReady::Embedded(icy_img.clone());
-        let aa = CoverReady::Embedded(aa_img.clone());
-        let station = CoverReady::Embedded(station_img.clone());
-        assert!(matches!(
-            pick_stream_cover(icy.clone(), aa.clone(), station.clone()),
-            CoverReady::Embedded(img) if Arc::ptr_eq(&img, &icy_img)
-        ));
-        assert!(matches!(
-            pick_stream_cover(CoverReady::Pending, aa.clone(), station.clone()),
-            CoverReady::Embedded(img) if Arc::ptr_eq(&img, &aa_img)
-        ));
-        assert!(matches!(
-            pick_stream_cover(CoverReady::Logo, CoverReady::Pending, station.clone()),
-            CoverReady::Embedded(img) if Arc::ptr_eq(&img, &station_img)
-        ));
-        assert!(matches!(
-            pick_stream_cover(CoverReady::Logo, CoverReady::Logo, station),
-            CoverReady::Embedded(img) if Arc::ptr_eq(&img, &station_img)
-        ));
-        assert_eq!(
-            pick_stream_cover(CoverReady::Pending, CoverReady::Pending, CoverReady::Logo),
-            CoverReady::Logo
-        );
-    }
+    /// Always finds the 1×1 PNG and counts lookups.
+    struct Counting(std::sync::Arc<std::sync::atomic::AtomicUsize>);
 
-    fn serve_counting_html(
-        hits: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-    ) -> (String, std::thread::JoinHandle<()>) {
-        use std::io::{Read, Write};
-        use std::net::TcpListener;
-        use std::sync::atomic::Ordering;
-        use std::thread;
-
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let handle = thread::spawn(move || {
-            for stream in listener.incoming().flatten() {
-                hits.fetch_add(1, Ordering::SeqCst);
-                let mut stream = stream;
-                let mut buf = [0u8; 2048];
-                let _ = stream.read(&mut buf);
-                let body = b"<html>nope</html>";
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                    body.len()
-                );
-                let _ = stream.write_all(response.as_bytes());
-                let _ = stream.write_all(body);
-            }
-        });
-        (format!("http://{addr}/"), handle)
-    }
-
-    #[test]
-    fn a_failed_url_is_not_fetched_again() {
-        use std::sync::atomic::Ordering;
-
-        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let (url, _handle) = serve_counting_html(hits.clone());
-        let cache = CoverCache::new();
-        let key = CoverKey::Url(url);
-        let mut ready = CoverReady::Pending;
-        for _ in 0..100 {
-            std::thread::sleep(Duration::from_millis(10));
-            ready = cache.get(key.clone());
-            if ready != CoverReady::Pending {
-                break;
-            }
+    impl znicz_core::CoverSource for Counting {
+        fn name(&self) -> &'static str {
+            "counting"
         }
-        assert_eq!(ready, CoverReady::Logo);
-        let after_first = hits.load(Ordering::SeqCst);
-        assert!(after_first >= 1);
-        let _ = cache.get(key);
-        std::thread::sleep(Duration::from_millis(50));
-        assert_eq!(hits.load(Ordering::SeqCst), after_first);
+        fn key(&self, query: &znicz_core::StreamQuery) -> Option<String> {
+            Some(query.icy_title.clone().unwrap_or_default())
+        }
+        fn find(&self, _query: &znicz_core::StreamQuery) -> znicz_core::Found {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            znicz_core::Found::Art(znicz_core::CoverArt {
+                mime: "image/png".into(),
+                bytes: PNG_1X1.to_vec(),
+            })
+        }
+        fn remembers(&self) -> bool {
+            false
+        }
+    }
+
+    fn stream_query(title: Option<&str>) -> znicz_core::StreamQuery {
+        znicz_core::StreamQuery {
+            stream_url: "http://radio/stream".into(),
+            station_name: "Radio".into(),
+            icy_title: title.map(str::to_string),
+            icy_url: None,
+            station_art: None,
+            search: true,
+        }
+    }
+
+    fn wait_ready(cache: &CoverCache, key: &CoverKey) -> CoverReady {
+        let start = std::time::Instant::now();
+        loop {
+            let ready = cache.get(key.clone());
+            if ready != CoverReady::Pending || start.elapsed() > Duration::from_secs(5) {
+                return ready;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn a_stream_key_resolves_through_the_chain() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let streams = znicz_core::StreamCovers::new(vec![Box::new(Counting(calls))]);
+        let cache = CoverCache::with_streams(streams);
+        let key = CoverKey::Stream(stream_query(Some("A - B")));
+        assert!(matches!(wait_ready(&cache, &key), CoverReady::Embedded(_)));
+    }
+
+    #[test]
+    fn only_streams_without_a_title_are_refreshed() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let streams = znicz_core::StreamCovers::new(vec![Box::new(Counting(calls.clone()))]);
+        let cache =
+            CoverCache::with_streams(streams).with_stream_refresh(Duration::from_millis(200));
+        let titled = CoverKey::Stream(stream_query(Some("A - B")));
+        let untitled = CoverKey::Stream(stream_query(None));
+        wait_ready(&cache, &titled);
+        wait_ready(&cache, &untitled);
+        let after_first = calls.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(after_first, 2);
+
+        std::thread::sleep(Duration::from_millis(250));
+        assert!(matches!(cache.get(titled.clone()), CoverReady::Embedded(_)));
+        assert!(
+            matches!(cache.get(untitled.clone()), CoverReady::Embedded(_)),
+            "a refreshing entry keeps its image"
+        );
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 
     #[test]
