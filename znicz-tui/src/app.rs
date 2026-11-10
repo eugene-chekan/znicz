@@ -1058,6 +1058,8 @@ impl App {
             KeyCode::Char('n') => self.skip_track(false),
             KeyCode::Char('p') => self.skip_track(true),
 
+            KeyCode::Up if key.modifiers.contains(KeyModifiers::ALT) => self.move_queue_row(-1),
+            KeyCode::Down if key.modifiers.contains(KeyModifiers::ALT) => self.move_queue_row(1),
             KeyCode::Right if key.modifiers.contains(KeyModifiers::ALT) => {
                 self.pan_titles(1);
             }
@@ -1997,6 +1999,25 @@ impl App {
                 "shuffle off".into()
             }),
         );
+    }
+
+    /// `Alt-↑` / `Alt-↓`: move the highlighted queue row; the cursor follows it.
+    fn move_queue_row(&mut self, delta: isize) {
+        if self.modal != Modal::None || !self.queue_open || self.focus != Focus::Queue {
+            return;
+        }
+        let len = self.player.state().queue.len();
+        let Some(from) = self.queue_cursor.selected(len) else {
+            return;
+        };
+        let to = from as isize + delta;
+        if to < 0 || to as usize >= len {
+            return;
+        }
+        let to = to as usize;
+        self.apply(Command::QueueMove { from, to }, None);
+        self.queue_cursor.set(to, len);
+        self.queue_h_offset = 0;
     }
 
     fn pan_titles(&mut self, dir: isize) {

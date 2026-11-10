@@ -179,6 +179,7 @@ pub const QUEUE: &[Binding] = &[
     b("d / Del", "remove from the queue"),
     b("C", "clear the queue"),
     b("o", "jump to the playing track"),
+    b("Alt-↑ / Alt-↓", "move the row up / down"),
 ];
 
 pub const LIBRARY: &[Binding] = &[
