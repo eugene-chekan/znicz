@@ -24,14 +24,12 @@ pub(crate) fn agent() -> ureq::Agent {
 
 /// The outcome of a GET: a JSON body, an HTTP status the source may care
 /// about, or a transport failure.
-#[allow(dead_code)] // used by the search sources (Task 4, 5)
 pub(crate) enum Fetched {
     Json(Value),
     Status(u16),
     Failed,
 }
 
-#[allow(dead_code)] // used by the search sources (Task 4, 5)
 pub(crate) fn get_json(url: &str, query: &[(&str, &str)]) -> Fetched {
     let mut request = agent().get(url);
     for (name, value) in query {
@@ -75,7 +73,6 @@ pub(crate) mod test_server {
 
     /// Serves each request with `handler(request_line)`; returns the origin and
     /// the raw requests seen (request line plus headers).
-    #[allow(dead_code)] // used by the search sources (Task 4, 5)
     pub(crate) fn serve<F>(handler: F) -> (String, Arc<Mutex<Vec<String>>>)
     where
         F: Fn(&str) -> (u16, Vec<u8>) + Send + 'static,
