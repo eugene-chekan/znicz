@@ -16,7 +16,9 @@ See `znicz-core/src/player/commands.rs`. Examples:
 - `Play(QueueItem)` — stop whatever is playing, then open a local file or an HTTP stream, open output, start decode. A failed open leaves the player Stopped.
 - `Pause` / `Resume` — atomic flag; callback writes silence while paused. Pause also skips `pump_decode`, so a radio stream stops pulling bytes.
 - `Seek(duration)` — seek the decoder, flush the ring. On a radio row this returns `radio cannot seek`.
-- `SetVolume`, `NextTrack`, `QueueAdd`, …
+- `QueueMove { from, to }` — move one queue row. The playing row stays playing (the playing index follows it); an index out of range is an error, `from == to` is a no-op. An older running player rejects it, and the client suggests `znicz player stop`.
+- `SetVolume` ramps over 20 ms; `SetMuted` fades over 500 ms.
+- `NextTrack`, `QueueAdd`, …
 
 ## Output device
 

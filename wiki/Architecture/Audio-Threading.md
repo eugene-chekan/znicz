@@ -22,7 +22,7 @@ Player thread                    Audio callback
 
 `rtrb` is SPSC: **s**ingle **p**roducer, **s**ingle **c**onsumer. That matches this design. Do not share one `Mutex` around both ends.
 
-Pause and volume use `AtomicBool` / `AtomicU32` so the callback can read them without a lock.
+Pause uses an `AtomicBool`. Gain uses a `GainControl` (target, ramp time, generation; all atomics) in `znicz-core/src/audio/gain.rs`, so the callback reads it without a lock. Each stream callback keeps its own `GainRamp` and applies one gain per **frame** (all channels share it). A mute or unmute fades over 500 ms; any other volume change ramps over 20 ms to avoid clicks. A finished ramp lands exactly on the target, so gain 1.0 passes samples through untouched (bit-perfect). A stream opened mid-fade starts at the target, so the rest of an unmute fade is skipped on a track change.
 
 ## Back-pressure: never drop audio
 
@@ -45,7 +45,7 @@ otherwise the end of every track would be cut off.
 
 ## Golden rules
 
-1. Callback: pop, scale volume, write. Stop.
+1. Callback: pop, scale by the frame gain, write. Stop.
 2. Match **sample rate** and **channels** to the file when the device allows it.
 3. Never throw away decoded samples to make them fit. Keep them for the next round.
 4. Prefill the ring a little before you need it, but do not hold a lock while decoding.

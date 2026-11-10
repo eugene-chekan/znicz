@@ -153,7 +153,7 @@ The essentials:
 | P | Playlists |
 | R | Radio |
 | → ← | Seek ±5s (Shift-→ / Shift-← for ±30s) |
-| + / - | Volume, `m` to mute |
+| + / - | Volume in 1 % steps; `m` mutes (fades out and in over half a second) |
 | e / z | Repeat (off, all, one) / shuffle |
 | r | Reload the list in front |
 | j k, g G, Ctrl-d Ctrl-u | Move in the list |
@@ -170,10 +170,14 @@ The essentials:
 | J | Jump the library to the playing track |
 | Tab | Next column when three-column browse is active; otherwise library ↔ queue |
 | Shift-Tab | Previous column (or queue focus when the drawer is open) |
+| Alt-↑ / Alt-↓ | Move the highlighted queue row up / down (queue drawer focused) |
 | Alt-← / Alt-→ | Pan a long title |
 | v / i | Stage: full-screen now playing (cover, details, signal path); again to return to Browse |
 | , | Devices |
 | ? / q | Help / quit TUI (`s` stops playback) |
+
+Some terminals do not send Alt-arrows (for example macOS Terminal until you
+enable "Use Option as Meta key"); `Alt-↑` / `Alt-↓` and the `Alt-←` / `Alt-→` pan need that.
 
 To see the layout without starting the player:
 

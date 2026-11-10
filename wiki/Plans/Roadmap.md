@@ -134,7 +134,7 @@ A five-part rework of the player experience. Each part has its own spec and PR.
 | 2 | Space and layering: modals inside the list region, toasts in a transport slot with history, focus styling, breadcrumb, playing marker | **Done** in 0.7.0 ([spec](../../docs/superpowers/specs/2026-11-07-space-and-layering-design.md)) |
 | 3 | Empty-library onboarding: scan a folder from the TUI; the player process owns the library | **Done** in 0.8.0 ([spec](../../docs/superpowers/specs/2026-11-08-library-service-design.md)) |
 | 4 | Stage mode ([#46](https://github.com/eugene-chekan/znicz/issues/46)): full-screen now playing; the inspector folds in; marquee ([#34](https://github.com/eugene-chekan/znicz/issues/34)) | **Done** in 0.9.0 ([spec](../../docs/superpowers/specs/2026-11-09-stage-mode-design.md)) |
-| 5 | Reorder rows ([#36](https://github.com/eugene-chekan/znicz/issues/36)) and finer volume ([#47](https://github.com/eugene-chekan/znicz/issues/47)) | Planned |
+| 5 | Reorder rows ([#36](https://github.com/eugene-chekan/znicz/issues/36)) and finer volume ([#47](https://github.com/eugene-chekan/znicz/issues/47)) | **Done** in 0.10.0 ([spec](../../docs/superpowers/specs/2026-11-09-queue-reorder-and-volume-design.md)); the five-part rework is complete |
 
 Browse dropped the cover and gives the library the full height; the cover lives on Stage.
 

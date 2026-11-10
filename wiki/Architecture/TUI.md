@@ -214,7 +214,12 @@ no duration (`—`).
 `Enter` plays a row, `d` removes one, `C` clears, `o` jumps back to whatever is
 playing. `d` on the playing row starts the next remaining one, or stops if
 that was the last row. `Alt-↑` / `Alt-↓` move the highlighted row (the cursor
-follows it, the playing track keeps playing, and the ends do nothing).
+follows it, the playing track keeps playing, and the ends do nothing). It works
+with the drawer focused on Browse or Stage. An older running player answers with
+a hint to run `znicz player stop`.
+
+`+` / `-` change volume by 1 % (snapped to whole percent). The volume bar has
+eighth-cell resolution: 6 cells on the Browse transport, 10 on Stage.
 
 ### Devices
 
