@@ -108,6 +108,7 @@ fn main() {
         name: "Example FM".into(),
         url: "https://example.com/stream".into(),
         art: None,
+        cover_search: true,
     }];
     show(
         "Radio",

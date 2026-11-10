@@ -11,7 +11,7 @@ use ratatui_image::{Resize, StatefulImage};
 use znicz_core::{OutputInfo, PlaybackStatus, PlayerState, QueueItem, RepeatMode, TrackInfo};
 
 use crate::app::{repeat_label, App};
-use crate::cover::{pick_stream_cover, CoverKey, CoverReady};
+use crate::cover::{CoverKey, CoverReady};
 use crate::format;
 use crate::theme;
 use crate::tui_config::CoverProtocol;
@@ -370,6 +370,53 @@ fn cover_draw_label(ready: &CoverReady) -> String {
     }
 }
 
+/// The cover question for the playing stream.
+pub(crate) fn stream_query(
+    state: &PlayerState,
+    track: &TrackInfo,
+    stations: &[znicz_core::Station],
+    search: bool,
+) -> znicz_core::StreamQuery {
+    let stream_url = track.url.clone().unwrap_or_default();
+    let station_name = match state.queue.get(state.queue_position) {
+        Some(QueueItem::Stream { name, .. }) => name.clone(),
+        _ => String::new(),
+    };
+    let station = stations.iter().find(|s| s.url == stream_url);
+    let icy_title = Some(track.title.clone())
+        .filter(|title| !title.trim().is_empty() && *title != station_name);
+    znicz_core::StreamQuery {
+        icy_title,
+        icy_url: track.icy_stream_url.clone(),
+        station_art: station.and_then(|s| s.art.clone()),
+        search: search && station.is_none_or(|s| s.cover_search),
+        stream_url,
+        station_name,
+    }
+}
+
+/// Show the last stream cover while the same stream's next cover is pending.
+pub(crate) fn keep_previous(
+    last: &mut Option<(String, CoverReady)>,
+    stream_url: &str,
+    ready: CoverReady,
+) -> CoverReady {
+    match &ready {
+        CoverReady::Embedded(_) => {
+            *last = Some((stream_url.to_string(), ready.clone()));
+            ready
+        }
+        CoverReady::Pending => match last {
+            Some((url, previous)) if url == stream_url => previous.clone(),
+            _ => ready,
+        },
+        CoverReady::Logo => {
+            *last = None;
+            ready
+        }
+    }
+}
+
 pub(crate) fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState) {
     if area.width == 0 || area.height == 0 {
         return;
@@ -377,35 +424,19 @@ pub(crate) fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, state: 
 
     let use_logo_only = app.tui.cover_protocol == CoverProtocol::Off;
     let ready = match (use_logo_only, state.current_track.as_ref()) {
-        (true, _) | (_, None) => CoverReady::Logo,
+        (true, _) | (_, None) => {
+            app.last_stream_cover = None;
+            CoverReady::Logo
+        }
         (false, Some(track)) => {
             if let Some(p) = track.path.as_deref() {
+                app.last_stream_cover = None;
                 app.covers.get(CoverKey::File(p.to_path_buf()))
             } else {
-                let icy_ready = match track.icy_stream_url.as_deref() {
-                    Some(u) if u.starts_with("http://") || u.starts_with("https://") => {
-                        app.covers.get(CoverKey::Url(u.to_string()))
-                    }
-                    _ => CoverReady::Logo,
-                };
-                let aa_ready = match track
-                    .url
-                    .as_deref()
-                    .and_then(znicz_core::parse_audioaddict_channel)
-                {
-                    Some((network, channel)) => {
-                        app.covers.get(CoverKey::AudioAddict { network, channel })
-                    }
-                    None => CoverReady::Logo,
-                };
-                let station_ready = app
-                    .stations
-                    .iter()
-                    .find(|s| Some(s.url.as_str()) == track.url.as_deref())
-                    .and_then(|s| s.art.clone())
-                    .map(|p| app.covers.get(CoverKey::ImageFile(p)))
-                    .unwrap_or(CoverReady::Logo);
-                pick_stream_cover(icy_ready, aa_ready, station_ready)
+                let query = stream_query(state, track, &app.stations, app.tui.cover_search);
+                let stream_url = query.stream_url.clone();
+                let ready = app.covers.get(CoverKey::Stream(query));
+                keep_previous(&mut app.last_stream_cover, &stream_url, ready)
             }
         }
     };
@@ -590,6 +621,74 @@ mod tests {
         assert!(t.contains("https://example.com/stream"), "{t}");
         assert!(t.contains("● live"), "{t}");
         assert!(t.contains("stream "), "signal says stream:\n{t}");
+    }
+
+    fn stream_titled(title: &str) -> PlayerState {
+        let mut state = stream();
+        state.current_track.as_mut().unwrap().title = title.into();
+        state
+    }
+
+    fn station(cover_search: bool) -> znicz_core::Station {
+        znicz_core::Station {
+            name: "Jazz Radio".into(),
+            url: "https://example.com/stream".into(),
+            art: Some("/art/jazz.png".into()),
+            cover_search,
+        }
+    }
+
+    #[test]
+    fn a_stream_query_carries_the_icy_title_station_and_switches() {
+        let state = stream_titled("Serotonal - Memory Leaves");
+        let track = state.current_track.as_ref().unwrap();
+        let q = stream_query(&state, track, &[station(true)], true);
+        assert_eq!(q.station_name, "Jazz Radio");
+        assert_eq!(q.icy_title.as_deref(), Some("Serotonal - Memory Leaves"));
+        assert_eq!(
+            q.station_art.as_deref(),
+            Some(std::path::Path::new("/art/jazz.png"))
+        );
+        assert!(q.search);
+
+        assert!(!stream_query(&state, track, &[station(false)], true).search);
+        assert!(!stream_query(&state, track, &[station(true)], false).search);
+    }
+
+    #[test]
+    fn a_title_that_is_the_station_name_is_no_icy_title() {
+        let state = stream_titled("Jazz Radio");
+        let track = state.current_track.as_ref().unwrap();
+        assert_eq!(stream_query(&state, track, &[], true).icy_title, None);
+    }
+
+    #[test]
+    fn an_empty_title_is_no_icy_title() {
+        let state = stream_titled("");
+        let track = state.current_track.as_ref().unwrap();
+        assert_eq!(stream_query(&state, track, &[], true).icy_title, None);
+        let state = stream_titled("   ");
+        let track = state.current_track.as_ref().unwrap();
+        assert_eq!(stream_query(&state, track, &[], true).icy_title, None);
+    }
+
+    #[test]
+    fn the_previous_stream_cover_shows_while_the_next_is_pending() {
+        let img = CoverReady::Embedded(Arc::new(image::DynamicImage::new_rgb8(1, 1)));
+        let mut last = None;
+        let url = "http://radio/stream";
+
+        assert_eq!(keep_previous(&mut last, url, img.clone()), img);
+        assert_eq!(keep_previous(&mut last, url, CoverReady::Pending), img);
+        assert_eq!(
+            keep_previous(&mut last, "http://other/stream", CoverReady::Pending),
+            CoverReady::Pending,
+            "a new station starts from the logo"
+        );
+        assert_eq!(
+            keep_previous(&mut last, url, CoverReady::Logo),
+            CoverReady::Logo
+        );
     }
 
     #[test]

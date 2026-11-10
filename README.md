@@ -17,7 +17,7 @@
 - Repeat, shuffle, mute, and errors reported on screen rather than only in the log
 - Radio stations: HTTP/Icecast byte streams from the TUI, CLI, and MCP
 - Session restore: queue, volume, mute, repeat, and shuffle survive a restart
-- Embedded album art in the TUI (Kitty / Sixel / half-blocks; AudioAddict song covers on RadioTunes / DI.FM / RockRadio / JazzRadio / ClassicalRadio / ZenRadio; station art or ICY image for other streams, else logo)
+- Embedded album art in the TUI (Kitty / Sixel / half-blocks). Stream covers come from the ICY image, AudioAddict, an artist / title search (Deezer, then MusicBrainz and the Cover Art Archive), or the station's art, else the logo
 - MCP server: tools, resources, prompts, and bundled Agent Skills (same live player as the TUI)
 
 ## Build
@@ -136,8 +136,8 @@ rows tall, two below that. Example signal path:
 When the device will not take the file's own rate the badge reads `▲ resampled`,
 so a silent conversion never goes unnoticed. Messages appear on the transport's last row rather than over the list.
 On Stage the cover sits left of the details on a wide terminal and above them on a narrow one; streams
-use an ICY image when one decodes, else an AudioAddict song cover on those networks, else station art,
-else the Znicz logo. The cover area takes your terminal's background colour when the terminal reports it. Long now-playing titles scroll (set `marquee = false` to truncate with `…`).
+use the ICY image when one decodes, else an AudioAddict song cover on those networks, else an artist / title
+search (Deezer, then MusicBrainz), else station art, else the Znicz logo. The cover area takes your terminal's background colour when the terminal reports it. Long now-playing titles scroll (set `marquee = false` to truncate with `…`).
 Long list titles pan with `Alt-←` / `Alt-→` on the highlighted row.
 
 Press `?` in the player for the keymap: the keys for where you are come first,
@@ -214,7 +214,15 @@ show_cover = true         # cover on the Stage view
 cover_protocol = "auto"   # Stage cover: auto | kitty | sixel | halfblocks | off
 library_layout = "columns"  # columns | tree
 marquee = true            # scroll long now-playing titles; false truncates with …
+
+[covers]
+search = true   # look stream covers up by artist / title (Deezer, MusicBrainz)
 ```
+
+A station in `stations.toml` can opt out with `cover_search = false`.
+With search on, the playing stream's ICY title is sent to Deezer and, when
+Deezer has no match, to MusicBrainz. Set `search = false` to keep titles local.
+See [Stream covers](wiki/Architecture/Cover-Sources.md).
 
 The last queue (and volume, mute, repeat, shuffle) is
 `~/.local/share/znicz/session.toml`. Override with `ZNICZ_SESSION_PATH`.

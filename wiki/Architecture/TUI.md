@@ -241,7 +241,11 @@ in `layout::stage_layout`.
 For files, missing embedded art draws the bundled logo. For streams the cover
 is an ICY `StreamUrl` image when one decodes, else the AudioAddict current-song
 `art_url` (RadioTunes / DI.FM / RockRadio / JazzRadio / ClassicalRadio /
-ZenRadio), else the station `art` file, else the logo. The picture is
+ZenRadio), else an artist / title search (Deezer, then MusicBrainz), else the
+station `art` file, else the logo. Streams resolve through `CoverKey::Stream`
+and the chain in `znicz-core/src/cover/`; see [Stream covers](Cover-Sources.md).
+While the next cover loads, Stage keeps the previous cover of the same stream.
+The picture is
 letterboxed onto an opaque canvas the size of the cover area, so a stream cannot
 leave the previous cover on screen. The canvas takes the terminal's background
 colour when the terminal answers the OSC 11 query at startup (asked with the

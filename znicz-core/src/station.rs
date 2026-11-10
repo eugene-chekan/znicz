@@ -10,12 +10,24 @@ use crate::player::commands::Command;
 use crate::player::engine::PlayerOps;
 use crate::player::state::QueueItem;
 
+fn yes() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Station {
     pub name: String,
     pub url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub art: Option<PathBuf>,
+    /// Look the playing track's cover up by artist and title (Deezer,
+    /// MusicBrainz). `false` keeps this station's titles private.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub cover_search: bool,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -84,6 +96,7 @@ pub fn add(stations: &mut Vec<Station>, name: &str, url: &str) -> Result<()> {
         name,
         url,
         art: None,
+        cover_search: true,
     });
     Ok(())
 }
@@ -168,6 +181,7 @@ pub fn copy(stations: &mut Vec<Station>, name: &str, new_name: &str) -> Result<(
     add(stations, new_name, &src.url)?;
     if let Some(last) = stations.last_mut() {
         last.art = src.art;
+        last.cover_search = src.cover_search;
     }
     Ok(())
 }
@@ -240,11 +254,13 @@ mod tests {
                 name: "One".into(),
                 url: "https://example.com/one".into(),
                 art: None,
+                cover_search: true,
             },
             Station {
                 name: "Two".into(),
                 url: "http://example.com/two".into(),
                 art: None,
+                cover_search: true,
             },
         ];
         save(&path, &stations).unwrap();
@@ -291,11 +307,13 @@ mod tests {
                 name: "A".into(),
                 url: "https://a".into(),
                 art: None,
+                cover_search: true,
             },
             Station {
                 name: "B".into(),
                 url: "https://b".into(),
                 art: None,
+                cover_search: true,
             },
         ];
         assert!(rename(&mut stations, "A", "B").is_err());
@@ -310,6 +328,7 @@ mod tests {
             name: "A".into(),
             url: "https://a".into(),
             art: None,
+            cover_search: true,
         }];
         set_url(&mut stations, "A", "https://b").unwrap();
         assert_eq!(stations[0].url, "https://b");
@@ -324,6 +343,7 @@ mod tests {
             name: "A".into(),
             url: "https://a".into(),
             art: None,
+            cover_search: true,
         }];
         copy(&mut stations, "A", "B").unwrap();
         assert_eq!(stations.len(), 2);
@@ -339,11 +359,13 @@ mod tests {
                 name: "A".into(),
                 url: "https://a".into(),
                 art: None,
+                cover_search: true,
             },
             Station {
                 name: "B".into(),
                 url: "https://b".into(),
                 art: None,
+                cover_search: true,
             },
         ];
         update(&mut stations, "A", "C", "https://c").unwrap();
@@ -361,6 +383,7 @@ mod tests {
             name: "A".into(),
             url: "https://a".into(),
             art: None,
+            cover_search: true,
         }];
         set_art(&mut stations, "A", Some(img.to_str().unwrap())).unwrap();
         assert_eq!(
@@ -380,9 +403,28 @@ mod tests {
             name: "A".into(),
             url: "https://a".into(),
             art: None,
+            cover_search: true,
         }];
         assert!(set_art(&mut stations, "A", Some("https://x/a.png")).is_err());
         assert!(set_art(&mut stations, "A", Some("/definitely/missing/cover.png")).is_err());
         assert!(stations[0].art.is_none());
+    }
+
+    #[test]
+    fn cover_search_defaults_on_and_is_written_only_when_off() {
+        let file: StationsFile =
+            toml::from_str("[[station]]\nname = \"A\"\nurl = \"http://a\"\n").unwrap();
+        assert!(file.station[0].cover_search);
+
+        let mut off = file.station[0].clone();
+        off.cover_search = false;
+        let text = toml::to_string(&StationsFile { station: vec![off] }).unwrap();
+        assert!(text.contains("cover_search = false"), "{text}");
+
+        let on = toml::to_string(&StationsFile {
+            station: file.station,
+        })
+        .unwrap();
+        assert!(!on.contains("cover_search"), "{on}");
     }
 }

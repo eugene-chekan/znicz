@@ -1,5 +1,6 @@
 pub mod audio;
 mod audioaddict;
+pub mod cover;
 mod cover_fetch;
 pub mod error;
 pub mod library_host;
@@ -15,6 +16,7 @@ pub use audioaddict::{
     audioaddict_cache_fresh, audioaddict_cover_lookup, audioaddict_cover_url,
     parse_audioaddict_channel, AudioAddictLookup, AudioAddictNetwork,
 };
+pub use cover::{default_sources, CoverSource, Found, Resolution, StreamCovers, StreamQuery};
 pub use cover_fetch::fetch_cover;
 pub use error::{Result, ZniczError};
 pub use library_host::{

@@ -290,6 +290,9 @@ pub struct App {
     pub picker: Option<ratatui_image::picker::Picker>,
     pub(crate) cover_image: Option<ratatui_image::protocol::StatefulProtocol>,
     pub(crate) cover_draw_key: Option<(String, u16, u16)>,
+    /// The last stream cover shown and its stream URL, drawn while the next
+    /// title's cover is still loading.
+    pub(crate) last_stream_cover: Option<(String, crate::cover::CoverReady)>,
     pub(crate) playing: Option<crate::playing::PlayingRef>,
     pub(crate) library_list_state: ratatui::widgets::ListState,
     pub(crate) queue_list_state: ratatui::widgets::ListState,
@@ -546,6 +549,7 @@ impl App {
             picker: Some(ratatui_image::picker::Picker::halfblocks()),
             cover_image: None,
             cover_draw_key: None,
+            last_stream_cover: None,
             playing: None,
             library_list_state: ratatui::widgets::ListState::default(),
             queue_list_state: ratatui::widgets::ListState::default(),

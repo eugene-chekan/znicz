@@ -15,6 +15,7 @@
 - [TUI](Architecture/TUI.md)
 - [MCP](Architecture/MCP.md)
 - [Library](Architecture/Library.md)
+- [Stream covers](Architecture/Cover-Sources.md)
 - [Ownership](Rust/Ownership.md)
 - [Threads](Rust/Threads-and-Channels.md)
 - [Traits](Rust/Traits.md)

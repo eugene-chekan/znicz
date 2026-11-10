@@ -96,6 +96,8 @@ Stations live in `stations.toml` beside the library database:
 Override with `ZNICZ_STATIONS_PATH`. Names must be unique. A URL must start
 with `http://` or `https://`. Optional `art` is a **local image file** path
 (not `http://` or `https://`); omit or leave empty for no station picture.
+Optional `cover_search = false` stops artist / title cover lookups for that
+station.
 Playing a station **clears the queue** and starts that stream.
 
 Open the list in the player with `R`. Same list from the CLI and MCP:
@@ -128,6 +130,12 @@ Stage cover shows that picture instead of station `art` or the logo.
 RadioTunes, DI.FM, RockRadio, JazzRadio, ClassicalRadio, and ZenRadio do not
 send `StreamUrl`. For those hosts the TUI looks up the channel from the stream
 URL and uses AudioAddict `art_url` as the song cover.
+
+Stream cover order: ICY `StreamUrl` image, AudioAddict `art_url`, an artist /
+title search (Deezer, then MusicBrainz and the Cover Art Archive), station
+`art`, then the logo. `[covers] search = true` in `config.toml` turns the search
+on or off; `cover_search = false` on a station in `stations.toml` turns it off
+for that station. Details: [Stream covers](../Architecture/Cover-Sources.md).
 
 **Later:** HLS, PLS, XSPF. See the
 [roadmap](../Plans/Roadmap.md#later-radio-after-phase-4).

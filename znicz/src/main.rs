@@ -160,6 +160,13 @@ struct Config {
     library: LibrarySection,
     player: PlayerSection,
     tui: TuiSection,
+    covers: CoversSection,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct CoversSection {
+    /// Artist / title cover search for streams. Default on.
+    search: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -186,6 +193,7 @@ fn tui_config(config: &Config) -> TuiConfig {
             config.tui.library_layout.as_deref().unwrap_or("columns"),
         ),
         marquee: config.tui.marquee.unwrap_or(true),
+        cover_search: config.covers.search.unwrap_or(true),
     }
 }
 

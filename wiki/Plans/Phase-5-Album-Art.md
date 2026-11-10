@@ -20,7 +20,7 @@ This does not change audio quality. It is a display feature only.
 - Kitty / Sixel / half-blocks through `ratatui-image` (picker after alternate screen). `cover_protocol = "off"` keeps the slot and draws the logo
 - Bundled Znicz logo when the path is missing, there is no picture, or decode fails. The picture is letterboxed onto an opaque canvas that fills the slot, so the previous cover cannot remain. The bitmap is inset half a cell so its left edge matches the library pane's `│`.
 - **Radio / stream covers (0.4.1):** optional station `art` (local image path in `stations.toml`); ICY `StreamUrl` may be a cover image URL. Radio add/edit form has an `art:` field.
-- **AudioAddict song covers (0.4.2):** RadioTunes, DI.FM, RockRadio, JazzRadio, ClassicalRadio, and ZenRadio show the current song cover from JSON `art_url`. Cover choice: ICY image, then AudioAddict, then station file, then logo.
+- **AudioAddict song covers (0.4.2):** RadioTunes, DI.FM, RockRadio, JazzRadio, ClassicalRadio, and ZenRadio show the current song cover from JSON `art_url`. Cover choice: ICY image, then AudioAddict, then station file, then logo (superseded in 0.11.0 by the [cover source chain](../Architecture/Cover-Sources.md)).
 - In-memory cover cache (cap 16), decode off the UI thread, longest side capped at 512 px
 - Config under `[tui]`: `show_cover`, `cover_protocol` (`auto` | `kitty` | `sixel` | `halfblocks` | `off`)
 

@@ -797,6 +797,7 @@ fn enter_on_a_station_replaces_the_queue() {
             name: "Example".into(),
             url: "http://127.0.0.1:1/stream".into(),
             art: None,
+            cover_search: true,
         }],
     )
     .unwrap();
@@ -822,6 +823,7 @@ fn d_deletes_a_station_immediately() {
             name: "Gone".into(),
             url: "https://example.com/g".into(),
             art: None,
+            cover_search: true,
         }],
     )
     .unwrap();
@@ -956,6 +958,7 @@ fn a_on_radio_appends_the_station_without_starting() {
             name: "Example".into(),
             url: "http://127.0.0.1:1/stream".into(),
             art: None,
+            cover_search: true,
         }],
     )
     .unwrap();
@@ -1061,6 +1064,7 @@ fn e_on_radio_edits_name_and_url_together() {
             name: "Example".into(),
             url: "http://127.0.0.1:1/stream".into(),
             art: None,
+            cover_search: true,
         }],
     )
     .unwrap();
@@ -1105,6 +1109,7 @@ fn c_copies_the_highlighted_station() {
             name: "Example".into(),
             url: "http://127.0.0.1:1/stream".into(),
             art: None,
+            cover_search: true,
         }],
     )
     .unwrap();
