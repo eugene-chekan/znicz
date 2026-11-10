@@ -56,6 +56,7 @@ Goals:
 - [TUI](Architecture/TUI.md)
 - [MCP server](Architecture/MCP.md)
 - [Music library](Architecture/Library.md)
+- [Stream covers](Architecture/Cover-Sources.md)
 
 ### Plans
 

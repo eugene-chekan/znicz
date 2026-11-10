@@ -109,3 +109,4 @@ The last queue lives in `session.toml` in the data dir (see [Formats and metadat
 - [TUI](TUI.md)
 - [MCP](MCP.md)
 - [Music library](Library.md)
+- [Stream covers](Cover-Sources.md)

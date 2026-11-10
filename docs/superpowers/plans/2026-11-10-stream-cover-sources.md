@@ -67,7 +67,7 @@ Expected: rebase succeeds with no conflicts (only docs on this branch); tests pa
 - Create: `znicz-core/src/cover/mod.rs`, `znicz-core/src/cover/title.rs`
 - Modify: `znicz-core/src/lib.rs`
 
-- [ ] **Step 1: Add the dependency**
+- [x] **Step 1: Add the dependency**
 
 Root `Cargo.toml`, under `[workspace.dependencies]` (keep alphabetical order with neighbours):
 
@@ -81,7 +81,7 @@ unicode-normalization = "0.1"
 unicode-normalization.workspace = true
 ```
 
-- [ ] **Step 2: Create the module skeleton**
+- [x] **Step 2: Create the module skeleton**
 
 `znicz-core/src/cover/mod.rs`:
 
@@ -93,7 +93,7 @@ pub mod title;
 
 `znicz-core/src/lib.rs`: add `pub mod cover;` after `mod audioaddict;`.
 
-- [ ] **Step 3: Write the failing tests**
+- [x] **Step 3: Write the failing tests**
 
 `znicz-core/src/cover/title.rs`:
 
@@ -148,12 +148,12 @@ mod tests {
 
 Note: `ð` has no decomposition, so it stays; that is fine.
 
-- [ ] **Step 4: Run to see them fail**
+- [x] **Step 4: Run to see them fail**
 
 Run: `cargo test -p znicz-core --lib cover::title`
 Expected: compile errors, `split_icy_title`, `fold`, `artist_matches` not found.
 
-- [ ] **Step 5: Implement**
+- [x] **Step 5: Implement**
 
 Above the tests in `title.rs`:
 
@@ -199,12 +199,12 @@ pub fn artist_matches(wanted: &str, found: &str) -> bool {
 }
 ```
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 Run: `cargo test -p znicz-core --lib cover::title`
 Expected: 5 passed.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add Cargo.toml Cargo.lock znicz-core/Cargo.toml znicz-core/src/lib.rs znicz-core/src/cover
@@ -218,7 +218,7 @@ git commit -m "Add ICY title splitting and loose artist matching for cover searc
 **Files:**
 - Modify: `znicz-core/src/cover/mod.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Replace `znicz-core/src/cover/mod.rs` with the module doc, `pub mod title;`, and this test module (implementation comes in Step 3):
 
@@ -385,12 +385,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run to see them fail**
+- [x] **Step 2: Run to see them fail**
 
 Run: `cargo test -p znicz-core --lib cover::tests`
 Expected: compile errors (`StreamQuery`, `Found`, `CoverSource`, … not found).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `znicz-core/src/cover/mod.rs`, between `pub mod title;` and the tests:
 
@@ -574,12 +574,12 @@ impl StreamCovers {
 
 `CoverArt` (in `metadata.rs`) already derives `Debug, Clone, PartialEq, Eq`. Check `cover_fetch` is reachable as `crate::cover_fetch::fetch_cover` (it is a private module of the crate; `pub fn fetch_cover` is fine).
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cargo test -p znicz-core --lib cover::tests`
 Expected: 8 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-core/src/cover/mod.rs
@@ -594,7 +594,7 @@ git commit -m "Add the cover source trait and the stream cover resolver"
 - Create: `znicz-core/src/cover/http.rs`, `icy_url.rs`, `station_art.rs`, `audioaddict.rs` (under `cover/`)
 - Modify: `znicz-core/src/cover/mod.rs` (module lines)
 
-- [ ] **Step 1: HTTP helpers and test server**
+- [x] **Step 1: HTTP helpers and test server**
 
 `znicz-core/src/cover/http.rs`:
 
@@ -710,7 +710,7 @@ pub(crate) mod test_server {
 
 Check against the `ureq` 3 API in the lockfile: `ureq::Error::StatusCode(u16)` exists and is returned for 4xx/5xx by default; `config_builder().user_agent(..)` and `.timeout_global(..)` exist; `RequestBuilder::query(name, value)` percent-encodes. If a name differs, adapt and note it in the commit message.
 
-- [ ] **Step 2: Write the failing tests for the three simple sources**
+- [x] **Step 2: Write the failing tests for the three simple sources**
 
 `znicz-core/src/cover/icy_url.rs`:
 
@@ -850,12 +850,12 @@ pub mod icy_url;
 pub mod station_art;
 ```
 
-- [ ] **Step 3: Run to see them fail**
+- [x] **Step 3: Run to see them fail**
 
 Run: `cargo test -p znicz-core --lib cover::`
 Expected: compile errors for `IcyUrlSource`, `StationArtSource`, `AudioAddictSource`, `found`.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 `icy_url.rs`, above the tests:
 
@@ -981,12 +981,12 @@ impl CoverSource for AudioAddictSource {
 
 `sniff_image_mime` is `pub(crate)` in `metadata.rs` — reachable from the crate.
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `cargo test -p znicz-core --lib cover::`
 Expected: all cover tests pass (5 + 8 + 7 new).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add znicz-core/src/cover
@@ -1001,7 +1001,7 @@ git commit -m "Add ICY URL, station art, and AudioAddict cover sources"
 - Create: `znicz-core/src/cover/deezer.rs`
 - Modify: `znicz-core/src/cover/mod.rs` (`pub mod deezer;`)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `znicz-core/src/cover/deezer.rs`:
 
@@ -1095,12 +1095,12 @@ mod tests {
 
 Add `pub mod deezer;` to `cover/mod.rs`.
 
-- [ ] **Step 2: Run to see them fail**
+- [x] **Step 2: Run to see them fail**
 
 Run: `cargo test -p znicz-core --lib cover::deezer`
 Expected: compile errors (`DeezerSource` not found).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Above the tests:
 
@@ -1191,12 +1191,12 @@ impl CoverSource for DeezerSource {
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cargo test -p znicz-core --lib cover::deezer`
 Expected: 5 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-core/src/cover
@@ -1211,7 +1211,7 @@ git commit -m "Add the Deezer artist/title cover source"
 - Create: `znicz-core/src/cover/musicbrainz.rs`
 - Modify: `znicz-core/src/cover/mod.rs` (`pub mod musicbrainz;`)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `znicz-core/src/cover/musicbrainz.rs`:
 
@@ -1312,12 +1312,12 @@ mod tests {
 
 Add `pub mod musicbrainz;` to `cover/mod.rs`.
 
-- [ ] **Step 2: Run to see them fail**
+- [x] **Step 2: Run to see them fail**
 
 Run: `cargo test -p znicz-core --lib cover::musicbrainz`
 Expected: compile errors (`MusicBrainzSource` not found).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Above the tests:
 
@@ -1445,12 +1445,12 @@ impl CoverSource for MusicBrainzSource {
 
 `probe` follows redirects (ureq default), so a CAA 307 to archive.org reports the final 200.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cargo test -p znicz-core --lib cover::musicbrainz`
 Expected: 6 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-core/src/cover
@@ -1465,7 +1465,7 @@ git commit -m "Add the MusicBrainz and Cover Art Archive cover source"
 - Modify: `znicz-core/src/cover/mod.rs`, `znicz-core/src/lib.rs`, `znicz-core/src/station.rs`
 - Modify: every `Station { … }` literal (see Step 5)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `cover/mod.rs` tests:
 
@@ -1499,12 +1499,12 @@ In `station.rs` tests:
     }
 ```
 
-- [ ] **Step 2: Run to see them fail**
+- [x] **Step 2: Run to see them fail**
 
 Run: `cargo test -p znicz-core --lib default_chain cover_search_defaults`
 Expected: compile errors (`default_sources`, `cover_search` not found).
 
-- [ ] **Step 3: Implement the chain and exports**
+- [x] **Step 3: Implement the chain and exports**
 
 `cover/mod.rs`, after `StreamCovers`:
 
@@ -1528,7 +1528,7 @@ pub fn default_sources() -> Vec<Box<dyn CoverSource>> {
 pub use cover::{default_sources, CoverSource, Found, Resolution, StreamCovers, StreamQuery};
 ```
 
-- [ ] **Step 4: Implement `cover_search`**
+- [x] **Step 4: Implement `cover_search`**
 
 `station.rs`:
 
@@ -1554,7 +1554,7 @@ pub struct Station {
 }
 ```
 
-- [ ] **Step 5: Fix every `Station` literal**
+- [x] **Step 5: Fix every `Station` literal**
 
 Run: `cargo build --workspace --all-targets 2>&1 | grep -A3 "missing field \`cover_search\`"`
 
@@ -1566,12 +1566,12 @@ Each error points at a `Station { name, url, art }` literal (about 24, in `znicz
 
 Re-run until the build is clean: `cargo build --workspace --all-targets`.
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 Run: `cargo test -p znicz-core`
 Expected: all pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add -A
@@ -1585,7 +1585,7 @@ git commit -m "Wire the default cover chain and add a per-station cover_search s
 **Files:**
 - Modify: `znicz-tui/src/cover.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `cover.rs` tests, remove `pick_stream_cover_prefers_icy_then_audioaddict_then_station` and `a_failed_url_is_not_fetched_again` (and the `serve_counting_html` helper if nothing else uses it). Add:
 
@@ -1677,12 +1677,12 @@ In `cover.rs` tests, remove `pick_stream_cover_prefers_icy_then_audioaddict_then
     }
 ```
 
-- [ ] **Step 2: Run to see them fail**
+- [x] **Step 2: Run to see them fail**
 
 Run: `cargo test -p znicz-tui --lib cover`
 Expected: compile errors (`CoverKey::Stream`, `with_streams`, `with_stream_refresh` not found).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `znicz-tui/src/cover.rs`:
 
@@ -1793,12 +1793,12 @@ fn resolve_cover(key: &CoverKey, streams: &znicz_core::StreamCovers) -> ResolveR
 
 7. Delete `pick_stream_cover`. Imports: add `std::time::{Duration, Instant}`, drop `HashSet`.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cargo test -p znicz-tui --lib cover`
 Expected: cover tests pass. `views/stage.rs` will not compile yet if the crate is built as a whole; if `cargo test --lib` fails on `stage.rs` only, continue to Task 8 before running, and run Step 4 there.
 
-- [ ] **Step 5: Commit (together with Task 8 if stage.rs blocks the build)**
+- [x] **Step 5: Commit (together with Task 8 if stage.rs blocks the build)**
 
 ```bash
 git add znicz-tui/src/cover.rs
@@ -1812,7 +1812,7 @@ git commit -m "Resolve stream covers through the core cover chain"
 **Files:**
 - Modify: `znicz-tui/src/views/stage.rs`, `znicz-tui/src/app.rs`, `znicz-tui/src/tui_config.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `stage.rs` tests:
 
@@ -1888,12 +1888,12 @@ In `stage.rs` tests:
 
 (Adjust the `TrackInfo` literal to the struct's current fields if they differ; check `znicz-core/src/player/state.rs`.)
 
-- [ ] **Step 2: Run to see them fail**
+- [x] **Step 2: Run to see them fail**
 
 Run: `cargo test -p znicz-tui --lib stage`
 Expected: compile errors (`stream_query`, `keep_previous` not found).
 
-- [ ] **Step 3: Config switch**
+- [x] **Step 3: Config switch**
 
 `tui_config.rs`: add to `TuiConfig`
 
@@ -1914,7 +1914,7 @@ struct CoversSection {
 
 Add `covers: CoversSection,` to `Config`, and `cover_search: config.covers.search.unwrap_or(true),` in `tui_config`. Fix any other `TuiConfig { … }` literal the compiler reports.
 
-- [ ] **Step 4: Stage**
+- [x] **Step 4: Stage**
 
 In `app.rs`, add to `App`:
 
@@ -1987,12 +1987,12 @@ In `render_cover`, replace the whole `else { … pick_stream_cover(…) }` strea
             }
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `cargo test -p znicz-tui`
 Expected: all pass (including Task 7's cover tests).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A
@@ -2008,11 +2008,11 @@ git commit -m "Stage asks for one stream cover and keeps the last one while load
 - Create: `wiki/Architecture/Cover-Sources.md`
 - Modify: the plan's checkboxes
 
-- [ ] **Step 1: Version**
+- [x] **Step 1: Version**
 
 Root `Cargo.toml` `[workspace.package] version = "0.11.0"`.
 
-- [ ] **Step 2: README**
+- [x] **Step 2: README**
 
 - Features list: replace the cover bullet's stream part with: stream covers from the ICY image, AudioAddict, an artist / title search (Deezer, then MusicBrainz and the Cover Art Archive), or the station's art, else the logo.
 - Config section: document
@@ -2026,7 +2026,7 @@ and the per-station `cover_search = false` in `stations.toml`.
 - One privacy sentence: with search on, the playing stream's ICY title is sent to Deezer and, when Deezer has no match, to MusicBrainz.
 - Replace the Stage sentence "streams use an ICY image when one decodes, else an AudioAddict song cover on those networks, else station art, else the Znicz logo" with the new order.
 
-- [ ] **Step 3: Wiki**
+- [x] **Step 3: Wiki**
 
 - New `wiki/Architecture/Cover-Sources.md`: the chain and its order; `StreamQuery`, `Found`, `CoverSource` (with `remembers`), `Resolution`; how answers are remembered (256, session, `Unavailable` not kept, a failed download counts as not found); the 15 s refresh for title-less streams; the switches; MusicBrainz etiquette (User-Agent, one request per second). A section **Adding a source**: implement `CoverSource` in `znicz-core/src/cover/<name>.rs`, give it an `at(origin)` constructor for tests, test it against `cover::http::test_server::serve`, list it in `default_sources()` in the right place.
 - `Architecture/TUI.md` cover paragraph: streams resolve through `CoverKey::Stream` and the chain; link the new page; the previous cover stays while the next loads.
@@ -2034,7 +2034,7 @@ and the per-station `cover_search = false` in `stations.toml`.
 - `Plans/Roadmap.md`: under Phase 6, note that the MusicBrainz client for stream covers exists (`znicz-core/src/cover/musicbrainz.rs`) and can be reused.
 - Link the new page from wherever the other Architecture pages are listed (check `wiki/Home.md` or the sidebar file).
 
-- [ ] **Step 4: Full check**
+- [x] **Step 4: Full check**
 
 ```bash
 cargo fmt --all
@@ -2044,7 +2044,7 @@ cargo test --workspace
 
 Expected: clean; all tests pass.
 
-- [ ] **Step 5: Live smoke check (network)**
+- [x] **Step 5: Live smoke check (network)**
 
 ```bash
 cargo run -p znicz -- station play "HEAVY-MUSIC.NET"
@@ -2052,7 +2052,7 @@ cargo run -p znicz -- station play "HEAVY-MUSIC.NET"
 
 Then open the TUI (`cargo run -p znicz`), press `v`, and confirm a cover appears within a few seconds for both HEAVY-MUSIC.NET and FluxFM (`R` to pick a station). If a cover does not appear, run with `RUST_LOG=znicz_core::cover=debug` and read `~/.cache/znicz/znicz-session.log`. Report what was seen; do not block the PR on it if the network is unavailable.
 
-- [ ] **Step 6: Tick this plan's boxes and commit**
+- [x] **Step 6: Tick this plan's boxes and commit**
 
 ```bash
 git add -A

@@ -123,6 +123,7 @@ Details: [Phase 5 — Album art](Phase-5-Album-Art.md), [TUI architecture](../Ar
 ## Phase 6
 
 - MusicBrainz lookup for missing tags and higher-resolution cover art from Cover Art Archive
+- The MusicBrainz client for stream covers exists (`znicz-core/src/cover/musicbrainz.rs`, 0.11.0) and can be reused for tags. See [Stream covers](../Architecture/Cover-Sources.md).
 
 ## TUI reimagining (0.6+)
 
