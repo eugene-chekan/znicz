@@ -415,3 +415,48 @@ fn next_from_a_stream_row_moves_to_the_following_file() {
     assert_eq!(player.state().queue_position, 1);
     assert_eq!(player.state().queue.len(), 2);
 }
+
+#[test]
+fn moving_a_row_reorders_the_queue_and_keeps_the_playing_index() {
+    let (player, _thread) = spawn_player(AudioConfig::default());
+    player
+        .send_blocking(Command::ReplaceQueue {
+            items: paths(4),
+            position: 2,
+        })
+        .expect("replace queue");
+
+    player
+        .send_blocking(Command::QueueMove { from: 0, to: 3 })
+        .expect("move");
+
+    let state = player.state();
+    let names: Vec<_> = state.queue.iter().map(|i| format!("{i:?}")).collect();
+    assert!(names[3].contains("track-0"), "{names:?}");
+    assert!(names[0].contains("track-1"), "{names:?}");
+    assert_eq!(state.queue_position, 1, "track-2 is now at index 1");
+}
+
+#[test]
+fn moving_out_of_range_is_an_error() {
+    let (player, _thread) = spawn_player(AudioConfig::default());
+    player
+        .send_blocking(Command::QueueAdd(paths(2)))
+        .expect("queue add");
+    assert!(player
+        .send_blocking(Command::QueueMove { from: 0, to: 5 })
+        .is_err());
+    assert_eq!(player.state().queue.len(), 2);
+}
+
+#[test]
+fn moving_a_row_onto_itself_does_nothing() {
+    let (player, _thread) = spawn_player(AudioConfig::default());
+    player
+        .send_blocking(Command::QueueAdd(paths(3)))
+        .expect("queue add");
+    player
+        .send_blocking(Command::QueueMove { from: 1, to: 1 })
+        .expect("no-op move");
+    assert_eq!(player.state().queue, paths(3));
+}
