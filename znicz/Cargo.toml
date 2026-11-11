@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "A bit-perfect terminal music player with a library, radio and an MCP server"
+readme = "../README.md"
 
 [[bin]]
 name = "znicz"
