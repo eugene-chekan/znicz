@@ -1136,31 +1136,39 @@ impl LibraryPane {
                     .into_iter()
                     .max()
                     .unwrap_or(0),
-                _ => match self.column_focus {
-                    ColumnFocus::Artists => self
-                        .artists
-                        .iter()
-                        .map(|a| len(Item::Artist(a), RowContext::Flat))
-                        .max()
-                        .unwrap_or(0),
-                    ColumnFocus::Albums => {
-                        let context = self.album_context();
-                        self.albums
-                            .iter()
-                            .map(|a| len(Item::Album(a), context))
-                            .max()
-                            .unwrap_or(0)
-                    }
-                    ColumnFocus::Tracks => {
-                        let context = self.track_context();
-                        self.tracks
-                            .iter()
-                            .map(|t| len(Item::Track(t), context))
-                            .max()
-                            .unwrap_or(0)
-                    }
-                },
+                // Paging shows one level at a time; columns measure the focused one.
+                EffectiveLayout::Paging => self.longest_in_level(self.paging_level, playing),
+                _ => self.longest_in_level(self.column_focus, playing),
             },
+        }
+    }
+
+    fn longest_in_level(&self, level: ColumnFocus, playing: Option<&PlayingRef>) -> usize {
+        let len =
+            |item: Item, context: RowContext| Self::middle_len(&item, context, playing, false);
+        match level {
+            ColumnFocus::Artists => self
+                .artists
+                .iter()
+                .map(|a| len(Item::Artist(a), RowContext::Flat))
+                .max()
+                .unwrap_or(0),
+            ColumnFocus::Albums => {
+                let context = self.album_context();
+                self.albums
+                    .iter()
+                    .map(|a| len(Item::Album(a), context))
+                    .max()
+                    .unwrap_or(0)
+            }
+            ColumnFocus::Tracks => {
+                let context = self.track_context();
+                self.tracks
+                    .iter()
+                    .map(|t| len(Item::Track(t), context))
+                    .max()
+                    .unwrap_or(0)
+            }
         }
     }
 
