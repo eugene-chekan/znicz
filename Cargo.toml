@@ -3,7 +3,7 @@ resolver = "2"
 members = ["znicz-core", "znicz-library", "znicz-tui", "znicz-mcp", "znicz"]
 
 [workspace.package]
-version = "0.13.4"
+version = "0.14.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = ["Eugene Chekan"]
@@ -12,6 +12,7 @@ homepage = "https://github.com/eugene-chekan/znicz"
 rust-version = "1.85"
 
 [workspace.dependencies]
+semver = "1"
 tempfile = "3"
 unicode-normalization = "0.1"
 ureq = "3"

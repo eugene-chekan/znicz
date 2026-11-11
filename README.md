@@ -43,6 +43,9 @@ Both put `znicz` in `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows) and a
 it to your `PATH`; open a new terminal afterwards. Set `ZNICZ_INSTALL_DIR` to pick
 another folder, or `ZNICZ_NO_MODIFY_PATH=1` to leave `PATH` alone.
 
+To update later, run `znicz update`, or press `?` then `u` in the TUI when it
+says a new release is out (`znicz update --check` only reports).
+
 - **By hand:** download the `.tar.xz` (Linux) or `.zip` (Windows) for your
   platform, check it against its `.sha256`, and put `znicz` somewhere on `PATH`.
 - **Update:** run the install command again.
@@ -257,6 +260,9 @@ icons = "unicode"         # volume marker: unicode (◢ ×) | emoji (🔈 🔉 �
 
 [covers]
 search = true   # look stream covers up by artist / title (Deezer, iTunes, MusicBrainz)
+
+[updates]
+check = true    # ask GitHub for a new release once a day (TUI)
 ```
 
 A station in `stations.toml` can opt out with `cover_search = false`.

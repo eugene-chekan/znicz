@@ -10,6 +10,8 @@ use znicz_core::{ClientRole, IpcClient};
 /// How long clients wait for `ipc.toml` after spawning or detecting a live lock holder.
 pub const PLAYER_START_TIMEOUT: Duration = Duration::from_secs(10);
 const STARTUP_POLL: Duration = Duration::from_millis(50);
+/// How long a restart waits for a player that was asked to shut down to release its lock.
+pub const PLAYER_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub fn player_is_up(ipc: &Path) -> bool {
     IpcClient::connect(ipc, ClientRole::Agent).is_ok()
@@ -220,13 +222,39 @@ fn wait_until_up(ipc: &Path, timeout: Duration) -> bool {
     player_is_up(ipc)
 }
 
+/// After the TUI asked the player to shut down, wait until it has let go of
+/// `player.lock`, so the next player can start without waiting out its lock.
+/// A player that kept its advert (`ipc`) is running on purpose: return at once.
+pub fn wait_for_player_exit(ipc: &Path, lock_path: &Path, timeout: Duration) {
+    let start = Instant::now();
+    while !ipc.exists() && lock_holder_alive(lock_path) && start.elapsed() < timeout {
+        std::thread::sleep(STARTUP_POLL);
+    }
+}
+
+/// On Linux `current_exe()` reads `/proc/self/exe`, which after the installer
+/// replaced the file names the old inode as `… (deleted)`. Strip that.
+pub(crate) fn live_exe_path(p: PathBuf) -> PathBuf {
+    let stripped = p
+        .to_str()
+        .and_then(|s| s.strip_suffix(" (deleted)"))
+        .map(PathBuf::from);
+    stripped.unwrap_or(p)
+}
+
 pub fn ensure_player(
     ipc: &Path,
     lock_path: &Path,
     device: Option<&str>,
     config: Option<&Path>,
 ) -> color_eyre::Result<()> {
-    ensure_player_exe(ipc, lock_path, &std::env::current_exe()?, device, config)
+    ensure_player_exe(
+        ipc,
+        lock_path,
+        &live_exe_path(std::env::current_exe()?),
+        device,
+        config,
+    )
 }
 
 pub fn ensure_player_exe(
@@ -289,6 +317,46 @@ mod tests {
 
     fn temp_paths() -> TempPaths {
         TempPaths::new()
+    }
+
+    #[test]
+    fn wait_for_player_exit_returns_at_once_without_a_lock() {
+        let tmp = temp_paths();
+        let start = Instant::now();
+        wait_for_player_exit(&tmp.ipc, &tmp.lock, Duration::from_secs(5));
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn wait_for_player_exit_returns_at_once_when_the_advert_is_kept() {
+        // A player left running on purpose keeps its advert.
+        let tmp = temp_paths();
+        fs::write(&tmp.lock, format!("{}\n", std::process::id())).unwrap();
+        fs::write(&tmp.ipc, "port = 1\ntoken = \"x\"\n").unwrap();
+        let start = Instant::now();
+        wait_for_player_exit(&tmp.ipc, &tmp.lock, Duration::from_secs(5));
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn wait_for_player_exit_waits_while_a_live_player_holds_the_lock() {
+        let tmp = temp_paths();
+        fs::write(&tmp.lock, format!("{}\n", std::process::id())).unwrap();
+        let start = Instant::now();
+        wait_for_player_exit(&tmp.ipc, &tmp.lock, Duration::from_millis(200));
+        assert!(start.elapsed() >= Duration::from_millis(200));
+    }
+
+    #[test]
+    fn live_exe_path_strips_the_deleted_suffix() {
+        assert_eq!(
+            live_exe_path(PathBuf::from("/a/znicz (deleted)")),
+            PathBuf::from("/a/znicz")
+        );
+        assert_eq!(
+            live_exe_path(PathBuf::from("/a/znicz")),
+            PathBuf::from("/a/znicz")
+        );
     }
 
     #[test]

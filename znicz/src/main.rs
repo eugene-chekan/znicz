@@ -1,6 +1,8 @@
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
@@ -13,11 +15,15 @@ use znicz_core::{
 };
 use znicz_library::Library;
 use znicz_mcp::run_stdio;
-use znicz_tui::{App, TuiConfig};
+use znicz_tui::app::Engine;
+use znicz_tui::{App, Resume, RunOutcome, TuiConfig, Updates};
 
 mod daemon;
+mod update;
 
-use daemon::{acquire_player_lock, clear_stale_player_files, ensure_player, player_is_up};
+use daemon::{
+    PLAYER_EXIT_TIMEOUT, acquire_player_lock, clear_stale_player_files, ensure_player, player_is_up,
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "znicz", version, about = "Audiophile TUI music player")]
@@ -37,6 +43,10 @@ struct Cli {
 
     #[arg(long, help = "Path to config file")]
     config: Option<PathBuf>,
+
+    /// Set by a restart after an update: play from INDEX:SECONDS in the queue.
+    #[arg(long, hide = true, value_name = "INDEX:SECONDS")]
+    resume: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -84,6 +94,12 @@ enum Commands {
     Station {
         #[command(subcommand)]
         command: StationCmd,
+    },
+
+    /// Check for a newer release, or install it
+    Update {
+        #[arg(long, help = "Only check and print the release notes")]
+        check: bool,
     },
 }
 
@@ -161,6 +177,13 @@ struct Config {
     player: PlayerSection,
     tui: TuiSection,
     covers: CoversSection,
+    updates: UpdatesSection,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct UpdatesSection {
+    /// Check GitHub for a newer release once a day. Default on.
+    check: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -232,6 +255,7 @@ fn main() -> color_eyre::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
+    update::remove_old_exe();
 
     let cli = Cli::parse();
     let config = load_config(cli.config.as_deref());
@@ -243,6 +267,18 @@ fn main() -> color_eyre::Result<()> {
 
     let library_path = library_path(&config);
     let tui = tui_config(&config);
+    let extras = TuiExtras {
+        updates: update::state_path().map(|path| {
+            Arc::new(update::GithubUpdates::new(
+                path,
+                config.updates.check.unwrap_or(true),
+                update::API_URL.to_string(),
+            )) as Arc<dyn Updates>
+        }),
+        resume: cli.resume.as_deref().and_then(parse_resume),
+        config_file: cli.config.clone(),
+        cli_device: cli.device.clone(),
+    };
     let config_file = cli.config.clone();
 
     let audio_config = AudioConfig {
@@ -290,6 +326,7 @@ fn main() -> color_eyre::Result<()> {
         Some(Commands::Albums) => {
             list_albums(library_path)?;
         }
+        Some(Commands::Update { check }) => update::run_cli(check)?,
         Some(Commands::Playlist { command }) => match command {
             PlaylistCmd::List => list_playlists()?,
             PlaylistCmd::Save { name: _ } => {
@@ -305,6 +342,7 @@ fn main() -> color_eyre::Result<()> {
                     audio_config.device_id.as_deref(),
                     config_file.as_deref(),
                     tui,
+                    extras,
                 )?;
             }
             PlaylistCmd::Play { name, append } => {
@@ -318,6 +356,7 @@ fn main() -> color_eyre::Result<()> {
                     audio_config.device_id.as_deref(),
                     config_file.as_deref(),
                     tui,
+                    extras,
                 )?;
             }
             PlaylistCmd::Rename { name, new_name } => {
@@ -348,6 +387,7 @@ fn main() -> color_eyre::Result<()> {
                     audio_config.device_id.as_deref(),
                     config_file.as_deref(),
                     tui,
+                    extras,
                 )?;
             }
             StationCmd::Remove { name } => {
@@ -380,6 +420,7 @@ fn main() -> color_eyre::Result<()> {
                 audio_config.device_id.as_deref(),
                 config_file.as_deref(),
                 tui,
+                extras,
             )?;
         }
     }
@@ -564,6 +605,7 @@ fn run_tui(
     device: Option<&str>,
     config: Option<&Path>,
     tui: TuiConfig,
+    extras: TuiExtras,
 ) -> color_eyre::Result<()> {
     let player = connect_ui(device, config)?;
 
@@ -592,7 +634,7 @@ fn run_tui(
         }
     }
 
-    run_tui_with_client(player, library_path, None, tui)
+    run_tui_with_client(player, library_path, None, tui, extras)
 }
 
 fn playlists_dir() -> color_eyre::Result<PathBuf> {
@@ -620,6 +662,7 @@ fn play_station_and_run(
     device: Option<&str>,
     config: Option<&Path>,
     tui: TuiConfig,
+    extras: TuiExtras,
 ) -> color_eyre::Result<()> {
     let path = stations_path()?;
     let stations = znicz_core::load_stations(&path)?;
@@ -629,7 +672,7 @@ fn play_station_and_run(
     let player = connect_ui(device, config)?;
     znicz_core::play_station(&player, &station, append)
         .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-    run_tui_with_client(player, library_path, None, tui)
+    run_tui_with_client(player, library_path, None, tui, extras)
 }
 
 fn list_stations() -> color_eyre::Result<()> {
@@ -665,11 +708,23 @@ fn load_playlist_and_run(
     device: Option<&str>,
     config: Option<&Path>,
     tui: TuiConfig,
+    extras: TuiExtras,
 ) -> color_eyre::Result<()> {
     let result = load_path(&path)?;
     let player = connect_ui(device, config)?;
     apply_to_player(&player, &result, append).map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-    run_tui_with_client(player, library_path, skipped_notice(&result), tui)
+    run_tui_with_client(player, library_path, skipped_notice(&result), tui, extras)
+}
+
+/// What a TUI run gets besides the playback target: the update checker and,
+/// after a restart, where to pick playback back up.
+struct TuiExtras {
+    updates: Option<Arc<dyn Updates>>,
+    resume: Option<Resume>,
+    /// `--config` as given on this run, passed on to a restarted binary.
+    config_file: Option<PathBuf>,
+    /// `--device` as given on this run (not the config file's), for a restart.
+    cli_device: Option<String>,
 }
 
 fn run_tui_with_client(
@@ -677,6 +732,7 @@ fn run_tui_with_client(
     library_path: Option<PathBuf>,
     skip_notice: Option<String>,
     tui: TuiConfig,
+    extras: TuiExtras,
 ) -> color_eyre::Result<()> {
     // No library is not an error: the browser pane explains how to build one.
     let library = match open_library(library_path) {
@@ -694,13 +750,118 @@ fn run_tui_with_client(
     let mut app = App::with_remote(player, library);
     app.tui = tui;
     app.library.set_preferred_layout(app.tui.library_layout);
+    if let Some(updates) = extras.updates {
+        app = app.with_updates(updates);
+    }
     if let Some(message) = skip_notice {
         app.toasts.warn(message);
     }
-    let result = app.run();
+    if let Some(version) = app
+        .player
+        .player_version()
+        .filter(|v| update::is_newer(v, env!("CARGO_PKG_VERSION")))
+    {
+        app.toasts.info(format!(
+            "Player runs {version} · it updates when it next restarts"
+        ));
+    }
+    if let Some(resume) = extras.resume {
+        apply_resume(&app.player, resume);
+    }
+    let restart_config = extras.config_file;
+    let restart_device = extras.cli_device;
+    let outcome = app.run();
     drop(log);
 
-    result
+    match outcome? {
+        RunOutcome::Quit => Ok(()),
+        RunOutcome::Restart { resume } => restart(restart_args(
+            restart_config.as_deref(),
+            restart_device.as_deref(),
+            resume,
+        )),
+    }
+}
+
+/// After a restart: wait for the restored queue, then play where we were.
+fn apply_resume(player: &Engine, resume: Resume) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while player.state().queue.len() <= resume.index {
+        if Instant::now() >= deadline {
+            tracing::warn!("resume: queue not restored in time");
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let _ = player.send_blocking(Command::QueuePlayIndex(resume.index));
+    if resume.seconds > 0 {
+        let _ = player.send_blocking(Command::Seek(Duration::from_secs(resume.seconds)));
+    }
+}
+
+/// `--resume INDEX:SECONDS`. Anything else is ignored with a warning.
+pub(crate) fn parse_resume(s: &str) -> Option<Resume> {
+    let parsed = s.split_once(':').and_then(|(index, seconds)| {
+        Some(Resume {
+            index: index.parse().ok()?,
+            seconds: seconds.parse().ok()?,
+        })
+    });
+    if parsed.is_none() {
+        tracing::warn!("ignoring malformed --resume {s:?}");
+    }
+    parsed
+}
+
+/// The arguments for the restarted binary: the global options only, so the
+/// start-up action (files, playlist, station) does not run again.
+pub(crate) fn restart_args(
+    config: Option<&Path>,
+    device: Option<&str>,
+    resume: Option<Resume>,
+) -> Vec<OsString> {
+    let mut out = Vec::new();
+    if let Some(config) = config {
+        out.push(OsString::from("--config"));
+        out.push(config.as_os_str().to_os_string());
+    }
+    if let Some(device) = device {
+        out.push(OsString::from("--device"));
+        out.push(OsString::from(device));
+    }
+    if let Some(resume) = resume {
+        out.push(OsString::from("--resume"));
+        out.push(OsString::from(format!(
+            "{}:{}",
+            resume.index, resume.seconds
+        )));
+    }
+    out
+}
+
+/// Start the updated binary. Unix replaces this process (returns only on
+/// failure); Windows runs it as a child and exits with its status.
+fn restart(args: Vec<OsString>) -> color_eyre::Result<()> {
+    // The TUI may have just asked the player to stop; let it release its lock
+    // so the new player can start right away. Best effort: no paths, no wait.
+    if let (Ok(ipc), Ok(lock)) = (ipc_path(), player_lock_path()) {
+        daemon::wait_for_player_exit(&ipc, &lock, PLAYER_EXIT_TIMEOUT);
+    }
+    let exe = daemon::live_exe_path(std::env::current_exe()?);
+    let mut cmd = std::process::Command::new(exe);
+    cmd.args(args);
+    #[cfg(unix)]
+    {
+        // Replace this process with the new binary (no shell involved);
+        // this only returns when starting it failed.
+        use std::os::unix::process::CommandExt;
+        Err(cmd.exec().into())
+    }
+    #[cfg(not(unix))]
+    {
+        let status = cmd.status()?;
+        std::process::exit(status.code().unwrap_or(0));
+    }
 }
 
 /// Keeping stderr out of the interface.
@@ -939,5 +1100,51 @@ mod tests {
             rendered.contains(env!("CARGO_PKG_VERSION")),
             "expected the workspace version in {rendered:?}"
         );
+    }
+
+    fn os(args: &[&str]) -> Vec<OsString> {
+        args.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn parse_resume_reads_index_and_seconds() {
+        assert_eq!(
+            parse_resume("3:125"),
+            Some(Resume {
+                index: 3,
+                seconds: 125
+            })
+        );
+        assert_eq!(
+            parse_resume("0:0"),
+            Some(Resume {
+                index: 0,
+                seconds: 0
+            })
+        );
+    }
+
+    #[test]
+    fn parse_resume_rejects_malformed_values() {
+        assert_eq!(parse_resume("x"), None);
+        assert_eq!(parse_resume("3:"), None);
+        assert_eq!(parse_resume(":5"), None);
+    }
+
+    #[test]
+    fn restart_args_carry_only_the_global_options() {
+        let resume = Resume {
+            index: 3,
+            seconds: 7,
+        };
+        assert_eq!(
+            restart_args(Some(Path::new("p.toml")), Some("d"), Some(resume)),
+            os(&["--config", "p.toml", "--device", "d", "--resume", "3:7"])
+        );
+    }
+
+    #[test]
+    fn restart_args_are_empty_without_options() {
+        assert!(restart_args(None, None, None).is_empty());
     }
 }

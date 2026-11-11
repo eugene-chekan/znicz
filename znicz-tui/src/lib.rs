@@ -24,7 +24,11 @@ pub mod scan_status;
 pub mod theme;
 pub mod toast;
 pub mod tui_config;
+pub mod update;
 pub mod views;
 
-pub use app::{App, Focus, Modal, PlaylistPrompt, RadioPrompt, StationField, View};
+pub use app::{
+    App, Focus, Modal, PlaylistPrompt, RadioPrompt, Resume, RunOutcome, StationField, View,
+};
 pub use tui_config::{CoverProtocol, IconSet, LibraryLayout, TuiConfig};
+pub use update::{Release, Updates};

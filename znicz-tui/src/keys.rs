@@ -29,6 +29,7 @@ pub enum Context {
     Playlists,
     Radio,
     Messages,
+    Update,
     Prompt,
     StationPrompt,
     Help,
@@ -118,6 +119,7 @@ pub fn context_hints(context: Context) -> &'static [Hint] {
         Context::Stage => &[SPACE_PAUSE, NEXT, BROWSE, QUEUE_OPEN],
         Context::Playlists | Context::Radio => &[ENTER_PLAY, ADD, NEW, EDIT, DELETE, CLOSE],
         Context::Messages => &[CLEAR, CLOSE],
+        Context::Update => &[CLOSE],
         Context::Prompt => &[ENTER_SAVE, CANCEL],
         Context::StationPrompt => &[ENTER_SAVE, CANCEL, NEXT_FIELD],
         Context::Help => &[FILTER, CLOSE],
@@ -135,6 +137,7 @@ pub fn more_hint(context: Context) -> Option<Hint> {
             | Context::StationPrompt
             | Context::Help
             | Context::HelpFilter
+            | Context::Update
     );
     (!typed_or_help).then_some(MORE)
 }
@@ -226,6 +229,9 @@ pub const STAGE: &[Binding] = &[b("v / i / Esc", "back to browse")];
 
 pub const MESSAGES: &[Binding] = &[b("C", "clear the history"), b("Esc / M", "close")];
 
+/// Only in the help overlay; the action says it works when an update exists.
+pub const HELP: &[Binding] = &[b("u", "update (when one is available)")];
+
 /// A titled group of bindings in the help overlay.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Section {
@@ -244,6 +250,7 @@ const CONTEXT_SECTIONS: &[(&str, &[Binding])] = &[
     ("Devices", DEVICES),
     ("Stage", STAGE),
     ("Messages", MESSAGES),
+    ("Help", HELP),
 ];
 
 /// Title of the section holding this context's own keys, if it has a table.
@@ -257,7 +264,8 @@ pub fn context_title(context: Context) -> Option<&'static str> {
         Context::Playlists => Some("Playlists"),
         Context::Radio => Some("Radio"),
         Context::Messages => Some("Messages"),
-        Context::Prompt | Context::StationPrompt | Context::Help | Context::HelpFilter => None,
+        Context::Help => Some("Help"),
+        Context::Update | Context::Prompt | Context::StationPrompt | Context::HelpFilter => None,
     }
 }
 
@@ -344,7 +352,7 @@ mod tests {
         }
     }
 
-    const ALL_CONTEXTS: [Context; 14] = [
+    const ALL_CONTEXTS: [Context; 15] = [
         Context::Library,
         Context::LibraryTree,
         Context::Search,
@@ -355,6 +363,7 @@ mod tests {
         Context::Playlists,
         Context::Radio,
         Context::Messages,
+        Context::Update,
         Context::Prompt,
         Context::StationPrompt,
         Context::Help,
@@ -387,6 +396,7 @@ mod tests {
                 | Context::FolderPrompt
                 | Context::Prompt
                 | Context::StationPrompt
+                | Context::Update
                 | Context::Help
                 | Context::HelpFilter => {
                     assert_eq!(more_hint(context), None, "{context:?}")
@@ -464,13 +474,16 @@ mod tests {
                 "Radio",
                 "Devices",
                 "Stage",
-                "Messages"
+                "Messages",
+                "Help"
             ]
         );
         let dims: Vec<bool> = sections.iter().map(|s| s.dim).collect();
         assert_eq!(
             dims,
-            [false, false, false, true, true, true, true, true, true]
+            [
+                false, false, false, true, true, true, true, true, true, true
+            ]
         );
     }
 
@@ -482,11 +495,18 @@ mod tests {
     }
 
     #[test]
-    fn prompts_and_help_have_no_context_section() {
-        for context in [Context::Prompt, Context::StationPrompt, Context::Help] {
+    fn help_lists_the_update_key_first() {
+        let sections = help_sections(Context::Help);
+        assert_eq!(sections[0].title, "Help");
+        assert!(sections[0].bindings.iter().any(|b| b.keys == "u"));
+    }
+
+    #[test]
+    fn prompts_have_no_context_section() {
+        for context in [Context::Prompt, Context::StationPrompt] {
             let sections = help_sections(context);
             assert_eq!(sections[0].title, "Playback", "{context:?}");
-            assert_eq!(sections.len(), 9, "every table still listed once");
+            assert_eq!(sections.len(), 10, "every table still listed once");
             assert_eq!(context_title(context), None);
         }
     }
