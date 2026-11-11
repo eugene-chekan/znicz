@@ -38,3 +38,12 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 walkdir = "2.5"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 ratatui-image = { version = "11", default-features = false, features = ["image-defaults", "crossterm"] }
+
+# Debug and test builds keep file / line backtraces but drop full debugger info,
+# and dependencies carry none. Test binaries link every dependency, so full
+# debug info made each one 100–290 MB and `target/` grew by gigabytes per run.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
