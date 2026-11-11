@@ -149,16 +149,16 @@ Behaviour (spec "Update modal" and "Restart"):
   - Done: `Updated to {version}. Restart Znicz to use it.`; hint ` Enter restart now · Esc later `.
   - PlayerPlaying: `The player is playing. Restart it too? Playback resumes in a moment.`; hint ` Enter restart player · Esc keep it playing `.
 
-- [ ] **Step 1: Tests** with `FakeUpdates` from Task 2 (prefer unit tests inside `app.rs`; integration tests only see `pub` items):
+- [x] **Step 1: Tests** with `FakeUpdates` from Task 2 (prefer unit tests inside `app.rs`; integration tests only see `pub` items):
   - Offer + Enter → Installing; after polling the install result `Ok` → Done; fake recorded `install("9.9.9")`.
   - install `Err("boom")` → `Failed("boom")`, rendered text contains `boom`.
   - not installable: Enter does nothing (step stays NotInstallable), render contains the hint.
   - Done + Enter with a stopped local player → `should_quit`, `outcome == Restart { resume: None }`.
   - The playing branch: unit-test the decision as a pure fn `fn restart_step(status: PlaybackStatus, queue_len: usize) -> bool` (true = ask about the player) and test Stopped/empty/Playing/Paused; and test that PlayerPlaying + Enter gives `Restart { resume: Some(Resume { index: queue_position, .. }) }` and Esc gives `Restart { resume: None }` (set `update_step = PlayerPlaying` directly).
-- [ ] **Step 2:** run; fails.
-- [ ] **Step 3:** implement.
-- [ ] **Step 4:** checks pass.
-- [ ] **Step 5: Commit** `"Update modal: install the new release and offer a restart"`.
+- [x] **Step 2:** run; fails.
+- [x] **Step 3:** implement.
+- [x] **Step 4:** checks pass.
+- [x] **Step 5: Commit** `"Update modal: install the new release and offer a restart"`.
 
 ---
 

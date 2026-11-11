@@ -697,7 +697,7 @@ fn run_tui_with_client(
     if let Some(message) = skip_notice {
         app.toasts.warn(message);
     }
-    let result = app.run();
+    let result = app.run().map(|_| ());
     drop(log);
 
     result

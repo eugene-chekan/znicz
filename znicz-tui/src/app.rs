@@ -14,8 +14,8 @@ use ratatui::layout::Rect;
 use ratatui_image::picker::ProtocolType;
 use znicz_core::{
     AudioDeviceInfo, AudioOutput, Command, IpcClient, LibraryHost, LibraryOp, LibraryStatus,
-    PlaybackStatus, PlayerEvent, PlayerHandle, PlayerOps, PlayerState, RepeatMode, apply_to_player,
-    list_saved, load_path, sanitize_stem, saved_path, skipped_notice, write_path,
+    PlaybackStatus, PlayerEvent, PlayerHandle, PlayerOps, PlayerState, QueueItem, RepeatMode,
+    apply_to_player, list_saved, load_path, sanitize_stem, saved_path, skipped_notice, write_path,
 };
 use znicz_library::{Library, Track};
 
@@ -280,6 +280,39 @@ impl Modal {
     }
 }
 
+/// How the TUI ended: quit, or start the (updated) binary again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunOutcome {
+    Quit,
+    /// Start the (updated) binary again; `resume` replays where the player was.
+    Restart {
+        resume: Option<Resume>,
+    },
+}
+
+/// Where to pick playback up after a restart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Resume {
+    pub index: usize,
+    pub seconds: u64,
+}
+
+/// Where the Update modal is in offering, installing, and restarting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum UpdateStep {
+    Offer,
+    NotInstallable,
+    Installing,
+    Failed(String),
+    Done,
+    PlayerPlaying,
+}
+
+/// Whether restarting should ask about the player: it has a queue and is not stopped.
+pub(crate) fn restart_asks_about_player(status: PlaybackStatus, queue_len: usize) -> bool {
+    queue_len > 0 && status != PlaybackStatus::Stopped
+}
+
 pub struct App {
     pub player: Engine,
     pub focus: Focus,
@@ -346,6 +379,14 @@ pub struct App {
     pub update: Option<Release>,
     /// The background check's answer, until it arrives.
     update_check: Option<std::sync::mpsc::Receiver<Option<Release>>>,
+    /// The Update modal's current step.
+    pub(crate) update_step: UpdateStep,
+    /// How far the release notes are scrolled.
+    pub(crate) update_scroll: usize,
+    /// The install's result, until the install thread reports it.
+    install_rx: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    /// How the TUI ends; `Restart` once an update asks for it.
+    pub outcome: RunOutcome,
 }
 
 fn point_in(rect: Rect, column: u16, row: u16) -> bool {
@@ -606,10 +647,14 @@ impl App {
             updates: None,
             update: None,
             update_check: None,
+            update_step: UpdateStep::Offer,
+            update_scroll: 0,
+            install_rx: None,
+            outcome: RunOutcome::Quit,
         }
     }
 
-    pub fn run(&mut self) -> color_eyre::Result<()> {
+    pub fn run(&mut self) -> color_eyre::Result<RunOutcome> {
         let mut terminal = ratatui::init();
         let _mouse = MouseCapture::enable();
         self.picker = Some(make_picker(self.tui.cover_protocol));
@@ -620,7 +665,8 @@ impl App {
         self.spawn_update_check();
         let result = self.run_loop(&mut terminal);
         ratatui::restore();
-        result
+        result?;
+        Ok(self.outcome.clone())
     }
 
     /// Ask for the newer release on a background thread; `poll_updates` reads it.
@@ -679,7 +725,59 @@ impl App {
 
     /// Opened from Help with `u`.
     pub(crate) fn open_update(&mut self) {
+        let installable = self.updates.as_ref().is_some_and(|u| u.can_install());
+        self.update_step = if installable {
+            UpdateStep::Offer
+        } else {
+            UpdateStep::NotInstallable
+        };
+        self.update_scroll = 0;
         self.modal = Modal::Update;
+    }
+
+    /// Take the install's result when the install thread has reported it.
+    pub(crate) fn poll_install(&mut self) {
+        let Some(rx) = &self.install_rx else {
+            return;
+        };
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Err("the install stopped unexpectedly".to_string())
+            }
+        };
+        self.install_rx = None;
+        self.update_step = match result {
+            Ok(()) => UpdateStep::Done,
+            Err(error) => UpdateStep::Failed(error),
+        };
+    }
+
+    /// Install the offered release on a background thread.
+    fn start_install(&mut self) {
+        let (Some(updates), Some(release)) = (self.updates.clone(), self.update.clone()) else {
+            self.close_modal();
+            return;
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let version = release.version;
+        std::thread::spawn(move || {
+            let _ = tx.send(updates.install(&version));
+        });
+        self.install_rx = Some(rx);
+        self.update_step = UpdateStep::Installing;
+    }
+
+    /// Leave the TUI so the caller restarts the binary.
+    fn leave_for_restart(&mut self, resume: Option<Resume>, stop_player: bool) {
+        if stop_player {
+            if let Err(e) = self.player.shutdown_player() {
+                tracing::warn!("player shutdown before restart: {e}");
+            }
+        }
+        self.outcome = RunOutcome::Restart { resume };
+        self.should_quit = true;
     }
 
     fn overlays(&self) -> Overlays {
@@ -694,6 +792,7 @@ impl App {
         loop {
             self.poll_player_events();
             self.poll_updates();
+            self.poll_install();
             self.toasts.tick();
 
             let state = self.player.state();
@@ -1094,14 +1193,63 @@ impl App {
         }
     }
 
-    /// Keys while the Update modal is open. Task 3 adds the install flow.
+    /// Keys while the Update modal is open.
     fn on_update_key(&mut self, key: KeyEvent) {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.should_quit = true;
             return;
         }
-        if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
-            self.close_modal();
+        match self.update_step {
+            UpdateStep::Installing => {}
+            UpdateStep::Done => match key.code {
+                KeyCode::Enter => {
+                    let state = self.player.state();
+                    if restart_asks_about_player(state.status, state.queue.len()) {
+                        self.update_step = UpdateStep::PlayerPlaying;
+                    } else {
+                        self.leave_for_restart(None, true);
+                    }
+                }
+                KeyCode::Esc => {
+                    self.update = None;
+                    self.close_modal();
+                }
+                _ => {}
+            },
+            UpdateStep::PlayerPlaying => match key.code {
+                KeyCode::Enter => {
+                    let state = self.player.state();
+                    let seconds = match state.queue.get(state.queue_position) {
+                        Some(QueueItem::File { .. }) => state.position.as_secs(),
+                        _ => 0,
+                    };
+                    let resume = Resume {
+                        index: state.queue_position,
+                        seconds,
+                    };
+                    self.leave_for_restart(Some(resume), true);
+                }
+                KeyCode::Esc => self.leave_for_restart(None, false),
+                _ => {}
+            },
+            UpdateStep::Offer | UpdateStep::NotInstallable | UpdateStep::Failed(_) => {
+                let scroll = match key.code {
+                    KeyCode::Char('j') | KeyCode::Down => Some(1),
+                    KeyCode::Char('k') | KeyCode::Up => Some(-1),
+                    KeyCode::PageDown => Some(HELP_PAGE),
+                    KeyCode::PageUp => Some(-HELP_PAGE),
+                    _ => None,
+                };
+                if let Some(delta) = scroll {
+                    self.update_scroll = self.update_scroll.saturating_add_signed(delta);
+                    return;
+                }
+                match key.code {
+                    KeyCode::Enter if self.update_step == UpdateStep::Offer => self.start_install(),
+                    KeyCode::Enter | KeyCode::Esc | KeyCode::Char('q') => self.close_modal(),
+                    _ => {}
+                }
+            }
         }
     }
 
@@ -2730,5 +2878,143 @@ mod tests {
         app.on_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
         app.on_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE));
         assert_eq!(app.modal, Modal::Help);
+    }
+
+    fn app_offering(fake: Arc<FakeUpdates>) -> App {
+        let mut app = App::with_library(test_player(), None).with_updates(fake);
+        app.check_updates_now();
+        app
+    }
+
+    fn press(app: &mut App, code: KeyCode) {
+        app.on_key(KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    /// Poll the install until it leaves `Installing`, for at most two seconds.
+    fn wait_for_install(app: &mut App) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while app.update_step == UpdateStep::Installing && Instant::now() < deadline {
+            app.poll_install();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn rendered(app: &mut App) -> String {
+        let state = app.player.state();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+        terminal
+            .draw(|frame| views::render(frame, app, &state))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn enter_installs_the_offered_version_and_then_asks_to_restart() {
+        let fake = Arc::new(FakeUpdates::offering("9.9.9"));
+        let mut app = app_offering(fake.clone());
+        app.open_update();
+        assert_eq!(app.update_step, UpdateStep::Offer);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.update_step, UpdateStep::Installing);
+        wait_for_install(&mut app);
+        assert_eq!(app.update_step, UpdateStep::Done);
+        assert_eq!(fake.installs.lock().unwrap().as_slice(), ["9.9.9"]);
+    }
+
+    #[test]
+    fn a_failed_install_shows_the_error() {
+        let fake = FakeUpdates::offering("9.9.9");
+        *fake.install_result.lock().unwrap() = Err("boom".into());
+        let mut app = app_offering(Arc::new(fake));
+        app.open_update();
+        press(&mut app, KeyCode::Enter);
+        wait_for_install(&mut app);
+        assert_eq!(app.update_step, UpdateStep::Failed("boom".into()));
+        assert!(rendered(&mut app).contains("boom"));
+    }
+
+    #[test]
+    fn a_copy_that_cannot_install_closes_on_enter_without_installing() {
+        let mut fake = FakeUpdates::offering("9.9.9");
+        fake.installable = false;
+        let fake = Arc::new(fake);
+        let mut app = app_offering(fake.clone());
+        app.open_update();
+        assert_eq!(app.update_step, UpdateStep::NotInstallable);
+        let text = rendered(&mut app);
+        assert!(text.contains("rebuild it"));
+        assert!(text.contains("not installed by the Znicz installer"));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.modal, Modal::None);
+        assert!(fake.installs.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn enter_after_done_restarts_when_the_player_is_idle() {
+        let mut app = app_offering(Arc::new(FakeUpdates::offering("9.9.9")));
+        app.open_update();
+        app.update_step = UpdateStep::Done;
+        press(&mut app, KeyCode::Enter);
+        assert!(app.should_quit);
+        assert_eq!(app.outcome, RunOutcome::Restart { resume: None });
+    }
+
+    #[test]
+    fn esc_after_done_closes_the_modal_and_forgets_the_update() {
+        let mut app = app_offering(Arc::new(FakeUpdates::offering("9.9.9")));
+        app.open_update();
+        app.update_step = UpdateStep::Done;
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.modal, Modal::None);
+        assert!(app.update.is_none());
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn restart_asks_about_the_player_only_when_it_has_a_queue_and_is_not_stopped() {
+        use PlaybackStatus::*;
+        assert!(!restart_asks_about_player(Stopped, 0));
+        assert!(!restart_asks_about_player(Stopped, 3));
+        assert!(!restart_asks_about_player(Playing, 0));
+        assert!(restart_asks_about_player(Playing, 3));
+        assert!(restart_asks_about_player(Paused, 3));
+    }
+
+    #[test]
+    fn enter_while_the_player_plays_restarts_it_with_resume() {
+        let mut app = app_offering(Arc::new(FakeUpdates::offering("9.9.9")));
+        app.open_update();
+        app.update_step = UpdateStep::PlayerPlaying;
+        let index = app.player.state().queue_position;
+        press(&mut app, KeyCode::Enter);
+        assert!(app.should_quit);
+        assert!(matches!(
+            app.outcome,
+            RunOutcome::Restart { resume: Some(Resume { index: i, .. }) } if i == index
+        ));
+    }
+
+    #[test]
+    fn esc_while_the_player_plays_restarts_without_touching_it() {
+        let mut app = app_offering(Arc::new(FakeUpdates::offering("9.9.9")));
+        app.open_update();
+        app.update_step = UpdateStep::PlayerPlaying;
+        press(&mut app, KeyCode::Esc);
+        assert!(app.should_quit);
+        assert_eq!(app.outcome, RunOutcome::Restart { resume: None });
+    }
+
+    #[test]
+    fn the_update_title_names_the_version() {
+        let mut app = app_offering(Arc::new(FakeUpdates::offering("9.9.9")));
+        app.open_update();
+        assert!(rendered(&mut app).contains("Update to 9.9.9"));
     }
 }
