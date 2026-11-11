@@ -38,6 +38,19 @@ jobs:
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Install cargo-about
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.3
+
+      - name: Third-party licences are up to date
+        run: |
+          scripts/third-party-licenses.sh
+          git diff --exit-code THIRD-PARTY-LICENSES.html || {
+            echo "::error::THIRD-PARTY-LICENSES.html is stale. Run scripts/third-party-licenses.sh and commit it."
+            exit 1
+          }
+
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

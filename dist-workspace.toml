@@ -1,0 +1,29 @@
+[workspace]
+members = ["cargo:."]
+
+# Config for 'dist'
+[dist]
+# The preferred dist version to use in CI (Cargo.toml SemVer syntax)
+cargo-dist-version = "0.34.0"
+# CI backends to support
+ci = "github"
+# The installers to generate for each app
+installers = ["shell", "powershell"]
+# Target platforms to build apps for (Rust target-triple syntax)
+targets = ["aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+# Path that installers place binaries in: ~/.local/bin on Linux,
+# %USERPROFILE%\.local\bin on Windows (added to the user PATH).
+install-path = "~/.local/bin"
+# Where to host releases
+hosting = "github"
+# Whether to install an updater program
+install-updater = false
+# Shipped beside the binary (LICENSE-* and README.md are added automatically)
+include = ["THIRD-PARTY-LICENSES.html"]
+# Link the MSVC C runtime statically so znicz.exe needs no vcruntime DLL
+msvc-crt-static = true
+
+# cpal needs the ALSA headers to build on Linux
+[dist.dependencies.apt]
+libasound2-dev = "*"
+pkg-config = "*"

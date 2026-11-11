@@ -3,10 +3,12 @@ resolver = "2"
 members = ["znicz-core", "znicz-library", "znicz-tui", "znicz-mcp", "znicz"]
 
 [workspace.package]
-version = "0.13.0"
+version = "0.13.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-authors = ["Eugene"]
+authors = ["Eugene Chekan"]
+repository = "https://github.com/eugene-chekan/znicz"
+homepage = "https://github.com/eugene-chekan/znicz"
 rust-version = "1.85"
 
 [workspace.dependencies]
@@ -47,3 +49,13 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 debug = false
+
+# Release builds: smaller and faster, without symbols.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+# The profile that 'dist' builds release archives with.
+[profile.dist]
+inherits = "release"

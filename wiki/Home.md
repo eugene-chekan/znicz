@@ -74,6 +74,9 @@ Goals:
 
 ## Run it
 
+Release builds for Linux and Windows install with one command; see
+[Install](../README.md#install). From source:
+
 ```bash
 # Linux build tools
 sudo apt install pkg-config libasound2-dev

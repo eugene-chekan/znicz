@@ -20,7 +20,39 @@
 - Embedded album art in the TUI (Kitty / Sixel / half-blocks). Stream covers come from the ICY image, AudioAddict, an artist / title search (Deezer, then iTunes, then MusicBrainz and the Cover Art Archive), or the station's art, else the logo
 - MCP server: tools, resources, prompts, and bundled Agent Skills (same live player as the TUI)
 
-## Build
+## Install
+
+Download a release build from
+[GitHub Releases](https://github.com/eugene-chekan/znicz/releases/latest). It is
+one self-contained binary; settings and the library live in your user folders.
+
+**Linux** (x86-64 and ARM64, glibc 2.35 or newer, ALSA — present on every desktop
+distribution, PipeWire and PulseAudio included):
+
+```sh
+curl -LsSf https://github.com/eugene-chekan/znicz/releases/latest/download/znicz-installer.sh | sh
+```
+
+**Windows** (x86-64, PowerShell):
+
+```powershell
+irm https://github.com/eugene-chekan/znicz/releases/latest/download/znicz-installer.ps1 | iex
+```
+
+Both put `znicz` in `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows) and add
+it to your `PATH`; open a new terminal afterwards. Set `ZNICZ_INSTALL_DIR` to pick
+another folder, or `ZNICZ_NO_MODIFY_PATH=1` to leave `PATH` alone.
+
+- **By hand:** download the `.tar.xz` (Linux) or `.zip` (Windows) for your
+  platform, check it against its `.sha256`, and put `znicz` somewhere on `PATH`.
+- **Update:** run the install command again.
+- **Uninstall:** delete the binary (and `~/.config/znicz/env.*` plus the `PATH`
+  line the installer added). Your data stays in `~/.local/share/znicz` /
+  `%APPDATA%\znicz` until you remove it.
+- Windows may show a SmartScreen warning for a browser-downloaded `znicz.exe`:
+  release builds are not code-signed yet.
+
+## Build from source
 
 ### Linux
 
@@ -41,6 +73,8 @@ Uses WASAPI via cpal. For ASIO or exclusive WASAPI, see future roadmap.
 
 GitHub Actions on `main` and pull requests run rustfmt, Clippy, and
 `cargo test --workspace` on Linux and Windows.
+Pushing a `vX.Y.Z` tag runs the release workflow (see
+[Releasing](wiki/Rust/Cargo-Workspace.md#releasing)).
 
 ## Documentation
 
@@ -285,4 +319,7 @@ bit perfect or resampled.
 
 ## License
 
-MIT OR Apache-2.0
+MIT OR Apache-2.0, at your option: [LICENSE-MIT](LICENSE-MIT),
+[LICENSE-APACHE](LICENSE-APACHE). Release builds also carry
+[THIRD-PARTY-LICENSES.html](THIRD-PARTY-LICENSES.html), the licences of the Rust
+crates compiled into the binary.
