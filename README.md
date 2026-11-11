@@ -139,6 +139,11 @@ On Stage the cover sits left of the details on a wide terminal and above them on
 use the ICY image when one decodes, else an AudioAddict song cover on those networks, else an artist / title
 search (Deezer, then iTunes, then MusicBrainz), else station art, else the Znicz logo. The cover area takes your terminal's background colour when the terminal reports it. Long now-playing titles scroll (set `marquee = false` to truncate with `…`).
 Long list titles pan with `Alt-←` / `Alt-→` on the highlighted row.
+Under an artist, album rows read `Kind of Blue (1959)` and track rows `1. So What` (`2-3.` on
+multi-disc albums); the artist appears only when a track's artist differs (compilations, guests).
+An artist's albums run oldest first, albums without a year last. Search results keep `— Artist`.
+The volume bar starts with a marker (`◢`, `×` when muted); `icons = "emoji"` or `"nerd"` swaps in
+🔈 🔉 🔊 / 🔇 or Nerd Font glyphs.
 
 Press `?` in the player for the keymap: the keys for where you are come first,
 and `/` filters by key or action. The overlay footer shows the running version.
@@ -168,7 +173,7 @@ The essentials:
 | U | Rescan the remembered folders |
 | M | Messages: recent history; unread warnings and errors are counted |
 | J | Jump the library to the playing track |
-| Tab | Next column when three-column browse is active; otherwise library ↔ queue |
+| Tab | Next column when three-column browse is active; library ↔ queue while the drawer is open (only `]` opens it) |
 | Shift-Tab | Previous column (or queue focus when the drawer is open) |
 | Alt-↑ / Alt-↓ | Move the highlighted queue row up / down (queue drawer focused) |
 | Alt-← / Alt-→ | Pan a long title |
@@ -214,6 +219,7 @@ show_cover = true         # cover on the Stage view
 cover_protocol = "auto"   # Stage cover: auto | kitty | sixel | halfblocks | off
 library_layout = "columns"  # columns | tree
 marquee = true            # scroll long now-playing titles; false truncates with …
+icons = "unicode"         # volume marker: unicode (◢ ×) | emoji (🔈 🔉 🔊 🔇) | nerd (Nerd Font)
 
 [covers]
 search = true   # look stream covers up by artist / title (Deezer, iTunes, MusicBrainz)

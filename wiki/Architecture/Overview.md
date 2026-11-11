@@ -94,6 +94,7 @@ path = "~/.local/share/znicz/library.db"
 show_cover = true
 cover_protocol = "auto"   # Stage cover: auto | kitty | sixel | halfblocks | off
 marquee = true
+icons = "unicode"         # unicode | emoji | nerd (volume marker)
 ```
 
 `bit_perfect` is a flag for later policy (skip software volume, refuse resampling). Phase 1 still has a software volume control.

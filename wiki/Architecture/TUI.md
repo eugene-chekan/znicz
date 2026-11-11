@@ -72,7 +72,7 @@ toasts no longer float over the list. Long titles pan horizontally with
 `Alt-←` and `Alt-→` on the highlighted row only. `<` and `>` are unbound.
 Browse transport is text only (no cover). Hints stay on their own line and are
 never replaced by a message. Config: `[tui]` in `config.toml` (`show_cover`,
-`cover_protocol`, `library_layout`, `marquee`).
+`cover_protocol`, `library_layout`, `marquee`, `icons`).
 
 ### Responsive behaviour
 
@@ -102,7 +102,9 @@ and right in the library and never play anything:
 | Single column | back one level | into the artist or album |
 
 They do nothing in search results, the queue, or modals. `Tab` still cycles
-columns and wraps. `M` opens the messages list and `J` jumps to the playing
+columns and wraps. With the drawer open (overlay layout), `Tab` swaps library ↔
+queue focus; with it closed, outside the columns, `Tab` does nothing — only `]`
+opens the drawer. `M` opens the messages list and `J` jumps to the playing
 track.
 
 The footer shows a short hint list for the current **context** (library,
@@ -173,6 +175,20 @@ that entity in browse; **Enter** on a track plays it. `a` queues the selection;
 While the prompt is open, Left and Right move the caret. Queries go straight to
 SQLite. See [Library](Library.md).
 
+**Row labels.** Rows under an artist (tree albums and tracks, the album and
+track columns, the paging list's album and track levels) do not repeat it:
+`Kind of Blue (1959)`, `1. So What`. Track numbers are padded per album
+(` 9.` / `10.`); when any track has a disc above 1 they read `D-N.` (`2-3.`). A
+track without a number gets blanks so titles line up. A grouped track adds
+` — Artist` only when its artist differs from the browse artist (compilations,
+guests). Flat lists (search, all tracks) keep `Title — Artist` and
+`Album (Year) — Artist` and show no number. Albums under an artist sort by year,
+then name; albums without a year go last (`albums_for_browse_artist`). The
+right-hand column of a track row is the playing marker (` ▶ `) and the
+duration. Labels come from `LibraryPane::album_middle` / `track_middle` with a
+`RowContext` (`Flat` or `Grouped { artist, numbering }`); the pan width uses the
+same label.
+
 A library whose files carry **no album tags** cannot be grouped, so the pane
 falls back to a flat track list rather than looking empty.
 
@@ -220,6 +236,18 @@ a hint to run `znicz player stop`.
 
 `+` / `-` change volume by 1 % (snapped to whole percent). The volume bar has
 eighth-cell resolution: 6 cells on the Browse transport, 10 on Stage.
+A marker comes before it, chosen by `[tui] icons` (`format::volume_icon`):
+
+| `icons` | 0–33 % | 34–66 % | 67–100 % | muted |
+|---------|--------|---------|----------|-------|
+| `unicode` (default) | `◢` | `◢` | `◢` | `×` |
+| `emoji` | 🔈 | 🔉 | 🔊 | 🔇 |
+| `nerd` | 󰕿 | 󰖀 | 󰕾 | 󰝟 |
+
+Muted shows the marker, the bar at the level it returns to (dimmed on Stage),
+and `muted` instead of the percentage. Transport widths use display width
+(`unicode-width`), so a two-cell emoji still lets the volume segment drop first
+on a narrow line.
 
 ### Devices
 
@@ -256,6 +284,11 @@ percentages, so a fill can never match the terminal exactly, and the Sixel
 renderer erases the cells before drawing, so nothing old shows through. Kitty
 keeps the opaque fill because it does not erase the cells. `cover_protocol`
 applies here.
+
+Kitty and Sixel images bypass ratatui's cell diff, so when a modal or the queue
+drawer closes over the Stage, the run loop clears the terminal and forgets the
+drawn cover (`needs_full_redraw`); otherwise the closed overlay would stay
+painted over the image. A modal closing while the drawer stays open counts.
 
 Details, top to bottom: title (bold, scrolls), artist, `album · year · track N`,
 the seek line, volume / repeat / shuffle, and a **Signal** panel: `file` or
@@ -429,7 +462,7 @@ top of the player.
 | `line_edit.rs` | one-line prompt caret (search, playlist save, radio) |
 | `meta.rs` | background tag cache |
 | `cover.rs` | background cover cache + logo |
-| `tui_config.rs` | `show_cover` / `cover_protocol` / `library_layout` / `marquee` |
+| `tui_config.rs` | `show_cover` / `cover_protocol` / `library_layout` / `marquee` / `icons` |
 | `toast.rs` | live messages and history |
 | `format.rs` | durations, rates, bars, truncation |
 | `library_pane.rs` | browsing state |
