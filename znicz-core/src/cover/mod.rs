@@ -44,6 +44,9 @@ pub enum Found {
     NotFound,
     /// The source could not answer (network, rate limit). Not remembered.
     Unavailable,
+    /// The source expects an answer shortly (its data is catching up): stop
+    /// here, show what is on screen, and ask again soon. Not remembered.
+    Soon,
 }
 
 /// A place covers come from. Add a source by implementing this in a new file
@@ -71,6 +74,8 @@ pub enum Resolution {
     Nothing,
     /// No image, and at least one source could not answer: keep what is shown.
     Unsure,
+    /// A source asked to be asked again shortly; keep what is shown.
+    Soon,
 }
 
 #[derive(Debug, Clone)]
@@ -149,6 +154,10 @@ impl StreamCovers {
                         tracing::debug!(source = source.name(), "cover source unavailable");
                         unsure = true;
                         continue;
+                    }
+                    Found::Soon => {
+                        tracing::debug!(source = source.name(), "cover source asks to retry soon");
+                        return Resolution::Soon;
                     }
                     Found::NotFound => self.remember(source.as_ref(), key.clone(), Answer::Nothing),
                     Found::Url(url) => {
@@ -328,6 +337,20 @@ mod tests {
         assert_eq!(covers.resolve(&query(Some("A - B"))), Resolution::Unsure);
         assert_eq!(covers.resolve(&query(Some("A - B"))), Resolution::Unsure);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn soon_stops_the_chain_and_is_not_remembered() {
+        let (soon, soon_calls) = Fake::new("soon", || Found::Soon);
+        let (next, next_calls) = Fake::new("next", || Found::Art(art(4)));
+        let covers = covers(vec![Box::new(soon), Box::new(next)]);
+
+        assert_eq!(covers.resolve(&query(Some("A - B"))), Resolution::Soon);
+        assert_eq!(next_calls.load(Ordering::SeqCst), 0, "later sources wait");
+
+        assert_eq!(covers.resolve(&query(Some("A - B"))), Resolution::Soon);
+        assert_eq!(soon_calls.load(Ordering::SeqCst), 2, "asked again");
+        assert_eq!(next_calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]

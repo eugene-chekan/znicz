@@ -223,7 +223,9 @@ fn resolve_cover(key: &CoverKey, streams: &znicz_core::StreamCovers) -> ResolveR
             znicz_core::Resolution::Nothing => ResolveResult::Update {
                 ready: CoverReady::Logo,
             },
-            znicz_core::Resolution::Unsure => ResolveResult::KeepPrevious,
+            znicz_core::Resolution::Unsure | znicz_core::Resolution::Soon => {
+                ResolveResult::KeepPrevious
+            }
         },
     }
 }
