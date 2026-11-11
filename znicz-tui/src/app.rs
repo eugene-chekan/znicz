@@ -1039,8 +1039,7 @@ impl App {
                 {
                     self.library.cycle_column(true);
                 } else if !self.queue_open {
-                    self.open_queue();
-                    self.focus = Focus::Queue;
+                    // `]` opens the drawer; Tab only moves focus
                 } else if layout::is_sheet(self.list_width, true) || self.view == View::Stage {
                     // no-op in sheet mode, and on Stage (the library is hidden)
                 } else {

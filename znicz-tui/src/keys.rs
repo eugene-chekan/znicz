@@ -155,7 +155,7 @@ pub const GLOBAL: &[Binding] = &[
     b("r", "reload list"),
     b("z", "shuffle"),
     b("]", "open / close queue"),
-    b("Tab", "library ↔ queue (or next column)"),
+    b("Tab", "next column, or library ↔ queue"),
     b("Shift-Tab", "previous column / queue focus"),
     b("Alt-← / Alt-→", "pan titles"),
     b("v / i", "now playing (stage)"),
