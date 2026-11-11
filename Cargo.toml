@@ -31,6 +31,7 @@ schemars = { version = "1.2", features = ["derive"] }
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
 lofty = "0.25"
+unicode-width = "0.2"
 # `bundled` compiles SQLite from source so Linux and Windows builds do not need
 # a system SQLite installed.
 rusqlite = { version = "0.40", features = ["bundled"] }

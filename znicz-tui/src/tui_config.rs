@@ -35,6 +35,25 @@ impl LibraryLayout {
     }
 }
 
+/// Which symbols the TUI draws for icons (the volume marker).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IconSet {
+    #[default]
+    Unicode,
+    Emoji,
+    Nerd,
+}
+
+impl IconSet {
+    pub fn parse(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "emoji" => Self::Emoji,
+            "nerd" => Self::Nerd,
+            _ => Self::Unicode,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TuiConfig {
     pub show_cover: bool,
@@ -44,6 +63,8 @@ pub struct TuiConfig {
     pub marquee: bool,
     /// Look stream covers up by artist and title (Deezer, MusicBrainz).
     pub cover_search: bool,
+    /// Symbol set for icons such as the volume marker.
+    pub icons: IconSet,
 }
 
 impl Default for TuiConfig {
@@ -54,6 +75,7 @@ impl Default for TuiConfig {
             library_layout: LibraryLayout::Columns,
             marquee: true,
             cover_search: true,
+            icons: IconSet::Unicode,
         }
     }
 }
@@ -72,6 +94,17 @@ mod tests {
         assert_eq!(CoverProtocol::parse("nope"), CoverProtocol::Auto);
         assert_eq!(CoverProtocol::parse("KITTY"), CoverProtocol::Kitty);
         assert_eq!(CoverProtocol::parse("off"), CoverProtocol::Off);
+    }
+
+    #[test]
+    fn icon_set_parses_known_names_and_falls_back_to_unicode() {
+        assert_eq!(IconSet::parse("emoji"), IconSet::Emoji);
+        assert_eq!(IconSet::parse("NERD"), IconSet::Nerd);
+        assert_eq!(IconSet::parse(" Emoji "), IconSet::Emoji);
+        assert_eq!(IconSet::parse("unicode"), IconSet::Unicode);
+        assert_eq!(IconSet::parse("nope"), IconSet::Unicode);
+        assert_eq!(IconSet::parse(""), IconSet::Unicode);
+        assert_eq!(TuiConfig::default().icons, IconSet::Unicode);
     }
 
     #[test]

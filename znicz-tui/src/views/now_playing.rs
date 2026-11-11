@@ -11,6 +11,7 @@ use znicz_core::{PlaybackStatus, PlayerState, RepeatMode};
 use crate::app::{repeat_label, App};
 use crate::format;
 use crate::theme;
+use crate::tui_config::IconSet;
 
 pub fn render_transport(
     frame: &mut Frame,
@@ -35,6 +36,7 @@ pub fn render_transport(
             chrome_line(
                 state,
                 width,
+                app.tui.icons,
                 if marquee_on {
                     Some((&mut app.transport_marquee, std::time::Instant::now()))
                 } else {
@@ -102,6 +104,7 @@ pub(crate) fn message_line(
 fn chrome_line(
     state: &PlayerState,
     width: usize,
+    icons: IconSet,
     marquee: Option<(&mut crate::marquee::Marquee, std::time::Instant)>,
 ) -> Line<'static> {
     if width == 0 {
@@ -147,14 +150,12 @@ fn chrome_line(
         .filter(|s| !s.is_empty())
         .map(|s| format!(" {s}"));
 
+    let icon = format::volume_icon(icons, state.volume, state.muted);
+    let bar = format::volume_bar(state.volume, 6);
     let volume = if state.muted {
-        Some(" muted".to_string())
+        Some(format!(" {icon} {bar} muted"))
     } else {
-        Some(format!(
-            " {} {:>3.0}%",
-            format::volume_bar(state.volume, 6),
-            state.volume * 100.0
-        ))
+        Some(format!(" {icon} {bar} {:>3.0}%", state.volume * 100.0))
     };
 
     let mut toggle_text = String::new();
@@ -178,9 +179,24 @@ fn chrome_line(
     let mut include_subtitle = subtitle.is_some();
     let mut include_seek = true;
 
-    let volume_len = || volume.as_ref().map(|s| s.chars().count()).unwrap_or(0);
-    let toggles_len = || toggles.as_ref().map(|s| s.chars().count()).unwrap_or(0);
-    let subtitle_len = || subtitle.as_ref().map(|s| s.chars().count()).unwrap_or(0);
+    let volume_len = || {
+        volume
+            .as_ref()
+            .map(|s| format::display_width(s))
+            .unwrap_or(0)
+    };
+    let toggles_len = || {
+        toggles
+            .as_ref()
+            .map(|s| format::display_width(s))
+            .unwrap_or(0)
+    };
+    let subtitle_len = || {
+        subtitle
+            .as_ref()
+            .map(|s| format::display_width(s))
+            .unwrap_or(0)
+    };
 
     loop {
         let tail = if include_volume { volume_len() } else { 0 }
@@ -210,7 +226,10 @@ fn chrome_line(
     let mut middle_budget = width.saturating_sub(sym_len + times_len + tail_len);
 
     let sub_len = if include_subtitle {
-        subtitle.as_ref().map(|s| s.chars().count()).unwrap_or(0)
+        subtitle
+            .as_ref()
+            .map(|s| format::display_width(s))
+            .unwrap_or(0)
     } else {
         0
     };
@@ -266,7 +285,7 @@ fn chrome_line(
 
     if include_subtitle {
         if let Some(sub) = &subtitle {
-            let len = sub.chars().count();
+            let len = format::display_width(sub);
             if len <= middle_budget {
                 spans.push(Span::styled(sub.clone(), theme::subtitle()));
                 middle_budget = middle_budget.saturating_sub(len);
@@ -559,7 +578,7 @@ mod tests {
     #[test]
     fn without_a_marquee_a_long_title_is_cut() {
         // At 100 columns the title gets 35 (the seek bar takes up to 40).
-        let row = text(&chrome_line(&long_state(), 100, None));
+        let row = text(&chrome_line(&long_state(), 100, IconSet::Unicode, None));
         assert!(row.contains('…'), "{row:?}");
     }
 
@@ -568,12 +587,18 @@ mod tests {
         let state = long_state();
         let mut m = crate::marquee::Marquee::default();
         let t0 = std::time::Instant::now();
-        let start = text(&chrome_line(&state, 100, Some((&mut m, t0))));
+        let start = text(&chrome_line(
+            &state,
+            100,
+            IconSet::Unicode,
+            Some((&mut m, t0)),
+        ));
         assert!(start.contains("A Very"), "{start:?}");
         assert!(!start.contains('…'), "{start:?}");
         let later = text(&chrome_line(
             &state,
             100,
+            IconSet::Unicode,
             Some((&mut m, t0 + Duration::from_millis(2_000 + 5 * 200))),
         ));
         assert!(!later.contains("A Very"), "moved 5 columns: {later:?}");
@@ -582,6 +607,30 @@ mod tests {
 
     fn line_width(line: &Line) -> usize {
         line.spans.iter().map(|s| s.content.chars().count()).sum()
+    }
+
+    #[test]
+    fn an_emoji_volume_is_measured_in_cells_not_chars() {
+        // Two cells for the speaker emoji: at 33 the volume segment only
+        // fits if it is counted by display width (it needs 34 cells).
+        let state = PlayerState {
+            volume: 1.0,
+            ..long_state()
+        };
+        let state = PlayerState {
+            current_track: state.current_track.map(|mut t| {
+                t.title = "Song".into();
+                t
+            }),
+            ..state
+        };
+        let narrow = chrome_line(&state, 33, IconSet::Emoji, None);
+        let t = text(&narrow);
+        assert!(!t.contains('🔊'), "{t:?}");
+        assert!(line_width(&narrow) <= 33, "{t:?}");
+
+        let wide = text(&chrome_line(&state, 100, IconSet::Emoji, None));
+        assert!(wide.contains('🔊'), "{wide:?}");
     }
 
     #[test]
@@ -594,9 +643,9 @@ mod tests {
         for width in [80, 100, 140] {
             let mut m = crate::marquee::Marquee::default();
             let t0 = std::time::Instant::now();
-            let line = chrome_line(&state, width, Some((&mut m, t0)));
+            let line = chrome_line(&state, width, IconSet::Unicode, Some((&mut m, t0)));
             assert_eq!(line_width(&line), width, "scrolling at {width}");
-            let plain = chrome_line(&state, width, None);
+            let plain = chrome_line(&state, width, IconSet::Unicode, None);
             assert!(line_width(&plain) <= width, "normal at {width}");
         }
     }

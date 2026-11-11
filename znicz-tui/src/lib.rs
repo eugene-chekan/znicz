@@ -27,4 +27,4 @@ pub mod tui_config;
 pub mod views;
 
 pub use app::{App, Focus, Modal, PlaylistPrompt, RadioPrompt, StationField, View};
-pub use tui_config::{CoverProtocol, LibraryLayout, TuiConfig};
+pub use tui_config::{CoverProtocol, IconSet, LibraryLayout, TuiConfig};

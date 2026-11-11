@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+use crate::tui_config::IconSet;
+
 /// `M:SS`, or `H:MM:SS` for anything an hour or longer.
 pub fn duration(d: Duration) -> String {
     let secs = d.as_secs();
@@ -56,6 +58,29 @@ pub fn volume_bar(volume: f32, cells: usize) -> String {
     bar
 }
 
+/// The marker before the volume bar: level-dependent, or a mute sign.
+pub fn volume_icon(icons: IconSet, volume: f32, muted: bool) -> &'static str {
+    let percent = (volume.clamp(0.0, 1.0) * 100.0).round() as u32;
+    let level = match percent {
+        0..=33 => 0,
+        34..=66 => 1,
+        _ => 2,
+    };
+    match (icons, muted) {
+        (IconSet::Unicode, true) => "×",
+        (IconSet::Unicode, false) => "◢",
+        (IconSet::Emoji, true) => "🔇",
+        (IconSet::Emoji, false) => ["🔈", "🔉", "🔊"][level],
+        (IconSet::Nerd, true) => "\u{f075f}",
+        (IconSet::Nerd, false) => ["\u{f057f}", "\u{f0580}", "\u{f057e}"][level],
+    }
+}
+
+/// Terminal cells a string takes (emoji are two).
+pub fn display_width(text: &str) -> usize {
+    unicode_width::UnicodeWidthStr::width(text)
+}
+
 /// A seek bar: filled track, a knob at the playhead, then the rest.
 ///
 /// Returns the three pieces separately so each can be styled on its own.
@@ -105,6 +130,29 @@ pub fn position_of(index: usize, total: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_volume_icon_follows_the_level_and_mute() {
+        use crate::tui_config::IconSet::*;
+        assert_eq!(volume_icon(Unicode, 0.1, false), "◢");
+        assert_eq!(volume_icon(Unicode, 0.9, false), "◢");
+        assert_eq!(volume_icon(Unicode, 0.9, true), "×");
+        assert_eq!(volume_icon(Emoji, 0.33, false), "🔈");
+        assert_eq!(volume_icon(Emoji, 0.34, false), "🔉");
+        assert_eq!(volume_icon(Emoji, 0.66, false), "🔉");
+        assert_eq!(volume_icon(Emoji, 0.67, false), "🔊");
+        assert_eq!(volume_icon(Emoji, 0.5, true), "🔇");
+        assert_eq!(volume_icon(Nerd, 0.0, false), "\u{f057f}");
+        assert_eq!(volume_icon(Nerd, 0.5, false), "\u{f0580}");
+        assert_eq!(volume_icon(Nerd, 1.0, false), "\u{f057e}");
+        assert_eq!(volume_icon(Nerd, 1.0, true), "\u{f075f}");
+    }
+
+    #[test]
+    fn display_width_counts_emoji_as_two_cells() {
+        assert_eq!(display_width("◢ ███"), 5);
+        assert_eq!(display_width("🔊 ███"), 6);
+    }
 
     #[test]
     fn durations_grow_an_hour_field_only_when_needed() {

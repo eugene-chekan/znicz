@@ -14,7 +14,7 @@ use crate::app::{repeat_label, App};
 use crate::cover::{CoverKey, CoverReady};
 use crate::format;
 use crate::theme;
-use crate::tui_config::CoverProtocol;
+use crate::tui_config::{CoverProtocol, IconSet};
 
 /// Column where signal values start (`  file    …`).
 const LABEL: usize = 10;
@@ -38,7 +38,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState)
         .marquee
         .then(|| (&mut app.stage_marquee, std::time::Instant::now()));
     let title = stage_title(&full, width, scroll);
-    let lines = detail_lines(state, title, width, usize::from(layout.details.height));
+    let lines = detail_lines(
+        state,
+        app.tui.icons,
+        title,
+        width,
+        usize::from(layout.details.height),
+    );
     frame.render_widget(Paragraph::new(lines), layout.details);
 }
 
@@ -73,6 +79,7 @@ pub(crate) fn title_text(state: &PlayerState) -> String {
 /// then the volume line; title, artist, and seek always stay.
 pub(crate) fn detail_lines(
     state: &PlayerState,
+    icons: IconSet,
     title: String,
     width: usize,
     rows: usize,
@@ -97,7 +104,7 @@ pub(crate) fn detail_lines(
     head.push(Line::from(""));
     head.push(seek_line(state, width));
 
-    let volume = volume_line(state);
+    let volume = volume_line(state, icons);
     let (mut signal, mut explanation) = signal_lines(state, width);
 
     let needed = |signal: &[Line], explanation: &Option<Line>, volume: bool| {
@@ -233,17 +240,20 @@ fn seek_line(state: &PlayerState, width: usize) -> Line<'static> {
     ])
 }
 
-/// `███████▁▁▁  70%   repeat all   shuffle` (a 10-cell volume bar).
-fn volume_line(state: &PlayerState) -> Line<'static> {
+/// `◢ ███████▁▁▁  70%   repeat all   shuffle` (a 10-cell volume bar). Muted:
+/// `× ███████▁▁▁ muted`, with the bar dimmed.
+fn volume_line(state: &PlayerState, icons: IconSet) -> Line<'static> {
+    let icon = format::volume_icon(icons, state.volume, state.muted);
+    let bar = format::volume_bar(state.volume, 10);
     let mut spans = if state.muted {
-        vec![Span::styled("muted", theme::warn())]
+        vec![
+            Span::styled(format!("{icon} "), theme::warn()),
+            Span::styled(bar, theme::dim()),
+            Span::styled(" muted", theme::warn()),
+        ]
     } else {
         vec![Span::styled(
-            format!(
-                "{} {:>3.0}%",
-                format::volume_bar(state.volume, 10),
-                state.volume * 100.0
-            ),
+            format!("{icon} {bar} {:>3.0}%", state.volume * 100.0),
             theme::text(),
         )]
     };
@@ -587,7 +597,13 @@ mod tests {
 
     #[test]
     fn a_file_shows_artist_album_seek_and_signal() {
-        let t = text(&detail_lines(&playing(true), "Sour Times".into(), 70, 30));
+        let t = text(&detail_lines(
+            &playing(true),
+            IconSet::Unicode,
+            "Sour Times".into(),
+            70,
+            30,
+        ));
         for want in [
             "Sour Times",
             "Portishead",
@@ -606,7 +622,7 @@ mod tests {
     fn resampled_explains_both_rates_and_a_missing_format_is_a_dash() {
         let mut state = playing(false);
         state.output.as_mut().unwrap().sample_format = "?".into();
-        let t = text(&detail_lines(&state, "x".into(), 70, 30));
+        let t = text(&detail_lines(&state, IconSet::Unicode, "x".into(), 70, 30));
         assert!(
             t.contains("resampled") && t.contains("48 kHz") && t.contains("96 kHz"),
             "{t}"
@@ -616,7 +632,13 @@ mod tests {
 
     #[test]
     fn a_stream_shows_station_url_and_live() {
-        let t = text(&detail_lines(&stream(), "Artist - Song".into(), 70, 30));
+        let t = text(&detail_lines(
+            &stream(),
+            IconSet::Unicode,
+            "Artist - Song".into(),
+            70,
+            30,
+        ));
         assert!(t.contains("Jazz Radio"), "{t}");
         assert!(t.contains("https://example.com/stream"), "{t}");
         assert!(t.contains("● live"), "{t}");
@@ -695,6 +717,7 @@ mod tests {
     fn nothing_playing_says_so_without_a_signal_panel() {
         let t = text(&detail_lines(
             &PlayerState::default(),
+            IconSet::Unicode,
             "Nothing playing".into(),
             70,
             30,
@@ -709,16 +732,41 @@ mod tests {
     #[test]
     fn short_rows_drop_explanation_then_signal_then_volume() {
         let state = playing(true);
-        let all = detail_lines(&state, "x".into(), 70, 30).len();
-        let t = text(&detail_lines(&state, "x".into(), 70, all - 1));
+        let all = detail_lines(&state, IconSet::Unicode, "x".into(), 70, 30).len();
+        let t = text(&detail_lines(
+            &state,
+            IconSet::Unicode,
+            "x".into(),
+            70,
+            all - 1,
+        ));
         assert!(!t.contains("own rate") && t.contains("Signal"), "{t}");
-        let t = text(&detail_lines(&state, "x".into(), 70, 7));
+        let t = text(&detail_lines(&state, IconSet::Unicode, "x".into(), 70, 7));
         assert!(!t.contains("Signal") && t.contains('%'), "{t}");
-        let t = text(&detail_lines(&state, "x".into(), 70, 4));
+        let t = text(&detail_lines(&state, IconSet::Unicode, "x".into(), 70, 4));
         assert!(!t.contains('%'), "{t}");
         assert!(
             t.contains("x") && t.contains("Portishead") && t.contains("/ "),
             "title, artist, seek stay:\n{t}"
         );
+    }
+
+    #[test]
+    fn the_volume_line_leads_with_the_icon_then_the_bar() {
+        let mut state = playing(true);
+        state.volume = 0.5;
+        let t = text(&[volume_line(&state, IconSet::Unicode)]);
+        assert!(t.starts_with("◢ █████▁▁▁▁▁ "), "{t:?}");
+        assert!(t.trim_end().ends_with(" 50%"), "{t:?}");
+    }
+
+    #[test]
+    fn a_muted_volume_line_keeps_the_bar_and_says_muted() {
+        let mut state = playing(true);
+        state.volume = 0.5;
+        state.muted = true;
+        let t = text(&[volume_line(&state, IconSet::Unicode)]);
+        assert!(t.starts_with("× █████▁▁▁▁▁ muted"), "{t:?}");
+        assert!(!t.contains('%'), "{t:?}");
     }
 }

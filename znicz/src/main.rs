@@ -181,6 +181,7 @@ struct TuiSection {
     cover_protocol: Option<String>,
     library_layout: Option<String>,
     marquee: Option<bool>,
+    icons: Option<String>,
 }
 
 fn tui_config(config: &Config) -> TuiConfig {
@@ -194,6 +195,7 @@ fn tui_config(config: &Config) -> TuiConfig {
         ),
         marquee: config.tui.marquee.unwrap_or(true),
         cover_search: config.covers.search.unwrap_or(true),
+        icons: znicz_tui::IconSet::parse(config.tui.icons.as_deref().unwrap_or("unicode")),
     }
 }
 

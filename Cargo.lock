@@ -4674,6 +4674,7 @@ dependencies = [
  "ratatui",
  "ratatui-image",
  "tracing",
+ "unicode-width",
  "znicz-core",
  "znicz-library",
 ]
