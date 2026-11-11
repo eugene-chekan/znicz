@@ -11,10 +11,15 @@ pub const SEPARATOR: &str = " · ";
 const SEPARATOR_WIDTH: u16 = 3;
 
 /// What a footer hint says on screen, and the key a click sends.
+///
+/// `badge` is an extra note drawn after the text, with ` · ` between them
+/// (`? more · 0.14.2 available`). It counts toward the hint's width and click
+/// target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FooterLabel {
     pub text: String,
     pub key: KeyEvent,
+    pub badge: Option<String>,
 }
 
 impl From<Hint> for FooterLabel {
@@ -22,6 +27,7 @@ impl From<Hint> for FooterLabel {
         Self {
             text: hint.label.to_string(),
             key: hint.key,
+            badge: None,
         }
     }
 }
@@ -34,7 +40,12 @@ pub struct PlacedHint {
 }
 
 fn label_width(label: &FooterLabel) -> u16 {
-    label.text.chars().count() as u16
+    let text = label.text.chars().count();
+    let badge = label
+        .badge
+        .as_ref()
+        .map_or(0, |badge| SEPARATOR_WIDTH as usize + badge.chars().count());
+    (text + badge) as u16
 }
 
 /// Lay hints out left to right, keeping `more` right-aligned.
@@ -109,11 +120,55 @@ mod tests {
         FooterLabel {
             text: label.to_string(),
             key: KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+            badge: None,
+        }
+    }
+
+    fn badged(label: &str, c: char, badge: &str) -> FooterLabel {
+        FooterLabel {
+            badge: Some(badge.to_string()),
+            ..h(label, c)
         }
     }
 
     fn labels(placed: &[PlacedHint]) -> Vec<String> {
         placed.iter().map(|p| p.label.text.clone()).collect()
+    }
+
+    #[test]
+    fn the_badge_counts_toward_the_width_of_its_label() {
+        // "? more" (6) + " · " (3) + "9.9.9 available" (15) = 24 columns.
+        let placed = layout_footer(
+            Rect::new(0, 0, 40, 1),
+            &[],
+            Some(badged("? more", '?', "9.9.9 available")),
+        );
+        assert_eq!(placed[0].rect, Rect::new(16, 0, 24, 1));
+    }
+
+    #[test]
+    fn the_badge_takes_room_from_hints_before_it() {
+        // Budget is 30 - 24 - 3 = 3: "/ search" no longer fits.
+        let placed = layout_footer(
+            Rect::new(0, 0, 30, 1),
+            &[h("/ search", '/')],
+            Some(badged("? more", '?', "9.9.9 available")),
+        );
+        assert_eq!(labels(&placed), vec!["? more"]);
+    }
+
+    #[test]
+    fn the_more_click_target_covers_the_badge() {
+        let placed = layout_footer(
+            Rect::new(0, 23, 120, 1),
+            &[h("a add", 'a')],
+            Some(badged("? more", '?', "9.9.9 available")),
+        );
+        let more = footer_hits(&placed)
+            .into_iter()
+            .find(|hit| hit.key.code == KeyCode::Char('?'))
+            .unwrap();
+        assert_eq!(more.rect, Rect::new(96, 23, 24, 1));
     }
 
     #[test]

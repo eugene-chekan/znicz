@@ -25,6 +25,9 @@ and `znicz update --check` always ask.
 ## Telling the user
 
 - One toast per new version: `Znicz 0.14.0 is available · ? then u to update`.
+- While the update is known, the footer's `? more` reads
+  `? more · 0.14.2 available`, so the news outlasts the toast. On narrow
+  terminals it falls back to `? more` rather than hiding other hints.
 - Help's bottom title reads `znicz 0.13.4 → 0.14.0`; `u` in Help opens the
   **Update** modal. The `u` row is always listed in Help as
   `check for updates`.

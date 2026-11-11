@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.2 - 2026-11-12
+
+- The footer keeps saying a new release is available (`? more · 0.14.2 available`) after the toast fades.
+
 ## 0.14.1 - 2026-11-12
 
 - `u` in Help checks for updates right away when none is known.
