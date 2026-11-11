@@ -8,7 +8,10 @@ use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
     KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
+use ratatui::crossterm::execute;
+use ratatui::crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
 use ratatui::layout::Rect;
+use ratatui_image::picker::ProtocolType;
 use znicz_core::{
     apply_to_player, list_saved, load_path, sanitize_stem, saved_path, skipped_notice, write_path,
     AudioDeviceInfo, AudioOutput, Command, IpcClient, LibraryHost, LibraryOp, LibraryStatus,
@@ -589,12 +592,26 @@ impl App {
     }
 
     fn run_loop(&mut self, terminal: &mut ratatui::DefaultTerminal) -> color_eyre::Result<()> {
+        let mut repaint = false;
         loop {
             self.poll_player_events();
             self.toasts.tick();
 
             let state = self.player.state();
-            terminal.draw(|frame| views::render(frame, self, &state))?;
+            if repaint {
+                repaint = false;
+                // Clear and redraw as one update, so the terminal never shows
+                // the blank screen in between (ignored where unsupported).
+                execute!(terminal.backend_mut(), BeginSynchronizedUpdate)?;
+                terminal.clear()?;
+                let drawn = terminal
+                    .draw(|frame| views::render(frame, self, &state))
+                    .map(|_| ());
+                execute!(terminal.backend_mut(), EndSynchronizedUpdate)?;
+                drawn?;
+            } else {
+                terminal.draw(|frame| views::render(frame, self, &state))?;
+            }
 
             // Wake up for input, or on the tick to move the seek bar along.
             if event::poll(TICK_RATE)? {
@@ -613,9 +630,10 @@ impl App {
                 }
                 let overlays_after = self.overlays();
                 if needs_full_redraw(self.view, overlays_before, overlays_after) {
-                    // Retransmit the cover image, which the repaint wipes.
-                    self.cover_draw_key = None;
-                    terminal.clear()?;
+                    if cover_needs_retransmit(self.picker.as_ref().map(|p| p.protocol_type())) {
+                        self.cover_draw_key = None;
+                    }
+                    repaint = true;
                 }
             }
 
@@ -2212,6 +2230,14 @@ pub(crate) fn needs_full_redraw(view: View, before: Overlays, after: Overlays) -
     view == View::Stage && (modal_closed || drawer_closed)
 }
 
+/// After a full clear, Sixel and iTerm2 covers are re-sent from the encoded
+/// data ratatui-image keeps in the image cell, so they need no new encode.
+/// Kitty transmits an image once and only places it afterwards: encode it
+/// again so it is transmitted again.
+pub(crate) fn cover_needs_retransmit(protocol: Option<ProtocolType>) -> bool {
+    matches!(protocol, Some(ProtocolType::Kitty))
+}
+
 /// Label for the repeat indicator in the status bar.
 pub fn repeat_label(mode: RepeatMode) -> &'static str {
     match mode {
@@ -2290,6 +2316,16 @@ mod tests {
         assert!(!needs_full_redraw(View::Stage, none, both));
         assert!(!needs_full_redraw(View::Stage, both, both));
         assert!(!needs_full_redraw(View::Stage, drawer, both));
+    }
+
+    #[test]
+    fn only_kitty_covers_are_encoded_again_after_a_repaint() {
+        use ratatui_image::picker::ProtocolType;
+        assert!(cover_needs_retransmit(Some(ProtocolType::Kitty)));
+        assert!(!cover_needs_retransmit(Some(ProtocolType::Sixel)));
+        assert!(!cover_needs_retransmit(Some(ProtocolType::Iterm2)));
+        assert!(!cover_needs_retransmit(Some(ProtocolType::Halfblocks)));
+        assert!(!cover_needs_retransmit(None));
     }
 
     #[test]

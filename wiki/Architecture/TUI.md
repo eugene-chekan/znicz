@@ -286,9 +286,11 @@ keeps the opaque fill because it does not erase the cells. `cover_protocol`
 applies here.
 
 Kitty and Sixel images bypass ratatui's cell diff, so when a modal or the queue
-drawer closes over the Stage, the run loop clears the terminal and forgets the
-drawn cover (`needs_full_redraw`); otherwise the closed overlay would stay
-painted over the image. A modal closing while the drawer stays open counts.
+drawer closes over the Stage, the next frame clears the terminal and redraws
+everything in one synchronized update (`needs_full_redraw`); otherwise the
+closed overlay would stay painted over the image. A modal closing while the
+drawer stays open counts. Sixel and iTerm2 covers are re-sent from their encoded
+data; a Kitty cover is encoded and transmitted again (`cover_needs_retransmit`).
 
 Details, top to bottom: title (bold, scrolls), artist, `album · year · track N`,
 the seek line, volume / repeat / shuffle, and a **Signal** panel: `file` or
