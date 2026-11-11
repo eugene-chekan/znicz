@@ -244,11 +244,11 @@ fn apply_resume(player: &Engine, resume: Resume) {
 - `pub(crate) fn restart_args(args, resume) -> Vec<OsString>`: drops any existing `--resume X` / `--resume=X`, appends `--resume {index}:{seconds}` when given.
 - `pub(crate) fn live_exe_path(p: PathBuf) -> PathBuf`: on Linux `current_exe()` reads `/proc/self/exe`, which after the installer replaced the file names the old inode as `… (deleted)`; strip a trailing ` (deleted)`.
 
-- [ ] **Step 1: Tests:** `parse_resume` (`3:125`, `0:0`, `x`, `3:`, `:5`), `restart_args` (no resume; with resume; replaces an old `--resume 1:2` and `--resume=1:2`; keeps other args and their order), `live_exe_path` (`/a/znicz (deleted)` → `/a/znicz`; plain path unchanged).
-- [ ] **Step 2:** run; fails.
-- [ ] **Step 3:** implement.
-- [ ] **Step 4:** checks pass.
-- [ ] **Step 5: Commit** `"Restart on the updated binary and resume playback"`.
+- [x] **Step 1: Tests:** `parse_resume` (`3:125`, `0:0`, `x`, `3:`, `:5`), `restart_args` (no resume; with resume; replaces an old `--resume 1:2` and `--resume=1:2`; keeps other args and their order), `live_exe_path` (`/a/znicz (deleted)` → `/a/znicz`; plain path unchanged).
+- [x] **Step 2:** run; fails.
+- [x] **Step 3:** implement.
+- [x] **Step 4:** checks pass.
+- [x] **Step 5: Commit** `"Restart on the updated binary and resume playback"`.
 
 ---
 
