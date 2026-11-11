@@ -3,7 +3,22 @@
 //! Needs network access, so it is ignored by default:
 //! `cargo test -p znicz-core --test cover_live -- --ignored --nocapture`
 
-use znicz_core::{default_sources, Resolution, StreamCovers, StreamQuery};
+use znicz_core::{
+    audioaddict_cover_lookup, default_sources, AudioAddictLookup, AudioAddictNetwork, Resolution,
+    StreamCovers, StreamQuery,
+};
+
+#[test]
+#[ignore = "hits the RadioTunes API"]
+fn audioaddict_covers_the_current_track_of_smooth_beats() {
+    match audioaddict_cover_lookup(AudioAddictNetwork::RadioTunes, "smoothbeats", None) {
+        AudioAddictLookup::Found(url) => {
+            eprintln!("Smooth Beats cover: {url}");
+            assert!(url.starts_with("https://"), "not https: {url}");
+        }
+        other => panic!("expected a cover for Smooth Beats, got {other:?}"),
+    }
+}
 
 #[test]
 #[ignore = "hits Deezer, iTunes and MusicBrainz"]

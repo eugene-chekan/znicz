@@ -11,7 +11,7 @@ The TUI asks for it through `CoverKey::Stream` (see [TUI](TUI.md#stage)).
 | # | Source | Name | What it uses |
 |---|--------|------|--------------|
 | 1 | `IcyUrlSource` | `icy_url` | The ICY `StreamUrl` when it is an image URL |
-| 2 | `AudioAddictSource` | `audioaddict` | Song `art_url` for RadioTunes, DI.FM, RockRadio, JazzRadio, ClassicalRadio, ZenRadio |
+| 2 | `AudioAddictSource` | `audioaddict` | The cover of the channel's current track for RadioTunes, DI.FM, RockRadio, JazzRadio, ClassicalRadio, ZenRadio |
 | 3 | `DeezerSource` | `deezer` | Artist / title search on Deezer |
 | 4 | `ItunesSource` | `itunes` | Artist / title search on the iTunes Search API |
 | 5 | `MusicBrainzSource` | `musicbrainz` | Artist / title search on MusicBrainz, then the Cover Art Archive |
@@ -23,8 +23,17 @@ Notes on each source:
 
 - **ICY URL.** A `StreamUrl` that is a web page (HTML) is not an image and is
   skipped. Only a URL whose download is an image counts.
-- **AudioAddict.** Uses the channel's own API cache (about 15 s). Its answers
-  are not remembered by the chain.
+- **AudioAddict.** Asks the channel's current track
+  (`currently_playing/channel/{id}`). Cloudflare caches that endpoint for about
+  4 s, so each request carries a unique `t=` query value. The track's display
+  artist and title must equal the stream title (case and spacing ignored), and
+  the cover comes from `tracks/{id}` (`asset_url`, else `images.default`). The
+  stream title is compared, not the history, because the history lags the
+  stream by 10–15 s. Until the channel catches up the source answers **Soon**:
+  the chain stops there (later sources are not tried), and the TUI retries
+  after 1.5 s, keeping the previous cover. After 30 s on the same title the
+  source gives up with *not found* and the search sources run. Its answers are
+  not remembered by the chain.
 - **Deezer.** Queried with a plain `"{artist} {title}"` string. The advanced
   `artist:"…" track:"…"` syntax returns nothing now. Hits are kept only when the
   artist name matches. A `200` body with an `error` field, HTTP 429 and 5xx are
@@ -54,13 +63,15 @@ In `cover/mod.rs`:
 - `StreamQuery`: `stream_url`, `station_name`, `icy_title`, `icy_url`,
   `station_art`, and `search` (artist / title search allowed).
 - `Found`: what one source answered. `Url(String)` (to download), `Art(CoverArt)`
-  (bytes in hand), `NotFound`, or `Unavailable`.
+  (bytes in hand), `NotFound`, `Unavailable`, or `Soon` (the source expects an
+  answer shortly; the chain stops and nothing is remembered).
 - `CoverSource` trait: `name()`, `key()` (what the answer depends on, or `None`
   when the source does not apply), `find()` (runs on the cover worker thread,
   may block), and `remembers()` (default `true`).
 - `Resolution`: `Found(CoverArt)`, `Nothing` (every applicable source answered
-  without an image), or `Unsure` (no image, and at least one source was
-  unavailable). `Unsure` keeps the cover already on screen.
+  without an image), `Unsure` (no image, and at least one source was
+  unavailable), or `Soon` (a source asked to be asked again shortly). `Unsure`
+  and `Soon` keep the cover already on screen.
 - `StreamCovers`: runs the chain. `resolve(&StreamQuery) -> Resolution`.
 
 A downloaded image counts only if it is `image/*` by `Content-Type`, or it has
@@ -82,7 +93,8 @@ that source, and the chain moves on.
   never sent twice.
 - A stream without a title is refreshed every **15 s** (`STREAM_REFRESH`), so
   the cover follows the track.
-- An `Unsure` answer is retried once per interval.
+- An `Unsure` answer is retried every **15 s** (the stream refresh interval).
+- A `Soon` answer is retried after **1.5 s** (`SOON_RETRY`).
 - Requests that were queued for a track that has since changed are dropped.
 - While the next cover loads, Stage keeps the previous cover of the same stream
   on screen (`views/stage.rs`).

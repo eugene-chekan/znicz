@@ -129,9 +129,10 @@ name. Icecast `StreamUrl` may point at a cover image; when it decodes, the TUI
 Stage cover shows that picture instead of station `art` or the logo.
 RadioTunes, DI.FM, RockRadio, JazzRadio, ClassicalRadio, and ZenRadio do not
 send `StreamUrl`. For those hosts the TUI looks up the channel from the stream
-URL and uses AudioAddict `art_url` as the song cover.
+URL and uses the cover of the channel's current track (from the track's
+`asset_url`, else its `images.default`) as the song cover.
 
-Stream cover order: ICY `StreamUrl` image, AudioAddict `art_url`, an artist /
+Stream cover order: ICY `StreamUrl` image, AudioAddict current-track cover, an artist /
 title search (Deezer, then iTunes, then MusicBrainz and the Cover Art Archive), station
 `art`, then the logo. `[covers] search = true` in `config.toml` turns the search
 on or off; `cover_search = false` on a station in `stations.toml` turns it off
