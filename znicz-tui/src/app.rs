@@ -581,6 +581,13 @@ impl App {
         result
     }
 
+    fn overlays(&self) -> Overlays {
+        Overlays {
+            modal: self.modal != Modal::None,
+            drawer: self.queue_open,
+        }
+    }
+
     fn run_loop(&mut self, terminal: &mut ratatui::DefaultTerminal) -> color_eyre::Result<()> {
         loop {
             self.poll_player_events();
@@ -591,7 +598,7 @@ impl App {
 
             // Wake up for input, or on the tick to move the seek bar along.
             if event::poll(TICK_RATE)? {
-                let overlay_before = self.modal != Modal::None || self.queue_open;
+                let overlays_before = self.overlays();
                 // Handle everything already queued before drawing again,
                 // so held keys do not lag a frame behind.
                 loop {
@@ -604,8 +611,10 @@ impl App {
                         break;
                     }
                 }
-                let overlay_after = self.modal != Modal::None || self.queue_open;
-                if needs_full_redraw(self.view, overlay_before, overlay_after) {
+                let overlays_after = self.overlays();
+                if needs_full_redraw(self.view, overlays_before, overlays_after) {
+                    // Retransmit the cover image, which the repaint wipes.
+                    self.cover_draw_key = None;
                     terminal.clear()?;
                 }
             }
@@ -2189,13 +2198,22 @@ fn entry_from_track(track: &Track) -> Entry {
     }
 }
 
-/// Label for the repeat indicator in the status bar.
-/// Kitty and Sixel images paint outside the diff: when an overlay closes over
-/// the Stage cover, the cells it covered are never rewritten, so repaint all.
-pub(crate) fn needs_full_redraw(view: View, overlay_before: bool, overlay_after: bool) -> bool {
-    view == View::Stage && overlay_before && !overlay_after
+/// Which overlays sit over the main view this frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Overlays {
+    pub(crate) modal: bool,
+    pub(crate) drawer: bool,
 }
 
+/// Kitty and Sixel images bypass ratatui's cell diff, so on Stage any overlay
+/// that goes away leaves its cells painted over the cover until a full repaint.
+pub(crate) fn needs_full_redraw(view: View, before: Overlays, after: Overlays) -> bool {
+    let modal_closed = before.modal && !after.modal;
+    let drawer_closed = before.drawer && !after.drawer;
+    view == View::Stage && (modal_closed || drawer_closed)
+}
+
+/// Label for the repeat indicator in the status bar.
 pub fn repeat_label(mode: RepeatMode) -> &'static str {
     match mode {
         RepeatMode::Off => "repeat off",
@@ -2242,11 +2260,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_an_overlay_closing_over_the_stage_forces_a_repaint() {
-        assert!(needs_full_redraw(View::Stage, true, false));
-        assert!(!needs_full_redraw(View::Browse, true, false));
-        assert!(!needs_full_redraw(View::Stage, false, true));
-        assert!(!needs_full_redraw(View::Stage, true, true));
+    fn closing_a_modal_or_the_drawer_over_the_stage_forces_a_repaint() {
+        let none = Overlays {
+            modal: false,
+            drawer: false,
+        };
+        let modal = Overlays {
+            modal: true,
+            drawer: false,
+        };
+        let drawer = Overlays {
+            modal: false,
+            drawer: true,
+        };
+        let both = Overlays {
+            modal: true,
+            drawer: true,
+        };
+        assert!(needs_full_redraw(View::Stage, modal, none));
+        assert!(needs_full_redraw(View::Stage, drawer, none));
+        assert!(
+            needs_full_redraw(View::Stage, both, drawer),
+            "modal closes, drawer stays"
+        );
+        assert!(
+            needs_full_redraw(View::Stage, both, modal),
+            "drawer closes, modal stays"
+        );
+        assert!(!needs_full_redraw(View::Browse, both, none));
+        assert!(!needs_full_redraw(View::Stage, none, both));
+        assert!(!needs_full_redraw(View::Stage, both, both));
+        assert!(!needs_full_redraw(View::Stage, drawer, both));
     }
 
     #[test]
