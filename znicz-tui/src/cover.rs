@@ -615,25 +615,66 @@ mod tests {
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
+    /// Holds its first lookup until the test lets it go, so a test can queue
+    /// requests while the worker is known to be busy.
+    struct Gated {
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        started: std::sync::mpsc::Sender<()>,
+        release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+
+    impl znicz_core::CoverSource for Gated {
+        fn name(&self) -> &'static str {
+            "gated"
+        }
+        fn key(&self, query: &znicz_core::StreamQuery) -> Option<String> {
+            Some(query.icy_title.clone().unwrap_or_default())
+        }
+        fn find(&self, _query: &znicz_core::StreamQuery) -> znicz_core::Found {
+            let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if call == 0 {
+                self.started.send(()).ok();
+                let release = self.release.lock().unwrap();
+                release.recv_timeout(Duration::from_secs(5)).ok();
+            }
+            znicz_core::Found::Art(znicz_core::CoverArt {
+                mime: "image/png".into(),
+                bytes: PNG_1X1.to_vec(),
+            })
+        }
+        fn remembers(&self) -> bool {
+            false
+        }
+    }
+
     #[test]
     fn only_the_newest_queued_request_is_resolved() {
         let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let slow = Slow {
+        let (started_tx, started) = std::sync::mpsc::channel();
+        let (release, release_rx) = std::sync::mpsc::channel();
+        let gated = Gated {
             calls: calls.clone(),
-            pause: Duration::from_millis(200),
+            started: started_tx,
+            release: std::sync::Mutex::new(release_rx),
         };
-        let cache = CoverCache::with_streams(znicz_core::StreamCovers::new(vec![Box::new(slow)]));
+        let cache = CoverCache::with_streams(znicz_core::StreamCovers::new(vec![Box::new(gated)]));
         let key = |title: &str| CoverKey::Stream(stream_query(Some(title)));
         let (a, b, c, d) = (key("a"), key("b"), key("c"), key("d"));
 
+        // A is being looked up; B, C and D queue up behind it.
         assert_eq!(cache.get(a), CoverReady::Pending);
+        started
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the worker starts on A");
         assert_eq!(cache.get(b.clone()), CoverReady::Pending);
         assert_eq!(cache.get(c), CoverReady::Pending);
         assert_eq!(cache.get(d.clone()), CoverReady::Pending);
+        release.send(()).unwrap();
 
         assert!(matches!(wait_ready(&cache, &d), CoverReady::Embedded(_)));
-        assert!(
-            calls.load(std::sync::atomic::Ordering::SeqCst) <= 2,
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            2,
             "A and D only; B and C were superseded"
         );
 
