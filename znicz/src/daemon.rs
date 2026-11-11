@@ -170,7 +170,7 @@ pub fn spawn_detached_player_exe(
 #[cfg(windows)]
 fn without_inherited_stdio<T>(spawn: impl FnOnce() -> T) -> T {
     use windows_sys::Win32::Foundation::{
-        GetHandleInformation, SetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+        GetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, SetHandleInformation,
     };
     use windows_sys::Win32::System::Console::{
         GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,

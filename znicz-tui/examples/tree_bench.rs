@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use znicz_library::Library;
-use znicz_tui::library_pane::LibraryPane;
 use znicz_tui::LibraryLayout;
+use znicz_tui::library_pane::LibraryPane;
 
 fn main() {
     let path = std::env::args()

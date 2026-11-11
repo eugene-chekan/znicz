@@ -13,15 +13,15 @@ use ratatui::crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdat
 use ratatui::layout::Rect;
 use ratatui_image::picker::ProtocolType;
 use znicz_core::{
-    apply_to_player, list_saved, load_path, sanitize_stem, saved_path, skipped_notice, write_path,
     AudioDeviceInfo, AudioOutput, Command, IpcClient, LibraryHost, LibraryOp, LibraryStatus,
-    PlaybackStatus, PlayerEvent, PlayerHandle, PlayerOps, PlayerState, RepeatMode,
+    PlaybackStatus, PlayerEvent, PlayerHandle, PlayerOps, PlayerState, RepeatMode, apply_to_player,
+    list_saved, load_path, sanitize_stem, saved_path, skipped_notice, write_path,
 };
 use znicz_library::{Library, Track};
 
 use crate::cover::CoverCache;
 use crate::cursor::Cursor;
-use crate::help_state::{HelpState, HELP_PAGE};
+use crate::help_state::{HELP_PAGE, HelpState};
 use crate::hit::HitMap;
 use crate::keys::Context;
 use crate::layout;

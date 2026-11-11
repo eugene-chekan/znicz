@@ -19,11 +19,7 @@ pub const MODAL_FULL_BELOW: u16 = 10;
 
 /// Transport rows, including the message row.
 pub fn transport_height(window: u16) -> u16 {
-    if window < COMPACT_HEIGHT {
-        2
-    } else {
-        3
-    }
+    if window < COMPACT_HEIGHT { 2 } else { 3 }
 }
 
 /// A `want_w` × `want_h` box centred in the list region and clamped to it.
@@ -203,9 +199,11 @@ mod tests {
 
     #[test]
     fn a_tiny_stage_or_show_cover_off_has_no_cover() {
-        assert!(stage_layout(Rect::new(0, 0, 50, 7), FW, FH, true)
-            .cover
-            .is_none());
+        assert!(
+            stage_layout(Rect::new(0, 0, 50, 7), FW, FH, true)
+                .cover
+                .is_none()
+        );
         let s = stage_layout(Rect::new(0, 0, 120, 40), FW, FH, false);
         assert!(s.cover.is_none());
         assert!(s.details.width <= 80, "details centred, at most 80 wide");

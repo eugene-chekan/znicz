@@ -2,11 +2,11 @@
 
 use std::time::Duration;
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
-use ratatui::Frame;
 use znicz_library::{AlbumSummary, ArtistSummary, SearchHit, Track};
 
 use crate::app::{App, Focus};
@@ -633,11 +633,7 @@ fn list_item(
 
 /// The row's name with ` ♪` appended when it stands for what is playing.
 fn marked(name: String, mark: bool) -> String {
-    if mark {
-        format!("{name} ♪")
-    } else {
-        name
-    }
+    if mark { format!("{name} ♪") } else { name }
 }
 
 fn album_right(album: &AlbumSummary) -> String {

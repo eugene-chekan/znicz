@@ -130,9 +130,11 @@ mod tests {
     #[test]
     fn hidden_folders_need_a_dot() {
         let (_dir, home) = tree();
-        assert!(!complete("~/Music/", &home)
-            .matches
-            .contains(&".hidden".to_string()));
+        assert!(
+            !complete("~/Music/", &home)
+                .matches
+                .contains(&".hidden".to_string())
+        );
         assert_eq!(complete("~/Music/.h", &home).text, "~/Music/.hidden/");
     }
 

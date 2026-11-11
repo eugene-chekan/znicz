@@ -2,10 +2,10 @@
 
 use std::time::{Duration, Instant};
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, List, ListItem, Paragraph};
-use ratatui::Frame;
 
 use crate::app::App;
 use crate::format;

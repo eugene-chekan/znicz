@@ -423,13 +423,13 @@ pub(crate) mod test_server {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use super::test_server::{count, serve, serve_api, ART, LAGGING, NOW, TITLE, TRACK};
+    use super::test_server::{ART, LAGGING, NOW, TITLE, TRACK, count, serve, serve_api};
     use super::{
-        audioaddict_cover_lookup_at, parse_audioaddict_channel, AudioAddictLookup,
-        AudioAddictNetwork,
+        AudioAddictLookup, AudioAddictNetwork, audioaddict_cover_lookup_at,
+        parse_audioaddict_channel,
     };
 
     /// Smooth Beats on the test server, with `title` (or none).

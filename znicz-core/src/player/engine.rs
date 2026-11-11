@@ -2,13 +2,13 @@ use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::{bounded, unbounded, Receiver, RecvTimeoutError, Sender};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded, unbounded};
 
-use crate::audio::convert::{adapt_channels, RateConverter};
+use crate::audio::convert::{RateConverter, adapt_channels};
 use crate::audio::feeder::{DecodeStep, Feeder, PumpOutcome};
 use crate::audio::gain::MUTE_FADE;
 use crate::audio::http::HttpStreamSource;
-use crate::audio::icy::{apply_icy_to_track, apply_icy_url_to_track, IcyTitle, IcyUrl};
+use crate::audio::icy::{IcyTitle, IcyUrl, apply_icy_to_track, apply_icy_url_to_track};
 use crate::audio::output::AudioOutput;
 use crate::audio::source::{AudioDecoder, AudioSource, LocalFileSource};
 use crate::error::{Result, ZniczError};
@@ -521,11 +521,7 @@ impl PlayerEngine {
         self.rng ^= self.rng << 17;
 
         let pick = (self.rng % (len as u64 - 1)) as usize;
-        if pick >= current {
-            pick + 1
-        } else {
-            pick
-        }
+        if pick >= current { pick + 1 } else { pick }
     }
 
     fn play_queue_index(&mut self, index: usize) -> Result<()> {

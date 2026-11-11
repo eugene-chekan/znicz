@@ -6,7 +6,7 @@
 use std::path::Path;
 
 use znicz_core::{
-    spawn_player, AudioConfig, AudioOutput, Command, PlaybackStatus, QueueItem, RepeatMode,
+    AudioConfig, AudioOutput, Command, PlaybackStatus, QueueItem, RepeatMode, spawn_player,
 };
 
 fn skip_hardware_playback() -> bool {
@@ -434,9 +434,11 @@ fn moving_out_of_range_is_an_error() {
     player
         .send_blocking(Command::QueueAdd(paths(2)))
         .expect("queue add");
-    assert!(player
-        .send_blocking(Command::QueueMove { from: 0, to: 5 })
-        .is_err());
+    assert!(
+        player
+            .send_blocking(Command::QueueMove { from: 0, to: 5 })
+            .is_err()
+    );
     assert_eq!(player.state().queue.len(), 2);
 }
 

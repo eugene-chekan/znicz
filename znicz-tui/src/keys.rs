@@ -313,16 +313,21 @@ mod tests {
 
     #[test]
     fn seek_lives_on_the_arrows_and_h_l_move() {
-        assert!(GLOBAL
-            .iter()
-            .any(|b| b.keys == "→ / ←" && b.action.contains("5s")));
-        assert!(GLOBAL
-            .iter()
-            .any(|b| b.keys == "Shift-→ / Shift-←" && b.action.contains("30s")));
-        assert!(GLOBAL.iter().all(|b| !b
-            .keys
-            .split(" / ")
-            .any(|k| matches!(k, "h" | "l" | "H" | "L"))));
+        assert!(
+            GLOBAL
+                .iter()
+                .any(|b| b.keys == "→ / ←" && b.action.contains("5s"))
+        );
+        assert!(
+            GLOBAL
+                .iter()
+                .any(|b| b.keys == "Shift-→ / Shift-←" && b.action.contains("30s"))
+        );
+        assert!(GLOBAL.iter().all(|b| {
+            !b.keys
+                .split(" / ")
+                .any(|k| matches!(k, "h" | "l" | "H" | "L"))
+        }));
         assert!(NAVIGATION.iter().any(|b| b.keys == "h / l"));
     }
 
@@ -490,19 +495,23 @@ mod tests {
     fn the_filter_matches_actions_ignoring_case() {
         let sections = filter_sections(help_sections(Context::Library), "VOL");
         assert_eq!(titles(&sections), ["Playback"]);
-        assert!(sections[0]
-            .bindings
-            .iter()
-            .all(|b| b.action.contains("volume")));
+        assert!(
+            sections[0]
+                .bindings
+                .iter()
+                .all(|b| b.action.contains("volume"))
+        );
     }
 
     #[test]
     fn the_filter_matches_key_text() {
         let sections = filter_sections(help_sections(Context::Library), "del");
-        assert!(sections
-            .iter()
-            .flat_map(|s| s.bindings.iter())
-            .any(|b| b.keys == "d / Del"));
+        assert!(
+            sections
+                .iter()
+                .flat_map(|s| s.bindings.iter())
+                .any(|b| b.keys == "d / Del")
+        );
     }
 
     #[test]
@@ -558,12 +567,16 @@ mod tests {
         assert!(has("v / i", "now playing"));
         assert!(GLOBAL.iter().any(|b| b.keys.contains("Alt-→")));
         assert!(GLOBAL.iter().all(|b| !b.keys.contains('N')));
-        assert!(GLOBAL
-            .iter()
-            .all(|b| !b.keys.contains('<') && !b.keys.contains('>')));
+        assert!(
+            GLOBAL
+                .iter()
+                .all(|b| !b.keys.contains('<') && !b.keys.contains('>'))
+        );
         assert!(LIBRARY.iter().all(|b| b.keys != "R"));
-        assert!(DEVICES
-            .iter()
-            .any(|b| b.keys == "r" && b.action.contains("rescan")));
+        assert!(
+            DEVICES
+                .iter()
+                .any(|b| b.keys == "r" && b.action.contains("rescan"))
+        );
     }
 }

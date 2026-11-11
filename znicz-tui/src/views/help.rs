@@ -1,9 +1,9 @@
 //! The help overlay: this context's keys first, then the rest, with a filter.
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-use ratatui::Frame;
 
 use crate::app::App;
 use crate::help_state::HelpState;
@@ -17,11 +17,7 @@ const FILTER_HINT: &str = " Enter keep · Esc clear ";
 
 /// Bottom-right border text: what Enter and Esc do right now.
 fn border_hint(editing: bool) -> &'static str {
-    if editing {
-        FILTER_HINT
-    } else {
-        CLOSE_HINT
-    }
+    if editing { FILTER_HINT } else { CLOSE_HINT }
 }
 const FILTER_PREFIX: &str = "/ ";
 /// One column of keys and actions reads best kept narrow.

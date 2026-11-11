@@ -2,15 +2,15 @@
 
 use std::sync::Arc;
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 use ratatui_image::picker::Picker;
 use ratatui_image::{Resize, StatefulImage};
 use znicz_core::{OutputInfo, PlaybackStatus, PlayerState, QueueItem, RepeatMode, TrackInfo};
 
-use crate::app::{repeat_label, App};
+use crate::app::{App, repeat_label};
 use crate::cover::{CoverKey, CoverReady};
 use crate::format;
 use crate::theme;

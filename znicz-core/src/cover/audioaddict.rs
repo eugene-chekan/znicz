@@ -6,8 +6,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::audioaddict::{
-    audioaddict_cover_lookup_at, parse_audioaddict_channel, AudioAddictLookup, AudioAddictNetwork,
-    DEFAULT_ORIGIN,
+    AudioAddictLookup, AudioAddictNetwork, DEFAULT_ORIGIN, audioaddict_cover_lookup_at,
+    parse_audioaddict_channel,
 };
 use crate::cover::{CoverSource, Found, StreamQuery};
 
@@ -104,13 +104,13 @@ impl CoverSource for AudioAddictSource {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread;
     use std::time::Duration;
 
     use super::*;
-    use crate::audioaddict::test_server::{serve, serve_api, ART, LAGGING, NOW, TITLE, TRACK};
+    use crate::audioaddict::test_server::{ART, LAGGING, NOW, TITLE, TRACK, serve, serve_api};
 
     fn query(url: &str, title: Option<&str>) -> StreamQuery {
         StreamQuery {

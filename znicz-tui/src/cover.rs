@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::{unbounded, Sender};
-use image::{imageops, imageops::FilterType, DynamicImage, ImageBuffer, Rgba};
+use crossbeam_channel::{Sender, unbounded};
+use image::{DynamicImage, ImageBuffer, Rgba, imageops, imageops::FilterType};
 
 const MAX_EDGE: u32 = 512;
 const CACHE_CAP: usize = 16;

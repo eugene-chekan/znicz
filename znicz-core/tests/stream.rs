@@ -5,8 +5,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use znicz_core::{
-    play_station, spawn_player, AudioConfig, AudioOutput, Command, PlaybackStatus, PlayerEvent,
-    QueueItem, Station, TrackInfo,
+    AudioConfig, AudioOutput, Command, PlaybackStatus, PlayerEvent, QueueItem, Station, TrackInfo,
+    play_station, spawn_player,
 };
 
 fn serve_html() -> String {

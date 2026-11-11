@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::error::{Result, ZniczError};
 use crate::player::commands::Command;
 use crate::player::engine::PlayerOps;
-use crate::player::state::{is_http_url, QueueItem};
+use crate::player::state::{QueueItem, is_http_url};
 
 /// What a playlist file turned into.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

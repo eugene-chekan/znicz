@@ -2,13 +2,13 @@
 
 use std::time::Duration;
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 use znicz_core::{PlaybackStatus, PlayerState, RepeatMode};
 
-use crate::app::{repeat_label, App};
+use crate::app::{App, repeat_label};
 use crate::format;
 use crate::theme;
 use crate::tui_config::IconSet;

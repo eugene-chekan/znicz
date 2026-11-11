@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use znicz_core::{spawn_player, AudioConfig, AudioOutput, Command, PlayerEvent};
+use znicz_core::{AudioConfig, AudioOutput, Command, PlayerEvent, spawn_player};
 
 /// Skip hardware playback on CI (GitHub Windows runners still expose WASAPI)
 /// and on machines with no output device.

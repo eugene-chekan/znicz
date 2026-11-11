@@ -1,9 +1,9 @@
 //! Saved radio stations: pick one to play, or add, edit, copy, and delete.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, List, ListItem, Paragraph};
-use ratatui::Frame;
 
 use crate::app::{App, Modal, RadioPrompt, StationField};
 use crate::format;

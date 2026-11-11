@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use crate::cover::http::{get_json, probe, retryable, Fetched};
+use crate::cover::http::{Fetched, get_json, probe, retryable};
 use crate::cover::title::{artist_attempts, artist_matches, search_key, searchable};
 use crate::cover::{CoverSource, Found, StreamQuery};
 
@@ -149,8 +149,8 @@ impl CoverSource for MusicBrainzSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cover::http::test_server::serve;
     use crate::cover::StreamQuery;
+    use crate::cover::http::test_server::serve;
     use std::time::Instant;
 
     fn query(title: &str) -> StreamQuery {

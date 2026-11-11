@@ -1,7 +1,7 @@
 //! The station's local `art` image from `stations.toml`.
 
 use crate::cover::{CoverSource, Found, StreamQuery};
-use crate::metadata::{sniff_image_mime, CoverArt};
+use crate::metadata::{CoverArt, sniff_image_mime};
 
 pub struct StationArtSource;
 

@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use znicz_core::{spawn_player, AudioConfig, Command};
+use znicz_core::{AudioConfig, Command, spawn_player};
 
 #[test]
 fn blocking_send_applies_before_returning() {

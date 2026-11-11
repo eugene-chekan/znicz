@@ -4,12 +4,12 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::backend::TestBackend;
 use ratatui::Terminal;
+use ratatui::backend::TestBackend;
 use znicz_core::{
-    spawn_player, AudioConfig, OutputInfo, PlaybackStatus, PlayerState, TrackInfo, TrackTags,
+    AudioConfig, OutputInfo, PlaybackStatus, PlayerState, TrackInfo, TrackTags, spawn_player,
 };
-use znicz_tui::{views, App, View};
+use znicz_tui::{App, View, views};
 
 fn app() -> App {
     let (player, _thread) = spawn_player(AudioConfig::default());

@@ -4,8 +4,8 @@
 //! `cargo test -p znicz-core --test cover_live -- --ignored --nocapture`
 
 use znicz_core::{
-    audioaddict_cover_lookup, default_sources, AudioAddictLookup, AudioAddictNetwork, Resolution,
-    StreamCovers, StreamQuery,
+    AudioAddictLookup, AudioAddictNetwork, Resolution, StreamCovers, StreamQuery,
+    audioaddict_cover_lookup, default_sources,
 };
 
 #[test]

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use znicz_core::PlaybackStatus;
-use znicz_core::{spawn_player, AudioConfig, Command, PlayerHandle, QueueItem, RepeatMode};
+use znicz_core::{AudioConfig, Command, PlayerHandle, QueueItem, RepeatMode, spawn_player};
 use znicz_tui::keys::Context;
 use znicz_tui::library_pane::ColumnFocus;
 use znicz_tui::{App, Focus, Modal, PlaylistPrompt, RadioPrompt, StationField, View};

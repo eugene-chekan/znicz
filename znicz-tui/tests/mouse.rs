@@ -1,12 +1,12 @@
 //! Mouse: select-only clicks, wheel, click-outside, queue toggle.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
-use ratatui::Terminal;
 use std::path::PathBuf;
 use znicz_core::Command;
-use znicz_core::{spawn_player, AudioConfig, PlaybackStatus, PlayerHandle};
+use znicz_core::{AudioConfig, PlaybackStatus, PlayerHandle, spawn_player};
 use znicz_library::{AlbumSummary, Track};
 use znicz_tui::hit::{FooterHit, HitMap, ListHit};
 use znicz_tui::views;

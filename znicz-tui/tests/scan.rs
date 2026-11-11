@@ -5,11 +5,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::backend::TestBackend;
 use ratatui::Terminal;
-use znicz_core::{spawn_player, wait_for_library, AudioConfig, LibraryHost};
+use ratatui::backend::TestBackend;
+use znicz_core::{AudioConfig, LibraryHost, spawn_player, wait_for_library};
 use znicz_library::{Library, LibraryService};
-use znicz_tui::{views, App};
+use znicz_tui::{App, views};
 
 struct Setup {
     app: App,
@@ -87,8 +87,8 @@ fn an_empty_library_opens_the_folder_prompt() {
 
 #[test]
 fn the_folder_prompt_does_not_open_over_another_prompt() {
-    use znicz_tui::line_edit::LineEdit;
     use znicz_tui::PlaylistPrompt;
+    use znicz_tui::line_edit::LineEdit;
     let mut s = setup();
     s.app.playlist_prompt = Some(PlaylistPrompt::Save(LineEdit::new()));
     draw(&mut s.app);

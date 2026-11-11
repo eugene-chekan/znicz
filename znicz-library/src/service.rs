@@ -390,14 +390,18 @@ mod tests {
         let last = wait(&service, 3).last.unwrap();
         assert_eq!(last.skipped, std::slice::from_ref(&away));
         assert_eq!(last.removed, 1);
-        assert!(reader
-            .get_by_path(&away.join("kept.flac"))
-            .unwrap()
-            .is_some());
-        assert!(reader
-            .get_by_path(&here.join("deleted.flac"))
-            .unwrap()
-            .is_none());
+        assert!(
+            reader
+                .get_by_path(&away.join("kept.flac"))
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            reader
+                .get_by_path(&here.join("deleted.flac"))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -498,13 +502,17 @@ mod tests {
         assert_eq!(tried, [bad.clone(), good.clone()]);
         assert_eq!(summary.skipped, std::slice::from_ref(&bad));
         assert_eq!(summary.removed, 1);
-        assert!(library
-            .get_by_path(&bad.join("kept.flac"))
-            .unwrap()
-            .is_some());
-        assert!(library
-            .get_by_path(&good.join("deleted.flac"))
-            .unwrap()
-            .is_none());
+        assert!(
+            library
+                .get_by_path(&bad.join("kept.flac"))
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            library
+                .get_by_path(&good.join("deleted.flac"))
+                .unwrap()
+                .is_none()
+        );
     }
 }

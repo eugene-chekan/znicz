@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::error::Result;
 use crate::track::{AlbumSummary, ArtistSummary, SearchHit, SearchLimits, Track};
@@ -812,14 +812,18 @@ mod tests {
             .remove_missing_under(&[PathBuf::from("/gone-a")])
             .unwrap();
         assert_eq!(removed, 1);
-        assert!(library
-            .get_by_path(Path::new("/gone-b/y.flac"))
-            .unwrap()
-            .is_some());
-        assert!(library
-            .get_by_path(Path::new("/gone-a/x.flac"))
-            .unwrap()
-            .is_none());
+        assert!(
+            library
+                .get_by_path(Path::new("/gone-b/y.flac"))
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            library
+                .get_by_path(Path::new("/gone-a/x.flac"))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -1058,9 +1062,11 @@ mod tests {
             })
             .collect();
         assert_eq!(track_titles, vec!["Love Song"]);
-        assert!(!track_titles
-            .iter()
-            .any(|t| *t == "Alone" || *t == "Together"));
+        assert!(
+            !track_titles
+                .iter()
+                .any(|t| *t == "Alone" || *t == "Together")
+        );
     }
 
     #[test]
@@ -1165,10 +1171,12 @@ mod tests {
     #[test]
     fn empty_entity_query_returns_no_hits() {
         let library = Library::open_in_memory().unwrap();
-        assert!(library
-            .search_entities("  ", SearchLimits::default())
-            .unwrap()
-            .is_empty());
+        assert!(
+            library
+                .search_entities("  ", SearchLimits::default())
+                .unwrap()
+                .is_empty()
+        );
     }
 
     fn upsert_simple(

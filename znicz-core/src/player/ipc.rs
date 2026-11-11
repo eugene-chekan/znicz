@@ -810,7 +810,7 @@ pub fn try_state(path: &Path) -> Result<PlayerState> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::player::engine::{spawn_player, AudioConfig};
+    use crate::player::engine::{AudioConfig, spawn_player};
 
     #[test]
     fn command_transport_errors_get_the_hint_and_player_errors_stay_verbatim() {

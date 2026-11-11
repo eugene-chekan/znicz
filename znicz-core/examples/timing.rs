@@ -8,7 +8,7 @@
 
 use std::time::{Duration, Instant};
 
-use znicz_core::{spawn_player, AudioConfig, Command, PlaybackStatus, PlayerEvent};
+use znicz_core::{AudioConfig, Command, PlaybackStatus, PlayerEvent, spawn_player};
 
 fn main() {
     tracing_subscriber::fmt::init();

@@ -222,8 +222,8 @@ pub fn default_sources() -> Vec<Box<dyn CoverSource>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn art(byte: u8) -> CoverArt {
         CoverArt {

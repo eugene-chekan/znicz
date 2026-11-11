@@ -9,14 +9,14 @@ use rmcp::model::{
     PromptMessage, PromptMessageContent, PromptMessageRole, RawResource, ReadResourceRequestParam,
     ReadResourceResult, Resource, ResourceContents, ServerCapabilities, ServerInfo,
 };
-use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler};
+use rmcp::{ErrorData as McpError, ServerHandler, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use znicz_core::{
-    apply_to_player, copy_saved, list_saved, load_path, remove_saved, rename_saved, sanitize_stem,
-    saved_path, wait_for_library, write_path, AudioOutput, Command, IpcClient, LibraryHost,
-    LibraryOp, LoadResult, PlaybackStatus, PlayerState, ScanSummary,
+    AudioOutput, Command, IpcClient, LibraryHost, LibraryOp, LoadResult, PlaybackStatus,
+    PlayerState, ScanSummary, apply_to_player, copy_saved, list_saved, load_path, remove_saved,
+    rename_saved, sanitize_stem, saved_path, wait_for_library, write_path,
 };
 use znicz_library::{Library, Track};
 
@@ -1126,7 +1126,7 @@ mod tests {
     use super::*;
     use std::ops::{Deref, DerefMut};
     use std::time::Duration;
-    use znicz_core::{spawn_player, AudioConfig, ClientRole, IpcServer, PlaybackStatus};
+    use znicz_core::{AudioConfig, ClientRole, IpcServer, PlaybackStatus, spawn_player};
 
     /// Serialises `ZNICZ_STATIONS_PATH` writes against
     /// other tests that read env while constructing a server.
@@ -1423,9 +1423,11 @@ mod tests {
                 paths: vec!["/music/a.flac".into()],
             }))
             .expect("queue_add");
-        assert!(server
-            .queue_move(Parameters(QueueMoveParams { from: 0, to: 3 }))
-            .is_err());
+        assert!(
+            server
+                .queue_move(Parameters(QueueMoveParams { from: 0, to: 3 }))
+                .is_err()
+        );
     }
 
     /// A failing command must surface as an error, not a silent stale snapshot.
@@ -1963,12 +1965,14 @@ mod tests {
         server
             .add_radio_station(Parameters(params.clone()))
             .unwrap();
-        assert!(server
-            .add_radio_station(Parameters(StationAddParams {
-                name: "Example".into(),
-                url: "https://example.com/b".into(),
-            }))
-            .is_err());
+        assert!(
+            server
+                .add_radio_station(Parameters(StationAddParams {
+                    name: "Example".into(),
+                    url: "https://example.com/b".into(),
+                }))
+                .is_err()
+        );
     }
 
     #[test]
