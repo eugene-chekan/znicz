@@ -149,7 +149,14 @@ pub fn spawn_detached_player_exe(
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    without_inherited_stdio(|| cmd.spawn())?;
+    let mut child = without_inherited_stdio(|| cmd.spawn())?;
+    // Collect the player's exit status when it ends, so a parent that keeps
+    // running (`znicz mcp`) is not left with a zombie entry.
+    std::thread::Builder::new()
+        .name("znicz-player-reaper".into())
+        .spawn(move || {
+            let _ = child.wait();
+        })?;
     Ok(())
 }
 
@@ -163,7 +170,7 @@ pub fn spawn_detached_player_exe(
 #[cfg(windows)]
 fn without_inherited_stdio<T>(spawn: impl FnOnce() -> T) -> T {
     use windows_sys::Win32::Foundation::{
-        GetHandleInformation, SetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+        GetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, SetHandleInformation,
     };
     use windows_sys::Win32::System::Console::{
         GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
@@ -261,32 +268,22 @@ pub fn ensure_player_exe(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static NEXT: AtomicU64 = AtomicU64::new(0);
 
     struct TempPaths {
-        dir: PathBuf,
+        // Held so the folder lives, and is removed, with the test.
+        _dir: tempfile::TempDir,
         lock: PathBuf,
         ipc: PathBuf,
     }
 
     impl TempPaths {
         fn new() -> Self {
-            let n = NEXT.fetch_add(1, Ordering::Relaxed);
-            let dir = std::env::temp_dir().join(format!("znicz-daemon-{}-{n}", std::process::id()));
-            fs::create_dir_all(&dir).unwrap();
+            let dir = tempfile::tempdir().unwrap();
             Self {
-                lock: dir.join("player.lock"),
-                ipc: dir.join("ipc.toml"),
-                dir,
+                lock: dir.path().join("player.lock"),
+                ipc: dir.path().join("ipc.toml"),
+                _dir: dir,
             }
-        }
-    }
-
-    impl Drop for TempPaths {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.dir);
         }
     }
 
@@ -344,16 +341,48 @@ mod tests {
         assert!(!tmp.lock.exists());
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
-    fn temp_paths_directory_does_not_leak() {
-        let dir = {
-            let tmp = temp_paths();
-            tmp.dir.clone()
-        };
+    fn an_exited_player_does_not_stay_a_zombie() {
+        // `true` ignores the `player` argument and exits at once.
+        spawn_detached_player_exe(std::path::Path::new("true"), None, None).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if zombie_children().is_empty() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "zombies: {:?}",
+                zombie_children()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        // Give a not-yet-reaped child time to show up as a zombie, then check again.
+        std::thread::sleep(std::time::Duration::from_millis(200));
         assert!(
-            !dir.exists(),
-            "test runtime dir leaked at {}",
-            dir.display()
+            zombie_children().is_empty(),
+            "zombies: {:?}",
+            zombie_children()
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    fn zombie_children() -> Vec<String> {
+        let me = std::process::id().to_string();
+        std::fs::read_dir("/proc")
+            .unwrap()
+            .filter_map(|e| std::fs::read_to_string(e.ok()?.path().join("stat")).ok())
+            .filter(|stat| {
+                // `pid (comm) state ppid …`; comm may contain spaces, so split after ')'.
+                // Only count our `true` children so other tests cannot affect this one.
+                if !stat.contains("(true)") {
+                    return false;
+                }
+                let rest = stat.rsplit_once(')').map(|(_, r)| r).unwrap_or("");
+                let mut fields = rest.split_whitespace();
+                fields.next() == Some("Z") && fields.next() == Some(me.as_str())
+            })
+            .collect()
     }
 }

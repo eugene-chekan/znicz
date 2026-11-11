@@ -225,30 +225,22 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-
-    fn tmp() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "znicz-stations-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&dir).unwrap();
-        dir.join("stations.toml")
+    fn tmp() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stations.toml");
+        (dir, path)
     }
 
     #[test]
     fn missing_file_is_an_empty_list() {
-        let path = tmp();
-        let _ = fs::remove_file(&path);
+        let (_dir, path) = tmp();
         assert!(load(&path).unwrap().is_empty());
     }
 
     #[test]
     fn round_trip_keeps_file_order() {
-        let path = tmp();
+        let (_dir, path) = tmp();
         let stations = vec![
             Station {
                 name: "One".into(),
@@ -376,7 +368,7 @@ mod tests {
 
     #[test]
     fn art_round_trips_and_copy_keeps_the_path() {
-        let png = tmp();
+        let (_dir, png) = tmp();
         let img = png.parent().unwrap().join("logo.png");
         fs::write(&img, b"not-a-real-decode-here").unwrap();
         let mut stations = vec![Station {

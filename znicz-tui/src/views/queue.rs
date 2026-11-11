@@ -1,9 +1,9 @@
 //! The queue: what plays next, with real track names.
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, Paragraph};
-use ratatui::Frame;
 use znicz_core::PlayerState;
 
 use crate::app::{App, Focus};

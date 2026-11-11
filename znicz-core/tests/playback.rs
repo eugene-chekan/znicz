@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use znicz_core::{spawn_player, AudioConfig, AudioOutput, Command, PlayerEvent};
+use znicz_core::{AudioConfig, AudioOutput, Command, PlayerEvent, spawn_player};
 
 /// Skip hardware playback on CI (GitHub Windows runners still expose WASAPI)
 /// and on machines with no output device.
@@ -25,7 +25,8 @@ fn play_local_wav_starts_playback() {
         return;
     }
 
-    let wav = std::env::temp_dir().join("znicz-start-test.wav");
+    let dir = tempfile::tempdir().unwrap();
+    let wav = dir.path().join("start.wav");
     write_silent_wav(&wav, 44_100, 2, 8);
 
     let (player, _thread) = spawn_player(AudioConfig::default());
@@ -48,7 +49,6 @@ fn play_local_wav_starts_playback() {
     );
 
     player.send(Command::Stop).ok();
-    std::fs::remove_file(wav).ok();
 }
 
 /// Regression test for the fast-forward bug.
@@ -64,7 +64,8 @@ fn track_plays_for_its_real_duration() {
     }
 
     let seconds = 6;
-    let wav = std::env::temp_dir().join("znicz-duration-test.wav");
+    let dir = tempfile::tempdir().unwrap();
+    let wav = dir.path().join("duration.wav");
     write_silent_wav(&wav, 44_100, 2, seconds);
 
     let (player, _thread) = spawn_player(AudioConfig::default());
@@ -87,7 +88,6 @@ fn track_plays_for_its_real_duration() {
     }
 
     player.send(Command::Stop).ok();
-    std::fs::remove_file(wav).ok();
 
     let ended_after = ended_after.expect("track never reported TrackEnded");
 
@@ -108,9 +108,8 @@ fn track_plays_for_its_real_duration() {
 /// Tags must reach the player state, not just the file name.
 #[test]
 fn track_info_carries_tags() {
-    let dir = std::env::temp_dir().join("znicz-tags-test");
-    std::fs::create_dir_all(&dir).expect("create dir");
-    let flac = dir.join("01-track.flac");
+    let dir = tempfile::tempdir().unwrap();
+    let flac = dir.path().join("01-track.flac");
 
     let made = std::process::Command::new("ffmpeg")
         .args(["-y", "-loglevel", "error"])
@@ -126,7 +125,6 @@ fn track_info_carries_tags() {
 
     if !made {
         eprintln!("ffmpeg not available, skipping");
-        std::fs::remove_dir_all(&dir).ok();
         return;
     }
 
@@ -139,14 +137,13 @@ fn track_info_carries_tags() {
         info.artist_album().as_deref(),
         Some("Real Artist — Real Album")
     );
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// Files without tags still get a usable name.
 #[test]
 fn untagged_file_falls_back_to_file_name() {
-    let wav = std::env::temp_dir().join("znicz-untagged.wav");
+    let dir = tempfile::tempdir().unwrap();
+    let wav = dir.path().join("znicz-untagged.wav");
     write_silent_wav(&wav, 44_100, 2, 1);
 
     let info = znicz_core::probe_track(&wav).expect("probe track");
@@ -172,16 +169,13 @@ fn untagged_file_falls_back_to_file_name() {
         line.contains("kbps"),
         "WAV has a known uncompressed bitrate; got {line}"
     );
-
-    std::fs::remove_file(&wav).ok();
 }
 
 /// MP3 is the case that used to print `0x1003` and `unknown depth`.
 #[test]
 fn mp3_probe_uses_a_real_format_name() {
-    let dir = std::env::temp_dir().join("znicz-mp3-probe");
-    std::fs::create_dir_all(&dir).ok();
-    let mp3 = dir.join("track.mp3");
+    let dir = tempfile::tempdir().unwrap();
+    let mp3 = dir.path().join("track.mp3");
 
     let made = std::process::Command::new("ffmpeg")
         .args(["-y", "-loglevel", "error"])
@@ -195,7 +189,6 @@ fn mp3_probe_uses_a_real_format_name() {
 
     if !made {
         eprintln!("ffmpeg/libmp3lame not available, skipping");
-        std::fs::remove_dir_all(&dir).ok();
         return;
     }
 
@@ -211,8 +204,6 @@ fn mp3_probe_uses_a_real_format_name() {
         line.contains("kbps") || info.bitrate_kbps.is_some(),
         "a CBR MP3 should report a bitrate; got {line}"
     );
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// Write a silent PCM WAV file.

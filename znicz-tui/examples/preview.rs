@@ -10,14 +10,14 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use ratatui::backend::TestBackend;
 use ratatui::Terminal;
+use ratatui::backend::TestBackend;
 use znicz_core::{
-    spawn_player, AudioConfig, Command, OutputInfo, PlaybackStatus, PlayerState, TrackInfo,
-    TrackTags,
+    AudioConfig, Command, OutputInfo, PlaybackStatus, PlayerState, TrackInfo, TrackTags,
+    spawn_player,
 };
 use znicz_tui::meta::Entry;
-use znicz_tui::{views, App, Focus, Modal};
+use znicz_tui::{App, Focus, Modal, views};
 
 fn main() {
     let mut args = std::env::args().skip(1);

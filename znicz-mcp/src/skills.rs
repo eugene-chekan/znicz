@@ -162,19 +162,17 @@ mod tests {
 
     #[test]
     fn parses_frontmatter() {
-        let dir = std::env::temp_dir().join("znicz-skill-test");
-        std::fs::create_dir_all(&dir).ok();
-        let skill_dir = dir.join("test-skill");
-        std::fs::create_dir_all(&skill_dir).ok();
+        let dir = tempfile::tempdir().unwrap();
+        let skill_dir = dir.path().join("test-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: test-skill\ndescription: A test skill\n---\n# Test\n",
         )
-        .ok();
+        .unwrap();
 
-        let registry = SkillRegistry::load(std::slice::from_ref(&dir));
+        let root = dir.path().to_path_buf();
+        let registry = SkillRegistry::load(std::slice::from_ref(&root));
         assert!(registry.entries().iter().any(|e| e.name == "test-skill"));
-
-        std::fs::remove_dir_all(&dir).ok();
     }
 }

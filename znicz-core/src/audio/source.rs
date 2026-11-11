@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{CodecParameters, CodecType, DecoderOptions, CODEC_TYPE_NULL};
+use symphonia::core::codecs::{CODEC_TYPE_NULL, CodecParameters, CodecType, DecoderOptions};
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;

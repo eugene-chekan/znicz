@@ -7,13 +7,13 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use ratatui::backend::TestBackend;
 use ratatui::Terminal;
-use znicz_core::{spawn_player, AudioConfig, Command, PlayerHandle};
+use ratatui::backend::TestBackend;
+use znicz_core::{AudioConfig, Command, PlayerHandle, spawn_player};
 use znicz_tui::help_state::HelpState;
 use znicz_tui::keys::Context;
 use znicz_tui::line_edit::LineEdit;
-use znicz_tui::{views, App, Focus, Modal, PlaylistPrompt, RadioPrompt, StationField};
+use znicz_tui::{App, Focus, Modal, PlaylistPrompt, RadioPrompt, StationField, views};
 
 /// Sizes worth checking: a default terminal, a wide one, a cramped one, and a
 /// window small enough that panes have to be dropped.

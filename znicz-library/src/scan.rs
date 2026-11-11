@@ -167,29 +167,20 @@ mod tests {
 
     #[test]
     fn progress_reports_growing_counts() {
-        let dir = std::env::temp_dir().join(format!(
-            "znicz-scan-progress-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = tempfile::tempdir().unwrap();
         // Audio by extension, unreadable inside: seen and failed, never indexed.
         for i in 0..250 {
-            std::fs::write(dir.join(format!("t{i}.flac")), b"not audio").unwrap();
+            std::fs::write(dir.path().join(format!("t{i}.flac")), b"not audio").unwrap();
         }
         let mut library = Library::open_in_memory().unwrap();
         let mut seen = Vec::new();
         let report = library
-            .scan_with_progress(&dir, |r| seen.push(r.seen))
+            .scan_with_progress(dir.path(), |r| seen.push(r.seen))
             .unwrap();
         assert_eq!(report.seen, 250);
         assert_eq!(seen.first(), Some(&0), "reports at the start");
         assert_eq!(seen.last(), Some(&250), "and at the end");
         assert!(seen.contains(&100) && seen.contains(&200), "{seen:?}");
         assert!(seen.windows(2).all(|w| w[0] <= w[1]), "{seen:?}");
-        std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -810,10 +810,7 @@ pub fn try_state(path: &Path) -> Result<PlayerState> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::player::engine::{spawn_player, AudioConfig};
-    use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-
-    static NEXT: AtomicU64 = AtomicU64::new(0);
+    use crate::player::engine::{AudioConfig, spawn_player};
 
     #[test]
     fn command_transport_errors_get_the_hint_and_player_errors_stay_verbatim() {
@@ -852,17 +849,15 @@ mod tests {
         assert!(msg.contains("znicz player stop"), "{msg}");
     }
 
-    fn advertise_path() -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "znicz-ipc-{}-{}.toml",
-            std::process::id(),
-            NEXT.fetch_add(1, AtomicOrdering::Relaxed)
-        ))
+    fn advertise_path() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("advertise.toml");
+        (dir, path)
     }
 
     #[test]
     fn client_sees_volume_set_on_the_host() {
-        let path = advertise_path();
+        let (_dir, path) = advertise_path();
         let (player, _thread) = spawn_player(AudioConfig::default());
         let _server = IpcServer::start(player.clone(), &path).expect("start ipc");
         let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
@@ -906,7 +901,7 @@ mod tests {
 
     #[test]
     fn a_resent_command_is_answered_without_applying_it_again() {
-        let path = advertise_path();
+        let (_dir, path) = advertise_path();
         let (player, _thread) = spawn_player(AudioConfig::default());
         let _server = IpcServer::start(player.clone(), &path).expect("start ipc");
         let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
@@ -923,7 +918,7 @@ mod tests {
 
     #[test]
     fn a_new_request_id_is_applied() {
-        let path = advertise_path();
+        let (_dir, path) = advertise_path();
         let (player, _thread) = spawn_player(AudioConfig::default());
         let _server = IpcServer::start(player.clone(), &path).expect("start ipc");
         let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
@@ -968,7 +963,7 @@ mod tests {
 
     #[test]
     fn a_resend_after_a_lost_reply_carries_the_same_id() {
-        let path = advertise_path();
+        let (_dir, path) = advertise_path();
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let advertise = Advertise {
             port: listener.local_addr().expect("addr").port(),
@@ -996,7 +991,6 @@ mod tests {
         client.send_blocking(Command::QueueClear).expect("resent");
         client.send_blocking(Command::QueueClear).expect("next");
         let ids = fake.join().expect("fake player");
-        let _ = fs::remove_file(&path);
 
         assert!(ids[0].is_some(), "commands carry a request id: {ids:?}");
         assert_eq!(ids[0], ids[1], "the resend reuses the id");
@@ -1005,15 +999,14 @@ mod tests {
 
     #[test]
     fn missing_advertise_is_an_error() {
-        let path = advertise_path();
-        let _ = fs::remove_file(&path);
+        let (_dir, path) = advertise_path();
         assert!(IpcClient::connect(&path, ClientRole::Agent).is_err());
         assert!(try_state(&path).is_err());
     }
 
     #[test]
     fn wrong_token_does_not_change_the_host() {
-        let path = advertise_path();
+        let (_dir, path) = advertise_path();
         let (player, _thread) = spawn_player(AudioConfig::default());
         let _server = IpcServer::start(player.clone(), &path).expect("start ipc");
         let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
@@ -1036,7 +1029,7 @@ mod tests {
 
     #[test]
     fn ui_hello_blocks_stopped_idle() {
-        let path = advertise_path();
+        let (_dir, path) = advertise_path();
         let (player, _thread) = spawn_player(AudioConfig::default());
         let _server =
             IpcServer::start_with_idle(player, &path, Duration::from_millis(80)).expect("start");
@@ -1047,7 +1040,7 @@ mod tests {
 
     #[test]
     fn agent_only_does_not_block_stopped_idle() {
-        let path = advertise_path();
+        let (_dir, path) = advertise_path();
         let (player, _thread) = spawn_player(AudioConfig::default());
         let _server =
             IpcServer::start_with_idle(player, &path, Duration::from_millis(80)).expect("start");
@@ -1064,7 +1057,7 @@ mod tests {
 
     #[test]
     fn playing_does_not_idle_without_ui() {
-        let path = advertise_path();
+        let (_dir, path) = advertise_path();
         let (player, _thread) = spawn_player(AudioConfig::default());
         {
             let arc = player.state_arc();
@@ -1079,7 +1072,7 @@ mod tests {
 
     #[test]
     fn shutdown_stops_the_server() {
-        let path = advertise_path();
+        let (_dir, path) = advertise_path();
         let (player, _thread) = spawn_player(AudioConfig::default());
         let _server = IpcServer::start(player, &path).expect("start");
         let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
@@ -1088,18 +1081,16 @@ mod tests {
         assert!(IpcClient::connect(&path, ClientRole::Agent).is_err());
     }
 
-    fn session_path() -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "znicz-ipc-session-{}-{}.toml",
-            std::process::id(),
-            NEXT.fetch_add(1, AtomicOrdering::Relaxed)
-        ))
+    fn session_path() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.toml");
+        (dir, path)
     }
 
     #[test]
     fn host_writes_session_after_client_mutes() {
-        let path = advertise_path();
-        let session = session_path();
+        let (_dir, path) = advertise_path();
+        let (_session_dir, session) = session_path();
         let (player, _thread) = spawn_player(AudioConfig::default());
         let _server = IpcServer::start_with_session(
             player,
@@ -1130,7 +1121,7 @@ mod tests {
 
     #[test]
     fn state_after_host_exit_is_an_error_not_defaults() {
-        let path = advertise_path();
+        let (_dir, path) = advertise_path();
         let (player, _thread) = spawn_player(AudioConfig::default());
         let _server = IpcServer::start(player, &path).expect("start");
         let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
@@ -1148,7 +1139,7 @@ mod tests {
 
     #[test]
     fn client_follows_a_new_host_on_the_same_advertise() {
-        let path = advertise_path();
+        let (_dir, path) = advertise_path();
         let (player_a, _thread_a) = spawn_player(AudioConfig::default());
         player_a
             .send_blocking(Command::SetVolume(0.2))
@@ -1169,7 +1160,7 @@ mod tests {
 
     #[test]
     fn ensure_callback_starts_a_host_after_idle_exit() {
-        let path = advertise_path();
+        let (_dir, path) = advertise_path();
         let (player_a, _thread_a) = spawn_player(AudioConfig::default());
         player_a
             .send_blocking(Command::SetVolume(0.2))
@@ -1229,7 +1220,7 @@ mod tests {
 
     #[test]
     fn library_ops_reach_the_host_and_status_comes_back() {
-        let path = advertise_path();
+        let (_dir, path) = advertise_path();
         let (player, _thread) = spawn_player(AudioConfig::default());
         let host = Arc::new(FakeHost::default());
         let _server = IpcServer::start_with_library(player, &path, Duration::ZERO, host.clone())
@@ -1250,7 +1241,7 @@ mod tests {
 
     #[test]
     fn without_a_host_library_requests_fail() {
-        let path = advertise_path();
+        let (_dir, path) = advertise_path();
         let (player, _thread) = spawn_player(AudioConfig::default());
         let _server = IpcServer::start(player, &path).expect("start ipc");
         let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
@@ -1261,7 +1252,7 @@ mod tests {
 
     #[test]
     fn a_running_scan_holds_off_idle_exit() {
-        let path = advertise_path();
+        let (_dir, path) = advertise_path();
         let (player, _thread) = spawn_player(AudioConfig::default());
         let host = Arc::new(FakeHost::default());
         host.busy.store(true, Ordering::SeqCst);

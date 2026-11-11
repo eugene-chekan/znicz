@@ -1,9 +1,9 @@
 //! The hint line at the bottom of the frame.
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use crate::app::App;
 use crate::footer_hits::{self, FooterLabel, PlacedHint, SEPARATOR};

@@ -1049,6 +1049,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastrand"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
+
+[[package]]
 name = "fax"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3498,6 +3504,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
+name = "tempfile"
+version = "3.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
+dependencies = [
+ "fastrand",
+ "getrandom 0.4.3",
+ "once_cell",
+ "rustix 1.1.4",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "termina"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4594,13 +4613,14 @@ checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
 name = "znicz"
-version = "0.13.3"
+version = "0.13.4"
 dependencies = [
  "clap",
  "color-eyre",
  "dirs",
  "libc",
  "serde",
+ "tempfile",
  "tokio",
  "toml",
  "tracing",
@@ -4614,7 +4634,7 @@ dependencies = [
 
 [[package]]
 name = "znicz-core"
-version = "0.13.3"
+version = "0.13.4"
 dependencies = [
  "cpal",
  "crossbeam-channel",
@@ -4623,6 +4643,7 @@ dependencies = [
  "serde",
  "serde_json",
  "symphonia",
+ "tempfile",
  "thiserror 2.0.20",
  "toml",
  "tracing",
@@ -4633,11 +4654,12 @@ dependencies = [
 
 [[package]]
 name = "znicz-library"
-version = "0.13.3"
+version = "0.13.4"
 dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.20",
  "tracing",
  "walkdir",
@@ -4646,13 +4668,14 @@ dependencies = [
 
 [[package]]
 name = "znicz-mcp"
-version = "0.13.3"
+version = "0.13.4"
 dependencies = [
  "dirs",
  "rmcp",
  "schemars",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
@@ -4663,7 +4686,7 @@ dependencies = [
 
 [[package]]
 name = "znicz-tui"
-version = "0.13.3"
+version = "0.13.4"
 dependencies = [
  "color-eyre",
  "crossbeam-channel",
@@ -4673,6 +4696,7 @@ dependencies = [
  "lofty",
  "ratatui",
  "ratatui-image",
+ "tempfile",
  "tracing",
  "unicode-width",
  "znicz-core",

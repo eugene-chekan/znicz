@@ -6,7 +6,7 @@
 use std::path::Path;
 
 use znicz_core::{
-    spawn_player, AudioConfig, AudioOutput, Command, PlaybackStatus, QueueItem, RepeatMode,
+    AudioConfig, AudioOutput, Command, PlaybackStatus, QueueItem, RepeatMode, spawn_player,
 };
 
 fn skip_hardware_playback() -> bool {
@@ -243,10 +243,9 @@ fn removing_the_playing_row_starts_the_row_that_slid_in() {
     if skip_hardware_playback() {
         return;
     }
-    let dir = std::env::temp_dir().join("znicz-remove-playing-next");
-    std::fs::create_dir_all(&dir).unwrap();
-    let a = dir.join("a.wav");
-    let b = dir.join("b.wav");
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.wav");
+    let b = dir.path().join("b.wav");
     write_silent_wav(&a, 44_100, 2, 2);
     write_silent_wav(&b, 44_100, 2, 2);
 
@@ -273,7 +272,6 @@ fn removing_the_playing_row_starts_the_row_that_slid_in() {
     );
 
     player.send_blocking(Command::Stop).ok();
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -281,10 +279,9 @@ fn removing_the_last_playing_row_stops() {
     if skip_hardware_playback() {
         return;
     }
-    let dir = std::env::temp_dir().join("znicz-remove-playing-last");
-    std::fs::create_dir_all(&dir).unwrap();
-    let a = dir.join("a.wav");
-    let b = dir.join("b.wav");
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.wav");
+    let b = dir.path().join("b.wav");
     write_silent_wav(&a, 44_100, 2, 2);
     write_silent_wav(&b, 44_100, 2, 2);
 
@@ -308,8 +305,6 @@ fn removing_the_last_playing_row_stops() {
         state.current_track.is_none(),
         "the deleted file must not keep making sound"
     );
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -317,7 +312,8 @@ fn removing_the_only_playing_row_leaves_an_empty_stopped_queue() {
     if skip_hardware_playback() {
         return;
     }
-    let wav = std::env::temp_dir().join("znicz-remove-playing-only.wav");
+    let dir = tempfile::tempdir().unwrap();
+    let wav = dir.path().join("only.wav");
     write_silent_wav(&wav, 44_100, 2, 2);
 
     let (player, _thread) = spawn_player(AudioConfig::default());
@@ -332,8 +328,6 @@ fn removing_the_only_playing_row_leaves_an_empty_stopped_queue() {
     assert_eq!(state.queue_position, 0);
     assert_eq!(state.status, PlaybackStatus::Stopped);
     assert!(state.current_track.is_none());
-
-    std::fs::remove_file(&wav).ok();
 }
 
 #[test]
@@ -341,10 +335,9 @@ fn removing_the_playing_row_while_paused_starts_the_replacement() {
     if skip_hardware_playback() {
         return;
     }
-    let dir = std::env::temp_dir().join("znicz-remove-playing-paused");
-    std::fs::create_dir_all(&dir).unwrap();
-    let a = dir.join("a.wav");
-    let b = dir.join("b.wav");
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.wav");
+    let b = dir.path().join("b.wav");
     write_silent_wav(&a, 44_100, 2, 2);
     write_silent_wav(&b, 44_100, 2, 2);
 
@@ -369,7 +362,6 @@ fn removing_the_playing_row_while_paused_starts_the_replacement() {
     );
 
     player.send_blocking(Command::Stop).ok();
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -377,7 +369,8 @@ fn a_dead_replacement_errors_and_stays_stopped() {
     if skip_hardware_playback() {
         return;
     }
-    let a = std::env::temp_dir().join("znicz-remove-dead-a.wav");
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("dead-a.wav");
     write_silent_wav(&a, 44_100, 2, 2);
 
     let (player, _thread) = spawn_player(AudioConfig::default());
@@ -399,8 +392,6 @@ fn a_dead_replacement_errors_and_stays_stopped() {
         state.current_track.is_none(),
         "the deleted file must not keep playing"
     );
-
-    std::fs::remove_file(&a).ok();
 }
 
 #[test]
@@ -443,9 +434,11 @@ fn moving_out_of_range_is_an_error() {
     player
         .send_blocking(Command::QueueAdd(paths(2)))
         .expect("queue add");
-    assert!(player
-        .send_blocking(Command::QueueMove { from: 0, to: 5 })
-        .is_err());
+    assert!(
+        player
+            .send_blocking(Command::QueueMove { from: 0, to: 5 })
+            .is_err()
+    );
     assert_eq!(player.state().queue.len(), 2);
 }
 

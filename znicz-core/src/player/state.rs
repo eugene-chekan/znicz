@@ -222,11 +222,7 @@ impl Default for PlayerState {
 impl PlayerState {
     /// Volume actually sent to the device.
     pub fn effective_volume(&self) -> f32 {
-        if self.muted {
-            0.0
-        } else {
-            self.volume
-        }
+        if self.muted { 0.0 } else { self.volume }
     }
 }
 
@@ -265,15 +261,21 @@ mod tests {
 
     #[test]
     fn format_description_names_the_channel_layout() {
-        assert!(track(48_000, 1, Some(16))
-            .format_description()
-            .ends_with("mono"));
-        assert!(track(48_000, 2, Some(16))
-            .format_description()
-            .ends_with("stereo"));
-        assert!(track(48_000, 6, Some(16))
-            .format_description()
-            .ends_with("6ch"));
+        assert!(
+            track(48_000, 1, Some(16))
+                .format_description()
+                .ends_with("mono")
+        );
+        assert!(
+            track(48_000, 2, Some(16))
+                .format_description()
+                .ends_with("stereo")
+        );
+        assert!(
+            track(48_000, 6, Some(16))
+                .format_description()
+                .ends_with("6ch")
+        );
     }
 
     #[test]

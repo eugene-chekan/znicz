@@ -1,9 +1,9 @@
 //! Saved M3U playlists: pick one to play or add, or write the queue out.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, List, ListItem, Paragraph};
-use ratatui::Frame;
 
 use crate::app::{App, Modal, PlaylistPrompt};
 use crate::format;

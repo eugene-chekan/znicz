@@ -3,8 +3,8 @@ resolver = "2"
 members = ["znicz-core", "znicz-library", "znicz-tui", "znicz-mcp", "znicz"]
 
 [workspace.package]
-version = "0.13.3"
-edition = "2021"
+version = "0.13.4"
+edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = ["Eugene Chekan"]
 repository = "https://github.com/eugene-chekan/znicz"
@@ -12,6 +12,7 @@ homepage = "https://github.com/eugene-chekan/znicz"
 rust-version = "1.85"
 
 [workspace.dependencies]
+tempfile = "3"
 unicode-normalization = "0.1"
 ureq = "3"
 symphonia = { version = "0.5", features = ["all"] }

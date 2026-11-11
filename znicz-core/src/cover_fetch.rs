@@ -1,7 +1,7 @@
 use std::io::Read;
 use std::time::Duration;
 
-use crate::metadata::{sniff_image_mime, CoverArt};
+use crate::metadata::{CoverArt, sniff_image_mime};
 
 const MAX_BYTES: u64 = 2 * 1024 * 1024;
 

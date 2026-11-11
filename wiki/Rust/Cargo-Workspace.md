@@ -83,7 +83,7 @@ into `target/distrib/`.
 
 ## Edition
 
-We use **edition 2021** so we stay compatible with current cpal/rmcp crates. Edition is not the same as compiler version. The compiler is pinned in `rust-toolchain.toml`.
+We use **edition 2024** (Rust 1.85 or newer, the workspace `rust-version`). Edition is not the same as compiler version: `rust-toolchain.toml` follows stable with 1.85 as the minimum.
 
 ## Extra reading
 

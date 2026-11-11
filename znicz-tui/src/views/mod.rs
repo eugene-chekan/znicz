@@ -11,11 +11,11 @@ mod radio;
 pub mod stage;
 mod status;
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-use ratatui::Frame;
 use znicz_core::PlayerState;
 
 use crate::app::{App, Modal};

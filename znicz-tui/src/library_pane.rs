@@ -968,11 +968,7 @@ impl LibraryPane {
             Item::Album(a) => p.is_album(a),
             Item::Track(t) => tree && p.is_track(t),
         };
-        if hit {
-            2
-        } else {
-            0
-        }
+        if hit { 2 } else { 0 }
     }
 
     fn middle_len(
@@ -1994,7 +1990,7 @@ mod tests {
         assert!(pane.expanded.contains(&TreeNodeId::Artist("Miles".into())));
         assert!(pane.tree_rows().len() >= 2);
         assert_eq!(pane.enter(strip()), EnterResult::Moved); // still on artist — toggle collapse
-                                                             // After toggle collapse, expand again and open album
+        // After toggle collapse, expand again and open album
         assert_eq!(pane.enter(strip()), EnterResult::Moved);
         pane.step(1, strip()); // album row
         assert_eq!(pane.enter(strip()), EnterResult::Moved);

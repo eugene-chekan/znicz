@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crossbeam_channel::{unbounded, Sender};
+use crossbeam_channel::{Sender, unbounded};
 
 /// What the UI needs to draw one queue row.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

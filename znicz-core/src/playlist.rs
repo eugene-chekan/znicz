@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::error::{Result, ZniczError};
 use crate::player::commands::Command;
 use crate::player::engine::PlayerOps;
-use crate::player::state::{is_http_url, QueueItem};
+use crate::player::state::{QueueItem, is_http_url};
 
 /// What a playlist file turned into.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -301,19 +301,6 @@ pub fn skipped_notice(result: &LoadResult) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-
-    fn tmp() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "znicz-playlist-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&dir).unwrap();
-        dir
-    }
 
     fn touch(dir: &Path, name: &str) -> PathBuf {
         let path = dir.join(name);
@@ -323,41 +310,45 @@ mod tests {
 
     #[test]
     fn comments_and_blank_lines_are_not_skipped_counts() {
-        let dir = tmp();
-        let a = touch(&dir, "a.flac");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let a = touch(dir, "a.flac");
         let text = format!("#EXTM3U\n\n#EXTINF:123,Title\n{}\n", a.display());
-        let result = parse(&text, &dir);
+        let result = parse(&text, dir);
         assert_eq!(result.items, vec![QueueItem::file(a)]);
         assert_eq!(result.skipped, 0);
     }
 
     #[test]
     fn relative_paths_resolve_against_the_playlist_directory() {
-        let dir = tmp();
-        let a = touch(&dir, "a.flac");
-        let result = parse("a.flac\n", &dir);
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let a = touch(dir, "a.flac");
+        let result = parse("a.flac\n", dir);
         assert_eq!(result.items, vec![QueueItem::file(a)]);
     }
 
     #[test]
     fn a_bom_is_stripped() {
-        let dir = tmp();
-        let a = touch(&dir, "a.flac");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let a = touch(dir, "a.flac");
         let mut text = String::from("\u{feff}");
         text.push_str(&format!("{}\n", a.display()));
-        let result = parse(&text, &dir);
+        let result = parse(&text, dir);
         assert_eq!(result.items, vec![QueueItem::file(a)]);
     }
 
     #[test]
     fn http_and_https_lines_become_stream_items() {
-        let dir = tmp();
-        let a = touch(&dir, "a.flac");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let a = touch(dir, "a.flac");
         let text = format!(
             "http://example.com/x.mp3\nHTTPS://example.com/y\n{}\n",
             a.display()
         );
-        let result = parse(&text, &dir);
+        let result = parse(&text, dir);
         assert_eq!(
             result.items,
             vec![
@@ -371,13 +362,14 @@ mod tests {
 
     #[test]
     fn extinf_names_the_next_stream_and_is_ignored_for_files() {
-        let dir = tmp();
-        let a = touch(&dir, "a.flac");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let a = touch(dir, "a.flac");
         let text = format!(
             "#EXTM3U\n#EXTINF:-1,Live\n# a comment\nhttp://127.0.0.1:1/s\n#EXTINF:123,Ignored\n{}\n",
             a.display()
         );
-        let result = parse(&text, &dir);
+        let result = parse(&text, dir);
         assert_eq!(
             result.items,
             vec![
@@ -390,17 +382,19 @@ mod tests {
 
     #[test]
     fn ftp_and_missing_files_are_still_skipped() {
-        let dir = tmp();
-        let a = touch(&dir, "a.flac");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let a = touch(dir, "a.flac");
         let text = format!("ftp://x\nmissing.flac\n{}\n", a.display());
-        let result = parse(&text, &dir);
+        let result = parse(&text, dir);
         assert_eq!(result.items, vec![QueueItem::file(a)]);
         assert_eq!(result.skipped, 2);
     }
 
     #[test]
     fn a_url_only_playlist_is_not_empty() {
-        let result = parse("http://127.0.0.1:1/s\n", &tmp());
+        let tmp = tempfile::tempdir().unwrap();
+        let result = parse("http://127.0.0.1:1/s\n", tmp.path());
         assert_eq!(
             result.items,
             vec![QueueItem::stream(
@@ -432,19 +426,21 @@ mod tests {
 
     #[test]
     fn empty_result_when_nothing_playable() {
-        let result = parse("# only a comment\nftp://x\n", &tmp());
+        let tmp = tempfile::tempdir().unwrap();
+        let result = parse("# only a comment\nftp://x\n", tmp.path());
         assert!(result.items.is_empty());
         assert_eq!(result.skipped, 1);
     }
 
     #[test]
     fn write_then_parse_round_trips_absolute_paths() {
-        let dir = tmp();
-        let a = touch(&dir, "a.flac");
-        let b = touch(&dir, "b.flac");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let a = touch(dir, "a.flac");
+        let b = touch(dir, "b.flac");
         let text = write_text(&[QueueItem::file(a.clone()), QueueItem::file(b.clone())]);
         assert!(!text.contains('\u{feff}'));
-        let result = parse(&text, &dir);
+        let result = parse(&text, dir);
         // `write_text` writes `canonicalize()` output. On Windows that adds a
         // `\\?\` prefix and may expand 8.3 names (`RUNNER~1`), so the strings
         // are not the temp paths we started with. The files are the same.
@@ -473,20 +469,22 @@ mod tests {
 
     #[test]
     fn rename_saved_moves_the_file_and_keeps_m3u8() {
-        let dir = tmp();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
         fs::write(dir.join("evening.m3u8"), "x\n").unwrap();
-        let stem = rename_saved(&dir, "evening", "night").unwrap();
+        let stem = rename_saved(dir, "evening", "night").unwrap();
         assert_eq!(stem, "night");
         assert!(!dir.join("evening.m3u8").is_file());
         assert!(dir.join("night.m3u8").is_file());
-        assert_eq!(list_saved(&dir), vec!["night".to_string()]);
+        assert_eq!(list_saved(dir), vec!["night".to_string()]);
     }
 
     #[test]
     fn copy_saved_duplicates_the_file() {
-        let dir = tmp();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
         fs::write(dir.join("evening.m3u"), "track\n").unwrap();
-        let stem = copy_saved(&dir, "evening", "night").unwrap();
+        let stem = copy_saved(dir, "evening", "night").unwrap();
         assert_eq!(stem, "night");
         assert_eq!(
             fs::read_to_string(dir.join("evening.m3u")).unwrap(),
@@ -496,49 +494,54 @@ mod tests {
 
     #[test]
     fn copy_saved_refuses_the_same_name() {
-        let dir = tmp();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
         fs::write(dir.join("evening.m3u"), "").unwrap();
-        let err = copy_saved(&dir, "evening", "evening").unwrap_err();
+        let err = copy_saved(dir, "evening", "evening").unwrap_err();
         assert!(err.to_string().contains("already exists"));
     }
 
     #[test]
     fn remove_saved_deletes_the_file() {
-        let dir = tmp();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
         fs::write(dir.join("evening.m3u"), "").unwrap();
-        remove_saved(&dir, "evening").unwrap();
-        assert!(list_saved(&dir).is_empty());
-        let err = remove_saved(&dir, "evening").unwrap_err();
+        remove_saved(dir, "evening").unwrap();
+        assert!(list_saved(dir).is_empty());
+        let err = remove_saved(dir, "evening").unwrap_err();
         assert!(err.to_string().contains("no playlist named evening"));
     }
 
     #[test]
     fn rename_saved_refuses_a_name_that_already_exists() {
-        let dir = tmp();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
         fs::write(dir.join("a.m3u"), "").unwrap();
         fs::write(dir.join("b.m3u"), "").unwrap();
-        let err = rename_saved(&dir, "a", "b").unwrap_err();
+        let err = rename_saved(dir, "a", "b").unwrap_err();
         assert!(err.to_string().contains("already exists"));
         assert!(dir.join("a.m3u").is_file());
     }
 
     #[test]
     fn rename_saved_errors_when_the_old_name_is_missing() {
-        let dir = tmp();
-        let err = rename_saved(&dir, "gone", "night").unwrap_err();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let err = rename_saved(dir, "gone", "night").unwrap_err();
         assert!(err.to_string().contains("no playlist named gone"));
     }
 
     #[test]
     fn list_saved_is_sorted_stems_only() {
-        let dir = tmp();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
         fs::write(dir.join("b.m3u"), "").unwrap();
         fs::write(dir.join("a.m3u8"), "").unwrap();
         fs::write(dir.join("Evening.M3U"), "").unwrap();
         fs::create_dir(dir.join("folder.m3u")).unwrap();
         fs::write(dir.join("ignore.txt"), "").unwrap();
         assert_eq!(
-            list_saved(&dir),
+            list_saved(dir),
             vec!["Evening".to_string(), "a".to_string(), "b".to_string()]
         );
     }
@@ -564,8 +567,9 @@ mod tests {
 
     #[test]
     fn write_text_emits_extinf_for_named_streams_and_bare_urls() {
-        let dir = tmp();
-        let a = touch(&dir, "a.flac");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let a = touch(dir, "a.flac");
         let text = write_text(&[
             QueueItem::file(a.clone()),
             QueueItem::stream("Live", "http://127.0.0.1:1/s"),
@@ -581,7 +585,7 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("http://example.com/bare\n"), "{text}");
-        let parsed = parse(&text, &dir);
+        let parsed = parse(&text, dir);
         assert_eq!(
             parsed.items,
             vec![
@@ -595,8 +599,9 @@ mod tests {
 
     #[test]
     fn empty_apply_leaves_the_queue_alone() {
-        let dir = tmp();
-        let a = touch(&dir, "a.flac");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let a = touch(dir, "a.flac");
         let (player, _thread) = crate::spawn_player(crate::AudioConfig::default());
         player
             .send_blocking(Command::QueueAdd(vec![

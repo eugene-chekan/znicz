@@ -28,6 +28,9 @@ tracing-subscriber.workspace = true
 tokio.workspace = true
 dirs.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 # Used only to point stderr at a log file while the TUI owns the screen, so
 # ALSA's chatter cannot draw over the interface.
 [target.'cfg(unix)'.dependencies]

@@ -254,17 +254,10 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "znicz-service-{name}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::canonicalize(&dir).unwrap()
+    fn temp_dir() -> tempfile::TempDir {
+        // Canonical, so folder paths compare equal where the temp dir is a symlink.
+        let base = std::fs::canonicalize(std::env::temp_dir()).unwrap();
+        tempfile::tempdir_in(base).unwrap()
     }
 
     fn music(root: &Path, name: &str, files: usize) -> PathBuf {
@@ -292,7 +285,8 @@ mod tests {
 
     #[test]
     fn a_crashing_job_is_reported_and_the_worker_lives_on() {
-        let root = temp_dir("panic");
+        let dir = temp_dir();
+        let root = dir.path();
         let service = LibraryService::open(&root.join("library.db")).unwrap();
         service.apply_panic_for_test();
         let status = wait(&service, 1);
@@ -316,8 +310,9 @@ mod tests {
 
     #[test]
     fn adding_a_folder_scans_and_remembers_it() {
-        let root = temp_dir("add");
-        let jazz = music(&root, "jazz", 3);
+        let dir = temp_dir();
+        let root = dir.path();
+        let jazz = music(root, "jazz", 3);
         let db = root.join("library.db");
         {
             let service = LibraryService::open(&db).unwrap();
@@ -334,8 +329,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_symlinked_folder_is_remembered_as_written() {
-        let root = temp_dir("symlink");
-        let real = music(&root, "real", 1);
+        let dir = temp_dir();
+        let root = dir.path();
+        let real = music(root, "real", 1);
         let link = root.join("link");
         std::os::unix::fs::symlink(&real, &link).unwrap();
         let service = LibraryService::open(&root.join("library.db")).unwrap();
@@ -346,7 +342,8 @@ mod tests {
 
     #[test]
     fn a_path_that_is_not_a_folder_is_refused() {
-        let root = temp_dir("refuse");
+        let dir = temp_dir();
+        let root = dir.path();
         let service = LibraryService::open(&root.join("library.db")).unwrap();
         let err = service
             .apply(LibraryOp::AddFolder {
@@ -359,20 +356,22 @@ mod tests {
 
     #[test]
     fn each_queued_folder_finishes() {
-        let root = temp_dir("queue");
+        let dir = temp_dir();
+        let root = dir.path();
         let service = LibraryService::open(&root.join("library.db")).unwrap();
-        add(&service, &music(&root, "a", 1));
-        add(&service, &music(&root, "b", 1));
+        add(&service, &music(root, "a", 1));
+        add(&service, &music(root, "b", 1));
         let status = wait(&service, 2);
         assert_eq!(status.folders.len(), 2);
     }
 
     #[test]
     fn rescan_skips_missing_folders_and_prunes_only_what_it_scanned() {
-        let root = temp_dir("rescan");
+        let dir = temp_dir();
+        let root = dir.path();
         let db = root.join("library.db");
-        let here = music(&root, "here", 1);
-        let away = music(&root, "away", 0);
+        let here = music(root, "here", 1);
+        let away = music(root, "away", 0);
         let service = LibraryService::open(&db).unwrap();
         add(&service, &here);
         add(&service, &away);
@@ -391,21 +390,26 @@ mod tests {
         let last = wait(&service, 3).last.unwrap();
         assert_eq!(last.skipped, std::slice::from_ref(&away));
         assert_eq!(last.removed, 1);
-        assert!(reader
-            .get_by_path(&away.join("kept.flac"))
-            .unwrap()
-            .is_some());
-        assert!(reader
-            .get_by_path(&here.join("deleted.flac"))
-            .unwrap()
-            .is_none());
+        assert!(
+            reader
+                .get_by_path(&away.join("kept.flac"))
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            reader
+                .get_by_path(&here.join("deleted.flac"))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
     fn a_folder_that_scans_empty_keeps_its_tracks() {
-        let root = temp_dir("empty");
+        let dir = temp_dir();
+        let root = dir.path();
         let db = root.join("library.db");
-        let nas = music(&root, "nas", 0);
+        let nas = music(root, "nas", 0);
         let service = LibraryService::open(&db).unwrap();
         add(&service, &nas);
         wait(&service, 1);
@@ -426,7 +430,8 @@ mod tests {
 
     #[test]
     fn prune_drops_missing_files_anywhere() {
-        let root = temp_dir("prune");
+        let dir = temp_dir();
+        let root = dir.path();
         let db = root.join("library.db");
         let service = LibraryService::open(&db).unwrap();
         Library::open(&db)
@@ -439,7 +444,8 @@ mod tests {
 
     #[test]
     fn a_pruning_service_never_looks_idle_before_it_finishes() {
-        let root = temp_dir("busy");
+        let dir = temp_dir();
+        let root = dir.path();
         let db = root.join("library.db");
         let service = LibraryService::open(&db).unwrap();
         {
@@ -470,9 +476,10 @@ mod tests {
 
     #[test]
     fn a_failing_folder_does_not_stop_the_rest_of_a_rescan() {
-        let root = temp_dir("failing");
-        let bad = music(&root, "bad", 0);
-        let good = music(&root, "good", 0);
+        let dir = temp_dir();
+        let root = dir.path();
+        let bad = music(root, "bad", 0);
+        let good = music(root, "good", 0);
         let mut library = Library::open(&root.join("library.db")).unwrap();
         library.remember_folder(&bad).unwrap();
         library.remember_folder(&good).unwrap();
@@ -495,13 +502,17 @@ mod tests {
         assert_eq!(tried, [bad.clone(), good.clone()]);
         assert_eq!(summary.skipped, std::slice::from_ref(&bad));
         assert_eq!(summary.removed, 1);
-        assert!(library
-            .get_by_path(&bad.join("kept.flac"))
-            .unwrap()
-            .is_some());
-        assert!(library
-            .get_by_path(&good.join("deleted.flac"))
-            .unwrap()
-            .is_none());
+        assert!(
+            library
+                .get_by_path(&bad.join("kept.flac"))
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            library
+                .get_by_path(&good.join("deleted.flac"))
+                .unwrap()
+                .is_none()
+        );
     }
 }

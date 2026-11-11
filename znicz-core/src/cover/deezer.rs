@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 
-use crate::cover::http::{get_json, retryable, Fetched};
+use crate::cover::http::{Fetched, get_json, retryable};
 use crate::cover::title::{artist_attempts, artist_matches, search_key, searchable};
 use crate::cover::{CoverSource, Found, StreamQuery};
 
@@ -103,8 +103,8 @@ impl CoverSource for DeezerSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cover::http::test_server::serve;
     use crate::cover::StreamQuery;
+    use crate::cover::http::test_server::serve;
 
     fn query(title: Option<&str>, search: bool) -> StreamQuery {
         StreamQuery {
