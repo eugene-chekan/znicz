@@ -1,4 +1,4 @@
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,7 +21,9 @@ use znicz_tui::{App, Resume, RunOutcome, TuiConfig, Updates};
 mod daemon;
 mod update;
 
-use daemon::{acquire_player_lock, clear_stale_player_files, ensure_player, player_is_up};
+use daemon::{
+    PLAYER_EXIT_TIMEOUT, acquire_player_lock, clear_stale_player_files, ensure_player, player_is_up,
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "znicz", version, about = "Audiophile TUI music player")]
@@ -274,6 +276,8 @@ fn main() -> color_eyre::Result<()> {
             )) as Arc<dyn Updates>
         }),
         resume: cli.resume.as_deref().and_then(parse_resume),
+        config_file: cli.config.clone(),
+        cli_device: cli.device.clone(),
     };
     let config_file = cli.config.clone();
 
@@ -717,6 +721,10 @@ fn load_playlist_and_run(
 struct TuiExtras {
     updates: Option<Arc<dyn Updates>>,
     resume: Option<Resume>,
+    /// `--config` as given on this run, passed on to a restarted binary.
+    config_file: Option<PathBuf>,
+    /// `--device` as given on this run (not the config file's), for a restart.
+    cli_device: Option<String>,
 }
 
 fn run_tui_with_client(
@@ -751,7 +759,7 @@ fn run_tui_with_client(
     if let Some(version) = app
         .player
         .player_version()
-        .filter(|v| v != env!("CARGO_PKG_VERSION"))
+        .filter(|v| update::is_newer(v, env!("CARGO_PKG_VERSION")))
     {
         app.toasts.info(format!(
             "Player runs {version} · it updates when it next restarts"
@@ -760,12 +768,18 @@ fn run_tui_with_client(
     if let Some(resume) = extras.resume {
         apply_resume(&app.player, resume);
     }
+    let restart_config = extras.config_file;
+    let restart_device = extras.cli_device;
     let outcome = app.run();
     drop(log);
 
     match outcome? {
         RunOutcome::Quit => Ok(()),
-        RunOutcome::Restart { resume } => restart(resume),
+        RunOutcome::Restart { resume } => restart(restart_args(
+            restart_config.as_deref(),
+            restart_device.as_deref(),
+            resume,
+        )),
     }
 }
 
@@ -799,22 +813,21 @@ pub(crate) fn parse_resume(s: &str) -> Option<Resume> {
     parsed
 }
 
-/// The arguments for the restarted binary: this run's, minus any old
-/// `--resume`, plus the new one.
+/// The arguments for the restarted binary: the global options only, so the
+/// start-up action (files, playlist, station) does not run again.
 pub(crate) fn restart_args(
-    args: impl IntoIterator<Item = OsString>,
+    config: Option<&Path>,
+    device: Option<&str>,
     resume: Option<Resume>,
 ) -> Vec<OsString> {
     let mut out = Vec::new();
-    let mut args = args.into_iter();
-    while let Some(arg) = args.next() {
-        if arg.as_os_str() == OsStr::new("--resume") {
-            args.next();
-        } else if arg.to_str().is_some_and(|s| s.starts_with("--resume=")) {
-            continue;
-        } else {
-            out.push(arg);
-        }
+    if let Some(config) = config {
+        out.push(OsString::from("--config"));
+        out.push(config.as_os_str().to_os_string());
+    }
+    if let Some(device) = device {
+        out.push(OsString::from("--device"));
+        out.push(OsString::from(device));
     }
     if let Some(resume) = resume {
         out.push(OsString::from("--resume"));
@@ -826,21 +839,15 @@ pub(crate) fn restart_args(
     out
 }
 
-/// On Linux `current_exe()` reads `/proc/self/exe`, which after the installer
-/// replaced the file names the old inode as `… (deleted)`. Strip that.
-pub(crate) fn live_exe_path(p: PathBuf) -> PathBuf {
-    let stripped = p
-        .to_str()
-        .and_then(|s| s.strip_suffix(" (deleted)"))
-        .map(PathBuf::from);
-    stripped.unwrap_or(p)
-}
-
 /// Start the updated binary. Unix replaces this process (returns only on
 /// failure); Windows runs it as a child and exits with its status.
-fn restart(resume: Option<Resume>) -> color_eyre::Result<()> {
-    let exe = live_exe_path(std::env::current_exe()?);
-    let args = restart_args(std::env::args_os().skip(1), resume);
+fn restart(args: Vec<OsString>) -> color_eyre::Result<()> {
+    // The TUI may have just asked the player to stop; let it release its lock
+    // so the new player can start right away. Best effort: no paths, no wait.
+    if let (Ok(ipc), Ok(lock)) = (ipc_path(), player_lock_path()) {
+        daemon::wait_for_player_exit(&ipc, &lock, PLAYER_EXIT_TIMEOUT);
+    }
+    let exe = daemon::live_exe_path(std::env::current_exe()?);
     let mut cmd = std::process::Command::new(exe);
     cmd.args(args);
     #[cfg(unix)]
@@ -1125,63 +1132,19 @@ mod tests {
     }
 
     #[test]
-    fn restart_args_without_resume_keeps_the_args() {
-        let args = os(&["play", "--device", "hw:1", "a.flac"]);
-        assert_eq!(restart_args(args.clone(), None), args);
-    }
-
-    #[test]
-    fn restart_args_appends_resume() {
+    fn restart_args_carry_only_the_global_options() {
         let resume = Resume {
             index: 3,
-            seconds: 125,
-        };
-        assert_eq!(
-            restart_args(os(&["a.flac"]), Some(resume)),
-            os(&["a.flac", "--resume", "3:125"])
-        );
-    }
-
-    #[test]
-    fn restart_args_replaces_an_old_resume() {
-        let resume = Resume {
-            index: 2,
             seconds: 7,
         };
         assert_eq!(
-            restart_args(os(&["--resume", "1:2", "a.flac"]), Some(resume)),
-            os(&["a.flac", "--resume", "2:7"])
-        );
-        assert_eq!(
-            restart_args(os(&["--resume=1:2", "a.flac"]), None),
-            os(&["a.flac"])
+            restart_args(Some(Path::new("p.toml")), Some("d"), Some(resume)),
+            os(&["--config", "p.toml", "--device", "d", "--resume", "3:7"])
         );
     }
 
     #[test]
-    fn restart_args_keeps_other_args_in_order() {
-        let resume = Resume {
-            index: 0,
-            seconds: 0,
-        };
-        assert_eq!(
-            restart_args(
-                os(&["--device", "x", "--resume=1:2", "--config", "c.toml"]),
-                Some(resume)
-            ),
-            os(&["--device", "x", "--config", "c.toml", "--resume", "0:0"])
-        );
-    }
-
-    #[test]
-    fn live_exe_path_strips_the_deleted_suffix() {
-        assert_eq!(
-            live_exe_path(PathBuf::from("/a/znicz (deleted)")),
-            PathBuf::from("/a/znicz")
-        );
-        assert_eq!(
-            live_exe_path(PathBuf::from("/a/znicz")),
-            PathBuf::from("/a/znicz")
-        );
+    fn restart_args_are_empty_without_options() {
+        assert!(restart_args(None, None, None).is_empty());
     }
 }

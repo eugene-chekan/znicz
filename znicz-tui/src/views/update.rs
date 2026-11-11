@@ -65,7 +65,7 @@ fn body(app: &App) -> Text<'static> {
             lines.extend(notes.lines().map(str::to_string));
             lines.push(String::new());
             lines.push(NOT_INSTALLED.to_string());
-            lines.push(app.updates.as_ref().map(|u| u.hint()).unwrap_or_default());
+            lines.push(app.update_hint.clone());
         }
         UpdateStep::Installing => lines.push(format!("Updating to {version}…")),
         UpdateStep::Failed(error) => {

@@ -29,7 +29,7 @@ tracing-subscriber.workspace = true
 tokio.workspace = true
 dirs.workspace = true
 ureq.workspace = true
-semver = "1"
+semver.workspace = true
 tempfile.workspace = true
 
 # Used only to point stderr at a log file while the TUI owns the screen, so

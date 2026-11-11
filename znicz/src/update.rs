@@ -9,6 +9,8 @@ use color_eyre::eyre::{bail, eyre};
 use serde::{Deserialize, Serialize};
 use znicz_tui::{Release, Updates};
 
+use crate::daemon;
+
 pub(crate) mod installer;
 
 pub(crate) use installer::remove_old_exe;
@@ -55,9 +57,17 @@ pub(crate) fn version_from_tag(tag: &str) -> &str {
     tag.strip_prefix('v').unwrap_or(tag)
 }
 
+/// Whether `exe` sits in cargo's output, `…/target/debug` or `…/target/release`.
+fn is_cargo_output(exe: &Path) -> bool {
+    let parts: Vec<_> = exe.components().map(|c| c.as_os_str()).collect();
+    parts
+        .windows(2)
+        .any(|pair| pair[0] == "target" && (pair[1] == "debug" || pair[1] == "release"))
+}
+
 /// The hint for a copy the installer did not make.
 pub(crate) fn update_hint(exe: &Path) -> String {
-    if exe.components().any(|part| part.as_os_str() == "target") {
+    if is_cargo_output(exe) {
         CHECKOUT_HINT.to_string()
     } else if cfg!(windows) {
         WINDOWS_INSTALLER.to_string()
@@ -211,7 +221,8 @@ impl Updates for GithubUpdates {
     }
 
     fn hint(&self) -> String {
-        update_hint(&std::env::current_exe().unwrap_or_default())
+        let exe = std::env::current_exe().unwrap_or_default();
+        update_hint(&daemon::live_exe_path(exe))
     }
 
     fn notified(&self) -> Option<String> {
@@ -355,6 +366,13 @@ pub(crate) mod tests {
     fn update_hint_points_a_checkout_at_cargo() {
         let hint = update_hint(Path::new("/home/x/znicz/target/release/znicz"));
         assert!(hint.contains("git pull && cargo build --release"), "{hint}");
+    }
+
+    #[test]
+    fn update_hint_needs_cargo_output_dirs_not_any_target_dir() {
+        let hint = update_hint(Path::new("/home/x/target/bin/znicz"));
+        assert!(hint.contains("znicz-installer"), "{hint}");
+        assert!(!hint.contains("cargo build"), "{hint}");
     }
 
     #[test]

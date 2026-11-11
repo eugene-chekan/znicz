@@ -30,7 +30,8 @@
   `Znicz 0.14.0 is available · ? then u to update`.
 - Help's bottom-left version title becomes ` znicz 0.13.4 → 0.14.0 `, and in
   Help (not while filtering) `u` opens the **Update** modal. The Help key list
-  gets a row `u  update to the new version` only while an update is known.
+  always lists the `u` row as `update (when one is available)`, because help
+  rows cannot see app state; `u` does nothing when no update is known.
 
 ## Update modal (`Modal::Update`)
 

@@ -385,6 +385,8 @@ pub struct App {
     pub(crate) update_scroll: usize,
     /// The install's result, until the install thread reports it.
     install_rx: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    /// How to update by hand when this copy cannot install; read once per opening.
+    pub(crate) update_hint: String,
     /// How the TUI ends; `Restart` once an update asks for it.
     pub outcome: RunOutcome,
 }
@@ -650,6 +652,7 @@ impl App {
             update_step: UpdateStep::Offer,
             update_scroll: 0,
             install_rx: None,
+            update_hint: String::new(),
             outcome: RunOutcome::Quit,
         }
     }
@@ -723,14 +726,19 @@ impl App {
         }
     }
 
-    /// Opened from Help with `u`.
+    /// Opened from Help with `u`. A running install, or a finished one, keeps its
+    /// step: the modal may have been closed while it worked.
     pub(crate) fn open_update(&mut self) {
-        let installable = self.updates.as_ref().is_some_and(|u| u.can_install());
-        self.update_step = if installable {
-            UpdateStep::Offer
-        } else {
-            UpdateStep::NotInstallable
-        };
+        let keeps_step = self.install_rx.is_some() || self.update_step == UpdateStep::Done;
+        if !keeps_step {
+            let installable = self.updates.as_ref().is_some_and(|u| u.can_install());
+            self.update_step = if installable {
+                UpdateStep::Offer
+            } else {
+                UpdateStep::NotInstallable
+            };
+        }
+        self.update_hint = self.updates.as_ref().map(|u| u.hint()).unwrap_or_default();
         self.update_scroll = 0;
         self.modal = Modal::Update;
     }
@@ -748,9 +756,23 @@ impl App {
             }
         };
         self.install_rx = None;
+        // With the modal closed nothing on screen would show the result, so say it in a toast.
+        let modal_open = self.modal == Modal::Update;
         self.update_step = match result {
-            Ok(()) => UpdateStep::Done,
-            Err(error) => UpdateStep::Failed(error),
+            Ok(()) => {
+                if !modal_open {
+                    let version = self.update.as_ref().map_or("", |r| r.version.as_str());
+                    self.toasts
+                        .info(format!("Znicz {version} installed · ? then u to restart"));
+                }
+                UpdateStep::Done
+            }
+            Err(error) => {
+                if !modal_open {
+                    self.toasts.error(format!("Update failed: {error}"));
+                }
+                UpdateStep::Failed(error)
+            }
         };
     }
 
@@ -898,7 +920,9 @@ impl App {
                 self.message_h_offset = 0;
             }
             Modal::Help => self.help.scroll_by(delta),
-            Modal::Update => {}
+            Modal::Update => {
+                self.update_scroll = self.update_scroll.saturating_add_signed(delta);
+            }
             Modal::None => match self.focus {
                 Focus::Library if self.view == View::Browse => {
                     self.library.step(delta, self.library_strip())
@@ -939,6 +963,10 @@ impl App {
             return;
         }
         if self.hits.close.is_some_and(|r| point_in(r, column, row)) {
+            // An install cannot be abandoned half-way; its close waits for the result.
+            if self.modal == Modal::Update && self.update_step == UpdateStep::Installing {
+                return;
+            }
             if self.modal != Modal::None {
                 self.close_modal();
             } else if self.queue_open {
@@ -1196,7 +1224,10 @@ impl App {
     /// Keys while the Update modal is open.
     fn on_update_key(&mut self, key: KeyEvent) {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-            self.should_quit = true;
+            // Quitting mid-install could leave a half-written copy; the install ends on its own.
+            if self.update_step != UpdateStep::Installing {
+                self.should_quit = true;
+            }
             return;
         }
         match self.update_step {
@@ -3016,5 +3047,124 @@ mod tests {
         let mut app = app_offering(Arc::new(FakeUpdates::offering("9.9.9")));
         app.open_update();
         assert!(rendered(&mut app).contains("Update to 9.9.9"));
+    }
+
+    fn click(app: &mut App, column: u16, row: u16) {
+        app.on_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        });
+    }
+
+    #[test]
+    fn the_close_button_keeps_an_install_running_modal_open() {
+        let mut app = app_offering(Arc::new(FakeUpdates::offering("9.9.9")));
+        app.open_update();
+        app.hits.close = Some(Rect::new(10, 10, 3, 1));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.update_step, UpdateStep::Installing);
+        click(&mut app, 11, 10);
+        assert_eq!(app.modal, Modal::Update);
+        assert_eq!(app.update_step, UpdateStep::Installing);
+    }
+
+    #[test]
+    fn the_close_button_still_closes_the_update_modal_when_not_installing() {
+        let mut app = app_offering(Arc::new(FakeUpdates::offering("9.9.9")));
+        app.open_update();
+        app.hits.close = Some(Rect::new(10, 10, 3, 1));
+        click(&mut app, 11, 10);
+        assert_eq!(app.modal, Modal::None);
+    }
+
+    #[test]
+    fn reopening_the_update_modal_keeps_a_running_install_and_a_done_one() {
+        let mut app = app_offering(Arc::new(FakeUpdates::offering("9.9.9")));
+        app.open_update();
+        press(&mut app, KeyCode::Enter);
+        app.modal = Modal::None;
+        app.open_update();
+        assert_eq!(app.update_step, UpdateStep::Installing);
+
+        app.update_step = UpdateStep::Done;
+        app.modal = Modal::None;
+        app.open_update();
+        assert_eq!(app.update_step, UpdateStep::Done);
+    }
+
+    #[test]
+    fn an_install_that_ends_with_the_modal_closed_is_announced_in_a_toast() {
+        let mut app = app_offering(Arc::new(FakeUpdates::offering("9.9.9")));
+        app.open_update();
+        press(&mut app, KeyCode::Enter);
+        app.modal = Modal::None;
+        wait_for_install(&mut app);
+        assert!(
+            toast_texts(&app)
+                .iter()
+                .any(|t| t == "Znicz 9.9.9 installed · ? then u to restart"),
+            "{:?}",
+            toast_texts(&app)
+        );
+    }
+
+    #[test]
+    fn a_failed_install_with_the_modal_closed_shows_an_error_toast() {
+        let fake = FakeUpdates::offering("9.9.9");
+        *fake.install_result.lock().unwrap() = Err("boom".into());
+        let mut app = app_offering(Arc::new(fake));
+        app.open_update();
+        press(&mut app, KeyCode::Enter);
+        app.modal = Modal::None;
+        wait_for_install(&mut app);
+        assert!(
+            toast_texts(&app).iter().any(|t| t == "Update failed: boom"),
+            "{:?}",
+            toast_texts(&app)
+        );
+    }
+
+    #[test]
+    fn ctrl_c_does_not_quit_while_an_install_runs() {
+        let mut app = app_offering(Arc::new(FakeUpdates::offering("9.9.9")));
+        app.open_update();
+        press(&mut app, KeyCode::Enter);
+        app.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert!(!app.should_quit);
+        assert_eq!(app.update_step, UpdateStep::Installing);
+    }
+
+    #[test]
+    fn ctrl_c_still_quits_from_the_update_modal_when_idle() {
+        let mut app = app_offering(Arc::new(FakeUpdates::offering("9.9.9")));
+        app.open_update();
+        app.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn the_hint_is_read_once_when_the_modal_opens() {
+        let mut fake = FakeUpdates::offering("9.9.9");
+        fake.installable = false;
+        let mut app = app_offering(Arc::new(fake));
+        assert!(app.update_hint.is_empty());
+        app.open_update();
+        assert_eq!(app.update_step, UpdateStep::NotInstallable);
+        assert_eq!(app.update_hint, "rebuild it");
+    }
+
+    #[test]
+    fn the_wheel_scrolls_the_update_notes() {
+        let mut app = app_offering(Arc::new(FakeUpdates::offering("9.9.9")));
+        app.open_update();
+        app.on_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.update_scroll, 1);
     }
 }

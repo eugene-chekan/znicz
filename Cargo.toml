@@ -12,6 +12,7 @@ homepage = "https://github.com/eugene-chekan/znicz"
 rust-version = "1.85"
 
 [workspace.dependencies]
+semver = "1"
 tempfile = "3"
 unicode-normalization = "0.1"
 ureq = "3"

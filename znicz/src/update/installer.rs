@@ -155,6 +155,9 @@ pub(crate) fn run_installer(
     } else {
         stderr
     };
+    if detail.is_empty() {
+        return Err(format!("installer exited with {}", output.status));
+    }
     Err(format!("installer exited with {}: {detail}", output.status))
 }
 
@@ -169,20 +172,43 @@ fn last_lines(bytes: &[u8]) -> String {
     lines[lines.len().saturating_sub(TAIL_LINES)..].join("\n")
 }
 
-/// `znicz.exe` → `znicz.exe.old`.
-pub(crate) fn old_exe_path(exe: &Path) -> PathBuf {
+/// `znicz.exe` → `znicz.exe.old-<stamp>`. The stamp keeps a name free even when
+/// an earlier old copy is still in use by a running player.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn old_exe_path(exe: &Path, stamp: u128) -> PathBuf {
     let mut name = exe.file_name().unwrap_or_default().to_os_string();
-    name.push(".old");
+    name.push(format!(".old-{stamp}"));
     exe.with_file_name(name)
 }
 
-/// Deletes `<current exe>.old` left by an earlier Windows update. Best effort.
+/// The files in `dir` named `<exe_name>.old…`: old copies left by Windows updates.
+pub(crate) fn old_exe_names(dir: &Path, exe_name: &str) -> Vec<PathBuf> {
+    let prefix = format!("{exe_name}.old");
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with(&prefix))
+        })
+        .map(|entry| entry.path())
+        .collect()
+}
+
+/// Deletes the old copies of the current exe left by earlier Windows updates.
+/// Best effort: a copy still in use stays until a later start.
 pub(crate) fn remove_old_exe() {
     let Ok(exe) = std::env::current_exe() else {
         return;
     };
-    let old = old_exe_path(&exe);
-    if old.exists() {
+    let (Some(dir), Some(name)) = (exe.parent(), exe.file_name().and_then(|n| n.to_str())) else {
+        return;
+    };
+    for old in old_exe_names(dir, name) {
         let _ = std::fs::remove_file(old);
     }
 }
@@ -192,7 +218,8 @@ pub(crate) fn can_install() -> bool {
     let Some(receipt) = receipt_path().and_then(|path| load_receipt(&path)) else {
         return false;
     };
-    std::env::current_exe().is_ok_and(|exe| is_installed_copy(&exe, &receipt))
+    std::env::current_exe()
+        .is_ok_and(|exe| is_installed_copy(&crate::daemon::live_exe_path(exe), &receipt))
 }
 
 /// Installs `version` into the receipt's install directory. `capture` as in `run_installer`.
@@ -223,14 +250,28 @@ pub(crate) fn install_release(version: &str, capture: bool) -> Result<(), String
 #[cfg(windows)]
 fn move_running_exe_aside() -> Result<(PathBuf, PathBuf), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let old = old_exe_path(&exe);
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis());
+    let old = old_exe_path(&exe, stamp);
     std::fs::rename(&exe, &old).map_err(|e| e.to_string())?;
     Ok((exe, old))
 }
 
+/// Put the old copy back after a failed install, unless the installer already
+/// wrote a new copy at the original path (then the old one is left for later).
 #[cfg(windows)]
 fn restore_running_exe((exe, old): &(PathBuf, PathBuf)) {
-    let _ = std::fs::rename(old, exe);
+    if exe.exists() {
+        tracing::warn!(
+            "not restoring {}: a new copy is already there",
+            old.display()
+        );
+        return;
+    }
+    if let Err(e) = std::fs::rename(old, exe) {
+        tracing::warn!("could not restore {}: {e}", exe.display());
+    }
 }
 
 #[cfg(test)]
@@ -338,12 +379,40 @@ mod tests {
     }
 
     #[test]
-    fn old_exe_path_appends_old() {
+    fn old_exe_path_names_the_old_copy_with_a_stamp() {
         assert_eq!(
-            old_exe_path(Path::new("/opt/bin/znicz.exe")),
-            PathBuf::from("/opt/bin/znicz.exe.old")
+            old_exe_path(Path::new("/opt/bin/znicz.exe"), 42),
+            PathBuf::from("/opt/bin/znicz.exe.old-42")
         );
-        assert_eq!(old_exe_path(Path::new("znicz")), PathBuf::from("znicz.old"));
+        assert_eq!(
+            old_exe_path(Path::new("znicz"), 7),
+            PathBuf::from("znicz.old-7")
+        );
+    }
+
+    #[test]
+    fn old_exe_names_lists_only_the_old_copies_of_this_exe() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "znicz.exe",
+            "znicz.exe.old-1",
+            "znicz.exe.old-2",
+            "other.old-1",
+        ] {
+            std::fs::write(dir.path().join(name), "").unwrap();
+        }
+        let mut found: Vec<PathBuf> = old_exe_names(dir.path(), "znicz.exe")
+            .into_iter()
+            .map(|p| p.file_name().unwrap().into())
+            .collect();
+        found.sort();
+        assert_eq!(
+            found,
+            vec![
+                PathBuf::from("znicz.exe.old-1"),
+                PathBuf::from("znicz.exe.old-2")
+            ]
+        );
     }
 
     #[test]
@@ -389,6 +458,18 @@ mod tests {
 
         assert_eq!(run_installer(&script, install.path(), true), Ok(()));
         assert_eq!(run_installer(&script, install.path(), false), Ok(()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_installer_without_output_has_no_dangling_separator() {
+        let scripts = tempfile::tempdir().unwrap();
+        let install = tempfile::tempdir().unwrap();
+        let script = write_script(scripts.path(), "exit 3\n");
+
+        let err = run_installer(&script, install.path(), true).unwrap_err();
+        assert!(err.starts_with("installer exited with"), "{err}");
+        assert!(!err.ends_with(':') && !err.ends_with(' '), "{err:?}");
     }
 
     #[cfg(unix)]
