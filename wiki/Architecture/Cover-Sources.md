@@ -26,8 +26,9 @@ Notes on each source:
 - **AudioAddict.** Asks the channel's current track
   (`currently_playing/channel/{id}`). Cloudflare caches that endpoint for about
   4 s, so each request carries a unique `t=` query value. The track's display
-  artist and title must equal the stream title (case and spacing ignored), and
-  the cover comes from `tracks/{id}` (`asset_url`, else `images.default`). The
+  artist and title must equal the stream title, ignoring case, spacing and the
+  apostrophe's look-alikes (ICY titles carry `` 90`s `` for `90's`), and the
+  cover comes from `tracks/{id}` (`asset_url`, else `images.default`). The
   stream title is compared, not the history, because the history lags the
   stream by 10–15 s. Until the channel catches up the source answers **Soon**:
   the chain stops there (later sources are not tried), and the TUI retries

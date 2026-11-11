@@ -453,6 +453,16 @@ mod tests {
     }
 
     #[test]
+    fn a_backtick_in_the_stream_title_matches_an_apostrophe() {
+        let now = r#"{"channel_id":407,"channel_key":"smoothbeats","track":{"id":1272704,"display_artist":"MAAD","display_title":"90's Love"}}"#;
+        let (origin, _) = serve_api(now, TRACK);
+        assert_eq!(
+            lookup(&origin, Some("MAAD - 90`s Love")),
+            AudioAddictLookup::Found(ART.into())
+        );
+    }
+
+    #[test]
     fn images_default_template_is_stripped_and_https_added() {
         let track = r#"{"id":1272704,"images":{"default":"//cdn-images.audioaddict.com/x.jpg{?size,height,width,quality,pad}"}}"#;
         let (origin, _) = serve_api(NOW, track);

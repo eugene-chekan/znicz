@@ -25,11 +25,17 @@ pub fn split_icy_title<'a>(title: &'a str, station_name: &str) -> Option<(&'a st
     (!artist.is_empty() && !song.is_empty()).then_some((artist, song))
 }
 
-/// Lowercase, accents removed, whitespace collapsed: a key for loose matching.
+/// Lowercase, accents removed, apostrophe look-alikes made `'`, whitespace
+/// collapsed: a key for loose matching. ICY titles are quoted with `'`, so
+/// streams such as AudioAddict's send a backtick instead (`90`s Love`).
 pub fn fold(text: &str) -> String {
     let plain: String = text
         .nfkd()
         .filter(|c| !is_combining_mark(*c))
+        .map(|c| match c {
+            '`' | '\u{2018}' | '\u{2019}' => '\'',
+            other => other,
+        })
         .flat_map(char::to_lowercase)
         .collect();
     plain.split_whitespace().collect::<Vec<_>>().join(" ")
@@ -126,6 +132,14 @@ mod tests {
     fn fold_ignores_case_accents_and_spacing() {
         assert_eq!(fold("  Björk   Guðmundsdóttir "), "bjork guðmundsdottir");
         assert_eq!(fold("SIGUR RÓS"), "sigur ros");
+    }
+
+    #[test]
+    fn fold_treats_backticks_and_curly_quotes_as_apostrophes() {
+        // ICY titles are quoted with `'`, so AudioAddict streams send `90`s Love`.
+        assert_eq!(fold("90`s Love"), fold("90's Love"));
+        assert_eq!(fold("Don\u{2019}t Stop"), "don't stop");
+        assert_eq!(fold("\u{2018}Til Tuesday"), "'til tuesday");
     }
 
     #[test]
