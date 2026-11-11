@@ -12,6 +12,9 @@ const CACHE_CAP: usize = 16;
 /// channel map lifetime), so its cover follows the playing track. Also the
 /// wait before retrying a lookup that came back unsure (a source was down).
 const STREAM_REFRESH: Duration = Duration::from_secs(15);
+/// The wait before asking again after a `Soon` answer (the source's data is
+/// catching up with the stream title).
+const SOON_RETRY: Duration = Duration::from_millis(1500);
 const LOGO_PNG: &[u8] = include_bytes!("../assets/lantern-icon-1024.png");
 /// Opaque fill for letterboxing when the terminal does not report its own
 /// background. Transparent pad leaves the previous Kitty image in those cells.
@@ -61,8 +64,20 @@ struct Slot {
     ready: CoverReady,
     refreshing: bool,
     resolved_at: Instant,
-    /// The last answer was unsure, so the next refresh interval retries it.
-    retry: bool,
+    /// Retry the lookup this long after the last answer: unsure answers wait
+    /// the refresh interval, `Soon` answers a moment. `None` for a settled answer.
+    retry_after: Option<Duration>,
+}
+
+/// How long to wait before asking a stream's cover again. Read by the worker
+/// and by [`CoverCache::get`], so the builders still apply after the worker
+/// has been spawned.
+#[derive(Debug, Clone, Copy)]
+struct Intervals {
+    /// Title-less streams, and unsure answers.
+    stream_refresh: Duration,
+    /// `Soon` answers.
+    soon_retry: Duration,
 }
 
 type Map = Arc<Mutex<(HashMap<CoverKey, Slot>, VecDeque<CoverKey>)>>;
@@ -71,7 +86,7 @@ pub struct CoverCache {
     map: Map,
     requests: Sender<CoverKey>,
     logo: Arc<DynamicImage>,
-    stream_refresh: Duration,
+    intervals: Arc<Mutex<Intervals>>,
 }
 
 impl Default for CoverCache {
@@ -91,8 +106,13 @@ impl CoverCache {
             image::load_from_memory(LOGO_PNG).unwrap_or_else(|_| DynamicImage::new_rgb8(1, 1)),
         );
         let map: Map = Arc::new(Mutex::new((HashMap::new(), VecDeque::new())));
+        let intervals = Arc::new(Mutex::new(Intervals {
+            stream_refresh: STREAM_REFRESH,
+            soon_retry: SOON_RETRY,
+        }));
         let (requests, incoming) = unbounded::<CoverKey>();
         let worker_map = map.clone();
+        let worker_intervals = intervals.clone();
         std::thread::Builder::new()
             .name("znicz-cover".into())
             .spawn(move || {
@@ -102,7 +122,8 @@ impl CoverCache {
                     while let Ok(newer) = incoming.try_recv() {
                         skipped.push(std::mem::replace(&mut key, newer));
                     }
-                    let result = resolve_cover(&key, &streams);
+                    let current = *worker_intervals.lock().unwrap();
+                    let result = resolve_cover(&key, &streams, current);
                     let mut guard = worker_map.lock().unwrap();
                     let (cache, order) = &mut *guard;
                     match result {
@@ -113,15 +134,15 @@ impl CoverCache {
                                     ready,
                                     refreshing: false,
                                     resolved_at: Instant::now(),
-                                    retry: false,
+                                    retry_after: None,
                                 },
                             );
                         }
-                        ResolveResult::KeepPrevious => {
+                        ResolveResult::KeepPrevious { retry_after } => {
                             if let Some(slot) = cache.get_mut(&key) {
                                 slot.refreshing = false;
                                 slot.resolved_at = Instant::now();
-                                slot.retry = true;
+                                slot.retry_after = Some(retry_after);
                             }
                         }
                     }
@@ -153,13 +174,19 @@ impl CoverCache {
             map,
             requests,
             logo,
-            stream_refresh: STREAM_REFRESH,
+            intervals,
         }
     }
 
     /// Use another refresh interval for title-less streams (tests).
-    pub fn with_stream_refresh(mut self, every: Duration) -> Self {
-        self.stream_refresh = every;
+    pub fn with_stream_refresh(self, every: Duration) -> Self {
+        self.intervals.lock().unwrap().stream_refresh = every;
+        self
+    }
+
+    /// Use another retry delay after a `Soon` answer (tests).
+    pub fn with_soon_retry(self, every: Duration) -> Self {
+        self.intervals.lock().unwrap().soon_retry = every;
         self
     }
 
@@ -168,16 +195,19 @@ impl CoverCache {
     }
 
     pub fn get(&self, key: CoverKey) -> CoverReady {
+        let stream_refresh = self.intervals.lock().unwrap().stream_refresh;
         let mut guard = self.map.lock().unwrap();
         let (cache, _) = &mut *guard;
         if let Some(slot) = cache.get_mut(&key) {
             // A title-less stream follows its track; a pending lookup is never
-            // re-sent; an unsure answer is retried once per interval.
+            // re-sent unless it asked to be retried.
             let untitled_stream = matches!(&key, CoverKey::Stream(query) if query.icy_title.is_none())
                 && !matches!(slot.ready, CoverReady::Pending);
-            let refresh = !slot.refreshing
-                && slot.resolved_at.elapsed() >= self.stream_refresh
-                && (slot.retry || untitled_stream);
+            let due = match slot.retry_after {
+                Some(after) => slot.resolved_at.elapsed() >= after,
+                None => untitled_stream && slot.resolved_at.elapsed() >= stream_refresh,
+            };
+            let refresh = !slot.refreshing && due;
             if refresh {
                 slot.refreshing = true;
                 let ready = slot.ready.clone();
@@ -193,7 +223,7 @@ impl CoverCache {
                 ready: CoverReady::Pending,
                 refreshing: false,
                 resolved_at: Instant::now(),
-                retry: false,
+                retry_after: None,
             },
         );
         drop(guard);
@@ -204,10 +234,14 @@ impl CoverCache {
 
 enum ResolveResult {
     Update { ready: CoverReady },
-    KeepPrevious,
+    KeepPrevious { retry_after: Duration },
 }
 
-fn resolve_cover(key: &CoverKey, streams: &znicz_core::StreamCovers) -> ResolveResult {
+fn resolve_cover(
+    key: &CoverKey,
+    streams: &znicz_core::StreamCovers,
+    intervals: Intervals,
+) -> ResolveResult {
     let ready = |bytes: &[u8]| match decode_capped(bytes) {
         Some(img) => CoverReady::Embedded(Arc::new(img)),
         None => CoverReady::Logo,
@@ -223,7 +257,12 @@ fn resolve_cover(key: &CoverKey, streams: &znicz_core::StreamCovers) -> ResolveR
             znicz_core::Resolution::Nothing => ResolveResult::Update {
                 ready: CoverReady::Logo,
             },
-            znicz_core::Resolution::Unsure => ResolveResult::KeepPrevious,
+            znicz_core::Resolution::Unsure => ResolveResult::KeepPrevious {
+                retry_after: intervals.stream_refresh,
+            },
+            znicz_core::Resolution::Soon => ResolveResult::KeepPrevious {
+                retry_after: intervals.soon_retry,
+            },
         },
     }
 }
@@ -587,6 +626,47 @@ mod tests {
             CoverReady::Pending,
             "an unsure answer keeps the slot pending"
         );
+
+        assert!(matches!(wait_ready(&cache, &key), CoverReady::Embedded(_)));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    /// Answers `Soon` on the first lookup, art after that.
+    struct SoonThenArt(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    impl znicz_core::CoverSource for SoonThenArt {
+        fn name(&self) -> &'static str {
+            "soon"
+        }
+        fn key(&self, query: &znicz_core::StreamQuery) -> Option<String> {
+            Some(query.icy_title.clone().unwrap_or_default())
+        }
+        fn find(&self, _query: &znicz_core::StreamQuery) -> znicz_core::Found {
+            let before = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if before == 0 {
+                znicz_core::Found::Soon
+            } else {
+                znicz_core::Found::Art(znicz_core::CoverArt {
+                    mime: "image/png".into(),
+                    bytes: PNG_1X1.to_vec(),
+                })
+            }
+        }
+        fn remembers(&self) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn a_soon_answer_is_retried_after_the_short_interval() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let streams = znicz_core::StreamCovers::new(vec![Box::new(SoonThenArt(calls.clone()))]);
+        // The refresh interval is far longer than the test, so only the short
+        // "soon" retry can bring the art in time.
+        let cache = CoverCache::with_streams(streams)
+            .with_stream_refresh(Duration::from_secs(60))
+            .with_soon_retry(Duration::from_millis(100));
+        let key = CoverKey::Stream(stream_query(Some("A - B")));
 
         assert!(matches!(wait_ready(&cache, &key), CoverReady::Embedded(_)));
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);

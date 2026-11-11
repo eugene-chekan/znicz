@@ -268,7 +268,7 @@ in `layout::stage_layout`.
 
 For files, missing embedded art draws the bundled logo. For streams the cover
 is an ICY `StreamUrl` image when one decodes, else the AudioAddict current-song
-`art_url` (RadioTunes / DI.FM / RockRadio / JazzRadio / ClassicalRadio /
+cover (RadioTunes / DI.FM / RockRadio / JazzRadio / ClassicalRadio /
 ZenRadio), else an artist / title search (Deezer, then iTunes, then MusicBrainz), else the
 station `art` file, else the logo. Streams resolve through `CoverKey::Stream`
 and the chain in `znicz-core/src/cover/`; see [Stream covers](Cover-Sources.md).
