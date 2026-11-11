@@ -90,13 +90,33 @@ fn bracket_opens_the_queue_drawer_and_closes_it() {
 }
 
 #[test]
-fn tab_opens_the_drawer_then_swaps_focus_without_closing_it() {
+fn tab_does_not_open_the_drawer() {
     let mut app = new_app();
+    press(&mut app, KeyCode::Tab);
     assert!(!app.queue_open);
     assert_eq!(app.focus, Focus::Library);
 
+    press_char(&mut app, 'v'); // Stage
     press(&mut app, KeyCode::Tab);
-    assert!(app.queue_open, "Tab should open the drawer");
+    assert!(!app.queue_open);
+    assert_eq!(app.focus, Focus::Library);
+}
+
+#[test]
+fn tab_does_not_open_the_drawer_while_searching() {
+    let mut app = new_app();
+    press_char(&mut app, '/');
+    press_typed(&mut app, "queen");
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Tab);
+    assert!(!app.queue_open);
+    assert_eq!(app.focus, Focus::Library);
+}
+
+#[test]
+fn tab_swaps_focus_while_the_drawer_is_open() {
+    let mut app = new_app();
+    open_queue(&mut app);
     assert_eq!(app.focus, Focus::Queue);
 
     press(&mut app, KeyCode::Tab);

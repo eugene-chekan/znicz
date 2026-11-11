@@ -100,6 +100,61 @@ pub enum Item<'a> {
     Track(&'a Track),
 }
 
+/// How the rows of one album's track list are numbered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Numbering {
+    /// Display width of the widest label (`10.` is 3, `2-10.` is 5). 0: no numbers.
+    width: usize,
+    multi_disc: bool,
+}
+
+impl Numbering {
+    pub fn for_tracks(tracks: &[Track]) -> Self {
+        let multi_disc = tracks.iter().any(|t| t.disc_number.unwrap_or(1) > 1);
+        let width = tracks
+            .iter()
+            .filter_map(|t| number_label(t, multi_disc))
+            .map(|label| label.chars().count())
+            .max()
+            .unwrap_or(0);
+        Self { width, multi_disc }
+    }
+
+    /// `" 9. "`, `"2-3. "`, blanks for a missing number, `""` when the list has none.
+    pub fn prefix(&self, track: &Track) -> String {
+        if self.width == 0 {
+            return String::new();
+        }
+        let label = number_label(track, self.multi_disc).unwrap_or_default();
+        format!("{label:>width$} ", width = self.width)
+    }
+}
+
+fn number_label(track: &Track, multi_disc: bool) -> Option<String> {
+    let n = track.track_number?;
+    Some(if multi_disc {
+        format!("{}-{n}.", track.disc_number.unwrap_or(1))
+    } else {
+        format!("{n}.")
+    })
+}
+
+/// Where a row sits, which decides how much of its label repeats context.
+#[derive(Debug, Clone, Copy)]
+pub enum RowContext<'a> {
+    /// Search hits and track lists with no artist above them: full labels.
+    Flat,
+    /// Under a browse artist (and, for tracks, an album).
+    Grouped {
+        artist: &'a str,
+        numbering: Numbering,
+    },
+}
+
+fn same_artist(a: &str, b: &str) -> bool {
+    a.trim().to_lowercase() == b.trim().to_lowercase()
+}
+
 pub struct LibraryPane {
     library: Option<Library>,
     mode: Mode,
@@ -903,7 +958,7 @@ impl LibraryPane {
 
     /// Columns a row's playing marker adds to its middle text: ` ♪` after an
     /// artist or album name, `▶ ` before a tree track. Flat track rows mark
-    /// the right-hand number instead, so they add none.
+    /// the right-hand column instead, so they add none.
     fn marker_width(item: &Item, playing: Option<&PlayingRef>, tree: bool) -> usize {
         let Some(p) = playing else {
             return 0;
@@ -920,19 +975,38 @@ impl LibraryPane {
         }
     }
 
-    fn middle_len(item: &Item, playing: Option<&PlayingRef>, tree: bool) -> usize {
+    fn middle_len(
+        item: &Item,
+        context: RowContext<'_>,
+        playing: Option<&PlayingRef>,
+        tree: bool,
+    ) -> usize {
         let text = match item {
             Item::Artist(a) => Self::artist_middle(a),
-            Item::Album(a) => Self::album_middle(a),
-            Item::Track(t) => Self::track_middle(t),
+            Item::Album(a) => Self::album_middle(a, context),
+            Item::Track(t) => Self::track_middle(t, context),
         };
         text.chars().count() + Self::marker_width(item, playing, tree)
     }
 
     fn selected_middle_len(&self, strip_inner: usize, playing: Option<&PlayingRef>) -> usize {
-        let tree = self.is_tree(strip_inner);
+        if self.is_tree(strip_inner) {
+            let lens = self.tree_middle_lens(playing);
+            return self
+                .selected_index(strip_inner)
+                .and_then(|index| lens.get(index).copied())
+                .unwrap_or(0);
+        }
         match self.selected(strip_inner) {
-            Some(item) => Self::middle_len(&item, playing, tree),
+            Some(item) => {
+                let context = match (&item, &self.mode) {
+                    (_, Mode::Search(_) | Mode::AllTracks) => RowContext::Flat,
+                    (Item::Album(_), _) => self.album_context(),
+                    (Item::Track(_), _) => self.track_context(),
+                    (Item::Artist(_), _) => RowContext::Flat,
+                };
+                Self::middle_len(&item, context, playing, false)
+            }
             None => 0,
         }
     }
@@ -942,64 +1016,159 @@ impl LibraryPane {
             && self.effective_layout(strip_inner) == EffectiveLayout::Tree
     }
 
+    /// Label context of each tree row, in row order. A track is grouped under the artist of
+    /// the album row above it. The tracks of one album are consecutive, so the album's
+    /// numbering is computed once for its run of rows.
+    pub fn tree_row_contexts<'a>(&self, rows: &'a [TreeRow]) -> Vec<RowContext<'a>> {
+        let mut contexts = Vec::with_capacity(rows.len());
+        let mut artist: &'a str = "";
+        let mut numbered: Option<(&'a str, Numbering)> = None;
+        for row in rows {
+            let context = match row {
+                TreeRow::Artist { .. } => RowContext::Flat,
+                TreeRow::Album { artist: name, .. } => {
+                    artist = name.as_str();
+                    RowContext::Grouped {
+                        artist,
+                        numbering: Numbering::default(),
+                    }
+                }
+                TreeRow::Track { album_key, .. } => {
+                    let numbering = match numbered {
+                        Some((key, numbering)) if key == album_key.as_str() => numbering,
+                        _ => {
+                            let numbering = self
+                                .tree_track_cache
+                                .get(album_key)
+                                .map(|tracks| Numbering::for_tracks(tracks))
+                                .unwrap_or_default();
+                            numbered = Some((album_key.as_str(), numbering));
+                            numbering
+                        }
+                    };
+                    RowContext::Grouped { artist, numbering }
+                }
+            };
+            contexts.push(context);
+        }
+        contexts
+    }
+
+    /// Label width of every tree row, in row order, measured with the same contexts the
+    /// tree is drawn with.
+    fn tree_middle_lens(&self, playing: Option<&PlayingRef>) -> Vec<usize> {
+        let rows = self.tree_rows();
+        let contexts = self.tree_row_contexts(&rows);
+        rows.iter()
+            .zip(contexts)
+            .map(|(row, context)| match row {
+                TreeRow::Artist { artist, .. } => {
+                    Self::middle_len(&Item::Artist(artist), context, playing, true)
+                }
+                TreeRow::Album { album, .. } => {
+                    Self::middle_len(&Item::Album(album), context, playing, true)
+                }
+                TreeRow::Track {
+                    album_key, index, ..
+                } => self
+                    .tree_track_cache
+                    .get(album_key)
+                    .and_then(|tracks| tracks.get(*index))
+                    .map(|t| Self::middle_len(&Item::Track(t), context, playing, true))
+                    .unwrap_or(0),
+            })
+            .collect()
+    }
+
+    /// Context for the album rows of the column or paging list: grouped under the selected
+    /// artist, or flat when no artist is selected.
+    pub fn album_context(&self) -> RowContext<'_> {
+        match self.selected_artist_name() {
+            Some(artist) => RowContext::Grouped {
+                artist,
+                numbering: Numbering::default(),
+            },
+            None => RowContext::Flat,
+        }
+    }
+
+    /// Context for the track rows of the column or paging list: grouped under the selected
+    /// artist and numbered across the listed tracks, or flat when no artist is selected.
+    pub fn track_context(&self) -> RowContext<'_> {
+        match self.selected_artist_name() {
+            Some(artist) => RowContext::Grouped {
+                artist,
+                numbering: Numbering::for_tracks(&self.tracks),
+            },
+            None => RowContext::Flat,
+        }
+    }
+
+    fn selected_artist_name(&self) -> Option<&str> {
+        self.selected_artist_index()
+            .and_then(|i| self.artists.get(i))
+            .map(|artist| artist.name.as_str())
+    }
+
     pub fn longest_middle(&self, strip_inner: usize, playing: Option<&PlayingRef>) -> usize {
-        let len = |item: Item| Self::middle_len(&item, playing, false);
+        let len =
+            |item: Item, context: RowContext<'_>| Self::middle_len(&item, context, playing, false);
         match self.mode {
             Mode::Search(_) => self
                 .search_hits
                 .iter()
                 .map(|hit| match hit {
-                    SearchHit::Artist(artist) => len(Item::Artist(artist)),
-                    SearchHit::Album(album) => len(Item::Album(album)),
-                    SearchHit::Track(track) => len(Item::Track(track)),
+                    SearchHit::Artist(artist) => len(Item::Artist(artist), RowContext::Flat),
+                    SearchHit::Album(album) => len(Item::Album(album), RowContext::Flat),
+                    SearchHit::Track(track) => len(Item::Track(track), RowContext::Flat),
                 })
                 .max()
                 .unwrap_or(0),
             Mode::AllTracks => self
                 .tracks
                 .iter()
-                .map(|t| len(Item::Track(t)))
+                .map(|t| len(Item::Track(t), RowContext::Flat))
                 .max()
                 .unwrap_or(0),
             Mode::Browse => match self.effective_layout(strip_inner) {
                 EffectiveLayout::Tree => self
-                    .tree_rows()
-                    .iter()
-                    .map(|row| match row {
-                        TreeRow::Artist { artist, .. } => len(Item::Artist(artist)),
-                        TreeRow::Album { album, .. } => len(Item::Album(album)),
-                        TreeRow::Track {
-                            album_key, index, ..
-                        } => self
-                            .tree_track_cache
-                            .get(album_key)
-                            .and_then(|tracks| tracks.get(*index))
-                            .map(|t| Self::middle_len(&Item::Track(t), playing, true))
-                            .unwrap_or(0),
-                    })
+                    .tree_middle_lens(playing)
+                    .into_iter()
                     .max()
                     .unwrap_or(0),
-                _ => match self.column_focus {
-                    ColumnFocus::Artists => self
-                        .artists
-                        .iter()
-                        .map(|a| len(Item::Artist(a)))
-                        .max()
-                        .unwrap_or(0),
-                    ColumnFocus::Albums => self
-                        .albums
-                        .iter()
-                        .map(|a| len(Item::Album(a)))
-                        .max()
-                        .unwrap_or(0),
-                    ColumnFocus::Tracks => self
-                        .tracks
-                        .iter()
-                        .map(|t| len(Item::Track(t)))
-                        .max()
-                        .unwrap_or(0),
-                },
+                // Paging shows one level at a time; columns measure the focused one.
+                EffectiveLayout::Paging => self.longest_in_level(self.paging_level, playing),
+                _ => self.longest_in_level(self.column_focus, playing),
             },
+        }
+    }
+
+    fn longest_in_level(&self, level: ColumnFocus, playing: Option<&PlayingRef>) -> usize {
+        let len =
+            |item: Item, context: RowContext| Self::middle_len(&item, context, playing, false);
+        match level {
+            ColumnFocus::Artists => self
+                .artists
+                .iter()
+                .map(|a| len(Item::Artist(a), RowContext::Flat))
+                .max()
+                .unwrap_or(0),
+            ColumnFocus::Albums => {
+                let context = self.album_context();
+                self.albums
+                    .iter()
+                    .map(|a| len(Item::Album(a), context))
+                    .max()
+                    .unwrap_or(0)
+            }
+            ColumnFocus::Tracks => {
+                let context = self.track_context();
+                self.tracks
+                    .iter()
+                    .map(|t| len(Item::Track(t), context))
+                    .max()
+                    .unwrap_or(0)
+            }
         }
     }
 
@@ -1007,16 +1176,35 @@ impl LibraryPane {
         artist.name.clone()
     }
 
-    pub fn album_middle(album: &AlbumSummary) -> String {
+    /// An album's label. Under a browse artist the artist is dropped.
+    pub fn album_middle(album: &AlbumSummary, context: RowContext<'_>) -> String {
         let year = album.year.map(|y| format!(" ({y})")).unwrap_or_default();
-        let artist = album.album_artist.as_deref().unwrap_or("Unknown artist");
-        format!("{}{year} — {artist}", album.album)
+        match context {
+            RowContext::Grouped { .. } => format!("{}{year}", album.album),
+            RowContext::Flat => {
+                let artist = album.album_artist.as_deref().unwrap_or("Unknown artist");
+                format!("{}{year} — {artist}", album.album)
+            }
+        }
     }
 
-    pub fn track_middle(track: &Track) -> String {
-        match track.artist.as_deref() {
-            Some(artist) => format!("{} — {artist}", track.title),
-            None => track.title.clone(),
+    /// A track's label. Under a browse artist it takes a number, and the artist only when it
+    /// differs from that browse artist.
+    pub fn track_middle(track: &Track, context: RowContext<'_>) -> String {
+        match context {
+            RowContext::Flat => match track.artist.as_deref() {
+                Some(artist) => format!("{} — {artist}", track.title),
+                None => track.title.clone(),
+            },
+            RowContext::Grouped { artist, numbering } => {
+                let number = numbering.prefix(track);
+                match track.artist.as_deref() {
+                    Some(own) if !same_artist(own, artist) => {
+                        format!("{number}{} — {own}", track.title)
+                    }
+                    _ => format!("{number}{}", track.title),
+                }
+            }
         }
     }
 
@@ -2141,5 +2329,137 @@ mod tests {
         assert!(!pane.move_horizontal(true, wide()));
         assert!(!pane.move_horizontal(false, wide()));
         assert!(matches!(pane.mode(), Mode::Search(_)));
+    }
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+
+    fn track(title: &str, number: Option<u32>, disc: Option<u32>, artist: Option<&str>) -> Track {
+        Track {
+            id: 1,
+            path: std::path::PathBuf::from("/music/t.flac"),
+            title: title.into(),
+            artist: artist.map(str::to_string),
+            album: Some("Album".into()),
+            album_artist: None,
+            genre: None,
+            year: None,
+            track_number: number,
+            disc_number: disc,
+            codec: None,
+            sample_rate: None,
+            channels: None,
+            bits_per_sample: None,
+            duration_secs: None,
+        }
+    }
+
+    fn album(name: &str, artist: &str, year: Option<u32>) -> AlbumSummary {
+        AlbumSummary {
+            album: name.into(),
+            album_artist: Some(artist.into()),
+            year,
+            track_count: 1,
+            total_secs: None,
+        }
+    }
+
+    fn grouped(artist: &str, numbering: Numbering) -> RowContext<'_> {
+        RowContext::Grouped { artist, numbering }
+    }
+
+    #[test]
+    fn grouped_album_drops_the_artist_and_flat_album_keeps_it() {
+        let kind = album("Kind of Blue", "Miles Davis", Some(1959));
+        assert_eq!(
+            LibraryPane::album_middle(&kind, grouped("Miles Davis", Numbering::default())),
+            "Kind of Blue (1959)"
+        );
+        assert_eq!(
+            LibraryPane::album_middle(&kind, RowContext::Flat),
+            "Kind of Blue (1959) — Miles Davis"
+        );
+    }
+
+    #[test]
+    fn grouped_track_by_the_same_artist_drops_the_artist() {
+        let numbering = Numbering::for_tracks(&[track("So What", Some(1), None, None)]);
+        let so_what = track("So What", Some(1), None, Some(" miles davis "));
+        assert_eq!(
+            LibraryPane::track_middle(&so_what, grouped("Miles Davis", numbering)),
+            "1. So What"
+        );
+    }
+
+    #[test]
+    fn grouped_track_by_another_artist_keeps_the_artist() {
+        let numbering = Numbering::for_tracks(&[track("Song", Some(3), None, None)]);
+        let song = track("Song", Some(3), None, Some("Someone"));
+        assert_eq!(
+            LibraryPane::track_middle(&song, grouped("Various Artists", numbering)),
+            "3. Song — Someone"
+        );
+    }
+
+    #[test]
+    fn flat_track_keeps_its_artist_and_no_number() {
+        let so_what = track("So What", Some(1), None, Some("Miles Davis"));
+        assert_eq!(
+            LibraryPane::track_middle(&so_what, RowContext::Flat),
+            "So What — Miles Davis"
+        );
+    }
+
+    #[test]
+    fn numbers_pad_to_the_widest_label_in_the_album() {
+        let tracks: Vec<Track> = (1..=10).map(|n| track("t", Some(n), None, None)).collect();
+        let numbering = Numbering::for_tracks(&tracks);
+        assert_eq!(numbering.prefix(&tracks[8]), " 9. ");
+        assert_eq!(numbering.prefix(&tracks[9]), "10. ");
+    }
+
+    #[test]
+    fn multi_disc_albums_number_as_disc_dash_track() {
+        let tracks = [
+            track("a", Some(1), Some(1), None),
+            track("b", Some(3), Some(2), None),
+        ];
+        let numbering = Numbering::for_tracks(&tracks);
+        assert_eq!(numbering.prefix(&tracks[0]), "1-1. ");
+        assert_eq!(numbering.prefix(&tracks[1]), "2-3. ");
+    }
+
+    #[test]
+    fn a_track_without_a_number_in_a_numbered_list_gets_blanks() {
+        let tracks = [
+            track("a", Some(1), None, None),
+            track("b", Some(2), None, None),
+            track("c", None, None, None),
+        ];
+        let numbering = Numbering::for_tracks(&tracks);
+        assert_eq!(numbering.prefix(&tracks[0]), "1. ");
+        assert_eq!(numbering.prefix(&tracks[2]), "   ");
+    }
+
+    #[test]
+    fn pan_measures_the_grouped_album_label_under_its_artist() {
+        let mut pane = LibraryPane::new(None);
+        pane.inject_artists_for_test(vec![ArtistSummary {
+            name: "Miles Davis".into(),
+            track_count: 1,
+        }]);
+        pane.inject_albums_for_test(vec![album("Kind of Blue", "Miles Davis", None)]);
+        pane.focus_column(ColumnFocus::Albums);
+        // Grouped: "Kind of Blue" (12), not "Kind of Blue — Miles Davis" (26).
+        assert_eq!(pane.longest_middle(80, None), "Kind of Blue".len());
+    }
+
+    #[test]
+    fn a_list_with_no_numbers_has_no_prefix() {
+        let tracks = [track("a", None, None, None), track("b", None, None, None)];
+        let numbering = Numbering::for_tracks(&tracks);
+        assert_eq!(numbering.prefix(&tracks[0]), "");
     }
 }

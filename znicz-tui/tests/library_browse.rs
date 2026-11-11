@@ -315,3 +315,68 @@ fn a_library_with_no_album_tags_falls_back_to_a_track_list() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn grouped_tree_rows_drop_the_repeated_artist_and_number_tracks() {
+    if !ffmpeg_available() {
+        eprintln!("ffmpeg not available, skipping");
+        return;
+    }
+
+    let dir = fixture_dir("grouped-labels");
+    let mut app = app_with_library(&dir);
+    app.library
+        .set_preferred_layout(znicz_tui::LibraryLayout::Tree);
+    // Miles Davis sorts first: expand the artist, then its album.
+    assert!(app.library.toggle_expand_at_cursor());
+    app.library.step(1, 80);
+    assert!(app.library.toggle_expand_at_cursor());
+
+    let screen = draw(&mut app);
+    let album = screen
+        .lines()
+        .find(|l| l.contains("Kind of Blue"))
+        .expect("album row");
+    assert!(
+        !album.contains("— Miles Davis"),
+        "album under its artist drops the artist:\n{screen}"
+    );
+    let track = screen
+        .lines()
+        .find(|l| l.contains("So What"))
+        .expect("track row");
+    assert!(
+        track.contains("1. So What") && !track.contains("— Miles Davis"),
+        "track is numbered and keeps no repeated artist:\n{screen}"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn search_hits_keep_the_artist_and_no_number() {
+    if !ffmpeg_available() {
+        eprintln!("ffmpeg not available, skipping");
+        return;
+    }
+
+    let dir = fixture_dir("flat-labels");
+    let mut app = app_with_library(&dir);
+    app.library.begin_search();
+    for c in "so what".chars() {
+        app.library.push_char(c);
+    }
+    app.library.submit_search();
+
+    let screen = draw(&mut app);
+    assert!(
+        screen.contains("So What — Miles Davis"),
+        "search rows keep the full label:\n{screen}"
+    );
+    assert!(
+        !screen.contains("1. So What"),
+        "search rows get no number:\n{screen}"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}

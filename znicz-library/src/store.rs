@@ -429,7 +429,8 @@ impl Library {
         Ok(artists)
     }
 
-    /// Albums attributed to a browse artist (compilations for Various Artists).
+    /// Albums attributed to a browse artist (compilations for Various Artists), oldest first;
+    /// albums without a year last.
     pub fn albums_for_browse_artist(&self, artist: &str) -> Result<Vec<AlbumSummary>> {
         let attributed = self.attribute_albums()?;
         let mut albums: Vec<AlbumSummary> = attributed
@@ -438,9 +439,10 @@ impl Library {
             .map(|a| a.summary)
             .collect();
         albums.sort_by(|a, b| {
-            a.album
-                .to_lowercase()
-                .cmp(&b.album.to_lowercase())
+            let year = |album: &AlbumSummary| album.year.unwrap_or(u32::MAX);
+            year(a)
+                .cmp(&year(b))
+                .then_with(|| a.album.to_lowercase().cmp(&b.album.to_lowercase()))
                 .then_with(|| a.album.cmp(&b.album))
         });
         Ok(albums)
@@ -1340,6 +1342,46 @@ mod tests {
         let albums = library.albums_for_browse_artist("alpha").unwrap();
         let names: Vec<_> = albums.iter().map(|a| a.album.as_str()).collect();
         assert_eq!(names, vec!["First", "Second"]);
+    }
+
+    #[test]
+    fn albums_for_browse_artist_sorts_by_year_then_undated_last() {
+        let mut library = Library::open_in_memory().unwrap();
+        let albums = [
+            ("/music/m1.flac", "Tutu", Some(1986)),
+            ("/music/m2.flac", "Kind of Blue", Some(1959)),
+            ("/music/m3.flac", "Bootlegs", None),
+            ("/music/m4.flac", "Agharta", Some(1975)),
+            ("/music/m5.flac", "aura", Some(1985)),
+        ];
+        for (path, album, year) in albums {
+            library
+                .upsert_track(
+                    Path::new(path),
+                    "Track",
+                    Some("Miles".to_string()),
+                    Some(album.to_string()),
+                    None,
+                    None,
+                    year,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(0),
+                )
+                .unwrap();
+        }
+
+        let albums = library.albums_for_browse_artist("Miles").unwrap();
+        let names: Vec<_> = albums.iter().map(|a| a.album.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["Kind of Blue", "Agharta", "aura", "Tutu", "Bootlegs"]
+        );
     }
 
     #[test]

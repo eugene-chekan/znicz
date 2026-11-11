@@ -160,6 +160,7 @@ fn tab_on_stage_does_not_move_the_hidden_library_columns() {
     let mut app = app_with_library_rows();
     let before = app.library.column_focus();
     press(&mut app, 'v');
+    press(&mut app, ']');
     app.on_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
     assert_eq!(app.library.column_focus(), before);
     assert!(app.queue_open);
@@ -208,8 +209,8 @@ fn tab_keeps_focus_on_the_queue_while_on_stage() {
     let mut app = app();
     app.view = View::Stage;
     draw_with(&mut app, &playing(), 120, 40);
-    app.on_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-    assert!(app.queue_open, "Tab opens a closed drawer");
+    press(&mut app, ']');
+    assert!(app.queue_open, "] opens a closed drawer");
     let focus = app.focus;
     draw_with(&mut app, &playing(), 120, 40);
     app.on_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));

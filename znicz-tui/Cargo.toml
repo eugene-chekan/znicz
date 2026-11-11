@@ -17,6 +17,7 @@ color-eyre.workspace = true
 dirs.workspace = true
 image.workspace = true
 ratatui-image.workspace = true
+unicode-width.workspace = true
 
 [dev-dependencies]
 lofty = "0.25"
