@@ -31,6 +31,9 @@ pub enum ClientRole {
 struct Advertise {
     port: u16,
     token: String,
+    /// The player's `CARGO_PKG_VERSION`; absent in adverts written before it existed.
+    #[serde(default)]
+    version: Option<String>,
 }
 
 /// Names one change request so a resend after a lost reply is answered from
@@ -303,6 +306,7 @@ impl IpcServer {
             &Advertise {
                 port: addr.port(),
                 token: token.clone(),
+                version: Some(env!("CARGO_PKG_VERSION").to_string()),
             },
         )?;
 
@@ -618,6 +622,7 @@ struct Live {
     writer: TcpStream,
     reader: BufReader<TcpStream>,
     token: String,
+    version: Option<String>,
 }
 
 type EnsureFn = Arc<dyn Fn() -> Result<()> + Send + Sync>;
@@ -631,6 +636,9 @@ struct IpcInner {
     /// processes do not collide.
     client: u64,
     next_seq: std::sync::atomic::AtomicU64,
+    /// The version from the advert last read. Kept outside `live` so reading
+    /// it never waits on an in-flight request.
+    version: Mutex<Option<String>>,
 }
 
 fn open_stream(advertise_path: &Path, role: ClientRole) -> Result<Live> {
@@ -660,6 +668,7 @@ fn open_stream(advertise_path: &Path, role: ClientRole) -> Result<Live> {
         writer,
         reader,
         token: advertise.token,
+        version: advertise.version,
     })
 }
 
@@ -700,16 +709,27 @@ impl IpcClient {
         ensure: Option<EnsureFn>,
     ) -> Result<Self> {
         let live = open_live(&advertise, role, ensure.as_ref())?;
+        let version = live.version.clone();
         Ok(Self {
             inner: Arc::new(IpcInner {
                 advertise,
                 role,
+                version: Mutex::new(version),
                 live: Mutex::new(live),
                 ensure,
                 client: random_u64(),
                 next_seq: std::sync::atomic::AtomicU64::new(1),
             }),
         })
+    }
+
+    /// The player's version from its advert, if it advertises one.
+    pub fn player_version(&self) -> Option<String> {
+        self.inner
+            .version
+            .lock()
+            .ok()
+            .and_then(|version| version.clone())
     }
 
     /// A fresh id for one change request; a resend of it reuses the same id.
@@ -746,6 +766,9 @@ impl IpcClient {
                     self.inner.ensure.as_ref(),
                 )
                 .map_err(RpcFailure::connect)?;
+                if let Ok(mut version) = self.inner.version.lock() {
+                    *version = live.version.clone();
+                }
                 let request = make(&live.token);
                 rpc_on(&mut live, &request).map_err(|error| RpcFailure {
                     error,
@@ -853,6 +876,26 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("advertise.toml");
         (dir, path)
+    }
+
+    #[test]
+    fn an_advert_without_a_version_reads_as_none() {
+        let advertise: Advertise = toml::from_str("port = 1\ntoken = \"x\"\n").expect("parse");
+        assert_eq!(advertise.version, None);
+    }
+
+    #[test]
+    fn the_player_advertises_its_version_and_clients_report_it() {
+        let (_dir, path) = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let _server = IpcServer::start(player, &path).expect("start ipc");
+
+        let advertise = load_advertise(&path).expect("read advert");
+        let expected = env!("CARGO_PKG_VERSION").to_string();
+        assert_eq!(advertise.version, Some(expected.clone()));
+
+        let client = IpcClient::connect(&path, ClientRole::Ui).expect("connect");
+        assert_eq!(client.player_version(), Some(expected));
     }
 
     #[test]
@@ -968,6 +1011,7 @@ mod tests {
         let advertise = Advertise {
             port: listener.local_addr().expect("addr").port(),
             token: "t".into(),
+            version: None,
         };
         save_advertise(&path, &advertise).expect("advertise");
 

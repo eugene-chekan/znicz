@@ -19,11 +19,11 @@ Checks before each commit: `cargo fmt --all`, `cargo clippy --workspace --all-ta
 
 **Files:** `znicz-core/src/player/ipc.rs` (`struct Advertise` ~line 31, where it is written ~303 and ~968, `IpcClient` ~685–800), `znicz-tui/src/app.rs` (`Engine` ~line 80).
 
-- [ ] **Step 1: Tests** in `ipc.rs` tests:
+- [x] **Step 1: Tests** in `ipc.rs` tests:
   - an advert TOML without `version` (`port = 1\ntoken = "x"\n`) deserialises with `version == None`.
   - a server started like the existing tests (find one that uses `advertise_path()` and `IpcServer::start…`) writes an advert whose `version` is `Some(env!("CARGO_PKG_VERSION"))`, and `IpcClient::connect(...)?.player_version()` returns the same.
-- [ ] **Step 2:** run; fails.
-- [ ] **Step 3: Implement.** `Advertise { port, token, #[serde(default)] version: Option<String> }`; every place that builds an `Advertise` for writing sets `version: Some(env!("CARGO_PKG_VERSION").to_string())`. `IpcClient` keeps the version read from the advert when it connects / reconnects and exposes `pub fn player_version(&self) -> Option<String>`. In `znicz-tui` `Engine` add:
+- [x] **Step 2:** run; fails.
+- [x] **Step 3: Implement.** `Advertise { port, token, #[serde(default)] version: Option<String> }`; every place that builds an `Advertise` for writing sets `version: Some(env!("CARGO_PKG_VERSION").to_string())`. `IpcClient` keeps the version read from the advert when it connects / reconnects and exposes `pub fn player_version(&self) -> Option<String>`. In `znicz-tui` `Engine` add:
 
 ```rust
 /// The player's version, when it advertises one (remote players only).
@@ -43,8 +43,8 @@ pub fn shutdown_player(&self) -> znicz_core::Result<()> {
 }
 ```
 
-- [ ] **Step 4:** checks pass.
-- [ ] **Step 5: Commit** `"The player advertises its version"`.
+- [x] **Step 4:** checks pass.
+- [x] **Step 5: Commit** `"The player advertises its version"`.
 
 ---
 

@@ -95,6 +95,22 @@ impl Engine {
     pub fn drain_events(&self) -> Vec<PlayerEvent> {
         PlayerOps::drain_events(self)
     }
+
+    /// The player's version, when it advertises one (remote players only).
+    pub fn player_version(&self) -> Option<String> {
+        match self {
+            Self::Local(_) => None,
+            Self::Remote(player) => player.player_version(),
+        }
+    }
+
+    /// Ask a remote player process to exit. The local engine has no process.
+    pub fn shutdown_player(&self) -> znicz_core::Result<()> {
+        match self {
+            Self::Local(_) => Ok(()),
+            Self::Remote(player) => player.shutdown(),
+        }
+    }
 }
 
 impl PlayerOps for Engine {
