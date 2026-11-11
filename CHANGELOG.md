@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.14.1 - 2026-11-12
+
+- `u` in Help checks for updates right away when none is known.
+- Release notes in the Update window no longer start with a "Release Notes" heading.
+
 ## 0.14.0 - 2026-11-11
 
 - The TUI checks GitHub for a new release once a day and says so in a toast.

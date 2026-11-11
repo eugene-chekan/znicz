@@ -379,6 +379,8 @@ pub struct App {
     pub update: Option<Release>,
     /// The background check's answer, until it arrives.
     update_check: Option<std::sync::mpsc::Receiver<Option<Release>>>,
+    /// The answer to `u` in Help when no update is known, until it arrives.
+    manual_check: Option<std::sync::mpsc::Receiver<Result<Option<Release>, String>>>,
     /// The Update modal's current step.
     pub(crate) update_step: UpdateStep,
     /// How far the release notes are scrolled.
@@ -649,6 +651,7 @@ impl App {
             updates: None,
             update: None,
             update_check: None,
+            manual_check: None,
             update_step: UpdateStep::Offer,
             update_scroll: 0,
             install_rx: None,
@@ -723,6 +726,66 @@ impl App {
         };
         if let Some(release) = updates.latest() {
             self.on_update_found(release);
+        }
+    }
+
+    /// `u` in Help: open the known update, or else check for one right away.
+    pub(crate) fn update_or_check(&mut self) {
+        if self.update.is_some() {
+            self.open_update();
+            return;
+        }
+        let Some(updates) = self.updates.clone() else {
+            self.toasts.warn("Updates are not available in this build");
+            return;
+        };
+        if self.manual_check.is_some() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(updates.check_now());
+        });
+        self.manual_check = Some(rx);
+        self.toasts.info("Checking for updates…");
+    }
+
+    /// Take the answer to `u` in Help when it has arrived.
+    pub(crate) fn poll_manual_check(&mut self) {
+        let Some(rx) = &self.manual_check else {
+            return;
+        };
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.manual_check = None;
+                self.toasts.error("Update check failed");
+                return;
+            }
+        };
+        self.manual_check = None;
+        match result {
+            Ok(Some(release)) => {
+                let version = release.version.clone();
+                if let Some(updates) = &self.updates {
+                    updates.set_notified(&version);
+                }
+                self.update = Some(release);
+                if matches!(self.modal, Modal::None | Modal::Help) {
+                    self.open_update();
+                } else {
+                    self.toasts
+                        .info(format!("Znicz {version} is available · ? then u to update"));
+                }
+            }
+            Ok(None) => {
+                self.toasts
+                    .success(format!("Znicz {} is up to date", env!("CARGO_PKG_VERSION")));
+            }
+            Err(error) => {
+                self.toasts.error(format!("Update check failed: {error}"));
+            }
         }
     }
 
@@ -814,6 +877,7 @@ impl App {
         loop {
             self.poll_player_events();
             self.poll_updates();
+            self.poll_manual_check();
             self.poll_install();
             self.toasts.tick();
 
@@ -1216,7 +1280,7 @@ impl App {
             KeyCode::Char('g') | KeyCode::Home => self.help.scroll = 0,
             // Clamped to the last page when help is drawn.
             KeyCode::Char('G') | KeyCode::End => self.help.scroll = usize::MAX,
-            KeyCode::Char('u') if self.update.is_some() => self.open_update(),
+            KeyCode::Char('u') => self.update_or_check(),
             _ => {}
         }
     }
@@ -2809,27 +2873,44 @@ mod tests {
     use crate::update::{Release, Updates};
     use std::sync::Mutex;
 
-    /// A fake updater: a fixed release, a recorded install, a notified marker.
+    /// A fake updater: a fixed release, a recorded install, a notified marker,
+    /// and the answer `check_now` gives (counting its calls).
     pub(crate) struct FakeUpdates {
         pub(crate) release: Option<Release>,
         pub(crate) installable: bool,
         pub(crate) install_result: Mutex<Result<(), String>>,
         pub(crate) installs: Mutex<Vec<String>>,
         pub(crate) notified: Mutex<Option<String>>,
+        pub(crate) check_result: Mutex<Result<Option<Release>, String>>,
+        pub(crate) checks: Mutex<usize>,
+    }
+
+    fn fake_release(version: &str) -> Release {
+        Release {
+            version: version.into(),
+            notes: "Notes".into(),
+            url: "https://example.test/release".into(),
+        }
     }
 
     impl FakeUpdates {
         pub(crate) fn offering(version: &str) -> Self {
             Self {
-                release: Some(Release {
-                    version: version.into(),
-                    notes: "Notes".into(),
-                    url: "https://example.test/release".into(),
-                }),
+                release: Some(fake_release(version)),
+                ..Self::checking(Ok(None))
+            }
+        }
+
+        /// No release known from the daily check; `check_now` answers `result`.
+        pub(crate) fn checking(result: Result<Option<Release>, String>) -> Self {
+            Self {
+                release: None,
                 installable: true,
                 install_result: Mutex::new(Ok(())),
                 installs: Mutex::new(Vec::new()),
                 notified: Mutex::new(None),
+                check_result: Mutex::new(result),
+                checks: Mutex::new(0),
             }
         }
     }
@@ -2858,6 +2939,11 @@ mod tests {
 
         fn set_notified(&self, version: &str) {
             *self.notified.lock().unwrap() = Some(version.to_string());
+        }
+
+        fn check_now(&self) -> Result<Option<Release>, String> {
+            *self.checks.lock().unwrap() += 1;
+            self.check_result.lock().unwrap().clone()
         }
     }
 
@@ -2909,6 +2995,81 @@ mod tests {
         app.on_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
         app.on_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE));
         assert_eq!(app.modal, Modal::Help);
+    }
+
+    /// Poll the manual check until it reports, for at most two seconds.
+    fn wait_for_manual_check(app: &mut App) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while app.manual_check.is_some() && Instant::now() < deadline {
+            app.poll_manual_check();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn u_in_help_checks_now_when_no_update_is_known() {
+        let fake = Arc::new(FakeUpdates::checking(Ok(Some(fake_release("9.9.9")))));
+        let mut app = App::with_library(test_player(), None).with_updates(fake.clone());
+        press(&mut app, KeyCode::Char('?'));
+        press(&mut app, KeyCode::Char('u'));
+        assert!(
+            toast_texts(&app)
+                .iter()
+                .any(|t| t == "Checking for updates…")
+        );
+        wait_for_manual_check(&mut app);
+        assert_eq!(app.modal, Modal::Update);
+        assert_eq!(
+            app.update.as_ref().map(|r| r.version.as_str()),
+            Some("9.9.9")
+        );
+    }
+
+    #[test]
+    fn a_manual_check_that_finds_nothing_says_up_to_date() {
+        let fake = Arc::new(FakeUpdates::checking(Ok(None)));
+        let mut app = App::with_library(test_player(), None).with_updates(fake);
+        press(&mut app, KeyCode::Char('?'));
+        press(&mut app, KeyCode::Char('u'));
+        wait_for_manual_check(&mut app);
+        assert!(app.update.is_none());
+        assert!(
+            toast_texts(&app)
+                .iter()
+                .any(|t| t.contains("is up to date"))
+        );
+    }
+
+    #[test]
+    fn a_failed_manual_check_shows_the_error() {
+        let fake = Arc::new(FakeUpdates::checking(Err("offline".into())));
+        let mut app = App::with_library(test_player(), None).with_updates(fake);
+        press(&mut app, KeyCode::Char('?'));
+        press(&mut app, KeyCode::Char('u'));
+        wait_for_manual_check(&mut app);
+        assert!(toast_texts(&app).iter().any(|t| t.contains("offline")));
+    }
+
+    #[test]
+    fn a_second_u_while_checking_starts_no_second_check() {
+        let fake = Arc::new(FakeUpdates::checking(Ok(None)));
+        let mut app = App::with_library(test_player(), None).with_updates(fake.clone());
+        press(&mut app, KeyCode::Char('?'));
+        press(&mut app, KeyCode::Char('u'));
+        press(&mut app, KeyCode::Char('u'));
+        wait_for_manual_check(&mut app);
+        assert_eq!(*fake.checks.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn u_with_a_known_update_opens_it_without_checking() {
+        let fake = Arc::new(FakeUpdates::offering("9.9.9"));
+        let mut app = App::with_library(test_player(), None).with_updates(fake.clone());
+        app.check_updates_now();
+        press(&mut app, KeyCode::Char('?'));
+        press(&mut app, KeyCode::Char('u'));
+        assert_eq!(app.modal, Modal::Update);
+        assert_eq!(*fake.checks.lock().unwrap(), 0);
     }
 
     fn app_offering(fake: Arc<FakeUpdates>) -> App {

@@ -405,7 +405,9 @@ it never writes the database itself.
 When a newer release is known, a toast says so once, Help's bottom title reads
 `znicz 0.13.4 → 0.14.0`, and `u` in Help opens the **Update** modal: the
 release notes, `Enter` to install, then an offer to restart Znicz (and the
-player, resuming where it was). Details: [Updates](Updates.md).
+player, resuming where it was). When no update is known, `u` in Help checks
+GitHub right away (even with `[updates] check = false`) and says what it found.
+Details: [Updates](Updates.md).
 
 ## Messages
 
