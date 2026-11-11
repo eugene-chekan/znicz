@@ -229,8 +229,8 @@ pub const STAGE: &[Binding] = &[b("v / i / Esc", "back to browse")];
 
 pub const MESSAGES: &[Binding] = &[b("C", "clear the history"), b("Esc / M", "close")];
 
-/// Only in the help overlay; the action says it works when an update exists.
-pub const HELP: &[Binding] = &[b("u", "update (when one is available)")];
+/// Only in the help overlay: opens a known update, or checks for one right away.
+pub const HELP: &[Binding] = &[b("u", "check for updates")];
 
 /// A titled group of bindings in the help overlay.
 #[derive(Debug, Clone, PartialEq, Eq)]

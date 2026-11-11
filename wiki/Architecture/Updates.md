@@ -27,7 +27,14 @@ and `znicz update --check` always ask.
 - One toast per new version: `Znicz 0.14.0 is available · ? then u to update`.
 - Help's bottom title reads `znicz 0.13.4 → 0.14.0`; `u` in Help opens the
   **Update** modal. The `u` row is always listed in Help as
-  `update (when one is available)`.
+  `check for updates`.
+- `u` in Help with no update known checks right away, ignoring the daily limit
+  and `[updates] check = false`. `Checking for updates…` is shown meanwhile,
+  and a second `u` does not start another check. The outcomes:
+  - a newer release: the Update modal opens (or, when another modal is open,
+    the `is available` toast);
+  - up to date: `Znicz 0.14.1 is up to date` (success toast);
+  - an error: `Update check failed: …` (error toast).
 
 ## The Update modal
 

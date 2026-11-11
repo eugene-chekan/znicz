@@ -20,6 +20,8 @@ pub(crate) const CHECK_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// Dist's install section starts at this heading; it is not release notes.
 const INSTALL_SECTION: &str = "## Install znicz";
+/// dist puts this heading at the top of the body; the Update window has its own title.
+const NOTES_HEADING: &str = "## Release Notes";
 const NO_NOTES: &str = "No release notes.";
 const STATE_FILE: &str = "update-check.toml";
 const WINDOWS_INSTALLER: &str = r#"Run the installer again: powershell -ExecutionPolicy Bypass -c "irm https://github.com/eugene-chekan/znicz/releases/latest/download/znicz-installer.ps1 | iex""#;
@@ -37,12 +39,20 @@ pub(crate) fn is_newer(current: &str, latest: &str) -> bool {
     }
 }
 
-/// The body up to dist's `## Install znicz` section, trimmed; empty → "No release notes.".
+/// The body up to dist's `## Install znicz` section, without a leading
+/// `## Release Notes` heading, trimmed; empty → "No release notes.".
 pub(crate) fn release_notes(body: &str) -> String {
-    let notes: Vec<&str> = body
+    let mut notes: Vec<&str> = body
         .lines()
         .take_while(|line| !line.starts_with(INSTALL_SECTION))
         .collect();
+    let heading = notes
+        .iter()
+        .position(|line| !line.trim().is_empty())
+        .filter(|&index| notes[index].trim().eq_ignore_ascii_case(NOTES_HEADING));
+    if let Some(index) = heading {
+        notes.remove(index);
+    }
     let notes = notes.join("\n");
     let notes = notes.trim();
     if notes.is_empty() {
@@ -210,6 +220,15 @@ impl Updates for GithubUpdates {
             }
         }
         Self::stored_release(&self.state())
+    }
+
+    fn check_now(&self) -> Result<Option<Release>, String> {
+        let release = self.fetch_now()?;
+        if is_newer(env!("CARGO_PKG_VERSION"), &release.version) {
+            Ok(Some(release))
+        } else {
+            Ok(None)
+        }
     }
 
     fn can_install(&self) -> bool {
@@ -512,5 +531,48 @@ pub(crate) mod tests {
         updates.set_notified("0.14.0");
         assert_eq!(updates.notified(), Some("0.14.0".into()));
         assert_eq!(CheckState::load(&path).notified, Some("0.14.0".into()));
+    }
+
+    #[test]
+    fn release_notes_drop_the_release_notes_heading() {
+        assert_eq!(
+            release_notes("## Release Notes\n\n- Fix\n\n## Install znicz 0.14.0\ncurl"),
+            "- Fix"
+        );
+        assert_eq!(release_notes("## release notes  \n- Fix"), "- Fix");
+        assert_eq!(release_notes("## Release Notes\n"), NO_NOTES);
+    }
+
+    #[test]
+    fn check_now_asks_even_when_checks_are_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let (url, hits) = serve(200, RELEASE_099);
+        let updates = GithubUpdates::new(dir.path().join("update-check.toml"), false, url);
+
+        let release = updates.check_now().unwrap().expect("newer release");
+        assert_eq!(release.version, "99.0.0");
+        assert_eq!(*hits.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn check_now_is_none_when_up_to_date() {
+        let dir = tempfile::tempdir().unwrap();
+        let (url, hits) = serve(
+            200,
+            r#"{"tag_name":"v0.0.1","body":"Old","html_url":"https://x"}"#,
+        );
+        let updates = GithubUpdates::new(dir.path().join("update-check.toml"), true, url);
+
+        assert_eq!(updates.check_now(), Ok(None));
+        assert_eq!(*hits.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn check_now_passes_errors_through() {
+        let dir = tempfile::tempdir().unwrap();
+        let (url, _) = serve(404, "{}");
+        let updates = GithubUpdates::new(dir.path().join("update-check.toml"), true, url);
+
+        assert!(updates.check_now().is_err());
     }
 }
