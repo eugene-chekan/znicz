@@ -60,10 +60,21 @@ Release builds are made by [dist](https://github.com/axodotdev/cargo-dist)
    - `znicz-installer.sh` and `znicz-installer.ps1`, which download the right
      archive, verify it, and install to `~/.local/bin` (added to `PATH`).
 
-Archives hold the binary, `README.md` and both licence files. They are built with
+Archives hold the binary, `README.md`, both licence files and
+`THIRD-PARTY-LICENSES.html`. They are built with
 `[profile.dist]`, which inherits `[profile.release]` (thin LTO, one codegen unit,
 stripped symbols): about 15 MB unpacked, 5 MB packed. The Linux binary links only
 glibc and `libasound.so.2`.
+
+**Third-party licences.** `THIRD-PARTY-LICENSES.html` lists every crate compiled
+into the release binary (dev and build dependencies excluded, the three release
+targets only) with its licence text. [cargo-about](https://github.com/EmbarkStudios/cargo-about)
+builds it from `Cargo.lock` with `about.toml` (accepted licences) and `about.hbs`
+(the page). After any dependency change run `scripts/third-party-licenses.sh`
+and commit the file; the CI lint job regenerates it and fails when it differs.
+A new licence that is not in `accepted` fails the script until it is reviewed
+and added. Symphonia is MPL-2.0: fine to ship unmodified in an MIT / Apache
+binary, as long as the page points at its source, which it does.
 
 After changing `dist-workspace.toml` or upgrading dist, run `dist generate`
 (never edit `release.yml` by hand) and `dist plan` to see what a tag would

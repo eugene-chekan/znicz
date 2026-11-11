@@ -319,4 +319,7 @@ bit perfect or resampled.
 
 ## License
 
-MIT OR Apache-2.0
+MIT OR Apache-2.0, at your option: [LICENSE-MIT](LICENSE-MIT),
+[LICENSE-APACHE](LICENSE-APACHE). Release builds also carry
+[THIRD-PARTY-LICENSES.html](THIRD-PARTY-LICENSES.html), the licences of the Rust
+crates compiled into the binary.
