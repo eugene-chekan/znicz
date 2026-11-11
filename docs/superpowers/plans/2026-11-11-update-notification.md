@@ -86,15 +86,15 @@ App state (in `app.rs`): `pub updates: Option<Arc<dyn Updates>>`, `pub update: O
 
 Help: `version_title(popup_width, hint)` gets the update version: ` znicz 0.13.4 → 0.14.0 ` when `app.update` is `Some` (keep the existing "drop when it does not fit" rule; pass `Option<&str>`). In `on_help_key` (not editing, no modifiers): `KeyCode::Char('u') if self.update.is_some() => self.open_update()` where `open_update` for now just sets `self.modal = Modal::Update` (Task 3 fills it in; add the `Modal::Update` variant now with a placeholder render that draws an empty bordered modal titled `Update`, and `Esc` closes it). Help rows: `keys.rs` gets a row `u` / `update to the new version` in the Help context section, shown only when an update is known — if `help_sections` cannot see the app, add the row unconditionally under a heading that says "when an update is available" (pick the simpler; note it in the report).
 
-- [ ] **Step 1: Tests** (use the existing App test helpers in `app.rs` tests / `znicz-tui/tests/keys.rs` — read them first; build an `App` with a local player). A `FakeUpdates` (in the test module) returning a fixed `Release { version: "9.9.9", .. }`, `can_install` configurable, `install` recording calls and returning a configurable result, `notified`/`set_notified` in a `Mutex<Option<String>>`.
+- [x] **Step 1: Tests** (use the existing App test helpers in `app.rs` tests / `znicz-tui/tests/keys.rs` — read them first; build an `App` with a local player). A `FakeUpdates` (in the test module) returning a fixed `Release { version: "9.9.9", .. }`, `can_install` configurable, `install` recording calls and returning a configurable result, `notified`/`set_notified` in a `Mutex<Option<String>>`.
   - after `with_updates(fake)` and one pump of the check result (expose a `pub(crate) fn poll_updates(&mut self)` and a test hook that runs the check synchronously, e.g. `pub(crate) fn check_updates_now(&mut self)`), `app.update` is `Some`, a toast with `9.9.9 is available` exists, `fake.notified() == Some("9.9.9")`.
   - a second app with the fake already notified for `9.9.9`: no toast.
   - `version_title(80, hint, Some("9.9.9"))` text is ` znicz {CARGO_PKG_VERSION} → 9.9.9 `.
   - Help open + `u` with an update → `modal == Modal::Update`; without an update → stays Help.
-- [ ] **Step 2:** run; fails.
-- [ ] **Step 3:** implement.
-- [ ] **Step 4:** checks pass.
-- [ ] **Step 5: Commit** `"Tell the TUI user about a new release"`.
+- [x] **Step 2:** run; fails.
+- [x] **Step 3:** implement.
+- [x] **Step 4:** checks pass.
+- [x] **Step 5: Commit** `"Tell the TUI user about a new release"`.
 
 ---
 

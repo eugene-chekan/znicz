@@ -10,6 +10,7 @@ mod queue;
 mod radio;
 pub mod stage;
 mod status;
+mod update;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -121,6 +122,7 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
         Modal::Playlists => playlists::render_modal(frame, list, app),
         Modal::Radio => radio::render_modal(frame, list, app),
         Modal::Messages => messages::render_modal(frame, list, app),
+        Modal::Update => update::render_modal(frame, list, app),
         Modal::None => {}
     }
 }

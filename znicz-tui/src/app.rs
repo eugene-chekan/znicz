@@ -30,6 +30,7 @@ use crate::line_edit::LineEdit;
 use crate::meta::{Entry, MetaCache};
 use crate::toast::Toasts;
 use crate::tui_config::{CoverProtocol, TuiConfig};
+use crate::update::{Release, Updates};
 use crate::views;
 
 /// GitHub Windows runners expose WASAPI, but enumerating devices from tests
@@ -163,6 +164,7 @@ pub enum Modal {
     Playlists,
     Radio,
     Messages,
+    Update,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,7 +270,12 @@ impl Modal {
     pub(crate) fn blocks_list_focus(self) -> bool {
         matches!(
             self,
-            Self::Help | Self::Devices | Self::Playlists | Self::Radio | Self::Messages
+            Self::Help
+                | Self::Devices
+                | Self::Playlists
+                | Self::Radio
+                | Self::Messages
+                | Self::Update
         )
     }
 }
@@ -333,6 +340,12 @@ pub struct App {
     pub library_poll_every: Duration,
     last_library_poll: Option<Instant>,
     pub should_quit: bool,
+    /// Where the newer release comes from; `None` disables the check.
+    pub updates: Option<Arc<dyn Updates>>,
+    /// The newer release, once the check has found one.
+    pub update: Option<Release>,
+    /// The background check's answer, until it arrives.
+    update_check: Option<std::sync::mpsc::Receiver<Option<Release>>>,
 }
 
 fn point_in(rect: Rect, column: u16, row: u16) -> bool {
@@ -529,6 +542,12 @@ impl App {
         app
     }
 
+    /// Check for a newer release when the TUI runs, and let the user update.
+    pub fn with_updates(mut self, updates: Arc<dyn Updates>) -> Self {
+        self.updates = Some(updates);
+        self
+    }
+
     fn with_engine(player: Engine, library: Option<Library>) -> Self {
         Self {
             player,
@@ -584,6 +603,9 @@ impl App {
             library_poll_every: Duration::from_millis(500),
             last_library_poll: None,
             should_quit: false,
+            updates: None,
+            update: None,
+            update_check: None,
         }
     }
 
@@ -595,9 +617,69 @@ impl App {
             protocol = ?self.picker.as_ref().map(|p| p.protocol_type()),
             "cover renderer"
         );
+        self.spawn_update_check();
         let result = self.run_loop(&mut terminal);
         ratatui::restore();
         result
+    }
+
+    /// Ask for the newer release on a background thread; `poll_updates` reads it.
+    fn spawn_update_check(&mut self) {
+        let Some(updates) = self.updates.clone() else {
+            return;
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(updates.latest());
+        });
+        self.update_check = Some(rx);
+    }
+
+    /// Take the background check's answer when it has arrived.
+    pub(crate) fn poll_updates(&mut self) {
+        let Some(rx) = &self.update_check else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Some(release)) => {
+                self.update_check = None;
+                self.on_update_found(release);
+            }
+            Ok(None) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.update_check = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
+    }
+
+    /// Remember a newer release, and announce it once per version.
+    pub(crate) fn on_update_found(&mut self, release: Release) {
+        let version = release.version.clone();
+        self.update = Some(release);
+        let Some(updates) = self.updates.clone() else {
+            return;
+        };
+        if updates.notified().as_deref() != Some(version.as_str()) {
+            self.toasts
+                .info(format!("Znicz {version} is available · ? then u to update"));
+            updates.set_notified(&version);
+        }
+    }
+
+    /// Run the update check now, on this thread (tests).
+    #[cfg(test)]
+    pub(crate) fn check_updates_now(&mut self) {
+        let Some(updates) = self.updates.clone() else {
+            return;
+        };
+        if let Some(release) = updates.latest() {
+            self.on_update_found(release);
+        }
+    }
+
+    /// Opened from Help with `u`.
+    pub(crate) fn open_update(&mut self) {
+        self.modal = Modal::Update;
     }
 
     fn overlays(&self) -> Overlays {
@@ -611,6 +693,7 @@ impl App {
         let mut repaint = false;
         loop {
             self.poll_player_events();
+            self.poll_updates();
             self.toasts.tick();
 
             let state = self.player.state();
@@ -716,6 +799,7 @@ impl App {
                 self.message_h_offset = 0;
             }
             Modal::Help => self.help.scroll_by(delta),
+            Modal::Update => {}
             Modal::None => match self.focus {
                 Focus::Library if self.view == View::Browse => {
                     self.library.step(delta, self.library_strip())
@@ -857,6 +941,10 @@ impl App {
             self.on_help_key(key);
             return;
         }
+        if self.modal == Modal::Update {
+            self.on_update_key(key);
+            return;
+        }
 
         // Search, playlist save, and radio prompts are plain text. They must run
         // before global keys, or `s` (stop) turns "To Listen" into "To Liten".
@@ -938,7 +1026,7 @@ impl App {
     fn on_esc(&mut self) {
         if matches!(
             self.modal,
-            Modal::Devices | Modal::Playlists | Modal::Radio | Modal::Messages
+            Modal::Devices | Modal::Playlists | Modal::Radio | Modal::Messages | Modal::Update
         ) {
             self.close_modal();
         } else if self.queue_open && (self.focus == Focus::Queue || self.view == View::Stage) {
@@ -1001,7 +1089,19 @@ impl App {
             KeyCode::Char('g') | KeyCode::Home => self.help.scroll = 0,
             // Clamped to the last page when help is drawn.
             KeyCode::Char('G') | KeyCode::End => self.help.scroll = usize::MAX,
+            KeyCode::Char('u') if self.update.is_some() => self.open_update(),
             _ => {}
+        }
+    }
+
+    /// Keys while the Update modal is open. Task 3 adds the install flow.
+    fn on_update_key(&mut self, key: KeyEvent) {
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+            self.should_quit = true;
+            return;
+        }
+        if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
+            self.close_modal();
         }
     }
 
@@ -1193,6 +1293,7 @@ impl App {
             Modal::Playlists => Context::Playlists,
             Modal::Radio => Context::Radio,
             Modal::Messages => Context::Messages,
+            Modal::Update => Context::Update,
             Modal::None
                 if self.view == View::Stage && !(self.queue_open && self.focus == Focus::Queue) =>
             {
@@ -1321,7 +1422,7 @@ impl App {
     fn reload_front(&mut self) {
         match self.modal {
             Modal::Radio => self.reload_stations(),
-            Modal::Messages => {}
+            Modal::Messages | Modal::Update => {}
             Modal::Playlists => self.reload_playlists(),
             Modal::Devices => {
                 self.devices = load_output_devices();
@@ -2524,5 +2625,110 @@ mod tests {
         });
         app.on_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
         assert_eq!(app.playing, None, "the next frame must re-resolve");
+    }
+
+    use crate::update::{Release, Updates};
+    use std::sync::Mutex;
+
+    /// A fake updater: a fixed release, a recorded install, a notified marker.
+    pub(crate) struct FakeUpdates {
+        pub(crate) release: Option<Release>,
+        pub(crate) installable: bool,
+        pub(crate) install_result: Mutex<Result<(), String>>,
+        pub(crate) installs: Mutex<Vec<String>>,
+        pub(crate) notified: Mutex<Option<String>>,
+    }
+
+    impl FakeUpdates {
+        pub(crate) fn offering(version: &str) -> Self {
+            Self {
+                release: Some(Release {
+                    version: version.into(),
+                    notes: "Notes".into(),
+                    url: "https://example.test/release".into(),
+                }),
+                installable: true,
+                install_result: Mutex::new(Ok(())),
+                installs: Mutex::new(Vec::new()),
+                notified: Mutex::new(None),
+            }
+        }
+    }
+
+    impl Updates for FakeUpdates {
+        fn latest(&self) -> Option<Release> {
+            self.release.clone()
+        }
+
+        fn can_install(&self) -> bool {
+            self.installable
+        }
+
+        fn install(&self, version: &str) -> Result<(), String> {
+            self.installs.lock().unwrap().push(version.to_string());
+            self.install_result.lock().unwrap().clone()
+        }
+
+        fn hint(&self) -> String {
+            "rebuild it".into()
+        }
+
+        fn notified(&self) -> Option<String> {
+            self.notified.lock().unwrap().clone()
+        }
+
+        fn set_notified(&self, version: &str) {
+            *self.notified.lock().unwrap() = Some(version.to_string());
+        }
+    }
+
+    fn toast_texts(app: &App) -> Vec<String> {
+        app.toasts.recent().iter().map(|t| t.text.clone()).collect()
+    }
+
+    #[test]
+    fn a_new_release_is_announced_once_and_remembered() {
+        let fake = Arc::new(FakeUpdates::offering("9.9.9"));
+        let mut app = App::with_library(test_player(), None).with_updates(fake.clone());
+        app.check_updates_now();
+        assert!(app.update.is_some());
+        assert!(
+            toast_texts(&app)
+                .iter()
+                .any(|t| t.contains("9.9.9 is available"))
+        );
+        assert_eq!(fake.notified(), Some("9.9.9".into()));
+    }
+
+    #[test]
+    fn a_release_already_announced_stays_quiet() {
+        let fake = FakeUpdates::offering("9.9.9");
+        *fake.notified.lock().unwrap() = Some("9.9.9".into());
+        let fake = Arc::new(fake);
+        let mut app = App::with_library(test_player(), None).with_updates(fake.clone());
+        app.check_updates_now();
+        assert!(app.update.is_some(), "the update is still known");
+        assert!(!toast_texts(&app).iter().any(|t| t.contains("is available")));
+    }
+
+    #[test]
+    fn u_in_help_opens_the_update_modal_only_when_one_is_known() {
+        let mut app = App::with_library(test_player(), None)
+            .with_updates(Arc::new(FakeUpdates::offering("9.9.9")));
+        app.check_updates_now();
+        app.on_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
+        assert_eq!(app.modal, Modal::Help);
+        app.on_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE));
+        assert_eq!(app.modal, Modal::Update);
+        app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.modal, Modal::None, "Esc closes the update modal");
+    }
+
+    #[test]
+    fn u_in_help_does_nothing_without_an_update() {
+        let mut app = App::with_library(test_player(), None);
+        app.on_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
+        app.on_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE));
+        assert_eq!(app.modal, Modal::Help);
     }
 }
