@@ -1,6 +1,0 @@
-queue = []
-queue_position = 0
-volume = 1.0
-muted = true
-repeat = "Off"
-shuffle = false
