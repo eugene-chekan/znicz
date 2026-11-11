@@ -400,6 +400,13 @@ it never writes the database itself.
 - **Polling.** The TUI asks for the library status at most every 500 ms and
   keeps the last status if the player cannot be reached.
 
+## Updates
+
+When a newer release is known, a toast says so once, Help's bottom title reads
+`znicz 0.13.4 → 0.14.0`, and `u` in Help opens the **Update** modal: the
+release notes, `Enter` to install, then an offer to restart Znicz (and the
+player, resuming where it was). Details: [Updates](Updates.md).
+
 ## Messages
 
 The interface owns the screen, so anything written to the log or to stdout is

@@ -254,7 +254,7 @@ fn apply_resume(player: &Engine, resume: Resume) {
 
 ### Task 6: Docs, changelog, version (controller)
 
-- [ ] `CHANGELOG.md` with `## 0.14.0 - 2026-11-11` (this feature) and short entries for 0.13.1–0.13.4 from `git log`.
-- [ ] Wiki: new `wiki/Architecture/Updates.md` (check, state file, notification, modal steps, restart and `--resume`, player version, CLI, axoupdater and the receipt), link from `_Sidebar.md` and `Architecture/Overview.md`; `TUI.md` (Help `u`, Update modal); README config (`[updates] check = true`) and install section (`znicz update`).
-- [ ] Version `0.14.0`; `scripts/third-party-licenses.sh` (new licences: add to `about.toml` `accepted` only if permissive; report them).
-- [ ] Checks; commit `"Document updates; changelog; bump to 0.14.0"`.
+- [x] `CHANGELOG.md` with `## 0.14.0 - 2026-11-11` (this feature) and short entries for 0.13.1–0.13.4 from `git log`.
+- [x] Wiki: new `wiki/Architecture/Updates.md` (check, state file, notification, modal steps, restart and `--resume`, player version, CLI, axoupdater and the receipt), link from `_Sidebar.md` and `Architecture/Overview.md`; `TUI.md` (Help `u`, Update modal); README config (`[updates] check = true`) and install section (`znicz update`).
+- [x] Version `0.14.0`; `scripts/third-party-licenses.sh` (new licences: add to `about.toml` `accepted` only if permissive; report them).
+- [x] Checks; commit `"Document updates; changelog; bump to 0.14.0"`.

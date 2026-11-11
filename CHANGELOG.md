@@ -1,0 +1,36 @@
+# Changelog
+
+## 0.14.0 - 2026-11-11
+
+- The TUI checks GitHub for a new release once a day and says so in a toast.
+  Help shows `znicz 0.13.4 → 0.14.0`; `u` in Help opens the release notes and
+  installs the update, then offers to restart Znicz (and the player, resuming
+  where it was). `[updates] check = false` turns the check off
+  ([#83](https://github.com/eugene-chekan/znicz/issues/83)).
+- `znicz update` installs the latest release; `znicz update --check` only
+  reports it.
+- The player writes its version into `ipc.toml`; a TUI newer than the player
+  says the player updates when it next restarts.
+
+## 0.13.4 - 2026-11-11
+
+- Closing a drawer or modal on Stage no longer blinks: the repaint happens in
+  one synchronized update and the cover is not re-encoded (except for Kitty).
+- An autostarted player no longer lingers as a zombie under `znicz mcp`.
+- Tests clean up their temporary files
+  ([#79](https://github.com/eugene-chekan/znicz/issues/79)).
+- Edition 2024.
+
+## 0.13.3 - 2026-11-11
+
+- AudioAddict covers match titles whose apostrophe the stream sends as a
+  backtick (`` 90`s Love ``).
+
+## 0.13.2 - 2026-11-11
+
+- RadioTunes / DI.FM covers follow the song instead of showing the previous
+  one.
+
+## 0.13.1 - 2026-11-11
+
+- Release builds and installers for Linux (x86-64, ARM64) and Windows.
