@@ -198,11 +198,11 @@ pub(crate) fn update_hint(exe: &Path) -> String
 
 CLI `znicz update [--check]` (spec "CLI"): `--check` forces a fetch (ignore `due`), saves, prints `znicz {current}, latest {v}` + notes, or `znicz {current} is up to date`. Without `--check`: fetch latest; if not newer print up to date; if not `can_install` print the hint and exit with an error; else install with installer output **enabled** and print the spec's message.
 
-- [ ] **Step 1: Tests** in `update.rs`: `is_newer` (`0.13.4`/`0.14.0` true; equal false; older false; `0.15.0-rc.1` false; garbage false); `release_notes` (body with notes + `## Install znicz 0.14.0` section → notes only; body that starts with the install section → `No release notes.`; empty → same); `version_from_tag`; `update_hint` for `/home/x/znicz/target/release/znicz` vs `/home/x/.local/bin/znicz`; `CheckState::due` (0 → due; now-1 h → not due; now-25 h → due); `CheckState` save/load round trip in a `tempfile::tempdir()`; `fetch_latest_at` against a local `TcpListener` server (copy the tiny HTTP server pattern from `znicz-core/src/audioaddict.rs` tests): 200 with `{"tag_name":"v0.14.0","body":"Fixes\n\n## Install znicz 0.14.0\n…","html_url":"https://x"}` → `("0.14.0","Fixes","https://x")`; 404 → Err; `not json` → Err. `GithubUpdates::latest` with a server, a fresh state file and `check=true` → `Some(Release{version:"99.0.0"..})` when the server says `v99.0.0`, and the state file now has `checked_at > 0`; with `check=false` → None and no request.
-- [ ] **Step 2:** run; fails.
-- [ ] **Step 3:** implement. Do not wire into the TUI yet (Task 5).
-- [ ] **Step 4:** checks pass; also `cargo run -q -- update --check` once by hand and paste its output in the report (needs network; if offline, say so).
-- [ ] **Step 5: Commit** `"znicz update: check GitHub releases and install through the dist receipt"`.
+- [x] **Step 1: Tests** in `update.rs`: `is_newer` (`0.13.4`/`0.14.0` true; equal false; older false; `0.15.0-rc.1` false; garbage false); `release_notes` (body with notes + `## Install znicz 0.14.0` section → notes only; body that starts with the install section → `No release notes.`; empty → same); `version_from_tag`; `update_hint` for `/home/x/znicz/target/release/znicz` vs `/home/x/.local/bin/znicz`; `CheckState::due` (0 → due; now-1 h → not due; now-25 h → due); `CheckState` save/load round trip in a `tempfile::tempdir()`; `fetch_latest_at` against a local `TcpListener` server (copy the tiny HTTP server pattern from `znicz-core/src/audioaddict.rs` tests): 200 with `{"tag_name":"v0.14.0","body":"Fixes\n\n## Install znicz 0.14.0\n…","html_url":"https://x"}` → `("0.14.0","Fixes","https://x")`; 404 → Err; `not json` → Err. `GithubUpdates::latest` with a server, a fresh state file and `check=true` → `Some(Release{version:"99.0.0"..})` when the server says `v99.0.0`, and the state file now has `checked_at > 0`; with `check=false` → None and no request.
+- [x] **Step 2:** run; fails.
+- [x] **Step 3:** implement. Do not wire into the TUI yet (Task 5).
+- [x] **Step 4:** checks pass; also `cargo run -q -- update --check` once by hand and paste its output in the report (needs network; if offline, say so).
+- [x] **Step 5: Commit** `"znicz update: check GitHub releases and install through the dist receipt"`.
 
 ---
 

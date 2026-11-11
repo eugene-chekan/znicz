@@ -16,6 +16,7 @@ use znicz_mcp::run_stdio;
 use znicz_tui::{App, TuiConfig};
 
 mod daemon;
+mod update;
 
 use daemon::{acquire_player_lock, clear_stale_player_files, ensure_player, player_is_up};
 
@@ -84,6 +85,12 @@ enum Commands {
     Station {
         #[command(subcommand)]
         command: StationCmd,
+    },
+
+    /// Check for a newer release, or install it
+    Update {
+        #[arg(long, help = "Only check and print the release notes")]
+        check: bool,
     },
 }
 
@@ -161,6 +168,15 @@ struct Config {
     player: PlayerSection,
     tui: TuiSection,
     covers: CoversSection,
+    updates: UpdatesSection,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct UpdatesSection {
+    /// Check GitHub for a newer release once a day. Default on.
+    /// Read by the TUI wiring (next task); allowed until then.
+    #[allow(dead_code)]
+    check: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -290,6 +306,7 @@ fn main() -> color_eyre::Result<()> {
         Some(Commands::Albums) => {
             list_albums(library_path)?;
         }
+        Some(Commands::Update { check }) => update::run_cli(check)?,
         Some(Commands::Playlist { command }) => match command {
             PlaylistCmd::List => list_playlists()?,
             PlaylistCmd::Save { name: _ } => {
