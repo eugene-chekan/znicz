@@ -1,7 +1,7 @@
 # Update notification and in-app update (#83)
 
 **Date:** 2026-11-11
-**Status:** Approved in chat (axoupdater; restart the player if idle, else ask; notes in the prompt)
+**Status:** Approved in chat (own installer runner instead of axoupdater, see "Installer runner"; restart the player if idle, else ask; notes in the prompt)
 **Crates:** `znicz` (binary), `znicz-tui`, `znicz-core` (IPC advert)
 **Version:** 0.14.0
 
@@ -126,3 +126,29 @@ IPC: an advert without `version` still parses; the player writes it.
 Wiki page `wiki/Guides/Updating.md` (or the existing guides folder),
 `[updates] check` in the config reference, README install section mentions
 `znicz update`, `CHANGELOG.md`.
+
+## Installer runner (replaces axoupdater)
+
+axoupdater added 4.6 MB (+31 %) to the release binary and ~91 crates,
+including `aws-lc-sys` (a C build). Znicz does the same steps itself with
+`ureq`:
+
+- **Receipt** (written by the dist installers): `$XDG_CONFIG_HOME/znicz/znicz-receipt.json`
+  when `XDG_CONFIG_HOME` is set; otherwise `~/.config/znicz/…` on Unix and
+  `%LOCALAPPDATA%\znicz\…` on Windows. JSON fields used: `install_prefix`,
+  `version`.
+- **Installable** when the receipt parses and the canonical directory of
+  `current_exe()` equals the canonical `install_prefix` (or
+  `install_prefix/bin`).
+- **Install `v`**: download
+  `https://github.com/eugene-chekan/znicz/releases/download/v{v}/znicz-installer.{sh,ps1}`
+  (cap 2 MB) into a temp dir; run `sh <file>` on Unix, or
+  `powershell -NoProfile -ExecutionPolicy Bypass -File <file>` on Windows, with
+  `ZNICZ_INSTALL_DIR=<install_prefix>` and `ZNICZ_NO_MODIFY_PATH=1`. TUI: output
+  captured; on failure the last lines of stderr/stdout form the error. CLI:
+  output shown.
+- **Windows**: before running, rename the running `znicz.exe` to
+  `znicz.exe.old` in the same folder (a running exe can be renamed but not
+  overwritten); if the installer fails, rename it back. At every start,
+  delete a leftover `znicz.exe.old` next to the exe (best effort; it fails
+  while an old player still runs it, which is fine).

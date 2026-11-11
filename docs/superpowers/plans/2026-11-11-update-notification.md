@@ -206,6 +206,12 @@ CLI `znicz update [--check]` (spec "CLI"): `--check` forces a fetch (ignore `due
 
 ---
 
+### Task 4b: Replace axoupdater with our own installer runner
+
+See the spec section "Installer runner". Remove `axoupdater` from `znicz/Cargo.toml`; `can_install` / `install` use a new `znicz/src/update/installer.rs` (or a section of `update.rs`): `receipt_path()`, `Receipt { install_prefix, version }` (serde, ignore other fields), `is_installed_copy(exe, receipt) -> bool`, `installer_url(version) -> String`, `download_installer(url, dir) -> Result<PathBuf, String>`, `run_installer(script, prefix, capture: bool) -> Result<(), String>`, Windows `rename_running_exe` / restore / `remove_old_exe`. Tests: receipt path from env (`XDG_CONFIG_HOME` set → that dir; pure fn taking the env values), receipt parsing (real receipt sample from the spec), `is_installed_copy` (same dir → true; `prefix/bin` → true; other dir → false; using temp dirs and `canonicalize`), `installer_url`, download against a local server (200 → file content written; 404 → Err), `run_installer` on Unix with a tiny script that checks `$ZNICZ_INSTALL_DIR` and `$ZNICZ_NO_MODIFY_PATH` and exits 0 / exits 3 with stderr `boom` → Err containing `boom`. `Cargo.lock` must no longer contain `axoupdater`, `reqwest`, `aws-lc-sys` (check `cargo tree -i aws-lc-sys` errors). Commit `"Run the release installer ourselves instead of axoupdater"`.
+
+---
+
 ### Task 5: Wire updates into the TUI; restart and `--resume`; version mismatch toast
 
 **Files:** `znicz/src/main.rs` (`Cli`, `run_tui_with_client` ~line 675 and its callers, `main`).
