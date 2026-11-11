@@ -85,7 +85,8 @@ fn icy_block(payload: &str) -> Vec<u8> {
 /// Decode-only: no cpal, no device. Skip only when ffmpeg cannot make the MP3.
 #[test]
 fn audio_decoder_decodes_a_loopback_mp3_stream() {
-    let mp3 = std::env::temp_dir().join("znicz-stream-decode-test.mp3");
+    let dir = tempfile::tempdir().unwrap();
+    let mp3 = dir.path().join("loopback.mp3");
     let made = std::process::Command::new("ffmpeg")
         .args(["-y", "-loglevel", "error"])
         .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=1"])
@@ -98,12 +99,10 @@ fn audio_decoder_decodes_a_loopback_mp3_stream() {
 
     if !made {
         eprintln!("ffmpeg/libmp3lame not available, skipping");
-        let _ = std::fs::remove_file(&mp3);
         return;
     }
 
     let buf = std::fs::read(&mp3).unwrap();
-    let _ = std::fs::remove_file(&mp3);
     decode_loopback_body(buf, "audio/mpeg");
 }
 
@@ -203,7 +202,8 @@ fn file_track(path: &Path) -> TrackInfo {
 /// Failed station play must not leave the previous file as now-playing.
 #[test]
 fn failed_station_play_does_not_keep_the_old_file() {
-    let wav = std::env::temp_dir().join("znicz-failed-station-old.wav");
+    let dir = tempfile::tempdir().unwrap();
+    let wav = dir.path().join("old.wav");
     write_silent_wav(&wav);
 
     let (player, _thread) = spawn_player(AudioConfig::default());
@@ -271,8 +271,6 @@ fn failed_station_play_does_not_keep_the_old_file() {
             "speakers must not keep playing the old file"
         );
     }
-
-    std::fs::remove_file(wav).ok();
 }
 
 /// A stream body that dies after probe must stop, not sit in Playing with no decoder.

@@ -226,8 +226,8 @@ mod tests {
 
     #[test]
     fn prune_missing_drops_gone_files_and_keeps_streams() {
-        let gone = std::env::temp_dir().join("znicz-session-missing-file.flac");
-        let _ = std::fs::remove_file(&gone);
+        let dir = tempfile::tempdir().unwrap();
+        let gone = dir.path().join("missing-file.flac");
         let mut session = Session {
             queue: vec![
                 QueueItem::file(&gone),
@@ -246,9 +246,8 @@ mod tests {
 
     #[test]
     fn save_and_load_round_trip_files_and_streams() {
-        let dir = std::env::temp_dir().join(format!("znicz-session-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("session.toml");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.toml");
         let session = Session {
             queue: vec![
                 QueueItem::file("/music/a.flac"),
@@ -263,13 +262,12 @@ mod tests {
         save(&path, &session).expect("save");
         let loaded = load(&path).expect("load");
         assert_eq!(loaded, session);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn missing_session_file_is_empty_defaults() {
-        let path = std::env::temp_dir().join("znicz-session-does-not-exist.toml");
-        let _ = std::fs::remove_file(&path);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.toml");
         let session = load(&path).expect("load");
         assert_eq!(session, Session::default());
     }
@@ -298,21 +296,15 @@ mod tests {
         assert!(state.current_track.is_none());
     }
 
-    fn temp_session_path() -> std::path::PathBuf {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "znicz-session-persist-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir.join("session.toml")
+    fn temp_session_path() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.toml");
+        (dir, path)
     }
 
     #[test]
     fn mute_is_not_written_before_debounce() {
-        let path = temp_session_path();
+        let (_dir, path) = temp_session_path();
         let (player, _thread) = crate::spawn_player(crate::AudioConfig::default());
         let mut persister = SessionPersister::new(&path, std::time::Duration::from_millis(200));
         persister.sync_from_player(&player);
@@ -328,7 +320,7 @@ mod tests {
 
     #[test]
     fn mute_is_written_after_the_snapshot_is_stable() {
-        let path = temp_session_path();
+        let (_dir, path) = temp_session_path();
         let (player, _thread) = crate::spawn_player(crate::AudioConfig::default());
         let mut persister = SessionPersister::new(&path, std::time::Duration::from_millis(30));
         persister.sync_from_player(&player);
@@ -342,7 +334,7 @@ mod tests {
 
     #[test]
     fn flush_writes_a_pending_mute_without_waiting() {
-        let path = temp_session_path();
+        let (_dir, path) = temp_session_path();
         let (player, _thread) = crate::spawn_player(crate::AudioConfig::default());
         let mut persister = SessionPersister::new(&path, std::time::Duration::from_millis(5_000));
         persister.sync_from_player(&player);

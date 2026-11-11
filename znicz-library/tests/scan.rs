@@ -3,7 +3,7 @@
 //! The fixtures are generated with ffmpeg. When ffmpeg is missing the tests
 //! report that and pass, so the suite still works on a bare machine.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use znicz_library::Library;
@@ -39,11 +39,8 @@ fn write_track(path: &Path, title: &str, artist: &str, album: &str, track: u32) 
     assert!(status.success(), "ffmpeg failed for {}", path.display());
 }
 
-fn fixture_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("znicz-library-{name}"));
-    std::fs::remove_dir_all(&dir).ok();
-    std::fs::create_dir_all(&dir).expect("create dir");
-    dir
+fn fixture_dir() -> tempfile::TempDir {
+    tempfile::tempdir().expect("create dir")
 }
 
 #[test]
@@ -53,7 +50,8 @@ fn scan_indexes_tagged_files() {
         return;
     }
 
-    let dir = fixture_dir("scan");
+    let tmp = fixture_dir();
+    let dir = tmp.path();
     write_track(
         &dir.join("Dummy/01 Mysterons.flac"),
         "Mysterons",
@@ -79,7 +77,7 @@ fn scan_indexes_tagged_files() {
     std::fs::write(dir.join("Dummy/cover.jpg"), b"not audio").unwrap();
 
     let mut library = Library::open_in_memory().expect("open library");
-    let report = library.scan(&dir).expect("scan");
+    let report = library.scan(dir).expect("scan");
 
     assert_eq!(
         report.seen, 3,
@@ -108,8 +106,6 @@ fn scan_indexes_tagged_files() {
     assert_eq!(album[0].sample_rate, Some(44_100));
     assert_eq!(album[0].channels, Some(2));
     assert!(album[0].duration_secs.unwrap_or(0.0) > 0.5);
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -119,19 +115,18 @@ fn rescan_skips_unchanged_files() {
         return;
     }
 
-    let dir = fixture_dir("rescan");
+    let tmp = fixture_dir();
+    let dir = tmp.path();
     write_track(&dir.join("a.flac"), "A", "Artist", "Album", 1);
 
     let mut library = Library::open_in_memory().expect("open library");
-    let first = library.scan(&dir).expect("first scan");
+    let first = library.scan(dir).expect("first scan");
     assert_eq!(first.added, 1);
 
-    let second = library.scan(&dir).expect("second scan");
+    let second = library.scan(dir).expect("second scan");
     assert_eq!(second.added, 0, "nothing new should be added");
     assert_eq!(second.unchanged, 1, "the file should be skipped");
     assert_eq!(library.track_count().unwrap(), 1, "no duplicate rows");
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -141,21 +136,20 @@ fn albums_are_grouped() {
         return;
     }
 
-    let dir = fixture_dir("albums");
+    let tmp = fixture_dir();
+    let dir = tmp.path();
     write_track(&dir.join("a1.flac"), "A1", "Artist One", "First", 1);
     write_track(&dir.join("a2.flac"), "A2", "Artist One", "First", 2);
     write_track(&dir.join("b1.flac"), "B1", "Artist Two", "Second", 1);
 
     let mut library = Library::open_in_memory().expect("open library");
-    library.scan(&dir).expect("scan");
+    library.scan(dir).expect("scan");
 
     let albums = library.albums().expect("albums");
     assert_eq!(albums.len(), 2, "expected 2 albums, got {albums:?}");
 
     let first = albums.iter().find(|a| a.album == "First").expect("First");
     assert_eq!(first.track_count, 2);
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// Files without an album tag are indexed but cannot be grouped, so the flat
@@ -167,12 +161,13 @@ fn untagged_files_are_still_listed() {
         return;
     }
 
-    let dir = fixture_dir("untagged");
+    let tmp = fixture_dir();
+    let dir = tmp.path();
     write_untagged(&dir.join("one.flac"));
     write_untagged(&dir.join("two.flac"));
 
     let mut library = Library::open_in_memory().expect("open library");
-    library.scan(&dir).expect("scan");
+    library.scan(dir).expect("scan");
 
     assert_eq!(library.track_count().unwrap(), 2);
     assert!(
@@ -182,8 +177,6 @@ fn untagged_files_are_still_listed() {
 
     let all = library.all_tracks(100).expect("all tracks");
     assert_eq!(all.len(), 2, "the tracks must still be reachable");
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -193,7 +186,8 @@ fn the_flat_listing_respects_its_limit() {
         return;
     }
 
-    let dir = fixture_dir("limit");
+    let tmp = fixture_dir();
+    let dir = tmp.path();
     for i in 0..5 {
         write_track(
             &dir.join(format!("{i}.flac")),
@@ -205,12 +199,10 @@ fn the_flat_listing_respects_its_limit() {
     }
 
     let mut library = Library::open_in_memory().expect("open library");
-    library.scan(&dir).expect("scan");
+    library.scan(dir).expect("scan");
 
     assert_eq!(library.all_tracks(3).expect("all tracks").len(), 3);
     assert_eq!(library.all_tracks(0).expect("all tracks").len(), 0);
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// A file with no metadata at all.
@@ -239,12 +231,13 @@ fn missing_files_are_removed() {
         return;
     }
 
-    let dir = fixture_dir("missing");
+    let tmp = fixture_dir();
+    let dir = tmp.path();
     let track = dir.join("gone.flac");
     write_track(&track, "Gone", "Artist", "Album", 1);
 
     let mut library = Library::open_in_memory().expect("open library");
-    library.scan(&dir).expect("scan");
+    library.scan(dir).expect("scan");
     assert_eq!(library.track_count().unwrap(), 1);
 
     std::fs::remove_file(&track).unwrap();
@@ -252,18 +245,15 @@ fn missing_files_are_removed() {
 
     assert_eq!(removed, 1);
     assert_eq!(library.track_count().unwrap(), 0);
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
 fn scanning_a_file_path_is_rejected() {
-    let dir = fixture_dir("notadir");
+    let tmp = fixture_dir();
+    let dir = tmp.path();
     let file = dir.join("plain.txt");
     std::fs::write(&file, b"hello").unwrap();
 
     let mut library = Library::open_in_memory().expect("open library");
     assert!(library.scan(&file).is_err(), "a file is not a folder");
-
-    std::fs::remove_dir_all(&dir).ok();
 }

@@ -778,22 +778,15 @@ fn display_album_artist(group: &AlbumGroup) -> Option<String> {
 mod tests {
     use super::*;
 
-    fn temp_db(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "znicz-store-{name}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir.join("library.db")
+    fn temp_db() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.db");
+        (dir, path)
     }
 
     #[test]
     fn remembered_folders_survive_a_reopen_and_ignore_duplicates() {
-        let db = temp_db("folders");
+        let (_dir, db) = temp_db();
         {
             let mut library = Library::open(&db).unwrap();
             library.remember_folder(Path::new("/music/b")).unwrap();
@@ -907,10 +900,8 @@ mod tests {
 
     #[test]
     fn opening_backfills_folded_columns_for_legacy_rows() {
-        let dir = std::env::temp_dir().join("znicz-library-fold-migrate");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("dir");
-        let path = dir.join("library.db");
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("library.db");
 
         {
             let conn = Connection::open(&path).expect("create legacy db");
@@ -952,8 +943,6 @@ mod tests {
         let found = library.search("веселые", 10).expect("search");
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].album.as_deref(), Some("Веселые Картинки"));
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn seed_entity_fixture(library: &mut Library) {

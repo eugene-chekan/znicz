@@ -54,7 +54,8 @@ mod tests {
 
     #[test]
     fn a_readable_file_is_the_cover() {
-        let path = std::env::temp_dir().join(format!("znicz-art-{}.png", std::process::id()));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("art.png");
         std::fs::write(&path, [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]).unwrap();
         let q = query(Some(path.clone()));
 
@@ -63,7 +64,6 @@ mod tests {
             Found::Art(art) => assert_eq!(art.mime, "image/png"),
             other => panic!("expected art, got {other:?}"),
         }
-        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

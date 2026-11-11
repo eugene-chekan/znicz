@@ -28,7 +28,8 @@ fn blocking_send_applies_before_returning() {
 fn blocking_send_reports_failure_to_the_caller() {
     let (player, _thread) = spawn_player(AudioConfig::default());
 
-    let missing = std::env::temp_dir().join("znicz-does-not-exist.flac");
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("does-not-exist.flac");
     let result = player.send_blocking(Command::Play(znicz_core::QueueItem::file(missing)));
 
     assert!(

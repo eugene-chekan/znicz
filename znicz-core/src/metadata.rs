@@ -330,10 +330,8 @@ mod tests {
             eprintln!("ffmpeg not available, skipping");
             return;
         }
-        let dir = std::env::temp_dir().join("znicz-cover-none");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("plain.flac");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("plain.flac");
         write_silent_flac(&path);
         assert!(read_cover(&path).is_none());
     }
@@ -344,10 +342,8 @@ mod tests {
             eprintln!("ffmpeg not available, skipping");
             return;
         }
-        let dir = std::env::temp_dir().join("znicz-cover-front");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("two.flac");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("two.flac");
         write_silent_flac(&path);
         save_pictures(
             &path,
@@ -367,10 +363,8 @@ mod tests {
             eprintln!("ffmpeg not available, skipping");
             return;
         }
-        let dir = std::env::temp_dir().join("znicz-cover-mp3");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("front.mp3");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("front.mp3");
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
@@ -399,10 +393,8 @@ mod tests {
             eprintln!("ffmpeg not available, skipping");
             return;
         }
-        let dir = std::env::temp_dir().join("znicz-cover-first");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("back.flac");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("back.flac");
         write_silent_flac(&path);
         save_pictures(&path, vec![picture(lofty::picture::PictureType::CoverBack)]);
         let cover = read_cover(&path).expect("back cover");
