@@ -90,6 +90,8 @@ pub(crate) const DEFAULT_ORIGIN: &str = "https://api.audioaddict.com";
 const JSON_MAX: u64 = 1024 * 1024;
 /// How long a channel list is trusted before it is fetched again.
 const CHANNEL_IDS_TTL: Duration = Duration::from_secs(60 * 60);
+/// A list younger than this is not refetched for an unknown channel key.
+const UNKNOWN_KEY_RECHECK: Duration = Duration::from_secs(60);
 /// Track covers kept in memory; the cache starts again when it is full.
 const TRACK_COVERS_MAX: usize = 256;
 
@@ -219,10 +221,14 @@ fn channel_id(
     let cache_key = (origin.to_string(), network);
     if let Ok(store) = CHANNEL_IDS.lock() {
         if let Some((fetched_at, ids)) = store.get(&cache_key) {
-            if fetched_at.elapsed() < CHANNEL_IDS_TTL {
+            let age = fetched_at.elapsed();
+            if age < CHANNEL_IDS_TTL {
                 if let Some(id) = ids.get(channel_key) {
                     return Ok(id.clone());
                 }
+            }
+            if age < UNKNOWN_KEY_RECHECK {
+                return Err(AudioAddictLookup::NoArt);
             }
         }
     }
@@ -535,6 +541,29 @@ mod tests {
             }
         });
         assert_eq!(lookup(&origin, Some(TITLE)), AudioAddictLookup::NoArt);
+    }
+
+    #[test]
+    fn unknown_key_does_not_refetch_the_channel_list_within_a_minute() {
+        let (origin, requests) = serve_api(NOW, TRACK);
+        for _ in 0..2 {
+            assert_eq!(
+                audioaddict_cover_lookup_at(
+                    AudioAddictNetwork::RadioTunes,
+                    "no-such-channel",
+                    Some(TITLE),
+                    &origin
+                ),
+                AudioAddictLookup::NoArt
+            );
+        }
+        let list_requests = requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|path| path.contains("/currently_playing") && !path.contains("/channel/"))
+            .count();
+        assert_eq!(list_requests, 1);
     }
 
     #[test]

@@ -6,7 +6,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::audioaddict::{
-    audioaddict_cover_lookup_at, parse_audioaddict_channel, AudioAddictLookup, DEFAULT_ORIGIN,
+    audioaddict_cover_lookup_at, parse_audioaddict_channel, AudioAddictLookup, AudioAddictNetwork,
+    DEFAULT_ORIGIN,
 };
 use crate::cover::{CoverSource, Found, StreamQuery};
 
@@ -28,42 +29,51 @@ impl AudioAddictSource {
     }
 
     fn find_at(&self, query: &StreamQuery, origin: &str, give_up: Duration) -> Found {
-        let Some(key) = self.key(query) else {
-            return Found::NotFound;
-        };
         let Some((network, channel)) = parse_audioaddict_channel(&query.stream_url) else {
             return Found::NotFound;
         };
-        let lookup =
-            audioaddict_cover_lookup_at(network, &channel, query.icy_title.as_deref(), origin);
+        let title = query.icy_title.as_deref();
+        let key = wait_key(network, &channel, title);
+        let lookup = audioaddict_cover_lookup_at(network, &channel, title, origin);
+        if lookup != AudioAddictLookup::NotYet {
+            self.forget(&key);
+        }
         match lookup {
-            AudioAddictLookup::Found(url) => {
-                if let Ok(mut waiting) = self.waiting.lock() {
-                    waiting.remove(&key);
-                }
-                Found::Url(url)
-            }
+            AudioAddictLookup::Found(url) => Found::Url(url),
             AudioAddictLookup::NoArt => Found::NotFound,
             AudioAddictLookup::RefreshFailed => Found::Unavailable,
             AudioAddictLookup::NotYet => self.wait(key, give_up),
         }
     }
 
+    fn forget(&self, key: &str) {
+        if let Ok(mut waiting) = self.waiting.lock() {
+            waiting.remove(key);
+        }
+    }
+
     /// `Soon` while the channel may still catch up; `NotFound` once it has
-    /// been waiting on this title for `give_up`.
+    /// been waiting on this title for `give_up`, after which the wait is
+    /// forgotten so the same title starts over if it is asked for again.
     fn wait(&self, key: String, give_up: Duration) -> Found {
         let Ok(mut waiting) = self.waiting.lock() else {
             return Found::NotFound;
         };
         let now = Instant::now();
         waiting.retain(|_, since| now.duration_since(*since) < WAITING_KEEP);
-        let since = *waiting.entry(key).or_insert(now);
+        let since = *waiting.entry(key.clone()).or_insert(now);
         if now.duration_since(since) >= give_up {
+            waiting.remove(&key);
             Found::NotFound
         } else {
             Found::Soon
         }
     }
+}
+
+/// The waiting key of a channel on a title. `key()` and `find_at` both use it.
+fn wait_key(network: AudioAddictNetwork, channel: &str, title: Option<&str>) -> String {
+    format!("{}:{channel}:{}", network.slug(), title.unwrap_or(""))
 }
 
 impl Default for AudioAddictSource {
@@ -79,8 +89,7 @@ impl CoverSource for AudioAddictSource {
 
     fn key(&self, query: &StreamQuery) -> Option<String> {
         let (network, channel) = parse_audioaddict_channel(&query.stream_url)?;
-        let title = query.icy_title.as_deref().unwrap_or("");
-        Some(format!("{}:{channel}:{title}", network.slug()))
+        Some(wait_key(network, &channel, query.icy_title.as_deref()))
     }
 
     fn find(&self, query: &StreamQuery) -> Found {
@@ -95,11 +104,13 @@ impl CoverSource for AudioAddictSource {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
 
     use super::*;
-    use crate::audioaddict::test_server::{serve_api, ART, LAGGING, NOW, TITLE, TRACK};
+    use crate::audioaddict::test_server::{serve, serve_api, ART, LAGGING, NOW, TITLE, TRACK};
 
     fn query(url: &str, title: Option<&str>) -> StreamQuery {
         StreamQuery {
@@ -145,6 +156,51 @@ mod tests {
         assert_eq!(source.find_at(&stream, &origin, give_up), Found::Soon);
         thread::sleep(Duration::from_millis(300));
         assert_eq!(source.find_at(&stream, &origin, give_up), Found::NotFound);
+    }
+
+    #[test]
+    fn a_give_up_starts_over_when_the_same_title_is_asked_again() {
+        let (origin, _) = serve_api(LAGGING, TRACK);
+        let source = AudioAddictSource::new();
+        let stream = query(STREAM, Some(TITLE));
+        let give_up = Duration::from_millis(100);
+        assert_eq!(source.find_at(&stream, &origin, give_up), Found::Soon);
+        thread::sleep(Duration::from_millis(300));
+        assert_eq!(source.find_at(&stream, &origin, give_up), Found::NotFound);
+        assert_eq!(source.find_at(&stream, &origin, give_up), Found::Soon);
+    }
+
+    #[test]
+    fn a_failed_lookup_forgets_the_wait() {
+        let failing = Arc::new(AtomicBool::new(false));
+        let flag = failing.clone();
+        let list = format!("[{LAGGING}]");
+        let (origin, _) = serve(move |path: &str| {
+            if path.contains("/currently_playing/channel/") {
+                if flag.load(Ordering::SeqCst) {
+                    (500, b"{}".to_vec())
+                } else {
+                    (200, LAGGING.as_bytes().to_vec())
+                }
+            } else if path.contains("/currently_playing") {
+                (200, list.as_bytes().to_vec())
+            } else {
+                (404, b"{}".to_vec())
+            }
+        });
+        let source = AudioAddictSource::new();
+        let stream = query(STREAM, Some(TITLE));
+        let give_up = Duration::from_millis(100);
+        assert_eq!(source.find_at(&stream, &origin, give_up), Found::Soon);
+        failing.store(true, Ordering::SeqCst);
+        assert_eq!(
+            source.find_at(&stream, &origin, give_up),
+            Found::Unavailable
+        );
+        failing.store(false, Ordering::SeqCst);
+        // The wait started before the failure; it must not count toward give-up.
+        thread::sleep(Duration::from_millis(300));
+        assert_eq!(source.find_at(&stream, &origin, give_up), Found::Soon);
     }
 
     #[test]
