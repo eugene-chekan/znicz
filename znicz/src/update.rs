@@ -5,10 +5,13 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use axoupdater::{AxoUpdater, UpdateRequest};
 use color_eyre::eyre::{bail, eyre};
 use serde::{Deserialize, Serialize};
 use znicz_tui::{Release, Updates};
+
+pub(crate) mod installer;
+
+pub(crate) use installer::remove_old_exe;
 
 pub(crate) const API_URL: &str = "https://api.github.com/repos/eugene-chekan/znicz/releases/latest";
 pub(crate) const CHECK_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
@@ -200,17 +203,11 @@ impl Updates for GithubUpdates {
     }
 
     fn can_install(&self) -> bool {
-        let mut updater = AxoUpdater::new_for("znicz");
-        if updater.load_receipt().is_err() {
-            return false;
-        }
-        updater
-            .check_receipt_is_for_this_executable()
-            .unwrap_or(false)
+        installer::can_install()
     }
 
     fn install(&self, version: &str) -> Result<(), String> {
-        run_installer(version, true)
+        installer::install_release(version, true)
     }
 
     fn hint(&self) -> String {
@@ -239,19 +236,6 @@ fn now_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs())
         .unwrap_or(0)
-}
-
-/// Installs `version` through the dist receipt. `quiet` hides the installer's output.
-pub(crate) fn run_installer(version: &str, quiet: bool) -> Result<(), String> {
-    let mut updater = AxoUpdater::new_for("znicz");
-    updater.load_receipt().map_err(|e| e.to_string())?;
-    if quiet {
-        updater.disable_installer_output();
-    }
-    updater
-        .configure_version_specifier(UpdateRequest::SpecificVersion(version.to_string()))
-        .always_update(true);
-    updater.run_sync().map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// The state file: `update-check.toml` next to the session file.
@@ -288,7 +272,7 @@ pub(crate) fn run_cli(check_only: bool) -> color_eyre::Result<()> {
             updates.hint()
         );
     }
-    run_installer(&release.version, false).map_err(|e| eyre!("update failed: {e}"))?;
+    installer::install_release(&release.version, false).map_err(|e| eyre!("update failed: {e}"))?;
     println!(
         "Updated to {}. A running player keeps the old version until it restarts (znicz player stop).",
         release.version
@@ -297,7 +281,7 @@ pub(crate) fn run_cli(check_only: bool) -> color_eyre::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -307,7 +291,7 @@ mod tests {
 
     /// Answers every request with `status` and `body`. Returns the URL to call and the
     /// number of requests that arrived.
-    fn serve(status: u16, body: &'static str) -> (String, Arc<Mutex<usize>>) {
+    pub(crate) fn serve(status: u16, body: &'static str) -> (String, Arc<Mutex<usize>>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let addr = listener.local_addr().expect("local addr");
         let hits = Arc::new(Mutex::new(0));

@@ -248,6 +248,7 @@ fn main() -> color_eyre::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
+    update::remove_old_exe();
 
     let cli = Cli::parse();
     let config = load_config(cli.config.as_deref());
