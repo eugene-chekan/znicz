@@ -2328,7 +2328,6 @@ mod tests {
 
     #[test]
     fn only_kitty_covers_are_encoded_again_after_a_repaint() {
-        use ratatui_image::picker::ProtocolType;
         assert!(cover_needs_retransmit(Some(ProtocolType::Kitty)));
         assert!(!cover_needs_retransmit(Some(ProtocolType::Sixel)));
         assert!(!cover_needs_retransmit(Some(ProtocolType::Iterm2)));

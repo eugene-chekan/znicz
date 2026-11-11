@@ -1170,7 +1170,9 @@ mod tests {
 
     /// A player that hosts a library service over a temp database, plus an MCP
     /// server reading the same database.
-    fn hosted_with_library() -> (IpcServer, ZniczMcpServer, tempfile::TempDir) {
+    /// `(dir, host, server)`: bound in this order, the dir is dropped last,
+    /// after the host and the server that use it.
+    fn hosted_with_library() -> (tempfile::TempDir, IpcServer, ZniczMcpServer) {
         let root = tempfile::tempdir().unwrap();
         let db = root.path().join("library.db");
         let advertise = root.path().join("ipc.toml");
@@ -1180,12 +1182,12 @@ mod tests {
             .expect("start ipc");
         let client = IpcClient::connect(&advertise, ClientRole::Agent).expect("connect");
         let server = ZniczMcpServer::with_library(client, Vec::new(), Library::open(&db).unwrap());
-        (host, server, root)
+        (root, host, server)
     }
 
     #[tokio::test]
     async fn scan_library_without_waiting_reports_queued() {
-        let (_host, server, root) = hosted_with_library();
+        let (root, _host, server) = hosted_with_library();
         let music = root.path().join("music");
         std::fs::create_dir_all(&music).unwrap();
         let result = server
@@ -1201,7 +1203,7 @@ mod tests {
 
     #[tokio::test]
     async fn library_status_lists_remembered_folders() {
-        let (_host, server, root) = hosted_with_library();
+        let (root, _host, server) = hosted_with_library();
         let music = std::fs::canonicalize({
             let m = root.path().join("music");
             std::fs::create_dir_all(&m).unwrap();
@@ -1222,7 +1224,7 @@ mod tests {
 
     #[tokio::test]
     async fn library_prune_reports_removed_entries() {
-        let (_host, server, root) = hosted_with_library();
+        let (root, _host, server) = hosted_with_library();
         Library::open(&root.path().join("library.db"))
             .unwrap()
             .upsert_track_for_test(
@@ -1538,7 +1540,7 @@ mod tests {
 
     #[tokio::test]
     async fn scan_indexes_and_then_search_finds_the_track() {
-        let (_host, server, root) = hosted_with_library();
+        let (root, _host, server) = hosted_with_library();
 
         // Build a tiny folder with one real FLAC, if ffmpeg is around.
         let dir = root.path().join("music");
