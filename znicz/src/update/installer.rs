@@ -110,18 +110,18 @@ pub(crate) fn download_installer(url: &str, dir: &Path) -> Result<PathBuf, Strin
     Ok(path)
 }
 
-/// Runs the installer with `ZNICZ_INSTALL_DIR` set to `install_dir`. With `capture`,
-/// the output is collected and the error carries its last lines; otherwise it is shown.
-pub(crate) fn run_installer(
-    script: &Path,
-    install_dir: &Path,
-    capture: bool,
-) -> Result<(), String> {
-    let mut command = if cfg!(windows) {
+/// The installer run: `powershell -File` on Windows, `sh` elsewhere, installing
+/// into `install_dir` without touching `PATH` again.
+fn installer_command(script: &Path, install_dir: &Path, windows: bool) -> Command {
+    let mut command = if windows {
         let mut command = Command::new("powershell");
         command
             .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
             .arg(script);
+        // PowerShell 7 sets PSModulePath to its own modules; Windows PowerShell
+        // 5.1 inherits it and fails to load them (PowerShell/PowerShell#18530).
+        // Without it, 5.1 uses its default module path.
+        command.env_remove("PSModulePath");
         command
     } else {
         let mut command = Command::new("sh");
@@ -132,6 +132,17 @@ pub(crate) fn run_installer(
         .env("ZNICZ_INSTALL_DIR", install_dir)
         .env("ZNICZ_NO_MODIFY_PATH", "1")
         .stdin(Stdio::null());
+    command
+}
+
+/// Runs the installer with `ZNICZ_INSTALL_DIR` set to `install_dir`. With `capture`,
+/// the output is collected and the error carries its last lines; otherwise it is shown.
+pub(crate) fn run_installer(
+    script: &Path,
+    install_dir: &Path,
+    capture: bool,
+) -> Result<(), String> {
+    let mut command = installer_command(script, install_dir, cfg!(windows));
 
     if !capture {
         let status = command.status().map_err(|e| e.to_string())?;
@@ -276,6 +287,29 @@ fn restore_running_exe((exe, old): &(PathBuf, PathBuf)) {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_windows_installer_does_not_inherit_powershell_7_modules() {
+        // PowerShell 7 sets PSModulePath to its own modules, which Windows
+        // PowerShell 5.1 then fails to load (PowerShell/PowerShell#18530).
+        let command = installer_command(Path::new("i.ps1"), Path::new("C:/bin"), true);
+        assert_eq!(command.get_program(), "powershell");
+        let removed = command
+            .get_envs()
+            .any(|(key, value)| key == "PSModulePath" && value.is_none());
+        assert!(removed, "PSModulePath must be removed for powershell");
+    }
+
+    #[test]
+    fn the_unix_installer_runs_with_sh() {
+        let command = installer_command(Path::new("i.sh"), Path::new("/bin"), false);
+        assert_eq!(command.get_program(), "sh");
+        let install_dir = command
+            .get_envs()
+            .find(|(key, _)| *key == "ZNICZ_INSTALL_DIR")
+            .and_then(|(_, value)| value);
+        assert_eq!(install_dir, Some(std::ffi::OsStr::new("/bin")));
+    }
     use super::*;
     use crate::update::tests::serve;
 

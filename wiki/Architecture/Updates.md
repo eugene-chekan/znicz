@@ -65,7 +65,10 @@ copy is shown the installer command.
 To install version `v`, Znicz downloads that release's `znicz-installer.sh`
 (`.ps1` on Windows) and runs it with `sh` (`powershell -ExecutionPolicy
 Bypass -File`), with `ZNICZ_INSTALL_DIR` set to the receipt's folder and
-`ZNICZ_NO_MODIFY_PATH=1`. That is the same script as the README's
+`ZNICZ_NO_MODIFY_PATH=1`. On Windows `PSModulePath` is removed from the
+installer's environment: a PowerShell 7 terminal sets it to its own modules,
+which Windows PowerShell 5.1 cannot load
+([PowerShell#18530](https://github.com/PowerShell/PowerShell/issues/18530)). That is the same script as the README's
 `curl … | sh`, fetched over HTTPS from GitHub; there is no separate signature
 check. dist's own updater library (axoupdater) does the same steps but added
 4.6 MB and a C crypto build, so Znicz does them itself.
