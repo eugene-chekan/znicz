@@ -1,9 +1,12 @@
 use std::collections::HashMap;
 use std::io::Read;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
+
+use crate::cover::title::fold;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AudioAddictNetwork {
@@ -83,15 +86,24 @@ pub fn parse_audioaddict_channel(stream_url: &str) -> Option<(AudioAddictNetwork
     Some((network, key))
 }
 
-const DEFAULT_ORIGIN: &str = "https://api.audioaddict.com";
+pub(crate) const DEFAULT_ORIGIN: &str = "https://api.audioaddict.com";
 const JSON_MAX: u64 = 1024 * 1024;
-const CACHE_TTL: Duration = Duration::from_secs(15);
+/// How long a channel list is trusted before it is fetched again.
+const CHANNEL_IDS_TTL: Duration = Duration::from_secs(60 * 60);
+/// Track covers kept in memory; the cache starts again when it is full.
+const TRACK_COVERS_MAX: usize = 256;
 
-type ChannelCoverMap = HashMap<String, Option<String>>;
-type CacheEntry = (Instant, ChannelCoverMap);
-type CacheStore = HashMap<(String, AudioAddictNetwork), CacheEntry>;
+/// Channel key → channel id.
+type ChannelIds = HashMap<String, String>;
+/// `(origin, network)` → when the channel list was fetched, and the list.
+type ChannelIdStore = HashMap<(String, AudioAddictNetwork), (Instant, ChannelIds)>;
+/// `(origin, network, track id)` → the track's cover, `None` when it has none.
+type TrackCoverStore = HashMap<(String, AudioAddictNetwork, String), Option<String>>;
 
-static CACHE: LazyLock<Mutex<CacheStore>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+static CHANNEL_IDS: LazyLock<Mutex<ChannelIdStore>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+static TRACK_COVERS: LazyLock<Mutex<TrackCoverStore>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static CACHE_BUSTER: AtomicU64 = AtomicU64::new(0);
 
 fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
@@ -121,28 +133,13 @@ fn normalize_art_url(raw: &str) -> Option<String> {
     }
 }
 
-fn channel_id_string(value: &Value) -> Option<String> {
+/// A numeric id as text; the API sends some ids as strings.
+fn id_string(value: &Value) -> Option<String> {
     match value {
         Value::Number(n) => Some(n.to_string()),
         Value::String(s) => Some(s.clone()),
         _ => None,
     }
-}
-
-#[cfg(test)]
-pub fn join_audioaddict_art_url(
-    channel_key: &str,
-    currently_playing: &str,
-    track_history: &str,
-) -> Option<String> {
-    let playing: Vec<Value> = serde_json::from_str(currently_playing).ok()?;
-    let entry = playing
-        .iter()
-        .find(|v| v.get("channel_key").and_then(Value::as_str) == Some(channel_key))?;
-    let channel_id = channel_id_string(entry.get("channel_id")?)?;
-    let history: HashMap<String, Value> = serde_json::from_str(track_history).ok()?;
-    let art_url = history.get(&channel_id)?.get("art_url")?.as_str()?;
-    normalize_art_url(art_url)
 }
 
 fn fetch_json(origin: &str, path: &str) -> Option<String> {
@@ -160,32 +157,13 @@ fn fetch_json(origin: &str, path: &str) -> Option<String> {
     String::from_utf8(body).ok()
 }
 
-fn rebuild_channel_map(currently_playing: &str, track_history: &str) -> Option<ChannelCoverMap> {
-    let playing: Vec<Value> = serde_json::from_str(currently_playing).ok()?;
-    let history: HashMap<String, Value> = serde_json::from_str(track_history).ok()?;
-    let mut map = ChannelCoverMap::new();
-    for entry in playing {
-        let Some(channel_key) = entry.get("channel_key").and_then(Value::as_str) else {
-            continue;
-        };
-        let Some(channel_id) = entry.get("channel_id").and_then(channel_id_string) else {
-            continue;
-        };
-        let art = history
-            .get(&channel_id)
-            .and_then(|v| v.get("art_url"))
-            .and_then(|v| v.as_str())
-            .and_then(normalize_art_url);
-        map.insert(channel_key.to_string(), art);
-    }
-    Some(map)
-}
-
-fn refresh_cache(network: AudioAddictNetwork, origin: &str) -> Option<ChannelCoverMap> {
-    let slug = network.slug();
-    let playing = fetch_json(origin, &format!("/v1/{slug}/currently_playing"))?;
-    let history = fetch_json(origin, &format!("/v1/{slug}/track_history"))?;
-    rebuild_channel_map(&playing, &history)
+/// A query value no earlier request used, so Cloudflare cannot answer from its cache.
+fn cache_buster() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let seq = CACHE_BUSTER.fetch_add(1, Ordering::Relaxed);
+    format!("{nanos}-{seq}")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -193,273 +171,387 @@ pub enum AudioAddictLookup {
     Found(String),
     NoArt,
     RefreshFailed,
-}
-
-pub fn audioaddict_cover_url(network: AudioAddictNetwork, channel_key: &str) -> Option<String> {
-    match audioaddict_cover_lookup(network, channel_key) {
-        AudioAddictLookup::Found(url) => Some(url),
-        AudioAddictLookup::NoArt | AudioAddictLookup::RefreshFailed => None,
-    }
+    /// The channel is still on another track than the stream title.
+    NotYet,
 }
 
 pub fn audioaddict_cover_lookup(
     network: AudioAddictNetwork,
     channel_key: &str,
+    title: Option<&str>,
 ) -> AudioAddictLookup {
-    audioaddict_cover_lookup_at(network, channel_key, DEFAULT_ORIGIN)
+    audioaddict_cover_lookup_at(network, channel_key, title, DEFAULT_ORIGIN)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn audioaddict_cover_url_at(
-    network: AudioAddictNetwork,
-    channel_key: &str,
-    origin: &str,
-) -> Option<String> {
-    match audioaddict_cover_lookup_at(network, channel_key, origin) {
-        AudioAddictLookup::Found(url) => Some(url),
-        AudioAddictLookup::NoArt | AudioAddictLookup::RefreshFailed => None,
-    }
-}
-
-fn lookup_channel(map: &ChannelCoverMap, channel_key: &str) -> AudioAddictLookup {
-    match map.get(channel_key) {
-        Some(Some(url)) => AudioAddictLookup::Found(url.clone()),
-        Some(None) | None => AudioAddictLookup::NoArt,
-    }
-}
-
+/// The cover of the track `channel_key` is playing now. With a `title`, the
+/// channel must be on that title, or the answer is `NotYet`.
 pub fn audioaddict_cover_lookup_at(
     network: AudioAddictNetwork,
     channel_key: &str,
+    title: Option<&str>,
     origin: &str,
 ) -> AudioAddictLookup {
     let origin = origin.trim_end_matches('/');
-    let cache_key = (origin.to_string(), network);
-    let needs_refresh = {
-        let Ok(cache) = CACHE.lock() else {
-            return AudioAddictLookup::RefreshFailed;
-        };
-        let now = Instant::now();
-        cache
-            .get(&cache_key)
-            .is_none_or(|(fetched_at, _)| now.duration_since(*fetched_at) >= CACHE_TTL)
+    let channel_id = match channel_id(network, channel_key, origin) {
+        Ok(id) => id,
+        Err(lookup) => return lookup,
     };
-    if needs_refresh {
-        let refresh_result = refresh_cache(network, origin);
-        let now = Instant::now();
-        let Ok(mut cache) = CACHE.lock() else {
-            return AudioAddictLookup::RefreshFailed;
-        };
-        match refresh_result {
-            Some(map) => {
-                cache.insert(cache_key.clone(), (now, map));
-            }
-            None => {
-                tracing::debug!(
-                    network = network.slug(),
-                    channel_key,
-                    "audioaddict cover refresh failed"
-                );
-                match cache.get_mut(&cache_key) {
-                    Some((fetched_at, _)) => *fetched_at = now,
-                    None => {
-                        cache.insert(cache_key.clone(), (now, ChannelCoverMap::new()));
-                    }
+    let track = match current_track(network, &channel_id, origin) {
+        Ok(track) => track,
+        Err(lookup) => return lookup,
+    };
+    if let Some(title) = title {
+        let current = format!("{} - {}", track.artist, track.title);
+        if fold(&current) != fold(title) {
+            return AudioAddictLookup::NotYet;
+        }
+    }
+    track_cover(network, &track.id, origin)
+}
+
+/// The numeric id of `channel_key`, from the network's channel list. The list
+/// is refreshed when it is old or lacks the key.
+fn channel_id(
+    network: AudioAddictNetwork,
+    channel_key: &str,
+    origin: &str,
+) -> Result<String, AudioAddictLookup> {
+    let cache_key = (origin.to_string(), network);
+    if let Ok(store) = CHANNEL_IDS.lock() {
+        if let Some((fetched_at, ids)) = store.get(&cache_key) {
+            if fetched_at.elapsed() < CHANNEL_IDS_TTL {
+                if let Some(id) = ids.get(channel_key) {
+                    return Ok(id.clone());
                 }
-                return AudioAddictLookup::RefreshFailed;
             }
         }
     }
-    let Ok(cache) = CACHE.lock() else {
+    let ids = fetch_channel_ids(network, origin).ok_or_else(|| {
+        tracing::debug!(
+            network = network.slug(),
+            channel_key,
+            "audioaddict channel list failed"
+        );
+        AudioAddictLookup::RefreshFailed
+    })?;
+    let id = ids.get(channel_key).cloned();
+    if let Ok(mut store) = CHANNEL_IDS.lock() {
+        store.insert(cache_key, (Instant::now(), ids));
+    }
+    id.ok_or(AudioAddictLookup::NoArt)
+}
+
+fn fetch_channel_ids(network: AudioAddictNetwork, origin: &str) -> Option<ChannelIds> {
+    let body = fetch_json(origin, &format!("/v1/{}/currently_playing", network.slug()))?;
+    let entries: Vec<Value> = serde_json::from_str(&body).ok()?;
+    Some(
+        entries
+            .iter()
+            .filter_map(|entry| {
+                let key = entry.get("channel_key")?.as_str()?;
+                let id = id_string(entry.get("channel_id")?)?;
+                Some((key.to_string(), id))
+            })
+            .collect(),
+    )
+}
+
+/// The track a channel is playing right now, read from the uncached endpoint.
+struct CurrentTrack {
+    id: String,
+    artist: String,
+    title: String,
+}
+
+fn current_track(
+    network: AudioAddictNetwork,
+    channel_id: &str,
+    origin: &str,
+) -> Result<CurrentTrack, AudioAddictLookup> {
+    let path = format!(
+        "/v1/{}/currently_playing/channel/{channel_id}?t={}",
+        network.slug(),
+        cache_buster()
+    );
+    let body = fetch_json(origin, &path).ok_or(AudioAddictLookup::RefreshFailed)?;
+    let entry: Value = serde_json::from_str(&body).map_err(|_| AudioAddictLookup::RefreshFailed)?;
+    let track = entry.get("track").ok_or(AudioAddictLookup::NoArt)?;
+    let id = track
+        .get("id")
+        .and_then(id_string)
+        .ok_or(AudioAddictLookup::NoArt)?;
+    let text = |field: &str| {
+        track
+            .get(field)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    Ok(CurrentTrack {
+        id,
+        artist: text("display_artist"),
+        title: text("display_title"),
+    })
+}
+
+/// The cover of a track from `tracks/{id}`, remembered per track.
+fn track_cover(network: AudioAddictNetwork, track_id: &str, origin: &str) -> AudioAddictLookup {
+    let key = (origin.to_string(), network, track_id.to_string());
+    if let Ok(covers) = TRACK_COVERS.lock() {
+        if let Some(cover) = covers.get(&key) {
+            return cover
+                .clone()
+                .map_or(AudioAddictLookup::NoArt, AudioAddictLookup::Found);
+        }
+    }
+    let Some(body) = fetch_json(origin, &format!("/v1/{}/tracks/{track_id}", network.slug()))
+    else {
         return AudioAddictLookup::RefreshFailed;
     };
-    cache
-        .get(&cache_key)
-        .map(|(_, map)| lookup_channel(map, channel_key))
-        .unwrap_or(AudioAddictLookup::NoArt)
-}
-
-#[cfg(test)]
-fn expire_audioaddict_cache_at(network: AudioAddictNetwork, origin: &str) {
-    let Ok(mut cache) = CACHE.lock() else {
-        return;
+    let Ok(track) = serde_json::from_str::<Value>(&body) else {
+        return AudioAddictLookup::RefreshFailed;
     };
-    let cache_key = (origin.trim_end_matches('/').to_string(), network);
-    if let Some((fetched_at, _)) = cache.get_mut(&cache_key) {
-        *fetched_at = Instant::now() - CACHE_TTL - Duration::from_secs(1);
+    let art = track
+        .get("asset_url")
+        .and_then(Value::as_str)
+        .and_then(normalize_art_url)
+        .or_else(|| {
+            track
+                .get("images")
+                .and_then(|images| images.get("default"))
+                .and_then(Value::as_str)
+                .and_then(normalize_art_url)
+        });
+    if let Ok(mut covers) = TRACK_COVERS.lock() {
+        if covers.len() >= TRACK_COVERS_MAX {
+            covers.clear();
+        }
+        covers.insert(key, art.clone());
     }
-}
-
-pub fn audioaddict_cache_fresh(network: AudioAddictNetwork) -> bool {
-    let Ok(cache) = CACHE.lock() else {
-        return false;
-    };
-    let cache_key = (DEFAULT_ORIGIN.to_string(), network);
-    cache
-        .get(&cache_key)
-        .is_some_and(|(fetched_at, _)| fetched_at.elapsed() < CACHE_TTL)
+    art.map_or(AudioAddictLookup::NoArt, AudioAddictLookup::Found)
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod test_server {
     use std::io::{Read, Write};
     use std::net::TcpListener;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::thread;
 
-    use super::{
-        audioaddict_cover_url_at, expire_audioaddict_cache_at, join_audioaddict_art_url,
-        parse_audioaddict_channel, AudioAddictNetwork,
-    };
+    /// The request paths a test server has seen, in order.
+    pub(crate) type Requests = Arc<Mutex<Vec<String>>>;
 
-    const PLAYING: &str =
-        r#"[{"channel_id":48,"channel_key":"datempolounge","track":{"id":15865}}]"#;
-    const HISTORY: &str = r#"{"48":{"art_url":"//cdn-images.audioaddict.com/a/f/9/a/4/7/af9a470e98f03d6a87a6e72bc0f8a204.jpg","type":"track"}}"#;
+    /// The stream title of the Smooth Beats test channel.
+    pub(crate) const TITLE: &str = "Else Born - This Time/Remember";
+    /// The channel's `currently_playing` entry while it is on the stream title.
+    pub(crate) const NOW: &str = r#"{"channel_id":407,"channel_key":"smoothbeats","track":{"id":1272704,"display_artist":"Else Born","display_title":"This Time/Remember","start_time":"2026-11-11T08:04:42-05:00","duration":241.0}}"#;
+    /// The channel's `currently_playing` entry while it still plays the previous song.
+    pub(crate) const LAGGING: &str = r#"{"channel_id":407,"channel_key":"smoothbeats","track":{"id":1111,"display_artist":"Parc","display_title":"4U","start_time":"2026-11-11T08:04:30-05:00","duration":200.0}}"#;
+    /// `tracks/1272704`: the cover is `asset_url`.
+    pub(crate) const TRACK: &str = r#"{"id":1272704,"display_artist":"Else Born","display_title":"This Time/Remember","asset_url":"//cdn-images.audioaddict.com/d/4/b/9/0/4/d4b904f817c57e4bfbe0a8bca9ffbb93.jpg","images":{"default":"//cdn-images.audioaddict.com/d/4/b/9/0/4/d4b904f817c57e4bfbe0a8bca9ffbb93.jpg{?size,height,width,quality,pad}"}}"#;
+    /// The cover `TRACK` resolves to.
+    pub(crate) const ART: &str =
+        "https://cdn-images.audioaddict.com/d/4/b/9/0/4/d4b904f817c57e4bfbe0a8bca9ffbb93.jpg";
 
-    fn serve_audioaddict<F>(handler: F) -> (String, Arc<AtomicUsize>)
+    /// Serves `handler(path) -> (status, body)` on a fresh loopback port.
+    /// Returns the origin (`http://127.0.0.1:port`) and the recorded paths.
+    pub(crate) fn serve<F>(handler: F) -> (String, Requests)
     where
         F: Fn(&str) -> (u16, Vec<u8>) + Send + 'static,
     {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let hits = Arc::new(AtomicUsize::new(0));
-        let hits_clone = hits.clone();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let requests: Requests = Arc::new(Mutex::new(Vec::new()));
+        let seen = requests.clone();
         thread::spawn(move || {
-            for stream in listener.incoming().flatten() {
-                let mut stream = stream;
+            for mut stream in listener.incoming().flatten() {
                 let mut buf = [0u8; 4096];
                 let n = stream.read(&mut buf).unwrap_or(0);
-                let req = String::from_utf8_lossy(&buf[..n]);
-                let path = req.lines().next().unwrap_or("");
-                hits_clone.fetch_add(1, Ordering::SeqCst);
-                let (status, body) = handler(path);
-                let status_text = match status {
+                let request = String::from_utf8_lossy(&buf[..n]).into_owned();
+                let path = request.split_whitespace().nth(1).unwrap_or("").to_string();
+                let (status, body) = handler(&path);
+                seen.lock().unwrap().push(path);
+                let text = match status {
                     200 => "200 OK",
                     404 => "404 Not Found",
                     _ => "500 Internal Server Error",
                 };
-                let header = format!(
-                    "HTTP/1.1 {status_text}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                let head = format!(
+                    "HTTP/1.1 {text}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                     body.len()
                 );
-                let _ = stream.write_all(header.as_bytes());
+                let _ = stream.write_all(head.as_bytes());
                 let _ = stream.write_all(&body);
             }
         });
-        (format!("http://{addr}"), hits)
+        (format!("http://{addr}"), requests)
     }
 
-    fn serve_audioaddict_api(
-        playing: &'static [u8],
-        history: &'static [u8],
-    ) -> (String, Arc<AtomicUsize>) {
-        let playing = playing.to_vec();
-        let history = history.to_vec();
-        serve_audioaddict(move |path: &str| {
-            if path.contains("currently_playing") {
-                (200, playing.clone())
-            } else if path.contains("track_history") {
-                (200, history.clone())
+    /// How many recorded paths contain `needle`.
+    pub(crate) fn count(requests: &Requests, needle: &str) -> usize {
+        requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|path| path.contains(needle))
+            .count()
+    }
+
+    /// A RadioTunes-like API: the channel list (one entry, `channel`), the
+    /// channel's current track, and `track` for any `tracks/{id}`.
+    pub(crate) fn serve_api(channel: &'static str, track: &'static str) -> (String, Requests) {
+        let list = format!("[{channel}]");
+        serve(move |path: &str| {
+            if path.contains("/currently_playing/channel/") {
+                (200, channel.as_bytes().to_vec())
+            } else if path.contains("/currently_playing") {
+                (200, list.as_bytes().to_vec())
+            } else if path.contains("/tracks/") {
+                (200, track.as_bytes().to_vec())
             } else {
                 (404, b"{}".to_vec())
             }
         })
     }
+}
 
-    fn serve_audioaddict_status(status: u16) -> (String, Arc<AtomicUsize>) {
-        serve_audioaddict(move |_path: &str| (status, b"{}".to_vec()))
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use super::test_server::{count, serve, serve_api, ART, LAGGING, NOW, TITLE, TRACK};
+    use super::{
+        audioaddict_cover_lookup_at, parse_audioaddict_channel, AudioAddictLookup,
+        AudioAddictNetwork,
+    };
+
+    /// Smooth Beats on the test server, with `title` (or none).
+    fn lookup(origin: &str, title: Option<&str>) -> AudioAddictLookup {
+        audioaddict_cover_lookup_at(AudioAddictNetwork::RadioTunes, "smoothbeats", title, origin)
     }
 
     #[test]
-    fn join_prefixes_https_and_strips_template() {
+    fn channel_on_the_previous_track_is_not_yet() {
+        let (origin, _) = serve_api(LAGGING, TRACK);
+        assert_eq!(lookup(&origin, Some(TITLE)), AudioAddictLookup::NotYet);
+    }
+
+    #[test]
+    fn channel_on_the_stream_title_gives_the_track_cover() {
+        let (origin, _) = serve_api(NOW, TRACK);
         assert_eq!(
-            join_audioaddict_art_url("datempolounge", PLAYING, HISTORY).as_deref(),
-            Some("https://cdn-images.audioaddict.com/a/f/9/a/4/7/af9a470e98f03d6a87a6e72bc0f8a204.jpg")
+            lookup(&origin, Some("  else  born - THIS time/remember ")),
+            AudioAddictLookup::Found(ART.into())
         );
-        let history = r#"{"48":{"art_url":"//cdn-images.audioaddict.com/x.jpg{?size,height,width,quality,pad}"}}"#;
+    }
+
+    #[test]
+    fn images_default_template_is_stripped_and_https_added() {
+        let track = r#"{"id":1272704,"images":{"default":"//cdn-images.audioaddict.com/x.jpg{?size,height,width,quality,pad}"}}"#;
+        let (origin, _) = serve_api(NOW, track);
         assert_eq!(
-            join_audioaddict_art_url("datempolounge", PLAYING, history).as_deref(),
-            Some("https://cdn-images.audioaddict.com/x.jpg")
+            lookup(&origin, None),
+            AudioAddictLookup::Found("https://cdn-images.audioaddict.com/x.jpg".into())
         );
     }
 
     #[test]
-    fn join_missing_channel_or_art_is_none() {
-        assert!(join_audioaddict_art_url("nope", PLAYING, HISTORY).is_none());
-        assert!(join_audioaddict_art_url("datempolounge", PLAYING, r#"{"48":{}}"#).is_none());
-        assert!(
-            join_audioaddict_art_url("datempolounge", PLAYING, r#"{"48":{"art_url":""}}"#)
-                .is_none()
-        );
+    fn track_cover_is_requested_once_per_track() {
+        let (origin, requests) = serve_api(NOW, TRACK);
+        for _ in 0..2 {
+            assert_eq!(
+                lookup(&origin, Some(TITLE)),
+                AudioAddictLookup::Found(ART.into())
+            );
+        }
+        assert_eq!(count(&requests, "/tracks/1272704"), 1);
     }
 
     #[test]
-    fn loopback_cover_url_is_some_then_cached() {
-        let playing = PLAYING.as_bytes();
-        let history = HISTORY.as_bytes();
-        let (origin, hits) = serve_audioaddict_api(playing, history);
-        let url =
-            audioaddict_cover_url_at(AudioAddictNetwork::RadioTunes, "datempolounge", &origin);
+    fn no_title_gives_the_current_track_cover() {
+        let (origin, _) = serve_api(LAGGING, TRACK);
+        assert_eq!(lookup(&origin, None), AudioAddictLookup::Found(ART.into()));
+    }
+
+    #[test]
+    fn failing_channel_request_is_refresh_failed() {
+        let list = format!("[{NOW}]");
+        let (origin, _) = serve(move |path: &str| {
+            if path.contains("/currently_playing/channel/") {
+                (500, b"{}".to_vec())
+            } else if path.contains("/currently_playing") {
+                (200, list.as_bytes().to_vec())
+            } else {
+                (404, b"{}".to_vec())
+            }
+        });
         assert_eq!(
-            url.as_deref(),
-            Some("https://cdn-images.audioaddict.com/a/f/9/a/4/7/af9a470e98f03d6a87a6e72bc0f8a204.jpg")
+            lookup(&origin, Some(TITLE)),
+            AudioAddictLookup::RefreshFailed
         );
-        let first_hits = hits.load(Ordering::SeqCst);
-        assert_eq!(first_hits, 2);
-        let again =
-            audioaddict_cover_url_at(AudioAddictNetwork::RadioTunes, "datempolounge", &origin);
-        assert_eq!(again, url);
-        assert_eq!(hits.load(Ordering::SeqCst), first_hits);
     }
 
     #[test]
-    fn loopback_404_is_none() {
-        let (origin, _hits) = serve_audioaddict_status(404);
-        assert!(audioaddict_cover_url_at(AudioAddictNetwork::Di, "trance", &origin).is_none());
-    }
-
-    #[test]
-    fn stale_refresh_failure_returns_none() {
-        let playing = PLAYING.as_bytes().to_vec();
-        let history = HISTORY.as_bytes().to_vec();
-        let requests = Arc::new(AtomicUsize::new(0));
-        let requests_clone = requests.clone();
-        let (origin, _hits) = serve_audioaddict(move |path: &str| {
-            let n = requests_clone.fetch_add(1, Ordering::SeqCst);
-            if n < 2 {
-                if path.contains("currently_playing") {
-                    (200, playing.clone())
-                } else if path.contains("track_history") {
-                    (200, history.clone())
+    fn failing_track_request_is_refresh_failed_and_retried() {
+        let track_calls = Arc::new(AtomicUsize::new(0));
+        let calls = track_calls.clone();
+        let list = format!("[{NOW}]");
+        let (origin, _) = serve(move |path: &str| {
+            if path.contains("/currently_playing/channel/") {
+                (200, NOW.as_bytes().to_vec())
+            } else if path.contains("/currently_playing") {
+                (200, list.as_bytes().to_vec())
+            } else if path.contains("/tracks/") {
+                if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                    (500, b"{}".to_vec())
                 } else {
-                    (404, b"{}".to_vec())
-                }
-            } else if n < 4 {
-                if path.contains("currently_playing") {
-                    (200, playing.clone())
-                } else {
-                    (404, b"{}".to_vec())
+                    (200, TRACK.as_bytes().to_vec())
                 }
             } else {
                 (404, b"{}".to_vec())
             }
         });
-        let url =
-            audioaddict_cover_url_at(AudioAddictNetwork::RadioTunes, "datempolounge", &origin);
-        assert!(url.is_some());
-        expire_audioaddict_cache_at(AudioAddictNetwork::RadioTunes, &origin);
-        let hits_before_stale = requests.load(Ordering::SeqCst);
-        assert!(
-            audioaddict_cover_url_at(AudioAddictNetwork::RadioTunes, "datempolounge", &origin)
-                .is_none()
+        assert_eq!(
+            lookup(&origin, Some(TITLE)),
+            AudioAddictLookup::RefreshFailed
         );
-        let hits_after_stale_fail = requests.load(Ordering::SeqCst);
-        assert_eq!(hits_after_stale_fail - hits_before_stale, 2);
-        let again =
-            audioaddict_cover_url_at(AudioAddictNetwork::RadioTunes, "datempolounge", &origin);
-        assert_eq!(again, url);
-        assert_eq!(requests.load(Ordering::SeqCst), hits_after_stale_fail);
+        assert_eq!(
+            lookup(&origin, Some(TITLE)),
+            AudioAddictLookup::Found(ART.into())
+        );
+    }
+
+    #[test]
+    fn unknown_channel_is_no_art() {
+        let (origin, _) = serve(|path: &str| {
+            if path.contains("/currently_playing") && !path.contains("/channel/") {
+                (
+                    200,
+                    br#"[{"channel_id":9,"channel_key":"other","track":{"id":1}}]"#.to_vec(),
+                )
+            } else {
+                (404, b"{}".to_vec())
+            }
+        });
+        assert_eq!(lookup(&origin, Some(TITLE)), AudioAddictLookup::NoArt);
+    }
+
+    #[test]
+    fn each_channel_request_carries_a_new_cache_buster() {
+        let (origin, requests) = serve_api(LAGGING, TRACK);
+        let _ = lookup(&origin, Some(TITLE));
+        let _ = lookup(&origin, Some(TITLE));
+        let busters: Vec<String> = requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|path| path.contains("/currently_playing/channel/"))
+            .filter_map(|path| path.split_once("?t=").map(|(_, t)| t.to_string()))
+            .collect();
+        assert_eq!(busters.len(), 2, "{busters:?}");
+        assert!(!busters[0].is_empty());
+        assert_ne!(busters[0], busters[1]);
     }
 
     #[test]
