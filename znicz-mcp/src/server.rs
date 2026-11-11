@@ -57,9 +57,9 @@ impl ZniczMcpServer {
             skills,
             library,
             playlists_dir: znicz_library::default_playlists_dir()
-                .unwrap_or_else(|| std::env::temp_dir().join("znicz-playlists")),
+                .unwrap_or_else(|| temp_fallback("znicz-playlists")),
             stations_path: znicz_library::default_stations_path()
-                .unwrap_or_else(|| std::env::temp_dir().join("znicz-stations.toml")),
+                .unwrap_or_else(|| temp_fallback("znicz-stations.toml")),
             tool_router: Self::tool_router(),
         }
     }
@@ -1097,6 +1097,14 @@ fn expand_home(path: &str, home: Option<&Path>) -> PathBuf {
     }
 }
 
+/// Where to keep data when the user data directory cannot be found: the
+/// temp dir, which the system may empty, so say so in the log.
+fn temp_fallback(name: &str) -> PathBuf {
+    let path = std::env::temp_dir().join(name);
+    tracing::warn!(path = %path.display(), "no user data directory; using a temporary path");
+    path
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -1130,21 +1138,12 @@ mod tests {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn unique_temp(prefix: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "{prefix}-{}-{}.toml",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ))
-    }
-
     struct Harness {
         server: ZniczMcpServer,
         host: znicz_core::PlayerHandle,
         _ipc: IpcServer,
+        // Holds the folder with the advertise file, removed with the test.
+        _dir: tempfile::TempDir,
     }
 
     impl Deref for Harness {
@@ -1160,8 +1159,8 @@ mod tests {
         }
     }
 
-    fn hosted_player() -> (znicz_core::PlayerHandle, IpcServer, IpcClient) {
-        let path = unique_temp("znicz-mcp-ipc");
+    fn hosted_player(dir: &Path) -> (znicz_core::PlayerHandle, IpcServer, IpcClient) {
+        let path = dir.join("ipc.toml");
         let (host, thread) = spawn_player(AudioConfig::default());
         std::mem::forget(thread);
         let ipc = IpcServer::start(host.clone(), &path).expect("start ipc");
@@ -1171,18 +1170,10 @@ mod tests {
 
     /// A player that hosts a library service over a temp database, plus an MCP
     /// server reading the same database.
-    fn hosted_with_library(name: &str) -> (IpcServer, ZniczMcpServer, PathBuf) {
-        let root = std::env::temp_dir().join(format!(
-            "znicz-mcp-lib-{name}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        let db = root.join("library.db");
-        let advertise = root.join("ipc.toml");
+    fn hosted_with_library() -> (IpcServer, ZniczMcpServer, tempfile::TempDir) {
+        let root = tempfile::tempdir().unwrap();
+        let db = root.path().join("library.db");
+        let advertise = root.path().join("ipc.toml");
         let (player, _thread) = znicz_core::spawn_player(znicz_core::AudioConfig::default());
         let service = std::sync::Arc::new(znicz_library::LibraryService::open(&db).unwrap());
         let host = IpcServer::start_with_library(player, &advertise, Duration::ZERO, service)
@@ -1194,8 +1185,8 @@ mod tests {
 
     #[tokio::test]
     async fn scan_library_without_waiting_reports_queued() {
-        let (_host, server, root) = hosted_with_library("nowait");
-        let music = root.join("music");
+        let (_host, server, root) = hosted_with_library();
+        let music = root.path().join("music");
         std::fs::create_dir_all(&music).unwrap();
         let result = server
             .scan_library(Parameters(ScanParams {
@@ -1210,9 +1201,9 @@ mod tests {
 
     #[tokio::test]
     async fn library_status_lists_remembered_folders() {
-        let (_host, server, root) = hosted_with_library("status");
+        let (_host, server, root) = hosted_with_library();
         let music = std::fs::canonicalize({
-            let m = root.join("music");
+            let m = root.path().join("music");
             std::fs::create_dir_all(&m).unwrap();
             m
         })
@@ -1231,8 +1222,8 @@ mod tests {
 
     #[tokio::test]
     async fn library_prune_reports_removed_entries() {
-        let (_host, server, root) = hosted_with_library("prune");
-        Library::open(&root.join("library.db"))
+        let (_host, server, root) = hosted_with_library();
+        Library::open(&root.path().join("library.db"))
             .unwrap()
             .upsert_track_for_test(
                 std::path::Path::new("/nowhere/x.flac"),
@@ -1249,22 +1240,26 @@ mod tests {
 
     fn server() -> Harness {
         let _lock = env_lock();
-        let (host, ipc, client) = hosted_player();
+        let dir = tempfile::tempdir().unwrap();
+        let (host, ipc, client) = hosted_player(dir.path());
         Harness {
             server: ZniczMcpServer::new(client, Vec::new()),
             host,
             _ipc: ipc,
+            _dir: dir,
         }
     }
 
     fn server_with_library() -> Harness {
         let library = Library::open_in_memory().expect("in-memory library");
         let _lock = env_lock();
-        let (host, ipc, client) = hosted_player();
+        let dir = tempfile::tempdir().unwrap();
+        let (host, ipc, client) = hosted_player(dir.path());
         Harness {
             server: ZniczMcpServer::with_library(client, Vec::new(), library),
             host,
             _ipc: ipc,
+            _dir: dir,
         }
     }
 
@@ -1437,7 +1432,8 @@ mod tests {
     #[test]
     fn play_reports_a_missing_file() {
         let server = server();
-        let missing = std::env::temp_dir().join("znicz-mcp-missing.flac");
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("znicz-mcp-missing.flac");
 
         let result = server.play(Parameters(PlayParams {
             path: missing.to_string_lossy().into_owned(),
@@ -1507,7 +1503,8 @@ mod tests {
     #[test]
     fn get_track_reads_a_file_outside_the_library() {
         let server = server_with_library();
-        let path = std::env::temp_dir().join("znicz-mcp-get-track.flac");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("znicz-mcp-get-track.flac");
 
         // A real tagged file is not needed: any readable file exercises the
         // fallback path, and an unreadable one must still not panic.
@@ -1524,8 +1521,6 @@ mod tests {
 
         assert_eq!(view["in_library"], false);
         assert_eq!(view["title"], "znicz-mcp-get-track");
-
-        std::fs::remove_file(&path).ok();
     }
 
     #[test]
@@ -1541,10 +1536,10 @@ mod tests {
 
     #[tokio::test]
     async fn scan_indexes_and_then_search_finds_the_track() {
-        let (_host, server, root) = hosted_with_library("scan");
+        let (_host, server, root) = hosted_with_library();
 
         // Build a tiny folder with one real FLAC, if ffmpeg is around.
-        let dir = root.join("music");
+        let dir = root.path().join("music");
         std::fs::create_dir_all(&dir).expect("create dir");
 
         let track = dir.join("track.flac");
@@ -1562,7 +1557,6 @@ mod tests {
 
         if !made {
             eprintln!("ffmpeg not available, skipping");
-            std::fs::remove_dir_all(&dir).ok();
             return;
         }
 
@@ -1598,22 +1592,12 @@ mod tests {
         let album_payload: serde_json::Value =
             serde_json::from_str(&result_text(&album)).expect("album json");
         assert_eq!(album_payload["count"], 1);
-
-        std::fs::remove_dir_all(&dir).ok();
     }
 
-    fn playlist_server() -> (Harness, PathBuf) {
-        let dir = std::env::temp_dir().join(format!(
-            "znicz-mcp-playlists-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).expect("playlists dir");
+    fn playlist_server() -> (Harness, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("playlists dir");
         let mut server = server();
-        server.playlists_dir = dir.clone();
+        server.playlists_dir = dir.path().to_path_buf();
         (server, dir)
     }
 
@@ -1639,20 +1623,23 @@ mod tests {
 
     #[test]
     fn save_playlist_errors_when_the_queue_is_empty() {
-        let (server, dir) = playlist_server();
+        let (server, _dir) = playlist_server();
         let result = server.save_playlist(Parameters(SavePlaylistParams {
             name: "evening".into(),
         }));
         assert!(result.is_err(), "expected an error, got {result:?}");
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn list_and_play_playlist_append_keeps_the_existing_queue() {
         let (server, dir) = playlist_server();
-        let existing = touch_track(&dir, "old.flac");
-        let added = touch_track(&dir, "new.flac");
-        std::fs::write(dir.join("evening.m3u"), format!("{}\n", added.display())).unwrap();
+        let existing = touch_track(dir.path(), "old.flac");
+        let added = touch_track(dir.path(), "new.flac");
+        std::fs::write(
+            dir.path().join("evening.m3u"),
+            format!("{}\n", added.display()),
+        )
+        .unwrap();
 
         server
             .queue_add(Parameters(QueueAddParams {
@@ -1677,19 +1664,20 @@ mod tests {
         assert_eq!(payload["skipped"], 0);
         assert_eq!(payload["state"]["queue"].as_array().unwrap().len(), 2);
         assert_eq!(payload["state"]["status"], "Stopped");
-
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn play_playlist_starts_playback_when_ffmpeg_can_make_a_file() {
         let (server, dir) = playlist_server();
-        let Some(track) = ffmpeg_flac(&dir, "real.flac") else {
+        let Some(track) = ffmpeg_flac(dir.path(), "real.flac") else {
             eprintln!("ffmpeg not available, skipping playback assert");
-            std::fs::remove_dir_all(&dir).ok();
             return;
         };
-        std::fs::write(dir.join("evening.m3u"), format!("{}\n", track.display())).unwrap();
+        std::fs::write(
+            dir.path().join("evening.m3u"),
+            format!("{}\n", track.display()),
+        )
+        .unwrap();
 
         let result = server
             .play_playlist(Parameters(PlayPlaylistParams {
@@ -1702,14 +1690,12 @@ mod tests {
         assert_eq!(payload["loaded"], 1);
         assert_eq!(payload["state"]["status"], "Playing");
         assert_eq!(payload["state"]["queue"].as_array().unwrap().len(), 1);
-
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn import_playlist_errors_when_nothing_is_playable() {
         let (server, dir) = playlist_server();
-        let path = dir.join("empty.m3u");
+        let path = dir.path().join("empty.m3u");
         std::fs::write(&path, "# only a comment\nftp://x\n").unwrap();
 
         let result = server.import_playlist(Parameters(ImportPlaylistParams {
@@ -1718,14 +1704,12 @@ mod tests {
         }));
         assert!(result.is_err(), "expected an error, got {result:?}");
         assert!(server.player.state().expect("state").queue.is_empty());
-
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn import_playlist_appends_an_http_line() {
         let (server, dir) = playlist_server();
-        let path = dir.join("radio.m3u");
+        let path = dir.path().join("radio.m3u");
         std::fs::write(&path, "#EXTINF:-1,Live\nhttp://127.0.0.1:1/s\n").unwrap();
 
         let result = server
@@ -1748,14 +1732,12 @@ mod tests {
             server.player.state().expect("state").status,
             PlaybackStatus::Stopped
         );
-
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn save_playlist_writes_the_queue() {
         let (server, dir) = playlist_server();
-        let track = touch_track(&dir, "keep.flac");
+        let track = touch_track(dir.path(), "keep.flac");
         server
             .queue_add(Parameters(QueueAddParams {
                 paths: vec![track.to_string_lossy().into_owned()],
@@ -1770,15 +1752,13 @@ mod tests {
         let payload: serde_json::Value =
             serde_json::from_str(&result_text(&result)).expect("save json");
         assert_eq!(payload["saved"], "evening.m3u");
-        assert!(dir.join("evening.m3u").is_file());
-
-        std::fs::remove_dir_all(&dir).ok();
+        assert!(dir.path().join("evening.m3u").is_file());
     }
 
     #[test]
     fn rename_playlist_moves_the_file() {
         let (server, dir) = playlist_server();
-        std::fs::write(dir.join("evening.m3u"), "x\n").unwrap();
+        std::fs::write(dir.path().join("evening.m3u"), "x\n").unwrap();
         let result = server
             .rename_playlist(Parameters(RenamePlaylistParams {
                 name: "evening".into(),
@@ -1788,16 +1768,14 @@ mod tests {
         let payload: serde_json::Value =
             serde_json::from_str(&result_text(&result)).expect("rename json");
         assert_eq!(payload["renamed"], "night");
-        assert!(dir.join("night.m3u").is_file());
-        assert!(!dir.join("evening.m3u").is_file());
-
-        std::fs::remove_dir_all(&dir).ok();
+        assert!(dir.path().join("night.m3u").is_file());
+        assert!(!dir.path().join("evening.m3u").is_file());
     }
 
     #[test]
     fn copy_playlist_duplicates_the_file() {
         let (server, dir) = playlist_server();
-        std::fs::write(dir.join("evening.m3u"), "x\n").unwrap();
+        std::fs::write(dir.path().join("evening.m3u"), "x\n").unwrap();
         let result = server
             .copy_playlist(Parameters(RenamePlaylistParams {
                 name: "evening".into(),
@@ -1807,16 +1785,14 @@ mod tests {
         let payload: serde_json::Value =
             serde_json::from_str(&result_text(&result)).expect("copy json");
         assert_eq!(payload["copied"], "night");
-        assert!(dir.join("evening.m3u").is_file());
-        assert!(dir.join("night.m3u").is_file());
-
-        std::fs::remove_dir_all(&dir).ok();
+        assert!(dir.path().join("evening.m3u").is_file());
+        assert!(dir.path().join("night.m3u").is_file());
     }
 
     #[test]
     fn remove_playlist_deletes_the_file() {
         let (server, dir) = playlist_server();
-        std::fs::write(dir.join("evening.m3u"), "x\n").unwrap();
+        std::fs::write(dir.path().join("evening.m3u"), "x\n").unwrap();
         let result = server
             .remove_playlist(Parameters(PlaylistNameParams {
                 name: "evening".into(),
@@ -1825,27 +1801,19 @@ mod tests {
         let payload: serde_json::Value =
             serde_json::from_str(&result_text(&result)).expect("remove json");
         assert_eq!(payload["removed"], "evening");
-        assert!(!dir.join("evening.m3u").is_file());
-
-        std::fs::remove_dir_all(&dir).ok();
+        assert!(!dir.path().join("evening.m3u").is_file());
     }
 
     /// Path is captured at `ZniczMcpServer::new`; set `ZNICZ_STATIONS_PATH` first.
     fn station_server() -> (Harness, PathBuf) {
-        let path = std::env::temp_dir().join(format!(
-            "znicz-mcp-stations-{}-{}.toml",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stations.toml");
         let _lock = env_lock();
         // SAFETY: `STATIONS_ENV` serialises env mutation against other server constructors.
         unsafe {
             std::env::set_var("ZNICZ_STATIONS_PATH", &path);
         }
-        let (host, ipc, client) = hosted_player();
+        let (host, ipc, client) = hosted_player(dir.path());
         let server = ZniczMcpServer::new(client, Vec::new());
         unsafe {
             std::env::remove_var("ZNICZ_STATIONS_PATH");
@@ -1855,6 +1823,7 @@ mod tests {
                 server,
                 host,
                 _ipc: ipc,
+                _dir: dir,
             },
             path,
         )
@@ -1862,7 +1831,7 @@ mod tests {
 
     #[test]
     fn add_and_list_stations_round_trip() {
-        let (server, path) = station_server();
+        let (server, _path) = station_server();
         server
             .add_radio_station(Parameters(StationAddParams {
                 name: "Example".into(),
@@ -1873,7 +1842,6 @@ mod tests {
         let text = result_text(&listed);
         assert!(text.contains("Example"));
         assert!(text.contains("https://example.com/stream"));
-        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -1903,13 +1871,11 @@ mod tests {
             .unwrap();
         let listed = result_text(&server.list_stations().unwrap());
         assert!(!listed.contains("cover.png"), "{listed}");
-        let _ = std::fs::remove_file(path);
-        let _ = std::fs::remove_file(img);
     }
 
     #[test]
     fn play_station_clears_the_queue_then_errors_on_a_dead_url() {
-        let (server, path) = station_server();
+        let (server, _path) = station_server();
         server
             .add_radio_station(Parameters(StationAddParams {
                 name: "Dead".into(),
@@ -1926,12 +1892,11 @@ mod tests {
         let queue = server.player.state().expect("state").queue;
         assert_eq!(queue.len(), 1);
         assert!(queue[0].is_stream());
-        let _ = std::fs::remove_file(path);
     }
 
     #[test]
     fn play_station_append_keeps_the_existing_queue() {
-        let (server, path) = station_server();
+        let (server, _path) = station_server();
         server
             .queue_add(Parameters(QueueAddParams {
                 paths: vec!["/music/a.flac".into()],
@@ -1957,7 +1922,6 @@ mod tests {
             server.player.state().expect("state").status,
             PlaybackStatus::Stopped
         );
-        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -1980,19 +1944,18 @@ mod tests {
                 name: "evening".into(),
             }))
             .expect("save mixed queue");
-        let body = std::fs::read_to_string(dir.join("evening.m3u")).unwrap();
+        let body = std::fs::read_to_string(dir.path().join("evening.m3u")).unwrap();
         assert!(body.contains("#EXTINF:-1,Live"), "{body}");
         assert!(body.contains("http://127.0.0.1:1/s"), "{body}");
         assert!(
             body.contains("/music/a.flac") || body.contains("a.flac"),
             "{body}"
         );
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn duplicate_station_name_is_an_error() {
-        let (server, path) = station_server();
+        let (server, _path) = station_server();
         let params = StationAddParams {
             name: "Example".into(),
             url: "https://example.com/a".into(),
@@ -2006,12 +1969,11 @@ mod tests {
                 url: "https://example.com/b".into(),
             }))
             .is_err());
-        let _ = std::fs::remove_file(path);
     }
 
     #[test]
     fn remove_rename_and_set_url_persist() {
-        let (server, path) = station_server();
+        let (server, _path) = station_server();
         server
             .add_radio_station(Parameters(StationAddParams {
                 name: "Example".into(),
@@ -2041,12 +2003,11 @@ mod tests {
             .unwrap();
         let listed = result_text(&server.list_stations().unwrap());
         assert!(!listed.contains("Renamed"));
-        let _ = std::fs::remove_file(path);
     }
 
     #[test]
     fn copy_radio_station_clones_the_url() {
-        let (server, path) = station_server();
+        let (server, _path) = station_server();
         server
             .add_radio_station(Parameters(StationAddParams {
                 name: "Example".into(),
@@ -2062,6 +2023,5 @@ mod tests {
         let listed = result_text(&server.list_stations().unwrap());
         assert!(listed.contains("Example"));
         assert!(listed.contains("Example2"));
-        let _ = std::fs::remove_file(path);
     }
 }

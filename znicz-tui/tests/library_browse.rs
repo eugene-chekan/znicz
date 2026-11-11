@@ -3,7 +3,7 @@
 //! Fixtures are made with ffmpeg. Without it the tests report and pass, so the
 //! suite still runs on a machine that has no encoder.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command as Shell;
 
 use ratatui::backend::TestBackend;
@@ -38,13 +38,6 @@ fn write_track(path: &Path, title: &str, artist: &str, album: &str, track: u32) 
         .status()
         .expect("run ffmpeg");
     assert!(status.success(), "ffmpeg failed for {}", path.display());
-}
-
-fn fixture_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("znicz-tui-{name}"));
-    std::fs::remove_dir_all(&dir).ok();
-    std::fs::create_dir_all(&dir).expect("create dir");
-    dir
 }
 
 /// An app whose library holds two albums by two artists.
@@ -109,8 +102,8 @@ fn artists_are_listed_then_albums_and_tracks_open() {
         return;
     }
 
-    let dir = fixture_dir("browse");
-    let mut app = app_with_library(&dir);
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_with_library(dir.path());
     // Prefer paging so Enter drills levels in one list (narrow path of the design).
     app.tui.library_layout = znicz_tui::LibraryLayout::Columns;
     app.library
@@ -155,8 +148,6 @@ fn artists_are_listed_then_albums_and_tracks_open() {
         draw_size(&mut app, 50, 24).contains("Kind of Blue")
             || draw_size(&mut app, 50, 24).contains("Dummy")
     );
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -166,8 +157,8 @@ fn a_search_shows_entity_hits_not_every_artist_track() {
         return;
     }
 
-    let dir = fixture_dir("search");
-    let mut app = app_with_library(&dir);
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_with_library(dir.path());
 
     app.library.begin_search();
     for c in "miles".chars() {
@@ -190,8 +181,6 @@ fn a_search_shows_entity_hits_not_every_artist_track() {
         "artist match must not expand to every track:\n{screen}"
     );
     assert!(!screen.contains("Mysterons"), "non-matches should be gone");
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -201,8 +190,8 @@ fn a_title_search_still_lists_the_matching_track() {
         return;
     }
 
-    let dir = fixture_dir("search-title");
-    let mut app = app_with_library(&dir);
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_with_library(dir.path());
 
     app.library.begin_search();
     for c in "So What".chars() {
@@ -217,8 +206,6 @@ fn a_title_search_still_lists_the_matching_track() {
         "title hit should be shown:\n{screen}"
     );
     assert!(!screen.contains("Mysterons"), "non-matches should be gone");
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -228,8 +215,8 @@ fn a_search_with_no_matches_says_so_on_screen() {
         return;
     }
 
-    let dir = fixture_dir("nomatch");
-    let mut app = app_with_library(&dir);
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_with_library(dir.path());
 
     app.library.begin_search();
     for c in "zzzz".chars() {
@@ -242,8 +229,6 @@ fn a_search_with_no_matches_says_so_on_screen() {
         screen.contains("nothing matched"),
         "an empty result must be explained:\n{screen}"
     );
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -253,8 +238,8 @@ fn adding_an_album_queues_all_of_its_tracks() {
         return;
     }
 
-    let dir = fixture_dir("enqueue");
-    let mut app = app_with_library(&dir);
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_with_library(dir.path());
     app.list_width = 50;
     app.library
         .set_preferred_layout(znicz_tui::LibraryLayout::Columns);
@@ -277,8 +262,6 @@ fn adding_an_album_queues_all_of_its_tracks() {
 
     // Everything listed at albums level for this artist.
     assert_eq!(app.library.listed_tracks(40).len(), 1);
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -288,8 +271,8 @@ fn a_library_with_no_album_tags_falls_back_to_a_track_list() {
         return;
     }
 
-    let dir = fixture_dir("untagged");
-    let path = dir.join("mystery.flac");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mystery.flac");
     let status = Shell::new("ffmpeg")
         .args(["-y", "-loglevel", "error"])
         .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=1"])
@@ -301,7 +284,7 @@ fn a_library_with_no_album_tags_falls_back_to_a_track_list() {
     assert!(status.success());
 
     let mut library = Library::open_in_memory().expect("open library");
-    library.scan(&dir).expect("scan");
+    library.scan(dir.path()).expect("scan");
 
     let (player, _thread) = spawn_player(AudioConfig::default());
     let mut app = App::with_library(player, Some(library));
@@ -312,8 +295,6 @@ fn a_library_with_no_album_tags_falls_back_to_a_track_list() {
         screen.contains("mystery"),
         "an untagged file must still be reachable:\n{screen}"
     );
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -323,8 +304,8 @@ fn grouped_tree_rows_drop_the_repeated_artist_and_number_tracks() {
         return;
     }
 
-    let dir = fixture_dir("grouped-labels");
-    let mut app = app_with_library(&dir);
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_with_library(dir.path());
     app.library
         .set_preferred_layout(znicz_tui::LibraryLayout::Tree);
     // Miles Davis sorts first: expand the artist, then its album.
@@ -349,8 +330,6 @@ fn grouped_tree_rows_drop_the_repeated_artist_and_number_tracks() {
         track.contains("1. So What") && !track.contains("— Miles Davis"),
         "track is numbered and keeps no repeated artist:\n{screen}"
     );
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -360,8 +339,8 @@ fn search_hits_keep_the_artist_and_no_number() {
         return;
     }
 
-    let dir = fixture_dir("flat-labels");
-    let mut app = app_with_library(&dir);
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_with_library(dir.path());
     app.library.begin_search();
     for c in "so what".chars() {
         app.library.push_char(c);
@@ -377,6 +356,4 @@ fn search_hits_keep_the_artist_and_no_number() {
         !screen.contains("1. So What"),
         "search rows get no number:\n{screen}"
     );
-
-    std::fs::remove_dir_all(&dir).ok();
 }

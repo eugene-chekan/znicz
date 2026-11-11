@@ -85,25 +85,20 @@ fn common_prefix(names: &[String]) -> String {
 mod tests {
     use super::*;
 
-    fn tree() -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "znicz-complete-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        for dir in [
+    /// A small folder tree; the `TempDir` must stay alive while it is used.
+    fn tree() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        for sub in [
             "Music/Classical",
             "Music/Classic Rock",
             "Music/Jazz",
             "Music/.hidden",
         ] {
-            std::fs::create_dir_all(root.join(dir)).unwrap();
+            std::fs::create_dir_all(root.join(sub)).unwrap();
         }
         std::fs::write(root.join("Music/Clash.txt"), b"a file").unwrap();
-        root
+        (dir, root)
     }
 
     #[test]
@@ -118,7 +113,7 @@ mod tests {
 
     #[test]
     fn a_single_match_completes_with_a_slash() {
-        let home = tree();
+        let (_dir, home) = tree();
         let done = complete("~/Music/Ja", &home);
         assert_eq!(done.text, "~/Music/Jazz/");
         assert_eq!(done.matches, ["Jazz"]);
@@ -126,7 +121,7 @@ mod tests {
 
     #[test]
     fn several_matches_complete_their_common_prefix_and_skip_files() {
-        let home = tree();
+        let (_dir, home) = tree();
         let done = complete("~/Music/Cl", &home);
         assert_eq!(done.text, "~/Music/Classic");
         assert_eq!(done.matches, ["Classic Rock", "Classical"]);
@@ -134,7 +129,7 @@ mod tests {
 
     #[test]
     fn hidden_folders_need_a_dot() {
-        let home = tree();
+        let (_dir, home) = tree();
         assert!(!complete("~/Music/", &home)
             .matches
             .contains(&".hidden".to_string()));
@@ -143,7 +138,7 @@ mod tests {
 
     #[test]
     fn no_match_leaves_the_text_alone() {
-        let home = tree();
+        let (_dir, home) = tree();
         let done = complete("~/Music/Zz", &home);
         assert_eq!(done.text, "~/Music/Zz");
         assert!(done.matches.is_empty());

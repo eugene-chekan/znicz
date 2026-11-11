@@ -514,25 +514,17 @@ fn unbound_keys_are_ignored() {
     assert_eq!(app.focus, Focus::Library);
 }
 
-fn playlist_fixture() -> (App, std::path::PathBuf) {
-    let dir = std::env::temp_dir().join(format!(
-        "znicz-tui-playlists-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&dir).expect("playlists dir");
-    let a = dir.join("a.flac");
-    let b = dir.join("b.flac");
+fn playlist_fixture() -> (App, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.flac");
+    let b = dir.path().join("b.flac");
     std::fs::write(&a, b"x").unwrap();
     std::fs::write(&b, b"x").unwrap();
-    std::fs::write(dir.join("evening.m3u"), format!("{}\n", a.display())).unwrap();
-    std::fs::write(dir.join("weekend.m3u"), format!("{}\n", b.display())).unwrap();
+    std::fs::write(dir.path().join("evening.m3u"), format!("{}\n", a.display())).unwrap();
+    std::fs::write(dir.path().join("weekend.m3u"), format!("{}\n", b.display())).unwrap();
 
     let mut app = new_app();
-    app.playlists_dir = dir.clone();
+    app.playlists_dir = dir.path().to_path_buf();
     (app, dir)
 }
 
@@ -561,7 +553,7 @@ fn s_still_stops_while_playlists_are_open() {
 #[test]
 fn enter_replaces_the_queue_from_the_highlighted_playlist() {
     let (mut app, dir) = playlist_fixture();
-    let other = dir.join("other.flac");
+    let other = dir.path().join("other.flac");
     std::fs::write(&other, b"x").unwrap();
     app.player
         .send_blocking(Command::QueueAdd(vec![znicz_core::QueueItem::file(
@@ -587,7 +579,7 @@ fn enter_replaces_the_queue_from_the_highlighted_playlist() {
 #[test]
 fn a_appends_the_playlist_without_clearing() {
     let (mut app, dir) = playlist_fixture();
-    let other = dir.join("other.flac");
+    let other = dir.path().join("other.flac");
     std::fs::write(&other, b"x").unwrap();
     app.player
         .send_blocking(Command::QueueAdd(vec![znicz_core::QueueItem::file(
@@ -706,26 +698,20 @@ fn e_edits_the_highlighted_playlist() {
     press_typed(&mut app, "night");
     press(&mut app, KeyCode::Enter);
     assert!(app.playlist_prompt.is_none());
-    assert!(dir.join("night.m3u").is_file());
-    assert!(!dir.join("evening.m3u").is_file());
+    assert!(dir.path().join("night.m3u").is_file());
+    assert!(!dir.path().join("evening.m3u").is_file());
     assert_eq!(
         app.playlists,
         vec!["night".to_string(), "weekend".to_string()]
     );
 }
 
-fn station_fixture() -> (App, PathBuf) {
-    let path = std::env::temp_dir().join(format!(
-        "znicz-tui-stations-{}-{}.toml",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+fn station_fixture() -> (App, tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("stations.toml");
     let mut app = new_app();
     app.stations_path = path.clone();
-    (app, path)
+    (app, dir, path)
 }
 
 #[test]
@@ -748,7 +734,7 @@ fn r_on_the_library_reloads_instead_of_repeat() {
 
 #[test]
 fn radio_add_prompt_treats_letters_as_text() {
-    let (mut app, _path) = station_fixture();
+    let (mut app, _dir, _path) = station_fixture();
     press_char(&mut app, 'R');
     press_char(&mut app, 'n');
     press_typed(&mut app, "songs");
@@ -758,7 +744,7 @@ fn radio_add_prompt_treats_letters_as_text() {
 
 #[test]
 fn radio_add_prompt_left_inserts_in_the_middle() {
-    let (mut app, _path) = station_fixture();
+    let (mut app, _dir, _path) = station_fixture();
     press_char(&mut app, 'R');
     press_char(&mut app, 'n');
     press_typed(&mut app, "Exmple");
@@ -777,7 +763,7 @@ fn radio_add_prompt_left_inserts_in_the_middle() {
 
 #[test]
 fn radio_add_prompt_right_moves_the_caret_forward() {
-    let (mut app, _path) = station_fixture();
+    let (mut app, _dir, _path) = station_fixture();
     press_char(&mut app, 'R');
     press_char(&mut app, 'n');
     press_typed(&mut app, "abc");
@@ -795,7 +781,7 @@ fn radio_add_prompt_right_moves_the_caret_forward() {
 
 #[test]
 fn radio_add_writes_the_file_after_name_and_url() {
-    let (mut app, path) = station_fixture();
+    let (mut app, _dir, path) = station_fixture();
     press_char(&mut app, 'R');
     press_char(&mut app, 'n');
     press_typed(&mut app, "Example");
@@ -810,7 +796,7 @@ fn radio_add_writes_the_file_after_name_and_url() {
 
 #[test]
 fn enter_on_a_station_replaces_the_queue() {
-    let (mut app, path) = station_fixture();
+    let (mut app, _dir, path) = station_fixture();
     znicz_core::save_stations(
         &path,
         &[znicz_core::Station {
@@ -836,7 +822,7 @@ fn enter_on_a_station_replaces_the_queue() {
 
 #[test]
 fn d_deletes_a_station_immediately() {
-    let (mut app, path) = station_fixture();
+    let (mut app, _dir, path) = station_fixture();
     znicz_core::save_stations(
         &path,
         &[znicz_core::Station {
@@ -940,8 +926,8 @@ fn d_deletes_the_highlighted_playlist() {
     let (mut app, dir) = playlist_fixture();
     press_char(&mut app, 'P');
     press_char(&mut app, 'd');
-    assert!(!dir.join("evening.m3u").is_file());
-    assert!(dir.join("weekend.m3u").is_file());
+    assert!(!dir.path().join("evening.m3u").is_file());
+    assert!(dir.path().join("weekend.m3u").is_file());
     assert_eq!(app.playlists, vec!["weekend".to_string()]);
 }
 
@@ -965,13 +951,13 @@ fn c_copies_the_highlighted_playlist() {
     press_typed(&mut app, "morning");
     press(&mut app, KeyCode::Enter);
     assert!(app.playlist_prompt.is_none());
-    assert!(dir.join("evening.m3u").is_file());
-    assert!(dir.join("morning.m3u").is_file());
+    assert!(dir.path().join("evening.m3u").is_file());
+    assert!(dir.path().join("morning.m3u").is_file());
 }
 
 #[test]
 fn a_on_radio_appends_the_station_without_starting() {
-    let (mut app, path) = station_fixture();
+    let (mut app, _dir, path) = station_fixture();
     znicz_core::save_stations(
         &path,
         &[znicz_core::Station {
@@ -1056,7 +1042,7 @@ fn n_on_radio_opens_a_form_instead_of_next() {
 
 #[test]
 fn tab_moves_the_station_form_to_the_url_field() {
-    let (mut app, _path) = station_fixture();
+    let (mut app, _dir, _path) = station_fixture();
     press_char(&mut app, 'R');
     press_char(&mut app, 'n');
     press_typed(&mut app, "songs");
@@ -1077,7 +1063,7 @@ fn tab_moves_the_station_form_to_the_url_field() {
 
 #[test]
 fn e_on_radio_edits_name_and_url_together() {
-    let (mut app, path) = station_fixture();
+    let (mut app, _dir, path) = station_fixture();
     znicz_core::save_stations(
         &path,
         &[znicz_core::Station {
@@ -1122,7 +1108,7 @@ fn e_on_radio_edits_name_and_url_together() {
 
 #[test]
 fn c_copies_the_highlighted_station() {
-    let (mut app, path) = station_fixture();
+    let (mut app, _dir, path) = station_fixture();
     znicz_core::save_stations(
         &path,
         &[znicz_core::Station {

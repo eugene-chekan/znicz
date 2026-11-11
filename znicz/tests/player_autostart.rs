@@ -3,41 +3,30 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use znicz_core::{ClientRole, IpcClient};
 
-static NEXT: AtomicU64 = AtomicU64::new(0);
-
 struct Isolated {
-    dir: PathBuf,
+    // Removed after `Drop` has stopped the player, since fields drop last.
+    dir: tempfile::TempDir,
     ipc: PathBuf,
     lock: PathBuf,
 }
 
 impl Isolated {
     fn new() -> Self {
-        let n = NEXT.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "znicz-autostart-{}-{}-{n}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&dir).expect("temp dir");
-        let ipc = dir.join("ipc.toml");
-        let lock = dir.join("player.lock");
+        let dir = tempfile::tempdir().expect("temp dir");
+        let ipc = dir.path().join("ipc.toml");
+        let lock = dir.path().join("player.lock");
         Self { dir, ipc, lock }
     }
 
     fn command(&self, exe: &str) -> Command {
         let mut cmd = Command::new(exe);
         cmd.env("ZNICZ_IPC_PATH", &self.ipc)
-            .env("ZNICZ_SESSION_PATH", self.dir.join("session.toml"))
-            .env("XDG_DATA_HOME", self.dir.join("data"))
+            .env("ZNICZ_SESSION_PATH", self.dir.path().join("session.toml"))
+            .env("XDG_DATA_HOME", self.dir.path().join("data"))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -49,8 +38,10 @@ impl Drop for Isolated {
     fn drop(&mut self) {
         if let Ok(client) = IpcClient::connect(&self.ipc, ClientRole::Agent) {
             let _ = client.shutdown();
+            // The player saves its session after it answers, and releases the
+            // lock last; wait for that before the folder is removed.
+            wait_gone(&self.lock, Duration::from_secs(10));
         }
-        let _ = fs::remove_dir_all(&self.dir);
     }
 }
 

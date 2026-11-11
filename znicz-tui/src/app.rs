@@ -534,12 +534,12 @@ impl App {
             devices: load_output_devices(),
             device_cursor: Cursor::new(),
             playlists_dir: znicz_library::default_playlists_dir()
-                .unwrap_or_else(|| std::env::temp_dir().join("znicz-playlists")),
+                .unwrap_or_else(|| temp_fallback("znicz-playlists")),
             playlists: Vec::new(),
             playlist_cursor: Cursor::new(),
             playlist_prompt: None,
             stations_path: znicz_library::default_stations_path()
-                .unwrap_or_else(|| std::env::temp_dir().join("znicz-stations.toml")),
+                .unwrap_or_else(|| temp_fallback("znicz-stations.toml")),
             stations: Vec::new(),
             station_cursor: Cursor::new(),
             message_cursor: Cursor::new(),
@@ -2261,6 +2261,14 @@ fn default_folder_text() -> String {
         (Some(music), None) if music.is_dir() => music.display().to_string(),
         _ => "~/".to_string(),
     }
+}
+
+/// Where to keep data when the user data directory cannot be found: the
+/// temp dir, which the system may empty, so say so in the log.
+fn temp_fallback(name: &str) -> PathBuf {
+    let path = std::env::temp_dir().join(name);
+    tracing::warn!(path = %path.display(), "no user data directory; using a temporary path");
+    path
 }
 
 #[cfg(test)]

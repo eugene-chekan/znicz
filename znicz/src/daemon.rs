@@ -268,32 +268,22 @@ pub fn ensure_player_exe(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static NEXT: AtomicU64 = AtomicU64::new(0);
 
     struct TempPaths {
-        dir: PathBuf,
+        // Held so the folder lives, and is removed, with the test.
+        _dir: tempfile::TempDir,
         lock: PathBuf,
         ipc: PathBuf,
     }
 
     impl TempPaths {
         fn new() -> Self {
-            let n = NEXT.fetch_add(1, Ordering::Relaxed);
-            let dir = std::env::temp_dir().join(format!("znicz-daemon-{}-{n}", std::process::id()));
-            fs::create_dir_all(&dir).unwrap();
+            let dir = tempfile::tempdir().unwrap();
             Self {
-                lock: dir.join("player.lock"),
-                ipc: dir.join("ipc.toml"),
-                dir,
+                lock: dir.path().join("player.lock"),
+                ipc: dir.path().join("ipc.toml"),
+                _dir: dir,
             }
-        }
-    }
-
-    impl Drop for TempPaths {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.dir);
         }
     }
 
@@ -349,19 +339,6 @@ mod tests {
         assert_eq!(text.trim(), std::process::id().to_string());
         drop(held);
         assert!(!tmp.lock.exists());
-    }
-
-    #[test]
-    fn temp_paths_directory_does_not_leak() {
-        let dir = {
-            let tmp = temp_paths();
-            tmp.dir.clone()
-        };
-        assert!(
-            !dir.exists(),
-            "test runtime dir leaked at {}",
-            dir.display()
-        );
     }
 
     #[cfg(target_os = "linux")]

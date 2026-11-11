@@ -845,10 +845,8 @@ mod tests {
             eprintln!("ffmpeg not available, skipping");
             return;
         }
-        let dir = std::env::temp_dir().join("znicz-cover-cache");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("front.flac");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("front.flac");
         write_silent_flac(&path);
         save_pictures(
             &path,

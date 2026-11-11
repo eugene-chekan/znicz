@@ -8,25 +8,20 @@ use std::time::{Duration, Instant};
 use znicz_core::{ClientRole, IpcClient, LibraryHost};
 
 struct Isolated {
-    dir: PathBuf,
+    // Removed after `Drop` has stopped the player, since fields drop last.
+    dir: tempfile::TempDir,
 }
 
 impl Isolated {
     fn new() -> Self {
-        let dir = std::env::temp_dir().join(format!(
-            "znicz-scan-cli-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(dir.join("music")).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("music")).unwrap();
         fs::write(
-            dir.join("config.toml"),
+            dir.path().join("config.toml"),
             format!(
                 "[library]\npath = \"{}\"\n",
-                dir.join("library.db")
+                dir.path()
+                    .join("library.db")
                     .display()
                     .to_string()
                     .replace('\\', "/")
@@ -37,16 +32,16 @@ impl Isolated {
     }
 
     fn ipc(&self) -> PathBuf {
-        self.dir.join("ipc.toml")
+        self.dir.path().join("ipc.toml")
     }
 
     fn znicz(&self) -> Command {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_znicz"));
         cmd.arg("--config")
-            .arg(self.dir.join("config.toml"))
+            .arg(self.dir.path().join("config.toml"))
             .env("ZNICZ_IPC_PATH", self.ipc())
-            .env("ZNICZ_SESSION_PATH", self.dir.join("session.toml"))
-            .env("XDG_DATA_HOME", self.dir.join("data"));
+            .env("ZNICZ_SESSION_PATH", self.dir.path().join("session.toml"))
+            .env("XDG_DATA_HOME", self.dir.path().join("data"));
         cmd
     }
 }
@@ -55,15 +50,21 @@ impl Drop for Isolated {
     fn drop(&mut self) {
         if let Ok(client) = IpcClient::connect(self.ipc(), ClientRole::Agent) {
             let _ = client.shutdown();
+            // The player saves its session after it answers, and releases the
+            // lock last; wait for that before the folder is removed.
+            let lock = self.dir.path().join("player.lock");
+            let start = Instant::now();
+            while lock.exists() && start.elapsed() < Duration::from_secs(10) {
+                std::thread::sleep(Duration::from_millis(50));
+            }
         }
-        let _ = fs::remove_dir_all(&self.dir);
     }
 }
 
 #[test]
 fn scan_goes_through_the_player_and_remembers_the_folder() {
     let iso = Isolated::new();
-    let music = std::path::absolute(iso.dir.join("music")).unwrap();
+    let music = std::path::absolute(iso.dir.path().join("music")).unwrap();
 
     let output = iso
         .znicz()
@@ -96,7 +97,7 @@ fn scanning_a_missing_folder_fails() {
     let output = iso
         .znicz()
         .arg("scan")
-        .arg(iso.dir.join("nope"))
+        .arg(iso.dir.path().join("nope"))
         .output()
         .expect("run scan");
     assert!(!output.status.success());
@@ -113,8 +114,8 @@ fn a_bad_folder_among_good_ones_scans_nothing() {
     let output = iso
         .znicz()
         .arg("scan")
-        .arg(iso.dir.join("music"))
-        .arg(iso.dir.join("nope"))
+        .arg(iso.dir.path().join("music"))
+        .arg(iso.dir.path().join("nope"))
         .output()
         .expect("run scan");
     assert!(!output.status.success());
