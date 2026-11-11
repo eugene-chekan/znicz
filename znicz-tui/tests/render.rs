@@ -893,10 +893,11 @@ fn the_library_marks_the_playing_track_album_and_artist() {
     app.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
     let screen = draw_with(&mut app, &playing_state(), 140, 30);
     assert!(screen.contains("Dummy ♪"), "{screen}");
+    // Under Portishead the track drops the repeated artist; the marker stays on its row.
     assert!(
         screen
             .lines()
-            .any(|l| l.contains("Sour Times — Portishead") && l.contains('▶')),
+            .any(|l| l.contains("Sour Times") && l.contains('▶') && !l.contains("— Portishead")),
         "{screen}"
     );
     assert!(!screen.contains("Miles ♪"), "{screen}");
