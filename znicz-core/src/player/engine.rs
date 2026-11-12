@@ -876,6 +876,10 @@ mod tests {
         player
             .send_blocking(Command::QueueRemove(9))
             .expect("remove past the end");
+        let err = player
+            .send_blocking(Command::QueueMove { from: 0, to: 9 })
+            .expect_err("move past the end must be rejected");
+        assert!(err.to_string().contains("out of range"), "got {err}");
 
         assert_eq!(revision(&player), before);
     }

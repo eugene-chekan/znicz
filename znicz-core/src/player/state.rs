@@ -199,7 +199,8 @@ impl Queue {
         self.revision
     }
 
-    /// The only way to change the items; raises the revision.
+    /// The only way to change the items. Every call raises the revision, even
+    /// if nothing is changed afterwards.
     pub fn items_mut(&mut self) -> &mut Vec<QueueItem> {
         self.revision = self.revision.wrapping_add(1);
         Arc::make_mut(&mut self.items)
@@ -426,11 +427,15 @@ mod tests {
     }
 
     #[test]
-    fn reading_does_not_raise_the_revision() {
-        let queue = Queue::new(vec![QueueItem::file("/music/a.flac")]);
-        let _ = queue.to_vec();
-        let _ = queue.len();
-        assert_eq!(queue.revision(), 0);
+    fn changing_a_clone_leaves_the_original_alone() {
+        let original = Queue::new(vec![QueueItem::file("/music/a.flac")]);
+        let mut copy = original.clone();
+        copy.items_mut().push(QueueItem::file("/music/b.flac"));
+
+        assert_eq!(original.len(), 1);
+        assert_eq!(original.revision(), 0);
+        assert_eq!(copy.len(), 2);
+        assert_ne!(original.as_ptr(), copy.as_ptr());
     }
 
     #[test]
