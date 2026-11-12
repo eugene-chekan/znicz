@@ -617,13 +617,27 @@ impl LibraryHost for IpcClient {
     }
 
     fn try_status(&self) -> Result<LibraryStatus> {
-        match self.rpc(|live| IpcRequest::State {
-            token: live.token.clone(),
-            queue_revision: None,
-        })? {
-            IpcResponse::Ok { library, .. } => Ok(library.unwrap_or_default()),
-            IpcResponse::Err { message } => Err(ZniczError::Library(message)),
-        }
+        // Sends the cached queue revision so the reply skips the queue, and
+        // keeps the cache coherent with the player like `state()` does.
+        self.rpc_live(
+            |live| IpcRequest::State {
+                token: live.token.clone(),
+                queue_revision: live.queue_cache.as_ref().map(Queue::revision),
+            },
+            |live, response| match response {
+                IpcResponse::Ok {
+                    mut state,
+                    library,
+                    queue_revision,
+                    queue_unchanged,
+                } => {
+                    sync_queue(live, &mut state.queue, queue_revision, queue_unchanged);
+                    Ok(library.unwrap_or_default())
+                }
+                IpcResponse::Err { message } => Err(ZniczError::Library(message)),
+            },
+        )
+        .map_err(|f| f.error)?
     }
 }
 
@@ -777,10 +791,6 @@ impl IpcClient {
             .map_err(|_| ZniczError::Player("ipc lock".into()))
     }
 
-    fn rpc(&self, make: impl Fn(&Live) -> IpcRequest) -> Result<IpcResponse> {
-        self.rpc_detailed(make).map_err(|f| f.error)
-    }
-
     fn rpc_detailed(
         &self,
         make: impl Fn(&Live) -> IpcRequest,
@@ -859,31 +869,43 @@ impl IpcClient {
 
 /// Fill in the queue of a State reply from the connection's cache, and keep
 /// the cache current. Runs under the lock that sent the request.
-fn finish_state(live: &mut Live, response: IpcResponse) -> Result<PlayerState> {
-    let (mut state, queue_revision, queue_unchanged) = match response {
-        IpcResponse::Ok {
-            state,
-            queue_revision,
-            queue_unchanged,
-            ..
-        } => (state, queue_revision, queue_unchanged),
-        IpcResponse::Err { message } => return Err(ZniczError::Player(message)),
-    };
+fn sync_queue(
+    live: &mut Live,
+    queue: &mut Queue,
+    queue_revision: Option<u64>,
+    queue_unchanged: bool,
+) {
     match (queue_revision, queue_unchanged) {
         (_, true) => match live.queue_cache.clone() {
-            Some(cache) => state.queue = cache,
-            // Only sent when the request carried a revision, so a cache
-            // should exist; without one the reply's empty queue stands.
-            None => live.queue_cache = None,
+            Some(cache) => *queue = cache,
+            None => {
+                // Only sent when the request carried a revision, so a cache
+                // should exist. Keep the empty queue and say so.
+                tracing::warn!("ipc: player omitted the queue without a cached copy");
+            }
         },
         (Some(revision), false) => {
-            state.queue.set_revision(revision);
-            live.queue_cache = Some(state.queue.clone());
+            queue.set_revision(revision);
+            live.queue_cache = Some(queue.clone());
         }
         // An older player reports no revision; never cache its queue.
         (None, false) => live.queue_cache = None,
     }
-    Ok(*state)
+}
+
+fn finish_state(live: &mut Live, response: IpcResponse) -> Result<PlayerState> {
+    match response {
+        IpcResponse::Ok {
+            mut state,
+            queue_revision,
+            queue_unchanged,
+            ..
+        } => {
+            sync_queue(live, &mut state.queue, queue_revision, queue_unchanged);
+            Ok(*state)
+        }
+        IpcResponse::Err { message } => Err(ZniczError::Player(message)),
+    }
 }
 
 impl PlayerOps for IpcClient {
@@ -1007,6 +1029,13 @@ mod tests {
         assert_eq!(client.state().expect("second").queue.len(), 3);
 
         let revision = player.state().queue.revision();
+        let cached = client.inner.live.lock().expect("lock").queue_cache.clone();
+        assert_eq!(
+            cached.map(|queue| queue.revision()),
+            Some(revision),
+            "the second state call ran through the cache"
+        );
+
         let token = load_advertise(&path).expect("advert").token;
         match client
             .rpc_raw(IpcRequest::State {
@@ -1025,6 +1054,46 @@ mod tests {
             }
             other => panic!("expected ok, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_reconnect_to_a_new_player_drops_the_cached_queue() {
+        let (_dir, path) = advertise_path();
+        let (player_a, _thread_a) = spawn_player(AudioConfig::default());
+        let server_a = IpcServer::start(player_a.clone(), &path).expect("start a");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        client
+            .send_blocking(Command::QueueAdd(queue_files(3)))
+            .expect("queue a");
+        assert_eq!(client.state().expect("fills the cache").queue.len(), 3);
+        let revision_a = player_a.state().queue.revision();
+
+        // Break the connection, then put a different player behind the same
+        // advertise path. It reaches the same revision with other items.
+        client
+            .inner
+            .live
+            .lock()
+            .expect("lock")
+            .writer
+            .shutdown(std::net::Shutdown::Both)
+            .expect("shutdown");
+        drop(server_a);
+
+        let (player_b, _thread_b) = spawn_player(AudioConfig::default());
+        let _server_b = IpcServer::start(player_b.clone(), &path).expect("start b");
+        let other: Vec<crate::QueueItem> = (0..3)
+            .map(|i| crate::QueueItem::File {
+                path: PathBuf::from(format!("/other/{i}.flac")),
+            })
+            .collect();
+        player_b
+            .send_blocking(Command::QueueAdd(other.clone()))
+            .expect("queue b");
+        assert_eq!(player_b.state().queue.revision(), revision_a);
+
+        let state = client.state().expect("state after reconnect");
+        assert_eq!(state.queue, other, "the new player's queue, not the cache");
     }
 
     #[test]
