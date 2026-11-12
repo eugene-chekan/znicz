@@ -1,4 +1,8 @@
+#[cfg(test)]
+use std::cell::Cell;
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -32,8 +36,10 @@ CREATE TABLE IF NOT EXISTS tracks (
     album_folded        TEXT,
     album_artist_folded TEXT
 );
-CREATE INDEX IF NOT EXISTS tracks_album_idx  ON tracks(album);
-CREATE INDEX IF NOT EXISTS tracks_artist_idx ON tracks(artist);
+DROP INDEX IF EXISTS tracks_album_idx;
+DROP INDEX IF EXISTS tracks_artist_idx;
+CREATE INDEX IF NOT EXISTS tracks_album_nocase_idx  ON tracks(album COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS tracks_artist_nocase_idx ON tracks(artist COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS tracks_title_idx  ON tracks(title);
 CREATE TABLE IF NOT EXISTS folders (
     path     TEXT PRIMARY KEY,
@@ -52,8 +58,15 @@ const FOLDED_COLUMNS: &[&str] = &[
 const COLUMNS: &str = "id, path, title, artist, album, album_artist, genre, year, \
      track_number, disc_number, codec, sample_rate, channels, bits_per_sample, duration_secs";
 
+/// Album attribution with the `Library::cache_key` it was built under.
+type AttributionCache = RefCell<Option<((i64, u64), Arc<Vec<AttributedAlbum>>)>>;
+
 pub struct Library {
     conn: Connection,
+    /// Rebuilt only when `cache_key` changes, so other connections' commits invalidate it.
+    attributed: AttributionCache,
+    #[cfg(test)]
+    attribution_builds: Cell<u32>,
 }
 
 impl Library {
@@ -77,7 +90,12 @@ impl Library {
         conn.pragma_update(None, "synchronous", "NORMAL").ok();
         conn.execute_batch(SCHEMA)?;
         ensure_folded_columns(&conn)?;
-        let library = Self { conn };
+        let library = Self {
+            conn,
+            attributed: RefCell::new(None),
+            #[cfg(test)]
+            attribution_builds: Cell::new(0),
+        };
         library.backfill_folded_columns()?;
         Ok(library)
     }
@@ -410,10 +428,10 @@ impl Library {
     /// Distinct browse artists for artist-first navigation, including a synthetic
     /// [`VARIOUS_ARTISTS_NAME`] root when any compilation album exists.
     pub fn browse_artists(&self) -> Result<Vec<ArtistSummary>> {
-        let attributed = self.attribute_albums()?;
+        let attributed = self.attributed_albums()?;
         let mut by_artist: std::collections::BTreeMap<String, u32> =
             std::collections::BTreeMap::new();
-        for album in &attributed {
+        for album in attributed.iter() {
             *by_artist.entry(album.browse_artist.clone()).or_insert(0) += album.summary.track_count;
         }
         let mut artists: Vec<ArtistSummary> = by_artist
@@ -432,11 +450,11 @@ impl Library {
     /// Albums attributed to a browse artist (compilations for Various Artists), oldest first;
     /// albums without a year last.
     pub fn albums_for_browse_artist(&self, artist: &str) -> Result<Vec<AlbumSummary>> {
-        let attributed = self.attribute_albums()?;
+        let attributed = self.attributed_albums()?;
         let mut albums: Vec<AlbumSummary> = attributed
-            .into_iter()
+            .iter()
             .filter(|a| a.browse_artist.eq_ignore_ascii_case(artist))
-            .map(|a| a.summary)
+            .map(|a| a.summary.clone())
             .collect();
         albums.sort_by(|a, b| {
             let year = |album: &AlbumSummary| album.year.unwrap_or(u32::MAX);
@@ -448,8 +466,32 @@ impl Library {
         Ok(albums)
     }
 
+    /// Cached [`attribute_albums`]. The key changes when this connection writes
+    /// (`total_changes`) or when another connection commits (`data_version`).
+    fn attributed_albums(&self) -> Result<Arc<Vec<AttributedAlbum>>> {
+        let key = self.cache_key()?;
+        if let Some((cached_key, albums)) = self.attributed.borrow().as_ref() {
+            if *cached_key == key {
+                return Ok(Arc::clone(albums));
+            }
+        }
+        let albums = Arc::new(self.attribute_albums()?);
+        *self.attributed.borrow_mut() = Some((key, Arc::clone(&albums)));
+        Ok(albums)
+    }
+
+    fn cache_key(&self) -> Result<(i64, u64)> {
+        let data_version: i64 = self
+            .conn
+            .query_row("PRAGMA data_version", [], |r| r.get(0))?;
+        Ok((data_version, self.conn.total_changes()))
+    }
+
     /// Classify each tagged album into a browse artist using the Various Artists rule.
     fn attribute_albums(&self) -> Result<Vec<AttributedAlbum>> {
+        #[cfg(test)]
+        self.attribution_builds
+            .set(self.attribution_builds.get() + 1);
         let mut statement = self.conn.prepare(
             "SELECT album, artist, album_artist, year, duration_secs
              FROM tracks
@@ -700,6 +742,7 @@ struct AlbumGroup {
     total_secs: Option<f64>,
 }
 
+#[derive(Clone)]
 struct AttributedAlbum {
     browse_artist: String,
     summary: AlbumSummary,
@@ -1422,5 +1465,138 @@ mod tests {
         let artists = library.browse_artists().unwrap();
         assert_eq!(artists.len(), 1);
         assert_eq!(artists[0].name, "Solo");
+    }
+
+    #[test]
+    fn attribution_is_cached_until_the_library_changes() {
+        let mut library = Library::open_in_memory().unwrap();
+        upsert_simple(
+            &mut library,
+            "/music/a.flac",
+            "T",
+            Some("Solo"),
+            Some("LP"),
+            None,
+        );
+
+        let first = library.browse_artists().unwrap();
+        let second = library.browse_artists().unwrap();
+        assert_eq!(first, second);
+        assert_eq!(library.attribution_builds.get(), 1);
+
+        let albums = library.albums_for_browse_artist("Solo").unwrap();
+        assert_eq!(albums.len(), 1);
+        assert_eq!(library.attribution_builds.get(), 1);
+    }
+
+    #[test]
+    fn attribution_cache_sees_own_writes() {
+        let mut library = Library::open_in_memory().unwrap();
+        upsert_simple(
+            &mut library,
+            "/music/a.flac",
+            "T",
+            Some("Solo"),
+            Some("LP"),
+            None,
+        );
+        assert_eq!(library.browse_artists().unwrap().len(), 1);
+
+        upsert_simple(
+            &mut library,
+            "/music/b.flac",
+            "U",
+            Some("Newcomer"),
+            Some("EP"),
+            None,
+        );
+        let names: Vec<String> = library
+            .browse_artists()
+            .unwrap()
+            .into_iter()
+            .map(|a| a.name)
+            .collect();
+        assert!(names.contains(&"Newcomer".to_string()), "got {names:?}");
+    }
+
+    #[test]
+    fn attribution_cache_sees_other_connections() {
+        let (_dir, db) = temp_db();
+        let mut writer = Library::open(&db).unwrap();
+        let reader = Library::open(&db).unwrap();
+        upsert_simple(
+            &mut writer,
+            "/music/a.flac",
+            "T",
+            Some("Solo"),
+            Some("LP"),
+            None,
+        );
+        assert_eq!(reader.browse_artists().unwrap().len(), 1);
+
+        upsert_simple(
+            &mut writer,
+            "/music/b.flac",
+            "U",
+            Some("Newcomer"),
+            Some("EP"),
+            None,
+        );
+        let names: Vec<String> = reader
+            .browse_artists()
+            .unwrap()
+            .into_iter()
+            .map(|a| a.name)
+            .collect();
+        assert!(names.contains(&"Newcomer".to_string()), "got {names:?}");
+    }
+
+    #[test]
+    fn album_lookup_uses_the_nocase_index() {
+        let library = Library::open_in_memory().unwrap();
+        let plan = |sql: &str| -> String {
+            let mut statement = library.conn.prepare(sql).unwrap();
+            let details: Vec<String> = statement
+                .query_map(params!["x"], |row| row.get::<_, String>(3))
+                .unwrap()
+                .map(|d| d.unwrap())
+                .collect();
+            details.join("\n")
+        };
+        let by_album =
+            plan("EXPLAIN QUERY PLAN SELECT id FROM tracks WHERE album = ?1 COLLATE NOCASE");
+        assert!(by_album.contains("tracks_album_nocase_idx"), "{by_album}");
+        let by_artist =
+            plan("EXPLAIN QUERY PLAN SELECT id FROM tracks WHERE artist = ?1 COLLATE NOCASE");
+        assert!(
+            by_artist.contains("tracks_artist_nocase_idx"),
+            "{by_artist}"
+        );
+    }
+
+    #[test]
+    fn old_indexes_are_dropped_on_open() {
+        let (_dir, db) = temp_db();
+        drop(Library::open(&db).unwrap());
+        {
+            let raw = Connection::open(&db).unwrap();
+            raw.execute_batch("CREATE INDEX tracks_album_idx ON tracks(album);")
+                .unwrap();
+        }
+        drop(Library::open(&db).unwrap());
+
+        let raw = Connection::open(&db).unwrap();
+        let names: Vec<String> = raw
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(|n| n.unwrap())
+            .collect();
+        assert!(!names.iter().any(|n| n == "tracks_album_idx"), "{names:?}");
+        assert!(
+            names.iter().any(|n| n == "tracks_album_nocase_idx"),
+            "{names:?}"
+        );
     }
 }
