@@ -6,7 +6,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph};
 use znicz_library::{AlbumSummary, ArtistSummary, SearchHit, Track};
 
 use crate::app::{App, Focus};
@@ -16,6 +16,7 @@ use crate::library_pane::{ColumnFocus, EffectiveLayout, LibraryPane, Mode, RowCo
 use crate::playing::PlayingRef;
 use crate::theme;
 use crate::views;
+use crate::views::window::visible_window;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     app.hits.library = None;
@@ -92,67 +93,50 @@ fn render_columns(frame: &mut Frame, area: Rect, app: &mut App, focused: bool) {
     let albums_title = column_title("Albums", artist.as_deref(), views::title_width(parts[1]));
     let tracks_title = column_title("Tracks", album.as_deref(), views::title_width(parts[2]));
 
-    render_column_list(
+    let artists = app.library.artists();
+    let strip = parts[0].width.saturating_sub(2) as usize;
+    let hit = render_column_list(
         frame,
         parts[0],
-        app,
         "Artists",
         ColumnFocus::Artists,
         focused && app.library.column_focus() == ColumnFocus::Artists,
-        app.library
-            .artists()
-            .iter()
-            .map(|a| {
-                let strip = parts[0].width.saturating_sub(2) as usize;
-                artist_row(a, strip, 0, playing.as_ref())
-            })
-            .collect(),
-        app.library.artists().len(),
+        artists.len(),
         app.library.selected_artist_index(),
+        |i| artist_row(&artists[i], strip, 0, playing.as_ref()),
     );
-    render_column_list(
+    app.hits.library_artists = Some(hit);
+
+    let albums = app.library.albums();
+    let context = app.library.album_context();
+    let strip = parts[1].width.saturating_sub(2) as usize;
+    let hit = render_column_list(
         frame,
         parts[1],
-        app,
         &albums_title,
         ColumnFocus::Albums,
         focused && app.library.column_focus() == ColumnFocus::Albums,
-        {
-            let context = app.library.album_context();
-            app.library
-                .albums()
-                .iter()
-                .map(|a| {
-                    let strip = parts[1].width.saturating_sub(2) as usize;
-                    album_row(a, context, strip, 0, playing.as_ref())
-                })
-                .collect()
-        },
-        app.library.albums().len(),
+        albums.len(),
         app.library.selected_album_index(),
+        |i| album_row(&albums[i], context, strip, 0, playing.as_ref()),
     );
-    render_column_list(
+    app.hits.library_albums = Some(hit);
+
+    let tracks = app.library.tracks();
+    // Computed once: the numbering reads the whole track list.
+    let context = app.library.track_context();
+    let strip = parts[2].width.saturating_sub(2) as usize;
+    let hit = render_column_list(
         frame,
         parts[2],
-        app,
         &tracks_title,
         ColumnFocus::Tracks,
         focused && app.library.column_focus() == ColumnFocus::Tracks,
-        {
-            // Computed once: the numbering reads the whole track list.
-            let context = app.library.track_context();
-            app.library
-                .tracks()
-                .iter()
-                .map(|t| {
-                    let strip = parts[2].width.saturating_sub(2) as usize;
-                    track_row(t, context, strip, 0, playing.as_ref())
-                })
-                .collect()
-        },
-        app.library.tracks().len(),
+        tracks.len(),
         app.library.selected_track_index(),
+        |i| track_row(&tracks[i], context, strip, 0, playing.as_ref()),
     );
+    app.hits.library_tracks = Some(hit);
 }
 
 /// `Albums · Miles`: a column title naming its parent selection.
@@ -163,43 +147,74 @@ fn column_title(name: &str, parent: Option<&str>, width: usize) -> String {
     }
 }
 
+/// Draws one library list, building rows only for the ones on screen.
+///
+/// `row` takes an absolute index. `state` holds the list's scroll position: it is
+/// read to place the window and written back to match what was drawn.
+#[allow(clippy::too_many_arguments)]
+fn draw_list(
+    frame: &mut Frame,
+    area: Rect,
+    block: Block<'static>,
+    focused: bool,
+    count: usize,
+    selected: Option<usize>,
+    state: &mut ListState,
+    row: impl Fn(usize) -> ListItem<'static>,
+) -> ListHit {
+    let inner = block.inner(area);
+    let window = visible_window(count, selected, state.offset(), inner.height as usize);
+    let items: Vec<ListItem> = window.clone().map(row).collect();
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(views::highlight(focused));
+    // The visible rows are the list's first rows, so the selection is relative to the window.
+    let mut list_state = ListState::default();
+    list_state.select(
+        selected
+            .filter(|s| window.contains(s))
+            .map(|s| s - window.start),
+    );
+    frame.render_stateful_widget(list, area, &mut list_state);
+
+    // `select(None)` resets the offset, so select before setting it.
+    state.select(selected);
+    *state.offset_mut() = window.start;
+    ListHit {
+        inner,
+        offset: window.start,
+        len: count,
+    }
+}
+
+/// A column list. Its scroll position is not kept between frames, so it starts at the top.
 #[allow(clippy::too_many_arguments)]
 fn render_column_list(
     frame: &mut Frame,
     area: Rect,
-    app: &mut App,
     title: &str,
     column: ColumnFocus,
     focused: bool,
-    items: Vec<ListItem>,
     count: usize,
     selected: Option<usize>,
-) {
+    row: impl Fn(usize) -> ListItem<'static>,
+) -> ListHit {
     let summary = match column {
         ColumnFocus::Artists => format!("{count} artists"),
         ColumnFocus::Albums => format!("{count} albums"),
         ColumnFocus::Tracks => format!("{count} tracks"),
     };
     let block = views::pane_block(title, focused, Some(summary));
-    let inner = block.inner(area);
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(views::highlight(focused));
-
-    let mut state = ListState::default();
-    state.select(selected);
-    frame.render_stateful_widget(list, area, &mut state);
-
-    let hit = ListHit {
-        inner,
-        offset: state.offset(),
-        len: count,
-    };
-    match column {
-        ColumnFocus::Artists => app.hits.library_artists = Some(hit),
-        ColumnFocus::Albums => app.hits.library_albums = Some(hit),
-        ColumnFocus::Tracks => app.hits.library_tracks = Some(hit),
-    }
+    draw_list(
+        frame,
+        area,
+        block,
+        focused,
+        count,
+        selected,
+        &mut ListState::default(),
+        row,
+    )
 }
 
 fn render_tree(frame: &mut Frame, area: Rect, app: &mut App, strip: usize, focused: bool) {
@@ -209,22 +224,8 @@ fn render_tree(frame: &mut Frame, area: Rect, app: &mut App, strip: usize, focus
     // Resolve the selection once: asking per row rebuilds the tree for every
     // row and re-queries the library.
     let selected = app.library.selected_index(strip);
+    // Numbering reads the whole run of an album, so the contexts cover every row.
     let contexts = app.library.tree_row_contexts(&rows);
-    let items: Vec<ListItem> = rows
-        .iter()
-        .zip(contexts)
-        .enumerate()
-        .map(|(i, (row, context))| {
-            tree_row(
-                app,
-                row,
-                context,
-                strip,
-                app.library.offset_for_row(i, selected),
-                playing.as_ref(),
-            )
-        })
-        .collect();
     let crumbs = tree_crumbs(&rows, selected);
     let parts: Vec<&str> = std::iter::once("Library")
         .chain(crumbs.iter().map(String::as_str))
@@ -232,22 +233,31 @@ fn render_tree(frame: &mut Frame, area: Rect, app: &mut App, strip: usize, focus
     let title = views::breadcrumb(&parts, views::title_width(area));
     let summary = format!("{count} rows");
     let block = views::pane_block(&title, focused, Some(summary));
-    let inner = block.inner(area);
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(views::highlight(focused));
-    app.library_list_state
-        .select(app.library.selected_index(strip));
-    frame.render_stateful_widget(list, area, &mut app.library_list_state);
-    app.hits.library = Some(ListHit {
-        inner,
-        offset: app.library_list_state.offset(),
-        len: count,
-    });
+    let library = &app.library;
+    let hit = draw_list(
+        frame,
+        area,
+        block,
+        focused,
+        count,
+        selected,
+        &mut app.library_list_state,
+        |i| {
+            tree_row(
+                library,
+                &rows[i],
+                contexts[i],
+                strip,
+                library.offset_for_row(i, selected),
+                playing.as_ref(),
+            )
+        },
+    );
+    app.hits.library = Some(hit);
 }
 
 fn tree_row(
-    app: &App,
+    library: &LibraryPane,
     row: &TreeRow,
     context: RowContext<'_>,
     strip: usize,
@@ -290,7 +300,7 @@ fn tree_row(
             depth,
         } => {
             let indent = "  ".repeat(*depth);
-            let track = app.library.tree_track_cache_get(album_key, *index);
+            let track = library.tree_track_cache_get(album_key, *index);
             let mark = track.is_some_and(|t| playing.is_some_and(|p| p.is_track(t)));
             let lead = if mark { "▶ " } else { "" };
             let middle = match track {
@@ -351,58 +361,82 @@ fn render_paging(frame: &mut Frame, area: Rect, app: &mut App, strip: usize, foc
         return;
     }
 
-    let items: Vec<ListItem> = match app.library.paging_level() {
-        ColumnFocus::Artists => app
-            .library
-            .artists()
-            .iter()
-            .enumerate()
-            .map(|(i, a)| artist_row(a, strip, app.library.offset_for(i, strip), playing.as_ref()))
-            .collect(),
-        ColumnFocus::Albums => {
-            let context = app.library.album_context();
-            app.library
-                .albums()
-                .iter()
-                .enumerate()
-                .map(|(i, a)| {
-                    album_row(
-                        a,
-                        context,
-                        strip,
-                        app.library.offset_for(i, strip),
-                        playing.as_ref(),
-                    )
-                })
-                .collect()
-        }
-        ColumnFocus::Tracks => {
-            let context = app.library.track_context();
-            app.library
-                .tracks()
-                .iter()
-                .enumerate()
-                .map(|(i, t)| {
-                    track_row(
-                        t,
-                        context,
-                        strip,
-                        app.library.offset_for(i, strip),
-                        playing.as_ref(),
-                    )
-                })
-                .collect()
-        }
-    };
     let count = app.library.len(strip);
     let summary = match app.library.paging_level() {
         ColumnFocus::Artists => format!("{count} artists"),
         ColumnFocus::Albums => format!("{count} albums"),
         ColumnFocus::Tracks => format!("{count} tracks"),
     };
-    finish_list(
-        frame, area, app, &title, focused, items, count, summary, strip,
-    );
+    let block = views::pane_block(&title, focused, Some(summary));
+    let selected = app.library.selected_index(strip);
+    let library = &app.library;
+    let hit = match library.paging_level() {
+        ColumnFocus::Artists => {
+            let artists = library.artists();
+            draw_list(
+                frame,
+                area,
+                block,
+                focused,
+                count,
+                selected,
+                &mut app.library_list_state,
+                |i| {
+                    artist_row(
+                        &artists[i],
+                        strip,
+                        library.offset_for_row(i, selected),
+                        playing.as_ref(),
+                    )
+                },
+            )
+        }
+        ColumnFocus::Albums => {
+            let albums = library.albums();
+            let context = library.album_context();
+            draw_list(
+                frame,
+                area,
+                block,
+                focused,
+                count,
+                selected,
+                &mut app.library_list_state,
+                |i| {
+                    album_row(
+                        &albums[i],
+                        context,
+                        strip,
+                        library.offset_for_row(i, selected),
+                        playing.as_ref(),
+                    )
+                },
+            )
+        }
+        ColumnFocus::Tracks => {
+            let tracks = library.tracks();
+            let context = library.track_context();
+            draw_list(
+                frame,
+                area,
+                block,
+                focused,
+                count,
+                selected,
+                &mut app.library_list_state,
+                |i| {
+                    track_row(
+                        &tracks[i],
+                        context,
+                        strip,
+                        library.offset_for_row(i, selected),
+                        playing.as_ref(),
+                    )
+                },
+            )
+        }
+    };
+    app.hits.library = Some(hit);
 }
 
 fn render_single_list(frame: &mut Frame, area: Rect, app: &mut App, strip: usize, focused: bool) {
@@ -423,45 +457,58 @@ fn render_single_list(frame: &mut Frame, area: Rect, app: &mut App, strip: usize
         return;
     }
 
-    let items: Vec<ListItem> = match app.library.mode() {
-        Mode::Search(_) => app
-            .library
-            .search_hits()
-            .iter()
-            .enumerate()
-            .map(|(i, hit)| {
-                hit_row(
-                    hit,
-                    strip,
-                    app.library.offset_for(i, strip),
-                    playing.as_ref(),
-                )
-            })
-            .collect(),
-        Mode::AllTracks | Mode::Browse => app
-            .library
-            .tracks()
-            .iter()
-            .enumerate()
-            .map(|(i, track)| {
-                track_row(
-                    track,
-                    RowContext::Flat,
-                    strip,
-                    app.library.offset_for(i, strip),
-                    playing.as_ref(),
-                )
-            })
-            .collect(),
-    };
     let count = app.library.len(strip);
     let summary = match app.library.mode() {
         Mode::Search(_) => search_summary(app.library.search_hits()),
         _ => format!("{count} tracks"),
     };
-    finish_list(
-        frame, area, app, &title, focused, items, count, summary, strip,
-    );
+    let block = views::pane_block(&title, focused, Some(summary));
+    let selected = app.library.selected_index(strip);
+    let library = &app.library;
+    let hit = match library.mode() {
+        Mode::Search(_) => {
+            let hits = library.search_hits();
+            draw_list(
+                frame,
+                area,
+                block,
+                focused,
+                count,
+                selected,
+                &mut app.library_list_state,
+                |i| {
+                    hit_row(
+                        &hits[i],
+                        strip,
+                        library.offset_for_row(i, selected),
+                        playing.as_ref(),
+                    )
+                },
+            )
+        }
+        Mode::AllTracks | Mode::Browse => {
+            let tracks = library.tracks();
+            draw_list(
+                frame,
+                area,
+                block,
+                focused,
+                count,
+                selected,
+                &mut app.library_list_state,
+                |i| {
+                    track_row(
+                        &tracks[i],
+                        RowContext::Flat,
+                        strip,
+                        library.offset_for_row(i, selected),
+                        playing.as_ref(),
+                    )
+                },
+            )
+        }
+    };
+    app.hits.library = Some(hit);
 }
 
 fn render_empty(frame: &mut Frame, area: Rect, title: &str, focused: bool, app: &App) {
@@ -497,33 +544,6 @@ fn empty_body(app: &App, width: usize) -> Vec<Line<'static>> {
         .notice()
         .unwrap_or("Nothing here. Press / to search, or Esc to go back.");
     vec![views::placeholder(notice)]
-}
-
-#[allow(clippy::too_many_arguments)]
-fn finish_list(
-    frame: &mut Frame,
-    area: Rect,
-    app: &mut App,
-    title: &str,
-    focused: bool,
-    items: Vec<ListItem>,
-    count: usize,
-    summary: String,
-    strip: usize,
-) {
-    let block = views::pane_block(title, focused, Some(summary));
-    let inner = block.inner(area);
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(views::highlight(focused));
-    app.library_list_state
-        .select(app.library.selected_index(strip));
-    frame.render_stateful_widget(list, area, &mut app.library_list_state);
-    app.hits.library = Some(ListHit {
-        inner,
-        offset: app.library_list_state.offset(),
-        len: count,
-    });
 }
 
 fn search_summary(hits: &[SearchHit]) -> String {

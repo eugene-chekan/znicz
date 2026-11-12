@@ -287,13 +287,13 @@ impl PlayerEngine {
             Command::PreviousTrack => self.previous_track()?,
             Command::QueueAdd(items) => {
                 let mut state = self.state.write().unwrap();
-                state.queue.extend(items);
+                state.queue.items_mut().extend(items);
                 self.event_tx.send(PlayerEvent::QueueChanged).ok();
                 self.emit_state_changed();
             }
             Command::QueueClear => {
                 let mut state = self.state.write().unwrap();
-                state.queue.clear();
+                state.queue.items_mut().clear();
                 state.queue_position = 0;
                 self.event_tx.send(PlayerEvent::QueueChanged).ok();
                 self.emit_state_changed();
@@ -395,12 +395,12 @@ impl PlayerEngine {
         state.output = Some(output_info);
 
         if state.queue.is_empty() {
-            state.queue = vec![item.clone()];
+            state.queue.replace(vec![item.clone()]);
             state.queue_position = 0;
         } else if let Some(pos) = state.queue.iter().position(|row| row == &item) {
             state.queue_position = pos;
         } else {
-            state.queue.push(item.clone());
+            state.queue.items_mut().push(item.clone());
             state.queue_position = state.queue.len() - 1;
         }
 
@@ -545,7 +545,7 @@ impl PlayerEngine {
         self.stop()?;
         let mut state = self.state.write().unwrap();
         let len = items.len();
-        state.queue = items;
+        state.queue.replace(items);
         state.queue_position = if len == 0 { 0 } else { position.min(len - 1) };
         drop(state);
         self.event_tx.send(PlayerEvent::QueueChanged).ok();
@@ -563,8 +563,9 @@ impl PlayerEngine {
             if from == to {
                 return Ok(());
             }
-            let item = state.queue.remove(from);
-            state.queue.insert(to, item);
+            let items = state.queue.items_mut();
+            let item = items.remove(from);
+            items.insert(to, item);
             state.queue_position = moved_position(state.queue_position, from, to);
         }
         self.event_tx.send(PlayerEvent::QueueChanged).ok();
@@ -580,7 +581,7 @@ impl PlayerEngine {
             }
             let playing = state.status != PlaybackStatus::Stopped;
             let was_playing_row = index == state.queue_position && playing;
-            state.queue.remove(index);
+            state.queue.items_mut().remove(index);
             if index < state.queue_position {
                 state.queue_position -= 1;
             }
@@ -800,7 +801,111 @@ pub(crate) fn moved_position(position: usize, from: usize, to: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::moved_position;
+    use super::{AudioConfig, PlayerHandle, moved_position, spawn_player};
+    use crate::player::commands::Command;
+    use crate::player::state::QueueItem;
+
+    fn player() -> PlayerHandle {
+        // Queue bookkeeping does not need a sound card; the engine opens the
+        // device lazily, so this works on machines without one.
+        spawn_player(AudioConfig::default()).0
+    }
+
+    fn files(names: &[&str]) -> Vec<QueueItem> {
+        names
+            .iter()
+            .map(|name| QueueItem::file(format!("/music/{name}.flac")))
+            .collect()
+    }
+
+    fn revision(player: &PlayerHandle) -> u64 {
+        player.state().queue.revision()
+    }
+
+    #[test]
+    fn queue_edits_raise_the_revision() {
+        let player = player();
+        let mut last = revision(&player);
+
+        let steps = [
+            Command::QueueAdd(files(&["a", "b", "c"])),
+            Command::QueueMove { from: 0, to: 2 },
+            Command::QueueRemove(0),
+            Command::ReplaceQueue {
+                items: files(&["x", "y"]),
+                position: 0,
+            },
+            Command::QueueClear,
+        ];
+        for command in steps {
+            let label = format!("{command:?}");
+            player.send_blocking(command).expect("queue command");
+            let now = revision(&player);
+            assert!(now > last, "{label} must raise the revision");
+            last = now;
+        }
+    }
+
+    #[test]
+    fn a_move_raises_the_revision_once_and_reorders() {
+        let player = player();
+        player
+            .send_blocking(Command::QueueAdd(files(&["a", "b", "c"])))
+            .expect("add");
+        let before = revision(&player);
+
+        player
+            .send_blocking(Command::QueueMove { from: 0, to: 2 })
+            .expect("move");
+
+        assert_eq!(revision(&player), before + 1);
+        assert_eq!(player.state().queue, files(&["b", "c", "a"]));
+    }
+
+    #[test]
+    fn rejected_or_no_op_queue_edits_keep_the_revision() {
+        let player = player();
+        player
+            .send_blocking(Command::QueueAdd(files(&["a", "b"])))
+            .expect("add");
+        let before = revision(&player);
+
+        player
+            .send_blocking(Command::QueueMove { from: 1, to: 1 })
+            .expect("same-index move");
+        player
+            .send_blocking(Command::QueueRemove(9))
+            .expect("remove past the end");
+        let err = player
+            .send_blocking(Command::QueueMove { from: 0, to: 9 })
+            .expect_err("move past the end must be rejected");
+        assert!(err.to_string().contains("out of range"), "got {err}");
+
+        assert_eq!(revision(&player), before);
+    }
+
+    #[test]
+    fn playback_and_mode_commands_keep_the_revision() {
+        let player = player();
+        player
+            .send_blocking(Command::QueueAdd(files(&["a", "b"])))
+            .expect("add");
+        let before = revision(&player);
+
+        player
+            .send_blocking(Command::SetVolume(0.5))
+            .expect("volume");
+        player.send_blocking(Command::SetMuted(true)).expect("mute");
+        player
+            .send_blocking(Command::SetRepeat(crate::player::state::RepeatMode::All))
+            .expect("repeat");
+        player
+            .send_blocking(Command::SetShuffle(true))
+            .expect("shuffle");
+        player.send_blocking(Command::Pause).expect("pause");
+
+        assert_eq!(revision(&player), before);
+    }
 
     #[test]
     fn the_playing_row_follows_itself() {

@@ -61,4 +61,18 @@ bytes are not pulled while paused.
 | `audio/source.rs` | Symphonia, `AudioSource` |
 | `audio/http.rs` | HTTP GET, unseekable body |
 | `station.rs` | `stations.toml`, `play_station` |
-| `player/state.rs` | snapshots for UI and MCP (`QueueItem`) |
+| `player/state.rs` | snapshots for UI and MCP (`QueueItem`, `Queue`) |
+
+## Queue revision
+
+`PlayerState.queue` is a `Queue`: the items behind an `Arc` and a `revision`
+that goes up on every change (`items_mut`, `replace` are the only writers).
+Cloning a state snapshot copies the `Arc`, not the items. On the wire the queue
+is still a plain JSON array.
+
+Over IPC, a `State` request carries the revision the client already holds
+(`queue_revision`). When it matches, the player replies with an empty queue and
+`queue_unchanged: true`, and the client puts back the queue it cached. The cache
+belongs to one connection, so a reconnect (a new player process, whose revisions
+start again) drops it. Older clients send no revision and get the full queue;
+older players never set `queue_unchanged`.

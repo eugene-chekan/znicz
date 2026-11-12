@@ -1,7 +1,4 @@
 //! The transport: what is playing, how far in, and how it reaches the speakers.
-
-use std::time::Duration;
-
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
@@ -446,16 +443,10 @@ pub fn status_marker(status: PlaybackStatus) -> String {
     format!("{:<2}", status_symbol(status))
 }
 
-/// Total time of everything queued, when every entry's length is known.
-pub fn total_duration(durations: &[Option<Duration>]) -> Option<Duration> {
-    if durations.is_empty() || durations.iter().any(|d| d.is_none()) {
-        return None;
-    }
-    Some(durations.iter().flatten().sum())
-}
-
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     #[test]
@@ -473,20 +464,6 @@ mod tests {
         assert_eq!(play.chars().count(), pause.chars().count());
         assert_eq!(play.chars().count(), stop.chars().count());
         assert_ne!(play.trim(), pause.trim());
-    }
-
-    #[test]
-    fn queue_length_needs_every_track_measured() {
-        let known = [Some(Duration::from_secs(60)), Some(Duration::from_secs(30))];
-        assert_eq!(total_duration(&known), Some(Duration::from_secs(90)));
-
-        let partial = [Some(Duration::from_secs(60)), None];
-        assert_eq!(
-            total_duration(&partial),
-            None,
-            "an unknown length makes the total a lie"
-        );
-        assert_eq!(total_duration(&[]), None);
     }
 
     fn text(line: &Line) -> String {

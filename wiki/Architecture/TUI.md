@@ -39,6 +39,14 @@ again. See [MCP](MCP.md).
 Ratatui does not keep widgets as a tree you mutate. You describe the layout
 **every frame**. That suits a player, where the position moves constantly.
 
+A frame reads the player state once and passes it down. Lists (the queue, the
+library columns, tree, paged and single lists) build rows only for what is on
+screen: `views::window::visible_window` follows ratatui's `List` scrolling rule
+(keep the offset until the selection leaves the screen), and the window start is
+stored as the list's offset for the next frame and for mouse hit-testing. The
+queue's title width and total length come from one pass per frame that formats
+no strings.
+
 ## Views
 
 Two views, toggled with `v` or `i`. The TUI always starts on **Browse**.

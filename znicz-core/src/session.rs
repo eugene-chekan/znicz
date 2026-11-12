@@ -47,7 +47,7 @@ impl Default for Session {
 impl Session {
     pub fn from_state(state: &PlayerState) -> Self {
         Self {
-            queue: state.queue.clone(),
+            queue: state.queue.to_vec(),
             queue_position: state.queue_position,
             volume: state.volume,
             muted: state.muted,

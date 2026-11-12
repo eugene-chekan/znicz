@@ -20,6 +20,20 @@ pub fn duration_opt(d: Option<Duration>) -> String {
     d.map(duration).unwrap_or_else(|| "—".to_string())
 }
 
+/// Columns `duration_opt(d)` takes, computed without building the string.
+pub fn duration_width(d: Option<Duration>) -> usize {
+    // Mirrors `duration`: `M:SS`, or `H:MM:SS` from an hour up. Unknown is "—".
+    fn digits(n: u64) -> usize {
+        if n == 0 { 1 } else { n.ilog10() as usize + 1 }
+    }
+    let Some(d) = d else {
+        return 1;
+    };
+    let secs = d.as_secs();
+    let (h, m) = (secs / 3600, (secs % 3600) / 60);
+    if h > 0 { digits(h) + 6 } else { digits(m) + 3 }
+}
+
 /// Sample rate in kHz, dropping a pointless trailing `.0`.
 pub fn khz(rate: u32) -> String {
     let khz = rate as f64 / 1000.0;
@@ -160,6 +174,23 @@ mod tests {
         assert_eq!(duration(Duration::from_secs(75)), "1:15");
         assert_eq!(duration(Duration::from_secs(3661)), "1:01:01");
         assert_eq!(duration_opt(None), "—");
+    }
+
+    #[test]
+    fn duration_width_matches_the_formatted_text() {
+        let secs = |s| Some(Duration::from_secs(s));
+        for d in [
+            None,
+            secs(0),
+            secs(59),
+            secs(60),
+            secs(3599),
+            secs(3600),
+            secs(36_000),
+            secs(360_000),
+        ] {
+            assert_eq!(duration_width(d), duration_opt(d).chars().count(), "{d:?}");
+        }
     }
 
     #[test]

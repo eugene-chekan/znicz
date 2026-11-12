@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -178,6 +179,95 @@ pub struct OutputInfo {
     pub bit_perfect: bool,
 }
 
+/// The play queue. Items are shared, so cloning a `PlayerState` is cheap, and
+/// every change raises `revision`, so IPC can skip sending an unchanged queue.
+#[derive(Debug, Clone, Default)]
+pub struct Queue {
+    items: Arc<Vec<QueueItem>>,
+    revision: u64,
+}
+
+impl Queue {
+    pub fn new(items: Vec<QueueItem>) -> Self {
+        Self {
+            items: Arc::new(items),
+            revision: 0,
+        }
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// The only way to change the items. Every call raises the revision, even
+    /// if nothing is changed afterwards.
+    pub fn items_mut(&mut self) -> &mut Vec<QueueItem> {
+        self.revision = self.revision.wrapping_add(1);
+        Arc::make_mut(&mut self.items)
+    }
+
+    pub fn replace(&mut self, items: Vec<QueueItem>) {
+        self.revision = self.revision.wrapping_add(1);
+        self.items = Arc::new(items);
+    }
+
+    pub fn to_vec(&self) -> Vec<QueueItem> {
+        self.items.as_ref().clone()
+    }
+
+    /// Items as received from a player that reported `revision`.
+    pub fn with_revision(items: Vec<QueueItem>, revision: u64) -> Self {
+        Self {
+            items: Arc::new(items),
+            revision,
+        }
+    }
+
+    /// Stamp the revision a player reported for these items, without copying them.
+    pub(crate) fn set_revision(&mut self, revision: u64) {
+        self.revision = revision;
+    }
+}
+
+impl std::ops::Deref for Queue {
+    type Target = [QueueItem];
+
+    fn deref(&self) -> &[QueueItem] {
+        &self.items
+    }
+}
+
+impl From<Vec<QueueItem>> for Queue {
+    fn from(items: Vec<QueueItem>) -> Self {
+        Self::new(items)
+    }
+}
+
+impl PartialEq for Queue {
+    fn eq(&self, other: &Self) -> bool {
+        self.items == other.items
+    }
+}
+
+impl PartialEq<Vec<QueueItem>> for Queue {
+    fn eq(&self, other: &Vec<QueueItem>) -> bool {
+        *self.items == *other
+    }
+}
+
+/// Serialized as a plain JSON array of items; the revision is not sent.
+impl Serialize for Queue {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.items.serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for Queue {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Vec::<QueueItem>::deserialize(d).map(Queue::new)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayerState {
     pub status: PlaybackStatus,
@@ -192,7 +282,7 @@ pub struct PlayerState {
     /// Details of the open output stream, once playback has started.
     #[serde(default)]
     pub output: Option<OutputInfo>,
-    pub queue: Vec<QueueItem>,
+    pub queue: Queue,
     pub queue_position: usize,
     #[serde(default)]
     pub repeat: RepeatMode,
@@ -211,7 +301,7 @@ impl Default for PlayerState {
             device_id: None,
             device_name: None,
             output: None,
-            queue: Vec::new(),
+            queue: Queue::default(),
             queue_position: 0,
             repeat: RepeatMode::default(),
             shuffle: false,
@@ -321,6 +411,70 @@ mod tests {
         state.muted = true;
         assert_eq!(state.effective_volume(), 0.0);
         assert_eq!(state.volume, 0.7, "volume setting must be remembered");
+    }
+
+    #[test]
+    fn items_mut_raises_the_revision() {
+        let mut queue = Queue::new(vec![QueueItem::file("/music/a.flac")]);
+        let before = queue.revision();
+        queue.items_mut().push(QueueItem::file("/music/b.flac"));
+        assert!(queue.revision() > before);
+        assert_eq!(queue.len(), 2);
+    }
+
+    #[test]
+    fn replace_raises_the_revision() {
+        let mut queue = Queue::new(vec![QueueItem::file("/music/a.flac")]);
+        let before = queue.revision();
+        queue.replace(vec![QueueItem::file("/music/b.flac")]);
+        assert!(queue.revision() > before);
+        assert_eq!(queue[0], QueueItem::file("/music/b.flac"));
+    }
+
+    #[test]
+    fn changing_a_clone_leaves_the_original_alone() {
+        let original = Queue::new(vec![QueueItem::file("/music/a.flac")]);
+        let mut copy = original.clone();
+        copy.items_mut().push(QueueItem::file("/music/b.flac"));
+
+        assert_eq!(original.len(), 1);
+        assert_eq!(original.revision(), 0);
+        assert_eq!(copy.len(), 2);
+        assert_ne!(original.as_ptr(), copy.as_ptr());
+    }
+
+    #[test]
+    fn clone_shares_the_items() {
+        let a = Queue::new(vec![
+            QueueItem::file("/music/a.flac"),
+            QueueItem::file("/music/b.flac"),
+        ]);
+        let b = a.clone();
+        assert_eq!(a.as_ptr(), b.as_ptr());
+        assert_eq!(a.revision(), b.revision());
+    }
+
+    #[test]
+    fn serializes_as_a_plain_array() {
+        let items = vec![
+            QueueItem::file("/music/a.flac"),
+            QueueItem::stream("Live", "https://example.com/s"),
+        ];
+        let queue = Queue::with_revision(items.clone(), 7);
+        let json = serde_json::to_value(&queue).unwrap();
+        assert_eq!(json, serde_json::to_value(&items).unwrap());
+
+        let back: Queue = serde_json::from_value(json).unwrap();
+        assert_eq!(back, queue);
+        assert_eq!(back.to_vec(), items);
+    }
+
+    #[test]
+    fn compares_with_a_vec() {
+        let items = vec![QueueItem::file("/music/a.flac")];
+        let queue = Queue::new(items.clone());
+        assert!(queue == items);
+        assert!(queue != Vec::<QueueItem>::new());
     }
 
     #[test]

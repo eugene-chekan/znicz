@@ -15,7 +15,7 @@ use crate::error::{Result, ZniczError};
 use crate::library_host::{LibraryHost, LibraryOp, LibraryStatus};
 use crate::player::commands::Command;
 use crate::player::engine::{PlayerHandle, PlayerOps};
-use crate::player::state::{PlaybackStatus, PlayerState};
+use crate::player::state::{PlaybackStatus, PlayerState, Queue};
 use crate::session::SessionPersister;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(400);
@@ -54,6 +54,10 @@ enum IpcRequest {
     },
     State {
         token: String,
+        /// The revision of the queue the client holds; the reply omits the
+        /// queue when it still matches.
+        #[serde(default)]
+        queue_revision: Option<u64>,
     },
     Command {
         token: String,
@@ -81,6 +85,13 @@ enum IpcResponse {
         /// The library writer's status, when this player hosts one.
         #[serde(default)]
         library: Option<LibraryStatus>,
+        /// The queue revision the player reported; set by State replies.
+        #[serde(default)]
+        queue_revision: Option<u64>,
+        /// True when the reply left the queue out because the client already
+        /// holds `queue_revision`.
+        #[serde(default)]
+        queue_unchanged: bool,
     },
     Err {
         message: String,
@@ -104,6 +115,8 @@ impl Shared {
         IpcResponse::Ok {
             state: Box::new(self.player.state()),
             library: self.library.as_ref().map(|host| host.status()),
+            queue_revision: None,
+            queue_unchanged: false,
         }
     }
 
@@ -474,7 +487,7 @@ fn handle_session(stream: TcpStream, shared: Arc<Shared>) {
         };
         let req_token = match &req {
             IpcRequest::Hello { token, .. }
-            | IpcRequest::State { token }
+            | IpcRequest::State { token, .. }
             | IpcRequest::Command { token, .. }
             | IpcRequest::Shutdown { token }
             | IpcRequest::Library { token, .. } => token.clone(),
@@ -497,8 +510,20 @@ fn handle_session(stream: TcpStream, shared: Arc<Shared>) {
                     },
                 );
             }
-            IpcRequest::State { .. } => {
-                let _ = write_json_line(&mut writer, &shared.ok());
+            IpcRequest::State { queue_revision, .. } => {
+                let mut state = shared.player.state();
+                let current = state.queue.revision();
+                let unchanged = queue_revision == Some(current);
+                if unchanged {
+                    state.queue = Queue::default();
+                }
+                let response = IpcResponse::Ok {
+                    state: Box::new(state),
+                    library: shared.library.as_ref().map(|host| host.status()),
+                    queue_revision: Some(current),
+                    queue_unchanged: unchanged,
+                };
+                let _ = write_json_line(&mut writer, &response);
             }
             IpcRequest::Command { command, id, .. } => {
                 let response = shared.apply_once(id, || shared.player.send_blocking(command));
@@ -574,8 +599,8 @@ impl LibraryHost for IpcClient {
     fn apply(&self, op: LibraryOp) -> Result<()> {
         let id = self.next_request_id();
         match self
-            .rpc_detailed(|token| IpcRequest::Library {
-                token: token.to_string(),
+            .rpc_detailed(|live| IpcRequest::Library {
+                token: live.token.clone(),
                 op: op.clone(),
                 id: Some(id),
             })
@@ -592,12 +617,27 @@ impl LibraryHost for IpcClient {
     }
 
     fn try_status(&self) -> Result<LibraryStatus> {
-        match self.rpc(|token| IpcRequest::State {
-            token: token.to_string(),
-        })? {
-            IpcResponse::Ok { library, .. } => Ok(library.unwrap_or_default()),
-            IpcResponse::Err { message } => Err(ZniczError::Library(message)),
-        }
+        // Sends the cached queue revision so the reply skips the queue, and
+        // keeps the cache coherent with the player like `state()` does.
+        self.rpc_live(
+            |live| IpcRequest::State {
+                token: live.token.clone(),
+                queue_revision: live.queue_cache.as_ref().map(Queue::revision),
+            },
+            |live, response| match response {
+                IpcResponse::Ok {
+                    mut state,
+                    library,
+                    queue_revision,
+                    queue_unchanged,
+                } => {
+                    sync_queue(live, &mut state.queue, queue_revision, queue_unchanged);
+                    Ok(library.unwrap_or_default())
+                }
+                IpcResponse::Err { message } => Err(ZniczError::Library(message)),
+            },
+        )
+        .map_err(|f| f.error)?
     }
 }
 
@@ -623,6 +663,9 @@ struct Live {
     reader: BufReader<TcpStream>,
     token: String,
     version: Option<String>,
+    /// The last queue this connection received, with its revision. It lives
+    /// here so a reconnect (a new player, whose revisions restart) drops it.
+    queue_cache: Option<Queue>,
 }
 
 type EnsureFn = Arc<dyn Fn() -> Result<()> + Send + Sync>;
@@ -669,6 +712,7 @@ fn open_stream(advertise_path: &Path, role: ClientRole) -> Result<Live> {
         reader,
         token: advertise.token,
         version: advertise.version,
+        queue_cache: None,
     })
 }
 
@@ -747,18 +791,26 @@ impl IpcClient {
             .map_err(|_| ZniczError::Player("ipc lock".into()))
     }
 
-    fn rpc(&self, make: impl Fn(&str) -> IpcRequest) -> Result<IpcResponse> {
-        self.rpc_detailed(make).map_err(|f| f.error)
-    }
-
     fn rpc_detailed(
         &self,
-        make: impl Fn(&str) -> IpcRequest,
+        make: impl Fn(&Live) -> IpcRequest,
     ) -> std::result::Result<IpcResponse, RpcFailure> {
+        self.rpc_live(make, |_, response| response)
+    }
+
+    /// Send one request and hand the reply to `finish`, all under the same
+    /// lock. A request that needs the connection's state (such as a cached
+    /// queue revision) must be built and finished on the same [`Live`]. A
+    /// reconnect replaces the `Live`, so the retry is built from the new one.
+    fn rpc_live<T>(
+        &self,
+        make: impl Fn(&Live) -> IpcRequest,
+        finish: impl FnOnce(&mut Live, IpcResponse) -> T,
+    ) -> std::result::Result<T, RpcFailure> {
         let mut live = self.lock_live().map_err(RpcFailure::connect)?;
-        let request = make(&live.token);
-        match rpc_on(&mut live, &request) {
-            Ok(response) => Ok(response),
+        let request = make(&live);
+        let response = match rpc_on(&mut live, &request) {
+            Ok(response) => response,
             Err(_) => {
                 *live = open_live(
                     &self.inner.advertise,
@@ -769,13 +821,14 @@ impl IpcClient {
                 if let Ok(mut version) = self.inner.version.lock() {
                     *version = live.version.clone();
                 }
-                let request = make(&live.token);
+                let request = make(&live);
                 rpc_on(&mut live, &request).map_err(|error| RpcFailure {
                     error,
                     mid_request: true,
-                })
+                })?
             }
-        }
+        };
+        Ok(finish(&mut live, response))
     }
 
     #[cfg(test)]
@@ -795,20 +848,63 @@ impl IpcClient {
 
     pub fn send_blocking(&self, command: Command) -> Result<()> {
         let id = self.next_request_id();
-        command_result(self.rpc_detailed(|token| IpcRequest::Command {
-            token: token.to_string(),
+        command_result(self.rpc_detailed(|live| IpcRequest::Command {
+            token: live.token.clone(),
             command: command.clone(),
             id: Some(id),
         }))
     }
 
     pub fn state(&self) -> Result<PlayerState> {
-        match self.rpc(|token| IpcRequest::State {
-            token: token.to_string(),
-        })? {
-            IpcResponse::Ok { state, .. } => Ok(*state),
-            IpcResponse::Err { message } => Err(ZniczError::Player(message)),
+        self.rpc_live(
+            |live| IpcRequest::State {
+                token: live.token.clone(),
+                queue_revision: live.queue_cache.as_ref().map(Queue::revision),
+            },
+            finish_state,
+        )
+        .map_err(|f| f.error)?
+    }
+}
+
+/// Fill in the queue of a State reply from the connection's cache, and keep
+/// the cache current. Runs under the lock that sent the request.
+fn sync_queue(
+    live: &mut Live,
+    queue: &mut Queue,
+    queue_revision: Option<u64>,
+    queue_unchanged: bool,
+) {
+    match (queue_revision, queue_unchanged) {
+        (_, true) => match live.queue_cache.clone() {
+            Some(cache) => *queue = cache,
+            None => {
+                // Only sent when the request carried a revision, so a cache
+                // should exist. Keep the empty queue and say so.
+                tracing::warn!("ipc: player omitted the queue without a cached copy");
+            }
+        },
+        (Some(revision), false) => {
+            queue.set_revision(revision);
+            live.queue_cache = Some(queue.clone());
         }
+        // An older player reports no revision; never cache its queue.
+        (None, false) => live.queue_cache = None,
+    }
+}
+
+fn finish_state(live: &mut Live, response: IpcResponse) -> Result<PlayerState> {
+    match response {
+        IpcResponse::Ok {
+            mut state,
+            queue_revision,
+            queue_unchanged,
+            ..
+        } => {
+            sync_queue(live, &mut state.queue, queue_revision, queue_unchanged);
+            Ok(*state)
+        }
+        IpcResponse::Err { message } => Err(ZniczError::Player(message)),
     }
 }
 
@@ -911,6 +1007,200 @@ mod tests {
         assert!((player.state().volume - 0.4).abs() < 0.001);
     }
 
+    fn queue_files(count: usize) -> Vec<crate::QueueItem> {
+        (0..count)
+            .map(|i| crate::QueueItem::File {
+                path: PathBuf::from(format!("/music/{i}.flac")),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn state_skips_an_unchanged_queue() {
+        let (_dir, path) = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let _server = IpcServer::start(player.clone(), &path).expect("start ipc");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        client
+            .send_blocking(Command::QueueAdd(queue_files(3)))
+            .expect("queue add");
+
+        assert_eq!(client.state().expect("first").queue.len(), 3);
+        assert_eq!(client.state().expect("second").queue.len(), 3);
+
+        let revision = player.state().queue.revision();
+        let cached = client.inner.live.lock().expect("lock").queue_cache.clone();
+        assert_eq!(
+            cached.map(|queue| queue.revision()),
+            Some(revision),
+            "the second state call ran through the cache"
+        );
+
+        let token = load_advertise(&path).expect("advert").token;
+        match client
+            .rpc_raw(IpcRequest::State {
+                token,
+                queue_revision: Some(revision),
+            })
+            .expect("raw state")
+        {
+            IpcResponse::Ok {
+                state,
+                queue_unchanged,
+                ..
+            } => {
+                assert!(queue_unchanged, "the queue is unchanged");
+                assert!(state.queue.is_empty(), "the queue is omitted");
+            }
+            other => panic!("expected ok, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_reconnect_to_a_new_player_drops_the_cached_queue() {
+        let (_dir, path) = advertise_path();
+        let (player_a, _thread_a) = spawn_player(AudioConfig::default());
+        let server_a = IpcServer::start(player_a.clone(), &path).expect("start a");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        client
+            .send_blocking(Command::QueueAdd(queue_files(3)))
+            .expect("queue a");
+        assert_eq!(client.state().expect("fills the cache").queue.len(), 3);
+        let revision_a = player_a.state().queue.revision();
+
+        // Break the connection, then put a different player behind the same
+        // advertise path. It reaches the same revision with other items.
+        client
+            .inner
+            .live
+            .lock()
+            .expect("lock")
+            .writer
+            .shutdown(std::net::Shutdown::Both)
+            .expect("shutdown");
+        drop(server_a);
+
+        let (player_b, _thread_b) = spawn_player(AudioConfig::default());
+        let _server_b = IpcServer::start(player_b.clone(), &path).expect("start b");
+        let other: Vec<crate::QueueItem> = (0..3)
+            .map(|i| crate::QueueItem::File {
+                path: PathBuf::from(format!("/other/{i}.flac")),
+            })
+            .collect();
+        player_b
+            .send_blocking(Command::QueueAdd(other.clone()))
+            .expect("queue b");
+        assert_eq!(player_b.state().queue.revision(), revision_a);
+
+        let state = client.state().expect("state after reconnect");
+        assert_eq!(state.queue, other, "the new player's queue, not the cache");
+    }
+
+    #[test]
+    fn state_sends_the_queue_after_a_change() {
+        let (_dir, path) = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let _server = IpcServer::start(player, &path).expect("start ipc");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        client
+            .send_blocking(Command::QueueAdd(queue_files(3)))
+            .expect("queue add");
+        assert_eq!(client.state().expect("first").queue.len(), 3);
+
+        client
+            .send_blocking(Command::QueueAdd(queue_files(1)))
+            .expect("queue add");
+        assert_eq!(client.state().expect("after change").queue.len(), 4);
+    }
+
+    #[test]
+    fn state_without_a_revision_gets_the_full_queue() {
+        let (_dir, path) = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let _server = IpcServer::start(player.clone(), &path).expect("start ipc");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        client
+            .send_blocking(Command::QueueAdd(queue_files(3)))
+            .expect("queue add");
+
+        let token = load_advertise(&path).expect("advert").token;
+        match client
+            .rpc_raw(IpcRequest::State {
+                token,
+                queue_revision: None,
+            })
+            .expect("raw state")
+        {
+            IpcResponse::Ok {
+                state,
+                queue_revision,
+                queue_unchanged,
+                ..
+            } => {
+                assert!(!queue_unchanged);
+                assert_eq!(queue_revision, Some(player.state().queue.revision()));
+                assert_eq!(state.queue.len(), 3);
+            }
+            other => panic!("expected ok, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn old_response_without_queue_fields_parses() {
+        let state = serde_json::to_value(PlayerState::default()).expect("state json");
+        let json = serde_json::json!({ "kind": "ok", "state": state }).to_string();
+        match serde_json::from_str::<IpcResponse>(&json).expect("parse") {
+            IpcResponse::Ok {
+                queue_revision,
+                queue_unchanged,
+                ..
+            } => {
+                assert_eq!(queue_revision, None);
+                assert!(!queue_unchanged);
+            }
+            other => panic!("expected ok, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn old_request_without_queue_revision_parses() {
+        let request: IpcRequest =
+            serde_json::from_str(r#"{"kind":"state","token":"t"}"#).expect("parse");
+        assert!(matches!(
+            request,
+            IpcRequest::State {
+                queue_revision: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    #[ignore]
+    fn perf_ipc_state_2000_queue() {
+        let (_dir, path) = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let _server = IpcServer::start(player, &path).expect("start ipc");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        let items: Vec<crate::QueueItem> = (0..2000)
+            .map(|i| crate::QueueItem::File {
+                path: PathBuf::from(format!("/music/{i}.flac")),
+            })
+            .collect();
+        client
+            .send_blocking(Command::QueueAdd(items))
+            .expect("queue add");
+        assert_eq!(client.state().expect("state").queue.len(), 2000);
+
+        const CALLS: u32 = 100;
+        let start = Instant::now();
+        for _ in 0..CALLS {
+            std::hint::black_box(client.state().expect("state"));
+        }
+        let mean_us = start.elapsed().as_secs_f64() * 1e6 / f64::from(CALLS);
+        println!("PERF perf_ipc_state_2000_queue: {mean_us:.1} µs");
+    }
+
     #[test]
     fn recent_outcomes_keep_the_last_request_per_client_and_cap_the_clients() {
         let mut recent = RecentOutcomes::default();
@@ -994,6 +1284,8 @@ mod tests {
         IpcResponse::Ok {
             state: Box::default(),
             library: None,
+            queue_revision: None,
+            queue_unchanged: false,
         }
     }
 

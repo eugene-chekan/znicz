@@ -556,7 +556,8 @@ mod tests {
             queue: vec![QueueItem::Stream {
                 name: "Jazz Radio".into(),
                 url: "https://example.com/stream".into(),
-            }],
+            }]
+            .into(),
             ..PlayerState::default()
         }
     }

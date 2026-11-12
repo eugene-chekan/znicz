@@ -2454,8 +2454,9 @@ impl App {
     }
 
     fn pan_queue(&mut self, dir: isize) {
+        let state = self.player.state();
         let max = self
-            .selected_queue_middle()
+            .selected_queue_middle(&state)
             .saturating_sub(self.queue_title_slot) as isize;
         let next = self.queue_h_offset as isize + dir;
         self.queue_h_offset = next.clamp(0, max.max(0)) as usize;
@@ -2484,8 +2485,7 @@ impl App {
         }
     }
 
-    fn selected_queue_middle(&self) -> usize {
-        let state = self.player.state();
+    fn selected_queue_middle(&self, state: &PlayerState) -> usize {
         let Some(index) = self.queue_cursor.selected(state.queue.len()) else {
             return 0;
         };
@@ -2496,9 +2496,9 @@ impl App {
             .unwrap_or(0)
     }
 
-    pub(crate) fn clamp_queue_pan(&mut self) {
+    pub(crate) fn clamp_queue_pan(&mut self, state: &PlayerState) {
         let max = self
-            .selected_queue_middle()
+            .selected_queue_middle(state)
             .saturating_sub(self.queue_title_slot);
         self.queue_h_offset = self.queue_h_offset.min(max);
     }
@@ -3105,6 +3105,89 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect()
+    }
+
+    /// The screen as one string per row, for checking what a frame shows.
+    fn screen_rows(app: &mut App) -> Vec<String> {
+        let state = app.player.state();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+        terminal
+            .draw(|frame| views::render(frame, app, &state))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let width = buffer.area.width as usize;
+        buffer
+            .content()
+            .chunks(width)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn a_long_queue_draws_the_rows_around_the_cursor() {
+        let mut app = App::with_library(test_player(), None);
+        let items: Vec<QueueItem> = (0..200)
+            .map(|i| QueueItem::File {
+                path: PathBuf::from(format!("/music/track-{i:03}.flac")),
+            })
+            .collect();
+        app.player
+            .send_blocking(Command::QueueAdd(items))
+            .expect("queue add");
+        press(&mut app, KeyCode::Char(']'));
+
+        app.queue_cursor.set(150, 200);
+        let rows = screen_rows(&mut app);
+        assert!(
+            rows.iter()
+                .any(|r| r.contains("track-150") && r.contains("151")),
+            "the selected track shows its row number 151"
+        );
+        assert!(
+            !rows.iter().any(|r| r.contains("track-000")),
+            "the first row has scrolled out of view"
+        );
+
+        app.queue_cursor.set(0, 200);
+        let rows = screen_rows(&mut app);
+        assert!(
+            rows.iter()
+                .any(|r| r.contains("track-000") && r.contains("  1 ")),
+            "back at the top, row 1 is drawn first"
+        );
+        assert!(!rows.iter().any(|r| r.contains("track-150")));
+    }
+
+    #[test]
+    #[ignore]
+    fn perf_queue_render_2000() {
+        let mut app = App::with_library(test_player(), None);
+        let items: Vec<QueueItem> = (0..2000)
+            .map(|i| QueueItem::File {
+                path: PathBuf::from(format!("/music/{i}.flac")),
+            })
+            .collect();
+        app.player
+            .send_blocking(Command::QueueAdd(items))
+            .expect("queue add");
+        press(&mut app, KeyCode::Char(']'));
+        assert!(app.queue_open, "] should open the queue drawer");
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 40)).unwrap();
+        let state = app.player.state();
+        assert_eq!(state.queue.len(), 2000);
+
+        const FRAMES: u32 = 100;
+        let start = Instant::now();
+        for _ in 0..FRAMES {
+            terminal
+                .draw(|frame| views::render(frame, &mut app, &state))
+                .unwrap();
+        }
+        let mean_us = start.elapsed().as_secs_f64() * 1e6 / f64::from(FRAMES);
+        println!("PERF perf_queue_render_2000: {mean_us:.1} µs");
     }
 
     #[test]
