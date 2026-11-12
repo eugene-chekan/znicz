@@ -155,6 +155,7 @@ mod tests {
             Search,
             Queue,
             Devices,
+            Settings,
             Stage,
             Playlists,
             Radio,

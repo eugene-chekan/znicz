@@ -25,6 +25,7 @@ pub enum Context {
     FolderPrompt,
     Queue,
     Devices,
+    Settings,
     Stage,
     Playlists,
     Radio,
@@ -74,6 +75,8 @@ const CLOSE: Hint = hint("Esc close", KeyCode::Esc);
 const ADD_FOLDER: Hint = hint("F add folder", KeyCode::Char('F'));
 const TAB_COMPLETE: Hint = hint("Tab complete", KeyCode::Tab);
 const ENTER_SCAN: Hint = hint("Enter scan", KeyCode::Enter);
+const ENTER_CHANGE: Hint = hint("Enter change", KeyCode::Enter);
+const CHOOSE: Hint = hint("h/l choose", KeyCode::Char('h'));
 /// Opens the Messages list; the footer appends the unread count.
 pub const MESSAGES_OPEN: Hint = hint("M messages", KeyCode::Char('M'));
 
@@ -116,6 +119,7 @@ pub fn context_hints(context: Context) -> &'static [Hint] {
         Context::FolderPrompt => &[TAB_COMPLETE, ENTER_SCAN, CANCEL],
         Context::Queue => &[ENTER_PLAY, REMOVE, JUMP, CLEAR, QUEUE_CLOSE],
         Context::Devices => &[SELECT, RESCAN, CLOSE],
+        Context::Settings => &[ENTER_CHANGE, CHOOSE, CLOSE],
         Context::Stage => &[SPACE_PAUSE, NEXT, BROWSE, QUEUE_OPEN],
         Context::Playlists | Context::Radio => &[ENTER_PLAY, ADD, NEW, EDIT, DELETE, CLOSE],
         Context::Messages => &[CLEAR, CLOSE],
@@ -163,6 +167,7 @@ pub const GLOBAL: &[Binding] = &[
     b("Alt-← / Alt-→", "pan titles"),
     b("v / i", "now playing (stage)"),
     b(",", "devices"),
+    b("S", "settings"),
     b("M", "messages"),
     b("?", "this help"),
     b("q", "quit TUI"),
@@ -225,6 +230,13 @@ pub const RADIO: &[Binding] = &[
     b("Esc", "close"),
 ];
 
+pub const SETTINGS: &[Binding] = &[
+    b("Enter / Space", "change"),
+    b("h / l", "choose"),
+    b("d", "remove folder"),
+    b("Esc", "close"),
+];
+
 pub const STAGE: &[Binding] = &[b("v / i / Esc", "back to browse")];
 
 pub const MESSAGES: &[Binding] = &[b("C", "clear the history"), b("Esc / M", "close")];
@@ -248,6 +260,7 @@ const CONTEXT_SECTIONS: &[(&str, &[Binding])] = &[
     ("Playlists", PLAYLISTS),
     ("Radio", RADIO),
     ("Devices", DEVICES),
+    ("Settings", SETTINGS),
     ("Stage", STAGE),
     ("Messages", MESSAGES),
     ("Help", HELP),
@@ -260,6 +273,7 @@ pub fn context_title(context: Context) -> Option<&'static str> {
         Context::FolderPrompt => None,
         Context::Queue => Some("Queue"),
         Context::Devices => Some("Devices"),
+        Context::Settings => Some("Settings"),
         Context::Stage => Some("Stage"),
         Context::Playlists => Some("Playlists"),
         Context::Radio => Some("Radio"),
@@ -342,7 +356,8 @@ mod tests {
     #[test]
     fn every_binding_documents_both_a_key_and_an_action() {
         let tables = [
-            GLOBAL, NAVIGATION, QUEUE, LIBRARY, DEVICES, PLAYLISTS, RADIO, STAGE, MESSAGES,
+            GLOBAL, NAVIGATION, QUEUE, LIBRARY, DEVICES, SETTINGS, PLAYLISTS, RADIO, STAGE,
+            MESSAGES,
         ];
         for table in tables {
             for binding in table {
@@ -352,13 +367,14 @@ mod tests {
         }
     }
 
-    const ALL_CONTEXTS: [Context; 15] = [
+    const ALL_CONTEXTS: [Context; 16] = [
         Context::Library,
         Context::LibraryTree,
         Context::Search,
         Context::FolderPrompt,
         Context::Queue,
         Context::Devices,
+        Context::Settings,
         Context::Stage,
         Context::Playlists,
         Context::Radio,
@@ -473,6 +489,7 @@ mod tests {
                 "Playlists",
                 "Radio",
                 "Devices",
+                "Settings",
                 "Stage",
                 "Messages",
                 "Help"
@@ -482,7 +499,7 @@ mod tests {
         assert_eq!(
             dims,
             [
-                false, false, false, true, true, true, true, true, true, true
+                false, false, false, true, true, true, true, true, true, true, true
             ]
         );
     }
@@ -506,7 +523,7 @@ mod tests {
         for context in [Context::Prompt, Context::StationPrompt] {
             let sections = help_sections(context);
             assert_eq!(sections[0].title, "Playback", "{context:?}");
-            assert_eq!(sections.len(), 10, "every table still listed once");
+            assert_eq!(sections.len(), 11, "every table still listed once");
             assert_eq!(context_title(context), None);
         }
     }

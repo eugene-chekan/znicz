@@ -284,6 +284,36 @@ fn replace<T: PartialEq>(slot: &mut T, new: T) -> bool {
     changed
 }
 
+/// The values the TUI shows but does not own. The binary reads them from the
+/// config file (or the player) and passes them in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsValues {
+    pub bit_perfect: bool,
+    pub update_check: bool,
+    /// `[audio] device`; `None` is the system default.
+    pub default_device: Option<String>,
+}
+
+impl Default for SettingsValues {
+    fn default() -> Self {
+        Self {
+            bit_perfect: true,
+            update_check: true,
+            default_device: None,
+        }
+    }
+}
+
+/// Index of the first selectable row (0 when there is none).
+pub fn first_selectable(rows: &[Row]) -> usize {
+    rows.iter().position(Row::selectable).unwrap_or(0)
+}
+
+/// Index of the last selectable row (0 when there is none).
+pub fn last_selectable(rows: &[Row]) -> usize {
+    rows.iter().rposition(Row::selectable).unwrap_or(0)
+}
+
 /// The next selectable index from `from` in the given direction, skipping
 /// headings. Stays at `from` when no selectable row lies that way.
 pub fn next_selectable(rows: &[Row], from: usize, forward: bool) -> usize {
@@ -588,5 +618,22 @@ mod tests {
         assert_eq!(next_selectable(&rows, 0, true), 0);
         assert_eq!(next_selectable(&rows, 1, false), 1);
         assert_eq!(next_selectable(&[], 0, true), 0);
+    }
+
+    #[test]
+    fn first_and_last_selectable_skip_the_headings() {
+        let rows = rows(&[folder("a")]);
+        assert_eq!(first_selectable(&rows), 1, "Show cover");
+        assert_eq!(last_selectable(&rows), rows.len() - 1, "Check for updates");
+        assert_eq!(first_selectable(&[Row::Heading("x")]), 0);
+        assert_eq!(last_selectable(&[]), 0);
+    }
+
+    #[test]
+    fn settings_values_default_to_the_config_defaults() {
+        let values = SettingsValues::default();
+        assert!(values.bit_perfect);
+        assert!(values.update_check);
+        assert_eq!(values.default_device, None);
     }
 }

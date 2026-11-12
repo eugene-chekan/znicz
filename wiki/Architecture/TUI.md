@@ -11,7 +11,7 @@ experience lives. The interface is an **immediate-mode** loop:
 While the TUI is up it also **captures the mouse**. A left click on a visible
 library, queue, or overlay list row **selects** that row (it does not play or
 open). The wheel moves the focused list one row, like `j` / `k`. Help,
-devices, playlists, and radio close with the top-right **X**, or
+devices, settings, playlists, and radio close with the top-right **X**, or
 with `Esc`, or a clickable footer hint — not by clicking outside. The queue
 drawer closes with the **X**, global `]`, or a clickable footer `] close` /
 `] queue` hint; `Esc` closes it when the drawer has queue focus, or on Stage regardless
@@ -263,6 +263,23 @@ A centered modal (`,`). Lists the output devices and switches between them with
 `Enter`. The footer shows what the open stream actually settled on, which is the
 quickest way to find a device that will take your files unconverted.
 
+### Settings
+
+`S` opens a centered modal with the display and audio settings, the music
+folders, and the update check, grouped under headings the cursor skips. `Enter`
+or `Space` changes the highlighted row: a switch flips, a choice steps forward
+and wraps. `h` / `l` (or `←` / `→`) step a choice back or forward and stop at
+the ends, and turn a switch off or on.
+
+Each change applies at once and is saved to `config.toml` in place, so comments
+and other keys stay. The strip above the bottom border explains the highlighted
+row in two lines; the border shows the config file's path. Bit-perfect is read
+when the player starts, so after a change the row says `on restart`. A cover
+protocol that needs the terminal's answer also says `on restart` after a change
+when the TUI started without asking the terminal. With no config file the change applies for this run only,
+and the first such change says so. A config file with an error is never written
+to; the change applies for the run and the toast gives the line and column.
+
 ### Stage
 
 Full-screen now playing (`v` / `i`), drawn by `views/stage.rs` with the geometry
@@ -475,6 +492,8 @@ top of the player.
 | `views/radio.rs` | saved stations overlay (`R`) |
 | `views/status.rs` | footer hint line for the current context |
 | `views/help.rs` | help overlay: context first, scroll, filter row |
+| `settings.rs` | Settings rows, their values, and how a choice steps (pure) |
+| `views/settings.rs` | Settings modal (`S`): list, explanation strip, config path |
 | `help_state.rs` | help context, scroll, and filter text |
 | `footer_hits.rs` | footer hint placement and click targets |
 | `theme.rs` | every colour, in one place (16 ANSI colours, tuned for dark palettes; themes: [#68](https://github.com/eugene-chekan/znicz/issues/68)) |

@@ -8,6 +8,8 @@ mod now_playing;
 mod playlists;
 mod queue;
 mod radio;
+mod settings;
+
 pub mod stage;
 mod status;
 mod update;
@@ -126,6 +128,7 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
         Modal::Radio => radio::render_modal(frame, list, app),
         Modal::Messages => messages::render_modal(frame, list, app),
         Modal::Update => update::render_modal(frame, list, app),
+        Modal::Settings => settings::render(frame, list, app),
         Modal::None => {}
     }
 }

@@ -7,6 +7,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use znicz_core::{AudioConfig, Command, PlayerHandle, spawn_player};
@@ -228,6 +229,25 @@ fn every_view_draws_at_every_size() {
             "radio at {width}x{height} should fill the window"
         );
     }
+}
+
+#[test]
+fn the_settings_modal_draws_at_every_size() {
+    let mut app = App::with_library(player(), None);
+    app.library_status.folders = vec![PathBuf::from("/music/a")];
+    app.on_key(KeyEvent::new(KeyCode::Char('S'), KeyModifiers::NONE));
+    // Last row, so the list has to scroll to show the cursor.
+    app.on_key(KeyEvent::new(KeyCode::Char('G'), KeyModifiers::NONE));
+
+    for &(width, height) in SIZES {
+        let screen = draw(&mut app, width, height);
+        assert_eq!(screen.lines().count(), height as usize);
+    }
+
+    let screen = draw(&mut app, 100, 30);
+    assert!(screen.contains(" Settings "), "{screen}");
+    assert!(screen.contains("Check for updates daily"), "{screen}");
+    assert!(screen.contains("Ask GitHub once a day"), "{screen}");
 }
 
 #[test]
@@ -721,6 +741,7 @@ fn no_modal_covers_the_transport_or_footer() {
         Modal::Playlists,
         Modal::Radio,
         Modal::Messages,
+        Modal::Settings,
     ];
     for &(width, height) in &[(80u16, 24u16), (120, 40), (60, 18), (40, 12)] {
         let mut app = App::with_library(player(), None);

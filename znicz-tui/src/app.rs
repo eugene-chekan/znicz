@@ -29,6 +29,7 @@ use crate::layout;
 use crate::library_pane::{ColumnFocus, EffectiveLayout, Item, LibraryPane, Mode};
 use crate::line_edit::LineEdit;
 use crate::meta::{Entry, MetaCache};
+use crate::settings::{self, Kind, Row, SettingsValues};
 use crate::toast::Toasts;
 use crate::tui_config::{CoverProtocol, TuiConfig};
 use crate::update::{Release, Updates};
@@ -166,6 +167,7 @@ pub enum Modal {
     Radio,
     Messages,
     Update,
+    Settings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -277,7 +279,48 @@ impl Modal {
                 | Self::Radio
                 | Self::Messages
                 | Self::Update
+                | Self::Settings
         )
+    }
+}
+
+/// How a key changes a Settings row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Change {
+    /// Enter or Space: flip a switch, or step a choice forward and wrap.
+    Activate,
+    /// `l` or `→`: switch on, or step a choice forward and stop at the end.
+    Forward,
+    /// `h` or `←`: switch off, or step a choice back and stop at the start.
+    Back,
+}
+
+/// A value as it is written to the config file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Stored {
+    Bool(bool),
+    Int(i64),
+    Str(&'static str),
+}
+
+/// What a Settings change can touch, kept so a failed save can undo it.
+struct SettingsSnapshot {
+    tui: TuiConfig,
+    bit_perfect: bool,
+    update_check: bool,
+    bit_perfect_changed: bool,
+    protocol_needs_restart: bool,
+    protocol: Option<ProtocolType>,
+}
+
+/// The picker's protocol for a configured cover protocol, given the one the
+/// start-up terminal query picked (used for `auto`).
+fn picker_protocol(wanted: CoverProtocol, queried: ProtocolType) -> ProtocolType {
+    match wanted {
+        CoverProtocol::Auto => queried,
+        CoverProtocol::Kitty => ProtocolType::Kitty,
+        CoverProtocol::Sixel => ProtocolType::Sixel,
+        CoverProtocol::Halfblocks | CoverProtocol::Off => ProtocolType::Halfblocks,
     }
 }
 
@@ -350,6 +393,26 @@ pub struct App {
     pub config_file: Option<ConfigFile>,
     /// Why the config file was not used (it is broken or unreadable), reported at start.
     pub config_problem: Option<ConfigProblem>,
+    /// Settings rows as of opening the modal (folders come from the library status).
+    pub(crate) settings_rows: Vec<Row>,
+    /// Index into `settings_rows`; never a heading.
+    pub(crate) settings_cursor: usize,
+    /// First row on screen in the Settings list, kept between frames.
+    pub(crate) settings_scroll: usize,
+    /// `[audio] bit_perfect`, as the config file has it.
+    pub bit_perfect: bool,
+    /// `[updates] check`, as the config file has it.
+    pub check_for_updates: bool,
+    /// `[audio] device`; `None` is the system default.
+    pub default_device: Option<String>,
+    /// Bit-perfect changed this run, so it takes effect when the player next starts.
+    pub(crate) bit_perfect_changed: bool,
+    /// A cover protocol was chosen that cannot be applied until the next start.
+    pub(crate) protocol_needs_restart: bool,
+    /// The protocol the start-up terminal query picked; `None` when no query ran.
+    pub(crate) queried_protocol: Option<ProtocolType>,
+    /// The "apply to this run only" toast has been shown.
+    run_only_warned: bool,
     pub covers: CoverCache,
     pub picker: Option<ratatui_image::picker::Picker>,
     pub(crate) cover_image: Option<ratatui_image::protocol::StatefulProtocol>,
@@ -610,6 +673,14 @@ impl App {
         self
     }
 
+    /// The config values Settings shows that the TUI does not own.
+    pub fn with_settings_values(mut self, values: SettingsValues) -> Self {
+        self.bit_perfect = values.bit_perfect;
+        self.check_for_updates = values.update_check;
+        self.default_device = values.default_device;
+        self
+    }
+
     /// Tell the user the config file did not load; the app runs on the defaults.
     pub(crate) fn announce_config_problem(&mut self) {
         if let Some(problem) = &self.config_problem {
@@ -654,6 +725,16 @@ impl App {
             tui: TuiConfig::default(),
             config_file: None,
             config_problem: None,
+            settings_rows: Vec::new(),
+            settings_cursor: 0,
+            settings_scroll: 0,
+            bit_perfect: true,
+            check_for_updates: true,
+            default_device: None,
+            bit_perfect_changed: false,
+            protocol_needs_restart: false,
+            queried_protocol: None,
+            run_only_warned: false,
             covers: CoverCache::new(),
             picker: Some(ratatui_image::picker::Picker::halfblocks()),
             cover_image: None,
@@ -690,6 +771,13 @@ impl App {
         let mut terminal = ratatui::init();
         let _mouse = MouseCapture::enable();
         self.picker = Some(make_picker(self.tui.cover_protocol));
+        // `make_picker` queries the terminal only for auto, kitty and sixel.
+        if matches!(
+            self.tui.cover_protocol,
+            CoverProtocol::Auto | CoverProtocol::Kitty | CoverProtocol::Sixel
+        ) {
+            self.queried_protocol = self.picker.as_ref().map(|p| p.protocol_type());
+        }
         tracing::info!(
             protocol = ?self.picker.as_ref().map(|p| p.protocol_type()),
             "cover renderer"
@@ -1011,6 +1099,7 @@ impl App {
                 self.message_h_offset = 0;
             }
             Modal::Help => self.help.scroll_by(delta),
+            Modal::Settings => self.settings_move(delta),
             Modal::Update => {
                 self.update_scroll = self.update_scroll.saturating_add_signed(delta);
             }
@@ -1142,6 +1231,12 @@ impl App {
                         self.message_cursor.set(index, self.toasts.history_len());
                         self.message_h_offset = 0;
                     }
+                    // A heading is not a row to select.
+                    Modal::Settings
+                        if self.settings_rows.get(index).is_some_and(Row::selectable) =>
+                    {
+                        self.settings_cursor = index;
+                    }
                     _ => {}
                 }
             }
@@ -1196,6 +1291,10 @@ impl App {
             return;
         }
 
+        if self.modal == Modal::Settings && self.on_settings_key(key) {
+            return;
+        }
+
         // Named-list overlays steal a/n/e/c/d (and Enter) from the global map
         // so new/edit are not next/repeat while P or R is open.
         if self.modal == Modal::Playlists && self.on_playlists_key(key) {
@@ -1215,6 +1314,11 @@ impl App {
 
         if self.modal == Modal::Devices {
             self.on_devices_key(key);
+            return;
+        }
+
+        // Settings has no list keys of its own; the rest of the keymap stays out.
+        if self.modal == Modal::Settings {
             return;
         }
 
@@ -1244,7 +1348,12 @@ impl App {
     fn on_esc(&mut self) {
         if matches!(
             self.modal,
-            Modal::Devices | Modal::Playlists | Modal::Radio | Modal::Messages | Modal::Update
+            Modal::Devices
+                | Modal::Playlists
+                | Modal::Radio
+                | Modal::Messages
+                | Modal::Update
+                | Modal::Settings
         ) {
             self.close_modal();
         } else if self.queue_open && (self.focus == Focus::Queue || self.view == View::Stage) {
@@ -1419,6 +1528,7 @@ impl App {
             KeyCode::Char('v') => self.toggle_stage(),
             KeyCode::Char('P') => self.toggle_playlists_modal(),
             KeyCode::Char('R') => self.toggle_radio_modal(),
+            KeyCode::Char('S') => self.toggle_settings_modal(),
             KeyCode::Char('M') => self.toggle_messages_modal(),
 
             KeyCode::Char(']') if self.modal.blocks_list_focus() => {}
@@ -1560,6 +1670,7 @@ impl App {
             Modal::Help if self.help.editing => Context::HelpFilter,
             Modal::Help => Context::Help,
             Modal::Devices => Context::Devices,
+            Modal::Settings => Context::Settings,
             Modal::Playlists => Context::Playlists,
             Modal::Radio => Context::Radio,
             Modal::Messages => Context::Messages,
@@ -1692,7 +1803,7 @@ impl App {
     fn reload_front(&mut self) {
         match self.modal {
             Modal::Radio => self.reload_stations(),
-            Modal::Messages | Modal::Update => {}
+            Modal::Messages | Modal::Update | Modal::Settings => {}
             Modal::Playlists => self.reload_playlists(),
             Modal::Devices => {
                 self.devices = load_output_devices();
@@ -2188,6 +2299,216 @@ impl App {
         }
     }
 
+    // --- settings modal ---
+
+    /// `S`: open Settings with the cursor on the first row, or close it.
+    fn toggle_settings_modal(&mut self) {
+        if self.modal == Modal::Settings {
+            self.close_modal();
+            return;
+        }
+        self.leave_messages();
+        self.settings_rows = settings::rows(&self.library_status.folders);
+        self.settings_cursor = settings::first_selectable(&self.settings_rows);
+        self.settings_scroll = 0;
+        self.modal = Modal::Settings;
+    }
+
+    /// Move the Settings cursor `delta` selectable rows, stopping at either end.
+    fn settings_move(&mut self, delta: isize) {
+        for _ in 0..delta.unsigned_abs() {
+            let next =
+                settings::next_selectable(&self.settings_rows, self.settings_cursor, delta > 0);
+            if next == self.settings_cursor {
+                break;
+            }
+            self.settings_cursor = next;
+        }
+    }
+
+    /// Keys that change the highlighted row. Returns false for the rest, which
+    /// move the cursor, close the modal, or are ignored.
+    fn on_settings_key(&mut self, key: KeyEvent) -> bool {
+        let change = match key.code {
+            KeyCode::Enter | KeyCode::Char(' ') => Change::Activate,
+            KeyCode::Char('l') | KeyCode::Right => Change::Forward,
+            KeyCode::Char('h') | KeyCode::Left => Change::Back,
+            // Task 7: `d` on a folder row asks before removing it.
+            KeyCode::Char('d') => return true,
+            _ => return false,
+        };
+        if let Some(row) = self.settings_rows.get(self.settings_cursor).cloned() {
+            self.change_setting(&row, change);
+        }
+        true
+    }
+
+    /// Change `row` the way `change` asks, then save it. A save that fails puts
+    /// the previous values back.
+    fn change_setting(&mut self, row: &Row, change: Change) {
+        let before = self.settings_snapshot();
+        if !self.apply_setting(row, change) {
+            return;
+        }
+        self.after_setting_changed(row);
+        self.save_setting(row, before);
+    }
+
+    /// Change the value in memory. Returns whether it changed.
+    fn apply_setting(&mut self, row: &Row, change: Change) -> bool {
+        match row.kind() {
+            Kind::Switch => {
+                let value = match change {
+                    Change::Activate => !self.switch_value(row),
+                    Change::Forward => true,
+                    Change::Back => false,
+                };
+                self.set_switch(row, value)
+            }
+            Kind::Choice => {
+                let (forward, wrap) = match change {
+                    Change::Activate => (true, true),
+                    Change::Forward => (true, false),
+                    Change::Back => (false, false),
+                };
+                settings::step_choice(row, &mut self.tui, forward, wrap)
+            }
+            // Task 7: the default device picker, add folder, rescan, and folder removal.
+            Kind::Action | Kind::Folder | Kind::Heading => false,
+        }
+    }
+
+    fn switch_value(&self, row: &Row) -> bool {
+        match row {
+            Row::ShowCover => self.tui.show_cover,
+            Row::CoverSearch => self.tui.cover_search,
+            Row::Marquee => self.tui.marquee,
+            Row::BitPerfect => self.bit_perfect,
+            Row::UpdateCheck => self.check_for_updates,
+            _ => false,
+        }
+    }
+
+    fn set_switch(&mut self, row: &Row, value: bool) -> bool {
+        let slot = match row {
+            Row::ShowCover => &mut self.tui.show_cover,
+            Row::CoverSearch => &mut self.tui.cover_search,
+            Row::Marquee => &mut self.tui.marquee,
+            Row::BitPerfect => &mut self.bit_perfect,
+            Row::UpdateCheck => &mut self.check_for_updates,
+            _ => return false,
+        };
+        let changed = *slot != value;
+        *slot = value;
+        changed
+    }
+
+    /// What a changed row needs beyond its new value.
+    fn after_setting_changed(&mut self, row: &Row) {
+        match row {
+            Row::ShowCover | Row::CoverSize => self.cover_draw_key = None,
+            Row::CoverProtocol => self.apply_cover_protocol(),
+            Row::LibraryLayout => self.library.set_preferred_layout(self.tui.library_layout),
+            Row::BitPerfect => self.bit_perfect_changed = true,
+            _ => {}
+        }
+    }
+
+    /// Point the picker at the new cover protocol. Without a start-up query the
+    /// terminal's answer is unknown, so a protocol that needs one waits for a restart.
+    fn apply_cover_protocol(&mut self) {
+        self.cover_draw_key = None;
+        let wanted = self.tui.cover_protocol;
+        match (self.queried_protocol, wanted) {
+            (Some(queried), _) => {
+                if let Some(picker) = self.picker.as_mut() {
+                    picker.set_protocol_type(picker_protocol(wanted, queried));
+                }
+            }
+            (None, CoverProtocol::Halfblocks | CoverProtocol::Off) => {
+                if let Some(picker) = self.picker.as_mut() {
+                    picker.set_protocol_type(ProtocolType::Halfblocks);
+                }
+                self.protocol_needs_restart = false;
+            }
+            (None, _) => self.protocol_needs_restart = true,
+        }
+    }
+
+    /// The value a Settings row saves, as the config file takes it.
+    fn stored_value(&self, row: &Row) -> Option<Stored> {
+        Some(match row {
+            Row::ShowCover => Stored::Bool(self.tui.show_cover),
+            Row::CoverSize => Stored::Int(i64::from(self.tui.cover_size.percent())),
+            Row::CoverProtocol => Stored::Str(settings::protocol_name(self.tui.cover_protocol)),
+            Row::CoverSearch => Stored::Bool(self.tui.cover_search),
+            Row::LibraryLayout => Stored::Str(settings::layout_name(self.tui.library_layout)),
+            Row::Marquee => Stored::Bool(self.tui.marquee),
+            Row::Icons => Stored::Str(settings::icons_name(self.tui.icons)),
+            Row::BitPerfect => Stored::Bool(self.bit_perfect),
+            Row::UpdateCheck => Stored::Bool(self.check_for_updates),
+            // Task 7: the default device is saved as `[audio] device`.
+            _ => return None,
+        })
+    }
+
+    /// Write a changed row to the config file. Without a usable file the change
+    /// stays for this run and the user is told why.
+    fn save_setting(&mut self, row: &Row, before: SettingsSnapshot) {
+        let (Some((section, key)), Some(value)) = (row.config_key(), self.stored_value(row)) else {
+            return;
+        };
+        let Some(file) = self.config_file.clone() else {
+            if !self.run_only_warned {
+                self.run_only_warned = true;
+                self.toasts
+                    .info("Settings apply to this run only (no config file path)");
+            }
+            return;
+        };
+        if let Some(problem) = &self.config_problem {
+            let text = match problem.location() {
+                Some(place) => format!("Not saved: config.toml has an error ({place})"),
+                None => "Not saved: config.toml could not be read".to_string(),
+            };
+            self.toasts.warn(text);
+            return;
+        }
+        let written = match value {
+            Stored::Bool(v) => file.set_bool(section, key, v),
+            Stored::Int(v) => file.set_int(section, key, v),
+            Stored::Str(v) => file.set_str(section, key, v),
+        };
+        if let Err(e) = written {
+            self.restore_settings(before);
+            self.toasts.error(format!("Could not save settings: {e}"));
+        }
+    }
+
+    fn settings_snapshot(&self) -> SettingsSnapshot {
+        SettingsSnapshot {
+            tui: self.tui,
+            bit_perfect: self.bit_perfect,
+            update_check: self.check_for_updates,
+            bit_perfect_changed: self.bit_perfect_changed,
+            protocol_needs_restart: self.protocol_needs_restart,
+            protocol: self.picker.as_ref().map(|p| p.protocol_type()),
+        }
+    }
+
+    fn restore_settings(&mut self, before: SettingsSnapshot) {
+        self.tui = before.tui;
+        self.bit_perfect = before.bit_perfect;
+        self.check_for_updates = before.update_check;
+        self.bit_perfect_changed = before.bit_perfect_changed;
+        self.protocol_needs_restart = before.protocol_needs_restart;
+        if let (Some(picker), Some(protocol)) = (self.picker.as_mut(), before.protocol) {
+            picker.set_protocol_type(protocol);
+        }
+        self.cover_draw_key = None;
+        self.library.set_preferred_layout(self.tui.library_layout);
+    }
+
     /// Enter in the library: land from search, drill browse, or play a track.
     fn library_enter(&mut self) {
         let strip = self.library_strip();
@@ -2288,6 +2609,10 @@ impl App {
     }
 
     fn step(&mut self, delta: isize) {
+        if self.modal == Modal::Settings {
+            self.settings_move(delta);
+            return;
+        }
         let len = self.list_len();
         if self.modal == Modal::Messages {
             self.message_cursor.step(delta, len);
@@ -2307,6 +2632,10 @@ impl App {
     }
 
     fn page(&mut self, delta: isize) {
+        if self.modal == Modal::Settings {
+            self.settings_move(delta);
+            return;
+        }
         let len = self.list_len();
         if self.modal == Modal::Messages {
             self.message_cursor.page(delta, len);
@@ -2326,6 +2655,10 @@ impl App {
     }
 
     fn go_first(&mut self) {
+        if self.modal == Modal::Settings {
+            self.settings_cursor = settings::first_selectable(&self.settings_rows);
+            return;
+        }
         if self.modal == Modal::Messages {
             self.message_cursor.first();
             self.message_h_offset = 0;
@@ -2344,6 +2677,10 @@ impl App {
     }
 
     fn go_last(&mut self) {
+        if self.modal == Modal::Settings {
+            self.settings_cursor = settings::last_selectable(&self.settings_rows);
+            return;
+        }
         let len = self.list_len();
         if self.modal == Modal::Messages {
             self.message_cursor.last(len);
@@ -3480,5 +3817,285 @@ mod tests {
             modifiers: KeyModifiers::NONE,
         });
         assert_eq!(app.update_scroll, 1);
+    }
+
+    // --- settings modal ---
+
+    use crate::settings::{Row, SettingsValues};
+    use crate::tui_config::{CoverSize, LibraryLayout};
+
+    fn settings_app(dir: &tempfile::TempDir) -> App {
+        App::with_library(test_player(), None)
+            .with_config_file(ConfigFile::new(dir.path().join("config.toml")))
+    }
+
+    /// Put the Settings cursor on `row`, as pressing keys to reach it would.
+    fn select(app: &mut App, row: Row) {
+        app.settings_cursor = app
+            .settings_rows
+            .iter()
+            .position(|r| *r == row)
+            .expect("the row is listed");
+    }
+
+    /// The config file as the test sees it on disk.
+    fn saved(dir: &tempfile::TempDir) -> toml::Table {
+        let text = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
+        toml::from_str(&text).unwrap()
+    }
+
+    #[test]
+    fn s_opens_settings_and_esc_closes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        assert_eq!(app.modal, Modal::Settings);
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.modal, Modal::None);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('S'));
+        assert_eq!(app.modal, Modal::None, "S again closes it");
+    }
+
+    #[test]
+    fn cursor_skips_headings() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        assert_eq!(app.settings_rows[app.settings_cursor], Row::ShowCover);
+        press(&mut app, KeyCode::Up);
+        assert_eq!(
+            app.settings_rows[app.settings_cursor],
+            Row::ShowCover,
+            "k at the top stays put"
+        );
+        for _ in 0..7 {
+            press(&mut app, KeyCode::Char('j'));
+        }
+        assert_eq!(
+            app.settings_rows[app.settings_cursor],
+            Row::DefaultDevice,
+            "the Audio heading is skipped"
+        );
+        press(&mut app, KeyCode::Char('k'));
+        assert_eq!(app.settings_rows[app.settings_cursor], Row::Icons);
+    }
+
+    #[test]
+    fn enter_on_show_cover_flips_it_and_saves() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Enter);
+        assert!(!app.tui.show_cover);
+        assert_eq!(saved(&dir)["tui"]["show_cover"].as_bool(), Some(false));
+    }
+
+    #[test]
+    fn l_and_h_step_cover_size_and_stop_at_the_ends() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        select(&mut app, Row::CoverSize);
+
+        app.cover_draw_key = Some(("cover".into(), 1, 1));
+        for _ in 0..3 {
+            press(&mut app, KeyCode::Char('l'));
+        }
+        assert_eq!(app.tui.cover_size, CoverSize::P25);
+        press(&mut app, KeyCode::Char('l'));
+        assert_eq!(app.tui.cover_size, CoverSize::P25, "stops at 25%");
+        assert_eq!(saved(&dir)["tui"]["cover_size"].as_integer(), Some(25));
+        assert_eq!(app.cover_draw_key, None, "the cover is drawn again");
+
+        for _ in 0..3 {
+            press(&mut app, KeyCode::Left);
+        }
+        assert_eq!(app.tui.cover_size, CoverSize::P100);
+        press(&mut app, KeyCode::Char('h'));
+        assert_eq!(app.tui.cover_size, CoverSize::P100, "stops at 100%");
+        assert_eq!(saved(&dir)["tui"]["cover_size"].as_integer(), Some(100));
+    }
+
+    #[test]
+    fn enter_steps_and_wraps() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        select(&mut app, Row::CoverSize);
+        for _ in 0..3 {
+            press(&mut app, KeyCode::Enter);
+        }
+        assert_eq!(app.tui.cover_size, CoverSize::P25);
+        press(&mut app, KeyCode::Char(' '));
+        assert_eq!(app.tui.cover_size, CoverSize::P100, "wraps to 100%");
+        assert_eq!(saved(&dir)["tui"]["cover_size"].as_integer(), Some(100));
+    }
+
+    #[test]
+    fn the_strip_shows_the_highlighted_rows_explanation() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        let screen = screen_rows(&mut app).join("\n");
+        assert!(screen.contains("Show album art on the Stage."), "{screen}");
+
+        press(&mut app, KeyCode::Down);
+        let screen = screen_rows(&mut app).join("\n");
+        assert!(
+            screen.contains("How big the album art is on the Stage"),
+            "{screen}"
+        );
+        assert!(!screen.contains("Show album art on the Stage."), "{screen}");
+    }
+
+    #[test]
+    fn a_failed_save_restores_the_value_and_toasts() {
+        let dir = tempfile::tempdir().unwrap();
+        // A file where the config's folder should be: creating the folder fails.
+        let blocker = dir.path().join("not-a-folder");
+        std::fs::write(&blocker, "a file").unwrap();
+        let mut app = App::with_library(test_player(), None)
+            .with_config_file(ConfigFile::new(blocker.join("config.toml")));
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.tui.show_cover, "the old value is back");
+        let texts = toast_texts(&app);
+        assert!(
+            texts
+                .last()
+                .is_some_and(|t| t.starts_with("Could not save settings: ")),
+            "{texts:?}"
+        );
+    }
+
+    #[test]
+    fn without_a_config_file_the_change_applies_and_toasts_once() {
+        let mut app = App::with_library(test_player(), None);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Enter);
+        assert!(!app.tui.show_cover, "the change applies for this run");
+        press(&mut app, KeyCode::Enter);
+        assert!(app.tui.show_cover);
+
+        let note = "Settings apply to this run only (no config file path)";
+        let texts = toast_texts(&app);
+        assert_eq!(texts.iter().filter(|t| *t == note).count(), 1, "{texts:?}");
+    }
+
+    #[test]
+    fn a_broken_config_is_not_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let broken = "[tui\nshow_cover = true\n";
+        std::fs::write(&path, broken).unwrap();
+        let mut app = App::with_library(test_player(), None)
+            .with_config_file(ConfigFile::new(path.clone()))
+            .with_config_problem(ConfigProblem::Parse {
+                line: 1,
+                column: 5,
+                message: "expected `]`".into(),
+            });
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Enter);
+
+        assert!(!app.tui.show_cover, "the change applies for this run");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), broken);
+        let texts = toast_texts(&app);
+        assert_eq!(
+            texts.last().map(String::as_str),
+            Some("Not saved: config.toml has an error (line 1, column 5)"),
+            "{texts:?}"
+        );
+    }
+
+    #[test]
+    fn help_lists_s() {
+        let sections = crate::keys::help_sections(crate::keys::Context::Library);
+        assert!(
+            sections
+                .iter()
+                .flat_map(|s| s.bindings.iter())
+                .any(|b| b.keys == "S" && b.action == "settings")
+        );
+    }
+
+    #[test]
+    fn bit_perfect_shows_on_restart_after_a_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir).with_settings_values(SettingsValues {
+            bit_perfect: true,
+            ..SettingsValues::default()
+        });
+        press(&mut app, KeyCode::Char('S'));
+        select(&mut app, Row::BitPerfect);
+        press(&mut app, KeyCode::Enter);
+
+        assert!(!app.bit_perfect);
+        assert!(app.bit_perfect_changed);
+        assert_eq!(saved(&dir)["audio"]["bit_perfect"].as_bool(), Some(false));
+        let screen = screen_rows(&mut app).join("\n");
+        assert!(screen.contains("on restart"), "{screen}");
+    }
+
+    #[test]
+    fn layout_change_applies_live() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        select(&mut app, Row::LibraryLayout);
+        press(&mut app, KeyCode::Enter);
+
+        assert_eq!(app.tui.library_layout, LibraryLayout::Tree);
+        let strip = app.library_strip();
+        assert_eq!(app.library.effective_layout(strip), EffectiveLayout::Tree);
+        assert_eq!(saved(&dir)["tui"]["library_layout"].as_str(), Some("tree"));
+    }
+
+    #[test]
+    fn a_cover_protocol_without_a_terminal_query_waits_for_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        select(&mut app, Row::CoverProtocol);
+
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.tui.cover_protocol, CoverProtocol::Kitty);
+        assert!(app.protocol_needs_restart);
+        let screen = screen_rows(&mut app).join("\n");
+        assert!(screen.contains("on restart"), "{screen}");
+
+        press(&mut app, KeyCode::Enter);
+        assert!(app.protocol_needs_restart, "sixel also needs a restart");
+        press(&mut app, KeyCode::Enter);
+        assert!(!app.protocol_needs_restart, "halfblocks works now");
+        assert_eq!(
+            saved(&dir)["tui"]["cover_protocol"].as_str(),
+            Some("halfblocks")
+        );
+    }
+
+    #[test]
+    fn a_click_selects_a_row_but_not_a_heading_and_the_wheel_moves() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        screen_rows(&mut app);
+        let hit = app.hits.overlay_list.expect("the list is drawn");
+
+        // Row 0 is the "Display" heading; row 2 is Cover size.
+        click(&mut app, hit.inner.x + 1, hit.inner.y);
+        assert_eq!(app.settings_cursor, 1, "a heading is not selected");
+        click(&mut app, hit.inner.x + 1, hit.inner.y + 2);
+        assert_eq!(app.settings_rows[app.settings_cursor], Row::CoverSize);
+
+        app.on_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.settings_rows[app.settings_cursor], Row::CoverProtocol);
     }
 }

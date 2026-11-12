@@ -17,7 +17,8 @@ use znicz_library::Library;
 use znicz_mcp::run_stdio;
 use znicz_tui::app::Engine;
 use znicz_tui::{
-    App, ConfigFile, ConfigProblem, CoverSize, Resume, RunOutcome, TuiConfig, Updates,
+    App, ConfigFile, ConfigProblem, CoverSize, Resume, RunOutcome, SettingsValues, TuiConfig,
+    Updates,
 };
 
 mod daemon;
@@ -309,6 +310,11 @@ fn main() -> color_eyre::Result<()> {
         cli_device: cli.device.clone(),
         effective_config: config_path(cli.config.as_deref()).map(ConfigFile::new),
         config_problem,
+        settings: SettingsValues {
+            bit_perfect: config.audio.bit_perfect.unwrap_or(true),
+            update_check: config.updates.check.unwrap_or(true),
+            default_device: config.audio.device.clone(),
+        },
     };
     let config_file = cli.config.clone();
 
@@ -893,6 +899,8 @@ struct TuiExtras {
     effective_config: Option<ConfigFile>,
     /// Why the config file was not used, shown as a toast when the TUI starts.
     config_problem: Option<ConfigProblem>,
+    /// Config values the Settings modal shows (bit-perfect, update check, device).
+    settings: SettingsValues,
 }
 
 fn run_tui_with_client(
@@ -927,6 +935,7 @@ fn run_tui_with_client(
     if let Some(problem) = extras.config_problem {
         app = app.with_config_problem(problem);
     }
+    app = app.with_settings_values(extras.settings);
     if let Some(message) = skip_notice {
         app.toasts.warn(message);
     }
