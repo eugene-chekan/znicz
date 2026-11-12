@@ -82,8 +82,14 @@ next frame shows it.
   slot. In the wide layout the details start right after the scaled cover (plus
   the gap) and take the rest of the width; in the stacked layout they start
   right below it. A change clears `cover_draw_key` so the cover is redrawn.
-- **Cover protocol**: changing it rebuilds the image picker the way start-up
-  does for that protocol and clears `cover_draw_key`.
+- **Cover protocol**: the terminal can only be queried before the event loop
+  starts (a query mid-run would race with key input). At start the TUI keeps
+  the queried picker's protocol type when it ran a query (config `auto`,
+  `kitty`, `sixel`). A change then calls `picker.set_protocol_type` (auto →
+  the queried type; halfblocks/off → Halfblocks; kitty/sixel → that type) and
+  clears `cover_draw_key`. When no query ran at start (config `halfblocks` or
+  `off`), switching to auto/kitty/sixel is saved and the row shows `on
+  restart`.
 - **Library layout**: same effect as the existing layout preference (the frame
   already syncs `app.library` from `app.tui.library_layout`).
 - **Default output device**: Enter opens the existing Devices modal in a
