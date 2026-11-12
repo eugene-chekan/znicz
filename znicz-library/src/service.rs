@@ -182,7 +182,8 @@ fn run(mut library: Library, shared: Arc<Shared>) {
             return;
         };
         if let Some(folders) = folders {
-            state.status.folders = folders;
+            let merged = folders_with_queued_adds(folders, &state.queue);
+            state.status.folders = merged;
         }
         state.status.scanning = None;
         state.status.running = false;
@@ -190,6 +191,20 @@ fn run(mut library: Library, shared: Arc<Shared>) {
         state.status.last = Some(summary);
         state.status.scans_finished += 1;
     }
+}
+
+/// The database's folders plus those of `Job::Add`s still queued: they are
+/// listed on `apply`, but not yet remembered, so a resync must not drop them.
+fn folders_with_queued_adds(mut folders: Vec<PathBuf>, queue: &VecDeque<Job>) -> Vec<PathBuf> {
+    for job in queue {
+        if let Job::Add(folder) = job {
+            if !folders.contains(folder) {
+                folders.push(folder.clone());
+            }
+        }
+    }
+    folders.sort();
+    folders
 }
 
 fn run_job(library: &mut Library, shared: &Shared, job: Job) -> ScanSummary {
@@ -315,6 +330,24 @@ mod tests {
             state.status.queued = state.queue.len();
             self.shared.wake.notify_all();
         }
+    }
+
+    #[test]
+    fn queued_adds_stay_listed_after_a_resync() {
+        let mut queue = VecDeque::new();
+        queue.push_back(Job::Add(PathBuf::from("/b")));
+        queue.push_back(Job::Prune);
+        queue.push_back(Job::Add(PathBuf::from("/c")));
+        queue.push_back(Job::Add(PathBuf::from("/a")));
+        let merged = folders_with_queued_adds(vec![PathBuf::from("/a")], &queue);
+        assert_eq!(
+            merged,
+            [
+                PathBuf::from("/a"),
+                PathBuf::from("/b"),
+                PathBuf::from("/c")
+            ]
+        );
     }
 
     #[test]
