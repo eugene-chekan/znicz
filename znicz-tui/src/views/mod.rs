@@ -108,7 +108,7 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
         crate::layout::Drawer::Overlay(rect) | crate::layout::Drawer::Sheet(rect) => {
             frame.render_widget(Clear, rect);
             app.queue_title_slot = queue::title_slot(app, state, crate::views::inner_width(rect));
-            app.clamp_queue_pan();
+            app.clamp_queue_pan(state);
             queue::render(frame, rect, app, state);
         }
         crate::layout::Drawer::Closed => {}

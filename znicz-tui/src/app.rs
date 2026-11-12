@@ -2454,8 +2454,9 @@ impl App {
     }
 
     fn pan_queue(&mut self, dir: isize) {
+        let state = self.player.state();
         let max = self
-            .selected_queue_middle()
+            .selected_queue_middle(&state)
             .saturating_sub(self.queue_title_slot) as isize;
         let next = self.queue_h_offset as isize + dir;
         self.queue_h_offset = next.clamp(0, max.max(0)) as usize;
@@ -2484,8 +2485,7 @@ impl App {
         }
     }
 
-    fn selected_queue_middle(&self) -> usize {
-        let state = self.player.state();
+    fn selected_queue_middle(&self, state: &PlayerState) -> usize {
         let Some(index) = self.queue_cursor.selected(state.queue.len()) else {
             return 0;
         };
@@ -2496,9 +2496,9 @@ impl App {
             .unwrap_or(0)
     }
 
-    pub(crate) fn clamp_queue_pan(&mut self) {
+    pub(crate) fn clamp_queue_pan(&mut self, state: &PlayerState) {
         let max = self
-            .selected_queue_middle()
+            .selected_queue_middle(state)
             .saturating_sub(self.queue_title_slot);
         self.queue_h_offset = self.queue_h_offset.min(max);
     }
