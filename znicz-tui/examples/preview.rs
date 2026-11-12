@@ -224,7 +224,8 @@ fn playing_state(queue: &[(PathBuf, Entry)], bit_perfect: bool) -> PlayerState {
         queue: queue
             .iter()
             .map(|(p, _)| znicz_core::QueueItem::file(p.clone()))
-            .collect(),
+            .collect::<Vec<_>>()
+            .into(),
         queue_position: 1,
         repeat: znicz_core::RepeatMode::All,
         shuffle: true,

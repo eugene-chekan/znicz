@@ -29,7 +29,8 @@ pub use player::commands::{Command, PlayerEvent};
 pub use player::engine::{AudioConfig, PlayerHandle, PlayerOps, spawn_player};
 pub use player::ipc::{ClientRole, IpcClient, IpcServer, try_state as ipc_try_state};
 pub use player::state::{
-    AudioDeviceInfo, OutputInfo, PlaybackStatus, PlayerState, QueueItem, RepeatMode, TrackInfo,
+    AudioDeviceInfo, OutputInfo, PlaybackStatus, PlayerState, Queue, QueueItem, RepeatMode,
+    TrackInfo,
 };
 pub use playlist::{
     LoadResult, apply_to_player, copy_saved, list_saved, load_path, parse, remove_saved,
