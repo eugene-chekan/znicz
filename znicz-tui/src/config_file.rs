@@ -139,9 +139,18 @@ pub fn write_atomically(path: &Path, text: &str) -> Result<(), String> {
     if let Some(dir) = target.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    let tmp = target.with_extension("toml.tmp");
-    std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, &target).map_err(|e| {
+    let mut tmp_name = target.file_name().unwrap_or_default().to_os_string();
+    tmp_name.push(".tmp");
+    let tmp = target.with_file_name(tmp_name);
+    let result = (|| {
+        std::fs::write(&tmp, text)?;
+        // The temp file starts with the default mode; keep the user's mode.
+        if let Ok(meta) = std::fs::metadata(&target) {
+            std::fs::set_permissions(&tmp, meta.permissions())?;
+        }
+        std::fs::rename(&tmp, &target)
+    })();
+    result.map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         e.to_string()
     })
@@ -280,6 +289,23 @@ mod tests {
             .map(|e| e.unwrap().file_name().into_string().unwrap())
             .collect();
         assert_eq!(names, vec!["config.toml".to_string()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn set_keeps_the_file_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new().unwrap();
+        let config = file_in(&dir, "config.toml", "[tui]\nmarquee = true\n");
+        std::fs::set_permissions(config.path(), std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        config.set_bool("tui", "marquee", false).unwrap();
+
+        let mode = std::fs::metadata(config.path())
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[test]
