@@ -85,6 +85,8 @@ impl Library {
     }
 
     fn prepare(conn: Connection) -> Result<Self> {
+        // Migrations and the WAL switch need the write lock; wait for the player instead of failing.
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         // WAL keeps reads working while a scan writes.
         conn.pragma_update(None, "journal_mode", "WAL").ok();
         conn.pragma_update(None, "synchronous", "NORMAL").ok();
@@ -1598,5 +1600,45 @@ mod tests {
             names.iter().any(|n| n == "tracks_album_nocase_idx"),
             "{names:?}"
         );
+    }
+
+    #[test]
+    fn clear_invalidates_the_attribution_cache() {
+        let mut library = Library::open_in_memory().unwrap();
+        upsert_simple(
+            &mut library,
+            "/music/a.flac",
+            "T",
+            Some("Solo"),
+            Some("LP"),
+            None,
+        );
+        assert_eq!(library.browse_artists().unwrap().len(), 1);
+
+        library.clear().unwrap();
+        assert!(library.browse_artists().unwrap().is_empty());
+        assert!(library.albums_for_browse_artist("Solo").unwrap().is_empty());
+    }
+
+    #[test]
+    fn open_waits_for_another_connections_write_lock() {
+        let (_dir, db) = temp_db();
+        drop(Library::open(&db).unwrap());
+        // An old-index database makes the next open run DDL, which needs the write lock.
+        // Regression guard: open must wait for the holder instead of failing with BUSY.
+        Connection::open(&db)
+            .unwrap()
+            .execute_batch("CREATE INDEX tracks_album_idx ON tracks(album);")
+            .unwrap();
+
+        let holder = Connection::open(&db).unwrap();
+        holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            holder.execute_batch("COMMIT").unwrap();
+        });
+        let opened = Library::open(&db);
+        release.join().unwrap();
+        assert!(opened.is_ok(), "open failed: {:?}", opened.err());
     }
 }
