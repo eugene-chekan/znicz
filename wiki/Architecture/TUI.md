@@ -280,6 +280,14 @@ when the TUI started without asking the terminal. With no config file the change
 and the first such change says so. A config file with an error is never written
 to; the change applies for the run and the toast gives the line and column.
 
+`Enter` on **Default output device** opens the Devices list with `System default`
+first; choosing a device switches to it, saves `[audio] device`, and returns to
+Settings. `System default` removes the key and switches to the device the OS
+marks as default. `+ Add a folder…` opens the folder prompt and returns to
+Settings when it closes, `Rescan all folders` runs the same rescan as `U`, and
+`d` on a folder asks in the strip how many tracks it takes out. `Enter` removes
+the folder and its tracks from the library (the files stay); `Esc` cancels.
+
 ### Stage
 
 Full-screen now playing (`v` / `i`), drawn by `views/stage.rs` with the geometry

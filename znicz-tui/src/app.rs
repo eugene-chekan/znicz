@@ -158,6 +158,16 @@ pub enum Focus {
     Queue,
 }
 
+/// What the Devices modal is for: switching the output now, or choosing the
+/// default output from Settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DevicesMode {
+    #[default]
+    Switch,
+    /// Opened from Settings' Default output device; row 0 is System default.
+    Default,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Modal {
     None,
@@ -301,6 +311,9 @@ enum Stored {
     Bool(bool),
     Int(i64),
     Str(&'static str),
+    Text(String),
+    /// Drop the key: the System default device.
+    Remove,
 }
 
 /// What a Settings change can touch, kept so a failed save can undo it.
@@ -308,6 +321,7 @@ struct SettingsSnapshot {
     tui: TuiConfig,
     bit_perfect: bool,
     update_check: bool,
+    default_device: Option<String>,
     protocol: Option<ProtocolType>,
 }
 
@@ -374,6 +388,8 @@ pub struct App {
     pub hits: HitMap,
     pub devices: Vec<AudioDeviceInfo>,
     pub device_cursor: Cursor,
+    /// Whether the Devices modal switches the output or picks the default.
+    pub(crate) devices_mode: DevicesMode,
     pub playlists_dir: PathBuf,
     pub playlists: Vec<String>,
     pub playlist_cursor: Cursor,
@@ -411,6 +427,10 @@ pub struct App {
     pub(crate) queried_protocol: Option<ProtocolType>,
     /// The "apply to this run only" toast has been shown.
     run_only_warned: bool,
+    /// A folder removal waiting for Enter in Settings: the folder and its track count.
+    pub(crate) settings_confirm: Option<(PathBuf, usize)>,
+    /// The folder prompt was opened from Settings, so closing it returns there.
+    folder_prompt_from_settings: bool,
     pub covers: CoverCache,
     pub picker: Option<ratatui_image::picker::Picker>,
     pub(crate) cover_image: Option<ratatui_image::protocol::StatefulProtocol>,
@@ -517,6 +537,9 @@ impl App {
         }
         self.scans_seen = Some(status.scans_finished);
         self.library_status = status;
+        if self.modal == Modal::Settings {
+            self.refresh_settings_rows();
+        }
         if self.wants_first_run_prompt() {
             self.open_folder_prompt();
         }
@@ -547,6 +570,7 @@ impl App {
             KeyCode::Esc => {
                 self.folder_prompt = None;
                 self.first_run_dismissed = true;
+                self.folder_prompt_closed();
             }
             KeyCode::Enter => self.submit_folder(),
             KeyCode::Tab => self.complete_folder(),
@@ -581,6 +605,7 @@ impl App {
                 self.folder_prompt = None;
                 self.first_run_dismissed = true;
                 self.toasts.info(format!("scanning {typed}"));
+                self.folder_prompt_closed();
             }
             Err(e) => self.toasts.error(e.to_string()),
         }
@@ -707,6 +732,7 @@ impl App {
             hits: HitMap::default(),
             devices: load_output_devices(),
             device_cursor: Cursor::new(),
+            devices_mode: DevicesMode::Switch,
             playlists_dir: znicz_library::default_playlists_dir()
                 .unwrap_or_else(|| temp_fallback("znicz-playlists")),
             playlists: Vec::new(),
@@ -734,6 +760,8 @@ impl App {
             cover_protocol_at_start: TuiConfig::default().cover_protocol,
             queried_protocol: None,
             run_only_warned: false,
+            settings_confirm: None,
+            folder_prompt_from_settings: false,
             covers: CoverCache::new(),
             picker: Some(ratatui_image::picker::Picker::halfblocks()),
             cover_image: None,
@@ -1091,7 +1119,10 @@ impl App {
             return;
         }
         match self.modal {
-            Modal::Devices => self.device_cursor.step(delta, self.devices.len()),
+            Modal::Devices => {
+                let len = self.device_rows();
+                self.device_cursor.step(delta, len);
+            }
             Modal::Playlists => self.playlist_cursor.step(delta, self.playlists.len()),
             Modal::Radio => self.station_cursor.step(delta, self.stations.len()),
             Modal::Messages => {
@@ -1224,7 +1255,10 @@ impl App {
         if let Some(hit) = self.hits.overlay_list {
             if let Some(index) = hit.row_at(column, row) {
                 match self.modal {
-                    Modal::Devices => self.device_cursor.set(index, self.devices.len()),
+                    Modal::Devices => {
+                        let len = self.device_rows();
+                        self.device_cursor.set(index, len);
+                    }
                     Modal::Playlists => self.playlist_cursor.set(index, self.playlists.len()),
                     Modal::Radio => self.station_cursor.set(index, self.stations.len()),
                     Modal::Messages => {
@@ -1346,6 +1380,10 @@ impl App {
     }
 
     fn on_esc(&mut self) {
+        if self.modal == Modal::Settings && self.settings_confirm.is_some() {
+            self.settings_confirm = None;
+            return;
+        }
         if matches!(
             self.modal,
             Modal::Devices
@@ -1718,11 +1756,12 @@ impl App {
 
     fn toggle_devices_modal(&mut self) {
         self.leave_messages();
-        self.modal = if self.modal == Modal::Devices {
-            Modal::None
+        if self.modal == Modal::Devices {
+            self.modal = Modal::None;
         } else {
-            Modal::Devices
-        };
+            self.devices_mode = DevicesMode::Switch;
+            self.modal = Modal::Devices;
+        }
     }
 
     fn toggle_playlists_modal(&mut self) {
@@ -1763,6 +1802,12 @@ impl App {
     fn close_modal(&mut self) {
         if self.modal == Modal::Help {
             self.modal = self.help.return_to;
+            return;
+        }
+        // The default picker goes back to Settings, not to whatever is behind it.
+        if self.modal == Modal::Devices && self.devices_mode == DevicesMode::Default {
+            self.devices_mode = DevicesMode::Switch;
+            self.modal = Modal::Settings;
             return;
         }
         self.leave_messages();
@@ -1807,7 +1852,8 @@ impl App {
             Modal::Playlists => self.reload_playlists(),
             Modal::Devices => {
                 self.devices = load_output_devices();
-                self.device_cursor.clamp(self.devices.len());
+                let len = self.device_rows();
+                self.device_cursor.clamp(len);
                 self.toasts
                     .info(format!("{} devices found", self.devices.len()));
             }
@@ -2286,15 +2332,30 @@ impl App {
     }
 
     fn on_devices_key(&mut self, key: KeyEvent) {
-        if key.code == KeyCode::Enter {
-            let selected = self
-                .device_cursor
-                .selected(self.devices.len())
-                .and_then(|i| self.devices.get(i))
-                .map(|d| (d.id.clone(), d.name.clone()));
-
-            if let Some((id, name)) = selected {
-                self.apply(Command::SetDevice(id), Some(format!("output: {name}")));
+        if key.code != KeyCode::Enter {
+            return;
+        }
+        let index = self.device_cursor.selected(self.device_rows());
+        match self.devices_mode {
+            DevicesMode::Switch => {
+                let selected = index
+                    .and_then(|i| self.devices.get(i))
+                    .map(|d| (d.id.clone(), d.name.clone()));
+                if let Some((id, name)) = selected {
+                    self.apply(Command::SetDevice(id), Some(format!("output: {name}")));
+                }
+            }
+            DevicesMode::Default => {
+                // Row 0 is System default; the others follow the device list.
+                let device = match index {
+                    None => return,
+                    Some(0) => None,
+                    Some(i) => match self.devices.get(i - 1) {
+                        Some(d) => Some((d.id.clone(), d.name.clone())),
+                        None => return,
+                    },
+                };
+                self.choose_default_device(device);
             }
         }
     }
@@ -2316,6 +2377,7 @@ impl App {
 
     /// Move the Settings cursor `delta` selectable rows, stopping at either end.
     fn settings_move(&mut self, delta: isize) {
+        self.settings_confirm = None;
         for _ in 0..delta.unsigned_abs() {
             let next =
                 settings::next_selectable(&self.settings_rows, self.settings_cursor, delta > 0);
@@ -2329,18 +2391,142 @@ impl App {
     /// Keys that change the highlighted row. Returns false for the rest, which
     /// move the cursor, close the modal, or are ignored.
     fn on_settings_key(&mut self, key: KeyEvent) -> bool {
-        let change = match key.code {
-            KeyCode::Enter | KeyCode::Char(' ') => Change::Activate,
-            KeyCode::Char('l') | KeyCode::Right => Change::Forward,
-            KeyCode::Char('h') | KeyCode::Left => Change::Back,
-            // Task 7: `d` on a folder row asks before removing it.
-            KeyCode::Char('d') => return true,
-            _ => return false,
+        let Some(row) = self.settings_rows.get(self.settings_cursor).cloned() else {
+            return false;
         };
-        if let Some(row) = self.settings_rows.get(self.settings_cursor).cloned() {
-            self.change_setting(&row, change);
+        if self.settings_confirm.is_some() && key.code == KeyCode::Enter {
+            self.remove_confirmed_folder();
+            return true;
+        }
+        match key.code {
+            KeyCode::Enter | KeyCode::Char(' ') => match row {
+                Row::DefaultDevice => self.open_default_device_picker(),
+                Row::AddFolder => self.open_folder_prompt_from_settings(),
+                Row::RescanAll => self.rescan_folders(),
+                _ => self.change_setting(&row, Change::Activate),
+            },
+            KeyCode::Char('l') | KeyCode::Right => self.change_setting(&row, Change::Forward),
+            KeyCode::Char('h') | KeyCode::Left => self.change_setting(&row, Change::Back),
+            KeyCode::Char('d') => {
+                if let Row::Folder(path) = row {
+                    self.ask_remove_folder(path);
+                }
+            }
+            _ => return false,
         }
         true
+    }
+
+    /// Enter on Default output device: the Devices list, choosing the default.
+    fn open_default_device_picker(&mut self) {
+        self.devices_mode = DevicesMode::Default;
+        let index = match self.default_device.as_deref() {
+            None => 0,
+            Some(id) => self
+                .devices
+                .iter()
+                .position(|d| d.id == id)
+                .map_or(0, |i| i + 1),
+        };
+        let rows = self.device_rows();
+        self.device_cursor.set(index, rows);
+        self.modal = Modal::Devices;
+    }
+
+    /// Rows in the Devices list: the devices, plus System default in the default mode.
+    pub(crate) fn device_rows(&self) -> usize {
+        self.devices.len() + usize::from(self.devices_mode == DevicesMode::Default)
+    }
+
+    /// Choose the Settings default output. `None` is System default, which
+    /// switches to the device the OS marks as default when one is listed. The
+    /// choice is saved, and Settings comes back with the cursor on the row.
+    fn choose_default_device(&mut self, device: Option<(String, String)>) {
+        let target = match &device {
+            Some(device) => Some(device.clone()),
+            None => self
+                .devices
+                .iter()
+                .find(|d| d.is_default)
+                .map(|d| (d.id.clone(), d.name.clone())),
+        };
+        if let Some((id, name)) = target {
+            if let Err(e) = self.player.send_blocking(Command::SetDevice(id)) {
+                self.toasts.error(e.to_string());
+                return;
+            }
+            self.toasts.success(format!("output: {name}"));
+        }
+        let before = self.settings_snapshot();
+        self.default_device = device.map(|(id, _)| id);
+        self.devices_mode = DevicesMode::Switch;
+        self.modal = Modal::Settings;
+        self.select_setting(&Row::DefaultDevice);
+        self.save_setting(&Row::DefaultDevice, before);
+    }
+
+    /// Put the Settings cursor on `row`, when the list has it.
+    fn select_setting(&mut self, row: &Row) {
+        if let Some(index) = self.settings_rows.iter().position(|r| r == row) {
+            self.settings_cursor = index;
+        }
+    }
+
+    /// `+ Add a folder…` in Settings: the folder prompt; closing it returns here.
+    fn open_folder_prompt_from_settings(&mut self) {
+        if self.library_host.is_none() {
+            self.toasts.error("no music library configured");
+            return;
+        }
+        self.modal = Modal::None;
+        self.folder_prompt_from_settings = true;
+        self.open_folder_prompt();
+    }
+
+    /// The folder prompt closed: show Settings again if it was opened from there.
+    fn folder_prompt_closed(&mut self) {
+        if std::mem::take(&mut self.folder_prompt_from_settings) {
+            self.modal = Modal::Settings;
+            self.refresh_settings_rows();
+        }
+    }
+
+    /// `d` on a folder: ask in the strip, with the number of tracks it removes.
+    fn ask_remove_folder(&mut self, path: PathBuf) {
+        let tracks = self.library.count_under(&path).unwrap_or(0);
+        self.settings_confirm = Some((path, tracks));
+    }
+
+    /// Enter on the removal question. The library job forgets the folder and its
+    /// tracks and reports the result when it finishes.
+    fn remove_confirmed_folder(&mut self) {
+        let Some((path, _)) = self.settings_confirm.take() else {
+            return;
+        };
+        let Some(host) = self.library_host.clone() else {
+            self.toasts.error("no music library configured");
+            return;
+        };
+        if let Err(e) = host.apply(LibraryOp::RemoveFolder { path }) {
+            self.toasts.error(e.to_string());
+        }
+    }
+
+    /// Rebuild the folder rows from the library status. The cursor stays on the
+    /// same row when it still exists.
+    fn refresh_settings_rows(&mut self) {
+        let rows = settings::rows(&self.library_status.folders);
+        if rows == self.settings_rows {
+            return;
+        }
+        let current = self.settings_rows.get(self.settings_cursor).cloned();
+        self.settings_rows = rows;
+        self.settings_confirm = None;
+        self.settings_cursor =
+            match current.and_then(|row| self.settings_rows.iter().position(|r| *r == row)) {
+                Some(index) => index,
+                None => settings::nearest_selectable(&self.settings_rows, self.settings_cursor),
+            };
     }
 
     /// Change `row` the way `change` asks, then save it. A save that fails puts
@@ -2373,7 +2559,7 @@ impl App {
                 };
                 settings::step_choice(row, &mut self.tui, forward, wrap)
             }
-            // Task 7: the default device picker, add folder, rescan, and folder removal.
+            // Actions and folder rows are run by `on_settings_key`, not changed here.
             Kind::Action | Kind::Folder | Kind::Heading => false,
         }
     }
@@ -2458,7 +2644,10 @@ impl App {
             Row::Icons => Stored::Str(settings::icons_name(self.tui.icons)),
             Row::BitPerfect => Stored::Bool(self.bit_perfect),
             Row::UpdateCheck => Stored::Bool(self.check_for_updates),
-            // Task 7: the default device is saved as `[audio] device`.
+            Row::DefaultDevice => match &self.default_device {
+                Some(id) => Stored::Text(id.clone()),
+                None => Stored::Remove,
+            },
             _ => return None,
         })
     }
@@ -2489,6 +2678,8 @@ impl App {
             Stored::Bool(v) => file.set_bool(section, key, v),
             Stored::Int(v) => file.set_int(section, key, v),
             Stored::Str(v) => file.set_str(section, key, v),
+            Stored::Text(v) => file.set_str(section, key, &v),
+            Stored::Remove => file.remove(section, key),
         };
         if let Err(e) = written {
             self.restore_settings(before);
@@ -2501,6 +2692,7 @@ impl App {
             tui: self.tui,
             bit_perfect: self.bit_perfect,
             update_check: self.check_for_updates,
+            default_device: self.default_device.clone(),
             protocol: self.picker.as_ref().map(|p| p.protocol_type()),
         }
     }
@@ -2509,6 +2701,7 @@ impl App {
         self.tui = before.tui;
         self.bit_perfect = before.bit_perfect;
         self.check_for_updates = before.update_check;
+        self.default_device = before.default_device;
         if let (Some(picker), Some(protocol)) = (self.picker.as_mut(), before.protocol) {
             picker.set_protocol_type(protocol);
         }
@@ -2607,7 +2800,7 @@ impl App {
         } else if self.modal == Modal::Playlists {
             self.playlists.len()
         } else if self.modal == Modal::Devices {
-            self.devices.len()
+            self.device_rows()
         } else if self.focus == Focus::Queue && self.queue_open {
             self.player.state().queue.len()
         } else {
@@ -4141,5 +4334,250 @@ mod tests {
         }
         assert_eq!(app.tui.cover_protocol, CoverProtocol::Auto);
         assert!(!app.protocol_needs_restart(), "auto is what the start used");
+    }
+
+    // --- settings: default device and folders ---
+
+    use crate::line_edit::LineEdit;
+
+    /// A library host that records the ops it is sent and reports a settable status.
+    #[derive(Default)]
+    struct RecordingHost {
+        ops: std::sync::Mutex<Vec<LibraryOp>>,
+        status: std::sync::Mutex<LibraryStatus>,
+        refuse: bool,
+    }
+
+    impl LibraryHost for RecordingHost {
+        fn apply(&self, op: LibraryOp) -> znicz_core::Result<()> {
+            if self.refuse {
+                return Err(znicz_core::ZniczError::Library("refused".into()));
+            }
+            self.ops.lock().unwrap().push(op);
+            Ok(())
+        }
+        fn status(&self) -> LibraryStatus {
+            self.status.lock().unwrap().clone()
+        }
+    }
+
+    fn device(id: &str, name: &str, is_default: bool) -> AudioDeviceInfo {
+        AudioDeviceInfo {
+            id: id.into(),
+            name: name.into(),
+            is_default,
+        }
+    }
+
+    /// Settings over a recording host that lists `folders`.
+    fn host_app(dir: &tempfile::TempDir, folders: &[&str]) -> (App, Arc<RecordingHost>) {
+        let host = Arc::new(RecordingHost::default());
+        let folders: Vec<PathBuf> = folders.iter().map(PathBuf::from).collect();
+        host.status.lock().unwrap().folders = folders.clone();
+        let mut app = settings_app(dir);
+        app.library_status.folders = folders;
+        app.library_host = Some(host.clone());
+        (app, host)
+    }
+
+    fn sent(host: &RecordingHost) -> Vec<LibraryOp> {
+        host.ops.lock().unwrap().clone()
+    }
+
+    #[test]
+    fn choosing_a_default_device_switches_and_saves() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        app.devices = vec![
+            device("usb", "USB DAC", false),
+            device("hdmi", "HDMI", true),
+        ];
+        press(&mut app, KeyCode::Char('S'));
+        select(&mut app, Row::DefaultDevice);
+        press(&mut app, KeyCode::Enter);
+
+        assert_eq!(app.modal, Modal::Devices);
+        assert_eq!(app.devices_mode, DevicesMode::Default);
+        let screen = screen_rows(&mut app).join("\n");
+        assert!(screen.contains("Default output device"), "{screen}");
+        assert!(screen.contains("System default"), "{screen}");
+
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.modal, Modal::Settings, "back to Settings");
+        assert_eq!(app.default_device.as_deref(), Some("usb"));
+        assert_eq!(saved(&dir)["audio"]["device"].as_str(), Some("usb"));
+        assert_eq!(app.settings_rows[app.settings_cursor], Row::DefaultDevice);
+        let screen = screen_rows(&mut app).join("\n");
+        assert!(
+            screen.contains("USB DAC"),
+            "the row shows the name:\n{screen}"
+        );
+    }
+
+    #[test]
+    fn system_default_removes_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("config.toml"),
+            "[audio]\ndevice = \"usb\"\n",
+        )
+        .unwrap();
+        let mut app = settings_app(&dir).with_settings_values(SettingsValues {
+            default_device: Some("usb".into()),
+            ..SettingsValues::default()
+        });
+        app.devices = vec![device("usb", "USB DAC", false)];
+        press(&mut app, KeyCode::Char('S'));
+        select(&mut app, Row::DefaultDevice);
+        press(&mut app, KeyCode::Enter);
+        // The picker opens on the current device; System default is row 0.
+        press(&mut app, KeyCode::Char('k'));
+        press(&mut app, KeyCode::Enter);
+
+        assert_eq!(app.default_device, None);
+        assert_eq!(app.modal, Modal::Settings);
+        let file = saved(&dir);
+        assert!(file["audio"].as_table().unwrap().get("device").is_none());
+    }
+
+    #[test]
+    fn esc_in_the_default_picker_returns_to_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        select(&mut app, Row::DefaultDevice);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Esc);
+
+        assert_eq!(app.modal, Modal::Settings);
+        assert_eq!(app.devices_mode, DevicesMode::Switch);
+        assert_eq!(app.settings_rows[app.settings_cursor], Row::DefaultDevice);
+        assert_eq!(app.default_device, None, "nothing was chosen");
+    }
+
+    #[test]
+    fn add_folder_opens_the_prompt_and_returns_to_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let music = tempfile::tempdir().unwrap();
+        let (mut app, host) = host_app(&dir, &[]);
+        press(&mut app, KeyCode::Char('S'));
+        select(&mut app, Row::AddFolder);
+
+        press(&mut app, KeyCode::Enter);
+        assert!(app.folder_prompt.is_some());
+        assert_eq!(app.modal, Modal::None);
+        press(&mut app, KeyCode::Esc);
+        assert!(app.folder_prompt.is_none());
+        assert_eq!(app.modal, Modal::Settings, "Esc returns to Settings");
+
+        press(&mut app, KeyCode::Enter);
+        app.folder_prompt = Some(LineEdit::from_text(music.path().display().to_string()));
+        press(&mut app, KeyCode::Enter);
+        assert!(app.folder_prompt.is_none());
+        assert_eq!(app.modal, Modal::Settings, "a submitted folder returns too");
+        assert!(
+            sent(&host)
+                .iter()
+                .any(|op| matches!(op, LibraryOp::AddFolder { .. }))
+        );
+    }
+
+    #[test]
+    fn rescan_sends_rescan_all() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, host) = host_app(&dir, &["/music/a"]);
+        press(&mut app, KeyCode::Char('S'));
+        select(&mut app, Row::RescanAll);
+        press(&mut app, KeyCode::Enter);
+
+        assert_eq!(sent(&host).len(), 1);
+        assert!(matches!(sent(&host)[0], LibraryOp::RescanAll));
+        assert_eq!(app.modal, Modal::Settings);
+    }
+
+    #[test]
+    fn d_asks_then_enter_sends_remove_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut library = Library::open_in_memory().unwrap();
+        library
+            .upsert_track_for_test(Path::new("/music/a/one.flac"), "One", None, None, None)
+            .unwrap();
+        let (mut app, host) = host_app(&dir, &["/music/a"]);
+        app.library = LibraryPane::new(Some(library));
+        press(&mut app, KeyCode::Char('S'));
+        select(&mut app, Row::Folder(PathBuf::from("/music/a")));
+        press(&mut app, KeyCode::Char('d'));
+
+        assert_eq!(app.settings_confirm, Some((PathBuf::from("/music/a"), 1)));
+        let screen = screen_rows(&mut app).join("\n");
+        assert!(
+            screen.contains("Remove /music/a and its 1 track from the library? Enter yes · Esc no"),
+            "{screen}"
+        );
+
+        press(&mut app, KeyCode::Enter);
+        assert!(app.settings_confirm.is_none());
+        assert!(matches!(
+            sent(&host).as_slice(),
+            [LibraryOp::RemoveFolder { path }] if path == Path::new("/music/a")
+        ));
+        assert_eq!(app.modal, Modal::Settings);
+    }
+
+    #[test]
+    fn esc_cancels_the_removal() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, host) = host_app(&dir, &["/music/a"]);
+        press(&mut app, KeyCode::Char('S'));
+        select(&mut app, Row::Folder(PathBuf::from("/music/a")));
+        press(&mut app, KeyCode::Char('d'));
+        press(&mut app, KeyCode::Esc);
+
+        assert!(app.settings_confirm.is_none());
+        assert_eq!(app.modal, Modal::Settings, "Esc cancels, it does not close");
+        assert!(sent(&host).is_empty());
+    }
+
+    #[test]
+    fn a_refused_removal_is_a_toast() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, host) = host_app(&dir, &["/music/a"]);
+        let refusing = Arc::new(RecordingHost {
+            refuse: true,
+            ..RecordingHost::default()
+        });
+        app.library_host = Some(refusing);
+        press(&mut app, KeyCode::Char('S'));
+        select(&mut app, Row::Folder(PathBuf::from("/music/a")));
+        press(&mut app, KeyCode::Char('d'));
+        press(&mut app, KeyCode::Enter);
+
+        assert!(sent(&host).is_empty());
+        assert!(toast_texts(&app).last().is_some_and(|t| t == "refused"));
+    }
+
+    #[test]
+    fn folder_rows_follow_the_library_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, host) = host_app(&dir, &["/music/a"]);
+        app.library_poll_every = Duration::ZERO;
+        press(&mut app, KeyCode::Char('S'));
+        select(&mut app, Row::Folder(PathBuf::from("/music/a")));
+
+        // The removal job finishes: the writer no longer lists the folder.
+        host.status.lock().unwrap().folders.clear();
+        screen_rows(&mut app);
+
+        assert!(
+            !app.settings_rows
+                .iter()
+                .any(|row| matches!(row, Row::Folder(_)))
+        );
+        assert_eq!(
+            app.settings_rows[app.settings_cursor],
+            Row::AddFolder,
+            "the cursor lands on the next row"
+        );
     }
 }

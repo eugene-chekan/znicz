@@ -314,6 +314,23 @@ pub fn last_selectable(rows: &[Row]) -> usize {
     rows.iter().rposition(Row::selectable).unwrap_or(0)
 }
 
+/// `index` if that row can be selected, else the nearest selectable row (above
+/// first). Used when the rows change under the cursor.
+pub fn nearest_selectable(rows: &[Row], index: usize) -> usize {
+    if rows.is_empty() {
+        return 0;
+    }
+    let index = index.min(rows.len() - 1);
+    if rows[index].selectable() {
+        return index;
+    }
+    let above = next_selectable(rows, index, false);
+    if above != index {
+        return above;
+    }
+    next_selectable(rows, index, true)
+}
+
 /// The next selectable index from `from` in the given direction, skipping
 /// headings. Stays at `from` when no selectable row lies that way.
 pub fn next_selectable(rows: &[Row], from: usize, forward: bool) -> usize {

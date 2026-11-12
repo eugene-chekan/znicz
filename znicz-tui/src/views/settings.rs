@@ -1,5 +1,7 @@
 //! The Settings modal: rows in groups, and a strip that explains the highlighted row.
 
+use std::path::Path;
+
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
@@ -87,9 +89,16 @@ pub fn render(frame: &mut Frame, list: Rect, app: &mut App) {
         frame.render_widget(Paragraph::new(Span::styled(line, theme::dim())), rule);
     }
 
-    let explanation = app.settings_rows.get(cursor).map_or("", Row::explanation);
+    let explanation = match &app.settings_confirm {
+        Some((path, tracks)) => removal_question(path, *tracks),
+        None => app
+            .settings_rows
+            .get(cursor)
+            .map_or("", Row::explanation)
+            .to_string(),
+    };
     let strip_width = usize::from(strip.width);
-    let text: Vec<Line> = wrap(explanation, strip_width, usize::from(strip_lines))
+    let text: Vec<Line> = wrap(&explanation, strip_width, usize::from(strip_lines))
         .into_iter()
         .map(|line| Line::from(Span::styled(line, theme::dim())))
         .collect();
@@ -152,6 +161,18 @@ fn config_path_label(app: &App, popup_width: u16) -> Option<String> {
     // Two corners and a space on each side of the label.
     let room = usize::from(popup_width).saturating_sub(4);
     Some(format!(" {} ", cut_left(&path, room)))
+}
+
+/// The question a folder removal asks, with the tracks it takes out.
+fn removal_question(path: &Path, tracks: usize) -> String {
+    let shown = match dirs::home_dir() {
+        Some(home) => folder_complete::tilde(path, &home),
+        None => path.display().to_string(),
+    };
+    format!(
+        "Remove {shown} and its {} from the library? Enter yes · Esc no",
+        format::tracks_label(tracks)
+    )
 }
 
 /// Keep the end of `text` that fits in `max` columns, marked with a leading `…`.
