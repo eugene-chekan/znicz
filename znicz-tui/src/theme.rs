@@ -85,6 +85,11 @@ pub fn info() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
+/// The `N available` note after `? more` while a newer release is known.
+pub fn update_badge() -> Style {
+    Style::default().fg(GOOD).add_modifier(Modifier::BOLD)
+}
+
 pub fn bad() -> Style {
     Style::default().fg(BAD).add_modifier(Modifier::BOLD)
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.14.2 - 2026-11-12
+
+- The footer keeps saying a new release is available (`? more · 0.14.2 available`) after the toast fades.
+- Updating from a PowerShell 7 terminal on Windows works: the installer no
+  longer inherits PowerShell 7's module path, which made Windows PowerShell
+  fail with "Microsoft.PowerShell.Security could not be loaded".
+
 ## 0.14.1 - 2026-11-12
 
 - `u` in Help checks for updates right away when none is known.
