@@ -53,6 +53,22 @@ fn cut_left(text: &str, width: usize) -> String {
 
 /// The message posted when a job finishes.
 pub fn finish_message(summary: &ScanSummary, home: Option<&Path>) -> (Level, String) {
+    if let Some(folder) = &summary.removed_folder {
+        let shown = match home {
+            Some(home) => tilde(folder, home),
+            None => folder.display().to_string(),
+        };
+        return match &summary.error {
+            Some(error) => (
+                Level::Error,
+                format!("could not remove the folder: {error}"),
+            ),
+            None => (
+                Level::Success,
+                format!("Removed {shown} ({} tracks)", grouped(summary.removed)),
+            ),
+        };
+    }
     if let Some(error) = &summary.error {
         return (Level::Error, format!("scan failed: {error}"));
     }
@@ -155,6 +171,32 @@ mod tests {
         assert_eq!(
             finish_message(&failed, home),
             (Level::Error, "scan failed: disk gone".into())
+        );
+    }
+
+    #[test]
+    fn a_removed_folder_names_the_folder_and_its_tracks() {
+        let home = Some(Path::new("/home/u"));
+        let removed = ScanSummary {
+            removed: 1240,
+            removed_folder: Some(PathBuf::from("/home/u/Music/Jazz")),
+            ..ScanSummary::default()
+        };
+        assert_eq!(
+            finish_message(&removed, home),
+            (Level::Success, "Removed ~/Music/Jazz (1,240 tracks)".into())
+        );
+        let failed = ScanSummary {
+            error: Some("disk gone".into()),
+            removed_folder: Some(PathBuf::from("/home/u/Music/Jazz")),
+            ..ScanSummary::default()
+        };
+        assert_eq!(
+            finish_message(&failed, home),
+            (
+                Level::Error,
+                "could not remove the folder: disk gone".into()
+            )
         );
     }
 }

@@ -16,6 +16,7 @@ enum Job {
     Add(PathBuf),
     RescanAll,
     Prune,
+    RemoveFolder(PathBuf),
     #[cfg(test)]
     PanicForTest,
 }
@@ -106,6 +107,10 @@ impl LibraryHost for LibraryService {
                 }
             }
             LibraryOp::Prune => state.queue.push_back(Job::Prune),
+            LibraryOp::RemoveFolder { path } => {
+                state.status.folders.retain(|folder| folder != &path);
+                state.queue.push_back(Job::RemoveFolder(path));
+            }
         }
         state.status.queued = state.queue.len();
         self.shared.wake.notify_all();
@@ -174,6 +179,12 @@ fn run_job(library: &mut Library, shared: &Shared, job: Job) -> ScanSummary {
         Job::Prune => library
             .remove_missing()
             .map(|removed| summary.removed = removed),
+        Job::RemoveFolder(folder) => {
+            summary.removed_folder = Some(folder.clone());
+            library
+                .remove_folder(&folder)
+                .map(|removed| summary.removed = removed)
+        }
         #[cfg(test)]
         Job::PanicForTest => panic!("injected library job panic"),
     };
@@ -440,6 +451,42 @@ mod tests {
             .unwrap();
         service.apply(LibraryOp::Prune).unwrap();
         assert_eq!(wait(&service, 1).last.unwrap().removed, 1);
+    }
+
+    #[test]
+    fn removing_a_folder_drops_its_tracks_and_reports_the_count() {
+        let dir = temp_dir();
+        let root = dir.path();
+        let db = root.join("library.db");
+        let music = root.join("music");
+        {
+            let mut writer = Library::open(&db).unwrap();
+            writer.remember_folder(&music).unwrap();
+            writer.remember_folder(&root.join("music2")).unwrap();
+            for path in [
+                music.join("a.flac"),
+                music.join("sub/b.flac"),
+                root.join("music2/c.flac"),
+            ] {
+                writer
+                    .upsert_track_for_test(&path, "t", None, None, None)
+                    .unwrap();
+            }
+        }
+        let service = LibraryService::open(&db).unwrap();
+        service
+            .apply(LibraryOp::RemoveFolder {
+                path: music.clone(),
+            })
+            .unwrap();
+        assert!(!service.status().folders.contains(&music));
+        let last = wait(&service, 1).last.unwrap();
+        assert!(last.error.is_none(), "{last:?}");
+        assert_eq!(last.removed, 2);
+        assert_eq!(last.removed_folder, Some(music.clone()));
+        let reader = Library::open(&db).unwrap();
+        assert_eq!(reader.folders().unwrap(), [root.join("music2")]);
+        assert_eq!(reader.track_count().unwrap(), 1);
     }
 
     #[test]

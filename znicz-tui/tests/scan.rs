@@ -262,6 +262,25 @@ fn an_unreachable_host_keeps_the_last_status() {
 }
 
 #[test]
+fn a_finished_folder_removal_toasts_the_folder_and_its_track_count() {
+    let mut s = setup();
+    let finished = znicz_core::LibraryStatus {
+        scans_finished: 1,
+        last: Some(znicz_core::ScanSummary {
+            removed: 2,
+            removed_folder: Some(PathBuf::from("/srv/music/Jazz")),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    s.app.library_host = Some(Scripted::new(vec![Ok(status(0, false)), Ok(finished)]));
+    s.app.poll_library();
+    s.app.poll_library();
+    let toast = s.app.toasts.current().expect("a toast");
+    assert_eq!(toast.text, "Removed /srv/music/Jazz (2 tracks)");
+}
+
+#[test]
 fn polling_is_throttled() {
     let mut s = setup();
     let host = Scripted::new(vec![Ok(status(1, false))]);
