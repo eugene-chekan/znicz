@@ -1,5 +1,7 @@
 //! The queue: what plays next, with real track names.
 
+use std::time::Duration;
+
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
@@ -14,7 +16,13 @@ use crate::views;
 use crate::views::now_playing;
 use crate::views::window::visible_window;
 
-pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState) {
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
+    app: &mut App,
+    state: &PlayerState,
+    stats: &QueueStats,
+) {
     app.hits.close = views::close_button_rect(area);
     let focused = app.focus == Focus::Queue && !app.modal.blocks_list_focus();
     let width = views::inner_width(area);
@@ -27,8 +35,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState)
     }
 
     let len = state.queue.len();
-    let (_, total) = queue_stats(app, &state.queue);
-    let summary = match total {
+    let summary = match stats.total {
         Some(total) => format!("{len} tracks · {}", format::duration(total)),
         None => format!("{len} tracks"),
     };
@@ -129,33 +136,85 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState)
     });
 }
 
-/// Duration of one queue entry, when it is known.
-fn item_duration(app: &App, item: &znicz_core::QueueItem) -> Option<std::time::Duration> {
-    match item {
-        znicz_core::QueueItem::File { path } => app.meta.get(path).and_then(|e| e.duration),
-        znicz_core::QueueItem::Stream { .. } => None,
-    }
+/// What the queue header and title need, gathered in one pass over the queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct QueueStats {
+    /// Widest time label, in columns.
+    pub time_width: usize,
+    /// Total length, when the queue is non-empty and every entry's length is known.
+    pub total: Option<Duration>,
 }
 
-/// Widest time label in the queue, and the total length when every entry has one.
-fn queue_stats(app: &App, queue: &[znicz_core::QueueItem]) -> (usize, Option<std::time::Duration>) {
-    let durations: Vec<Option<std::time::Duration>> =
-        queue.iter().map(|item| item_duration(app, item)).collect();
-    let time_width = durations
-        .iter()
-        .map(|d| format::duration_width(*d))
-        .max()
-        .unwrap_or(0);
-    (time_width, now_playing::total_duration(durations))
+/// Stats for the queue as it is now, reading each entry's length once.
+pub(crate) fn stats(app: &App, queue: &[znicz_core::QueueItem]) -> QueueStats {
+    stats_of(queue.iter().map(|item| match item {
+        znicz_core::QueueItem::File { path } => app.meta.get(path).and_then(|e| e.duration),
+        znicz_core::QueueItem::Stream { .. } => None,
+    }))
+}
+
+fn stats_of(durations: impl IntoIterator<Item = Option<Duration>>) -> QueueStats {
+    let mut time_width = 0;
+    let mut count = 0usize;
+    let mut total = Duration::ZERO;
+    let mut all_known = true;
+    for d in durations {
+        count += 1;
+        time_width = time_width.max(format::duration_width(d));
+        match d {
+            Some(d) => total += d,
+            None => all_known = false,
+        }
+    }
+    QueueStats {
+        time_width,
+        total: (all_known && count > 0).then_some(total),
+    }
 }
 
 /// Width left for the title after pinning index, marker, and duration.
-pub(crate) fn title_slot(app: &App, state: &PlayerState, width: usize) -> usize {
-    if state.queue.is_empty() {
+pub(crate) fn title_slot(stats: &QueueStats, len: usize, width: usize) -> usize {
+    if len == 0 {
         return width;
     }
-    let index_width = state.queue.len().to_string().len().max(2);
-    let (time_width, _) = queue_stats(app, &state.queue);
-    let fixed = index_width + 2 + 2 + time_width + 1;
+    let index_width = len.to_string().len().max(2);
+    let fixed = index_width + 2 + 2 + stats.time_width + 1;
     width.saturating_sub(fixed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stats_total_only_when_every_length_is_known() {
+        let secs = |s| Some(Duration::from_secs(s));
+        let known = stats_of([secs(60), secs(30)]);
+        assert_eq!(known.total, Some(Duration::from_secs(90)));
+
+        let partial = stats_of([secs(60), None]);
+        assert_eq!(
+            partial.total, None,
+            "an unknown length makes the total a lie"
+        );
+        assert_eq!(
+            partial.time_width, 4,
+            "the unknown dash still takes a column"
+        );
+
+        assert_eq!(
+            stats_of([]),
+            QueueStats {
+                time_width: 0,
+                total: None
+            }
+        );
+    }
+
+    #[test]
+    fn stats_time_width_is_the_widest_label() {
+        let secs = |s| Some(Duration::from_secs(s));
+        assert_eq!(stats_of([secs(59), secs(3600)]).time_width, 7);
+        assert_eq!(stats_of([secs(59), None]).time_width, 4);
+    }
 }
