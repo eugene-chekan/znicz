@@ -11,6 +11,7 @@ mod radio;
 pub mod stage;
 mod status;
 mod update;
+pub mod window;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};

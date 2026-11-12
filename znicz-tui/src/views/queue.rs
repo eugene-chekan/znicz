@@ -3,7 +3,7 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{List, ListItem, Paragraph};
+use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 use znicz_core::PlayerState;
 
 use crate::app::{App, Focus};
@@ -12,6 +12,7 @@ use crate::hit::ListHit;
 use crate::theme;
 use crate::views;
 use crate::views::now_playing;
+use crate::views::window::visible_window;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState) {
     app.hits.close = views::close_button_rect(area);
@@ -25,12 +26,30 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState)
         return;
     }
 
-    let index_width = state.queue.len().to_string().len().max(2);
-    let items: Vec<ListItem> = state
-        .queue
+    let len = state.queue.len();
+    let (_, total) = queue_stats(app, &state.queue);
+    let summary = match total {
+        Some(total) => format!("{len} tracks · {}", format::duration(total)),
+        None => format!("{len} tracks"),
+    };
+    let block = views::pane_block("Queue", focused, Some(summary)).title(views::close_title());
+    let inner = block.inner(area);
+
+    // Build rows only for what is on screen; the rest of a long queue is never touched.
+    let selected = app.queue_cursor.selected(len);
+    let window = visible_window(
+        len,
+        selected,
+        app.queue_list_state.offset(),
+        inner.height as usize,
+    );
+
+    let index_width = len.to_string().len().max(2);
+    let items: Vec<ListItem> = state.queue[window.clone()]
         .iter()
         .enumerate()
-        .map(|(i, item)| {
+        .map(|(row, item)| {
+            let i = window.start + row;
             let is_playing = i == state.queue_position;
 
             let (label, time) = match item {
@@ -57,7 +76,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState)
             let fixed = index_width + 2 + 2 + time.chars().count() + 1;
             let label = format::pan(
                 &label,
-                app.queue_offset_for(i, state.queue.len()),
+                app.queue_offset_for(i, len),
                 width.saturating_sub(fixed),
             );
 
@@ -89,33 +108,45 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState)
         })
         .collect();
 
-    let durations: Vec<Option<std::time::Duration>> = state
-        .queue
-        .iter()
-        .map(|item| match item {
-            znicz_core::QueueItem::File { path } => app.meta.get(path).and_then(|e| e.duration),
-            znicz_core::QueueItem::Stream { .. } => None,
-        })
-        .collect();
-    let summary = match now_playing::total_duration(&durations) {
-        Some(total) => format!("{} tracks · {}", state.queue.len(), format::duration(total)),
-        None => format!("{} tracks", state.queue.len()),
-    };
-
-    let block = views::pane_block("Queue", focused, Some(summary)).title(views::close_title());
-    let inner = block.inner(area);
+    // The visible rows are the list's first rows, so the selection is relative to the window.
+    let mut list_state = ListState::default();
+    list_state.select(
+        selected
+            .filter(|s| window.contains(s))
+            .map(|s| s - window.start),
+    );
     let list = List::new(items)
         .block(block)
         .highlight_style(views::highlight(focused));
+    frame.render_stateful_widget(list, area, &mut list_state);
 
-    app.queue_list_state
-        .select(app.queue_cursor.selected(state.queue.len()));
-    frame.render_stateful_widget(list, area, &mut app.queue_list_state);
+    *app.queue_list_state.offset_mut() = window.start;
+    app.queue_list_state.select(selected);
     app.hits.queue = Some(ListHit {
         inner,
-        offset: app.queue_list_state.offset(),
-        len: state.queue.len(),
+        offset: window.start,
+        len,
     });
+}
+
+/// Duration of one queue entry, when it is known.
+fn item_duration(app: &App, item: &znicz_core::QueueItem) -> Option<std::time::Duration> {
+    match item {
+        znicz_core::QueueItem::File { path } => app.meta.get(path).and_then(|e| e.duration),
+        znicz_core::QueueItem::Stream { .. } => None,
+    }
+}
+
+/// Widest time label in the queue, and the total length when every entry has one.
+fn queue_stats(app: &App, queue: &[znicz_core::QueueItem]) -> (usize, Option<std::time::Duration>) {
+    let durations: Vec<Option<std::time::Duration>> =
+        queue.iter().map(|item| item_duration(app, item)).collect();
+    let time_width = durations
+        .iter()
+        .map(|d| format::duration_width(*d))
+        .max()
+        .unwrap_or(0);
+    (time_width, now_playing::total_duration(durations))
 }
 
 /// Width left for the title after pinning index, marker, and duration.
@@ -124,19 +155,7 @@ pub(crate) fn title_slot(app: &App, state: &PlayerState, width: usize) -> usize 
         return width;
     }
     let index_width = state.queue.len().to_string().len().max(2);
-    let fixed = state
-        .queue
-        .iter()
-        .map(|item| {
-            let time = match item {
-                znicz_core::QueueItem::Stream { .. } => format::duration_opt(None),
-                znicz_core::QueueItem::File { path } => {
-                    format::duration_opt(app.meta.get(path).and_then(|e| e.duration))
-                }
-            };
-            index_width + 2 + 2 + time.chars().count() + 1
-        })
-        .max()
-        .unwrap_or(0);
+    let (time_width, _) = queue_stats(app, &state.queue);
+    let fixed = index_width + 2 + 2 + time_width + 1;
     width.saturating_sub(fixed)
 }

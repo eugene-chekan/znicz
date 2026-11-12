@@ -447,11 +447,16 @@ pub fn status_marker(status: PlaybackStatus) -> String {
 }
 
 /// Total time of everything queued, when every entry's length is known.
-pub fn total_duration(durations: &[Option<Duration>]) -> Option<Duration> {
-    if durations.is_empty() || durations.iter().any(|d| d.is_none()) {
-        return None;
+///
+/// Stops at the first unknown length, so the iterator may be lazy.
+pub fn total_duration(durations: impl IntoIterator<Item = Option<Duration>>) -> Option<Duration> {
+    let mut total = Duration::ZERO;
+    let mut count = 0usize;
+    for d in durations {
+        total += d?;
+        count += 1;
     }
-    Some(durations.iter().flatten().sum())
+    (count > 0).then_some(total)
 }
 
 #[cfg(test)]
@@ -478,15 +483,15 @@ mod tests {
     #[test]
     fn queue_length_needs_every_track_measured() {
         let known = [Some(Duration::from_secs(60)), Some(Duration::from_secs(30))];
-        assert_eq!(total_duration(&known), Some(Duration::from_secs(90)));
+        assert_eq!(total_duration(known), Some(Duration::from_secs(90)));
 
         let partial = [Some(Duration::from_secs(60)), None];
         assert_eq!(
-            total_duration(&partial),
+            total_duration(partial),
             None,
             "an unknown length makes the total a lie"
         );
-        assert_eq!(total_duration(&[]), None);
+        assert_eq!(total_duration(Vec::new()), None);
     }
 
     fn text(line: &Line) -> String {

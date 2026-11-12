@@ -3107,6 +3107,58 @@ mod tests {
             .collect()
     }
 
+    /// The screen as one string per row, for checking what a frame shows.
+    fn screen_rows(app: &mut App) -> Vec<String> {
+        let state = app.player.state();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+        terminal
+            .draw(|frame| views::render(frame, app, &state))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let width = buffer.area.width as usize;
+        buffer
+            .content()
+            .chunks(width)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn a_long_queue_draws_the_rows_around_the_cursor() {
+        let mut app = App::with_library(test_player(), None);
+        let items: Vec<QueueItem> = (0..200)
+            .map(|i| QueueItem::File {
+                path: PathBuf::from(format!("/music/track-{i:03}.flac")),
+            })
+            .collect();
+        app.player
+            .send_blocking(Command::QueueAdd(items))
+            .expect("queue add");
+        press(&mut app, KeyCode::Char(']'));
+
+        app.queue_cursor.set(150, 200);
+        let rows = screen_rows(&mut app);
+        assert!(
+            rows.iter()
+                .any(|r| r.contains("track-150") && r.contains("151")),
+            "the selected track shows its row number 151"
+        );
+        assert!(
+            !rows.iter().any(|r| r.contains("track-000")),
+            "the first row has scrolled out of view"
+        );
+
+        app.queue_cursor.set(0, 200);
+        let rows = screen_rows(&mut app);
+        assert!(
+            rows.iter()
+                .any(|r| r.contains("track-000") && r.contains("  1 ")),
+            "back at the top, row 1 is drawn first"
+        );
+        assert!(!rows.iter().any(|r| r.contains("track-150")));
+    }
+
     #[test]
     #[ignore]
     fn perf_queue_render_2000() {
