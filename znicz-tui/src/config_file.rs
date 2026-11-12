@@ -85,6 +85,45 @@ impl ConfigFile {
     }
 }
 
+/// Why `config.toml` was not used. The app then runs on the defaults.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigProblem {
+    /// The text does not parse. `line` and `column` are 1-based.
+    Parse {
+        line: usize,
+        column: usize,
+        message: String,
+    },
+    /// The file exists but cannot be read.
+    Unreadable { message: String },
+}
+
+impl ConfigProblem {
+    /// "line 12, column 5" for a parse error; `None` when the file could not be read.
+    pub fn location(&self) -> Option<String> {
+        match self {
+            Self::Parse { line, column, .. } => Some(format!("line {line}, column {column}")),
+            Self::Unreadable { .. } => None,
+        }
+    }
+
+    /// The error toast shown when the TUI starts.
+    pub fn toast_text(&self) -> String {
+        match self {
+            Self::Parse {
+                line,
+                column,
+                message,
+            } => format!(
+                "config.toml has an error (line {line}, column {column}): {message}. Using the defaults."
+            ),
+            Self::Unreadable { message } => {
+                format!("config.toml could not be read: {message}. Using the defaults.")
+            }
+        }
+    }
+}
+
 /// Write `text` next to `path`, then rename it over `path`. Creates the parent
 /// directory when it is missing.
 ///

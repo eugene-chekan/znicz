@@ -16,7 +16,7 @@ use znicz_core::{
 use znicz_library::Library;
 use znicz_mcp::run_stdio;
 use znicz_tui::app::Engine;
-use znicz_tui::{App, ConfigFile, Resume, RunOutcome, TuiConfig, Updates};
+use znicz_tui::{App, ConfigFile, ConfigProblem, Resume, RunOutcome, TuiConfig, Updates};
 
 mod daemon;
 mod update;
@@ -279,7 +279,9 @@ fn main() -> color_eyre::Result<()> {
     update::remove_old_exe();
 
     let cli = Cli::parse();
-    ensure_default_config(cli.config.as_deref());
+    if should_write_default(&cli) {
+        ensure_default_config();
+    }
     let (config, config_problem) = load_config(cli.config.as_deref());
 
     if cli.list_devices {
@@ -352,19 +354,9 @@ fn main() -> color_eyre::Result<()> {
         }
         Some(Commands::Update { check }) => update::run_cli(check)?,
         Some(Commands::Config { action }) => {
-            let path = config_path(cli.config.as_deref()).ok_or_else(|| {
-                color_eyre::eyre::eyre!("cannot work out where to keep config.toml; pass --config")
-            })?;
-            match action {
-                ConfigAction::Init { force } => {
-                    let outcome =
-                        init_config(&path, force).map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-                    if let Some(backup) = outcome.backup {
-                        println!("Backed up the old file to {}", backup.display());
-                    }
-                    println!("Wrote {}", path.display());
-                }
-                ConfigAction::Path => println!("{}", path.display()),
+            if let Err(message) = run_config(action, cli.config.as_deref()) {
+                eprintln!("{message}");
+                std::process::exit(1);
             }
         }
         Some(Commands::Playlist { command }) => match command {
@@ -488,7 +480,7 @@ fn open_library(path: Option<PathBuf>) -> color_eyre::Result<Library> {
 /// Read the config file. A missing file is not a problem. A broken or
 /// unreadable one gives the defaults, a warning, and the problem: either
 /// "line L, column C: <toml message>" or "cannot read: <io error>".
-fn load_config(path: Option<&Path>) -> (Config, Option<String>) {
+fn load_config(path: Option<&Path>) -> (Config, Option<ConfigProblem>) {
     let Some(path) = config_path(path) else {
         return (Config::default(), None);
     };
@@ -497,28 +489,32 @@ fn load_config(path: Option<&Path>) -> (Config, Option<String>) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return (Config::default(), None);
         }
-        Err(e) => Err(format!("cannot read: {e}")),
+        Err(e) => Err(ConfigProblem::Unreadable {
+            message: e.to_string(),
+        }),
     };
     match parsed {
         Ok(config) => (config, None),
-        Err(message) => {
-            tracing::warn!(path = %path.display(), "config.toml not used: {message}");
-            (Config::default(), Some(message))
+        Err(problem) => {
+            tracing::warn!(path = %path.display(), ?problem, "config.toml not used");
+            (Config::default(), Some(problem))
         }
     }
 }
 
-/// Parse config text. An error says where it is: "line L, column C: message".
+/// Parse config text. A parse error carries its 1-based line and column.
 /// The message is one line, since it is shown in a toast.
-fn parse_config_text(text: &str) -> Result<Config, String> {
+fn parse_config_text(text: &str) -> Result<Config, ConfigProblem> {
     toml::from_str::<Config>(text).map_err(|e| {
         let message = e.message().lines().collect::<Vec<_>>().join(", ");
-        match e.span() {
-            Some(span) => {
-                let (line, column) = line_and_column(text, span.start);
-                format!("line {line}, column {column}: {message}")
-            }
-            None => message,
+        // toml gives a span for every error from text; (1, 1) only guards a missing one.
+        let (line, column) = e
+            .span()
+            .map_or((1, 1), |span| line_and_column(text, span.start));
+        ConfigProblem::Parse {
+            line,
+            column,
+            message,
         }
     })
 }
@@ -537,12 +533,15 @@ fn config_path(cli_config: Option<&Path>) -> Option<PathBuf> {
     cli_config.map(PathBuf::from).or_else(default_config_path)
 }
 
-/// First start: write the default config when `--config` is not given and
-/// the default file does not exist yet. Failures only log a warning.
-fn ensure_default_config(cli_config: Option<&Path>) {
-    if cli_config.is_some() {
-        return;
-    }
+/// Whether this start writes the default config. Not with `--config`, and not
+/// for `config` subcommands: `config init` must find a fresh machine's file absent.
+fn should_write_default(cli: &Cli) -> bool {
+    cli.config.is_none() && !matches!(cli.command, Some(Commands::Config { .. }))
+}
+
+/// First start: write the default config at the default path if it is missing.
+/// Failures only log a warning.
+fn ensure_default_config() {
     let Some(path) = default_config_path() else {
         return;
     };
@@ -564,6 +563,24 @@ fn ensure_default_config_at(path: &Path) -> std::io::Result<bool> {
     znicz_tui::config_file::write_atomically(path, DEFAULT_CONFIG)
         .map_err(std::io::Error::other)?;
     Ok(true)
+}
+
+/// Run `znicz config init` or `znicz config path`. Errors are plain messages
+/// for stderr.
+fn run_config(action: ConfigAction, cli_config: Option<&Path>) -> Result<(), String> {
+    let path = config_path(cli_config)
+        .ok_or("cannot work out where to keep config.toml; pass --config")?;
+    match action {
+        ConfigAction::Init { force } => {
+            let outcome = init_config(&path, force)?;
+            if let Some(backup) = outcome.backup {
+                println!("Backed up the old file to {}", backup.display());
+            }
+            println!("Wrote {}", path.display());
+        }
+        ConfigAction::Path => println!("{}", path.display()),
+    }
+    Ok(())
 }
 
 /// What `znicz config init` did beyond writing the file.
@@ -870,7 +887,7 @@ struct TuiExtras {
     /// The config file Settings edits: `--config`, or the default path.
     effective_config: Option<ConfigFile>,
     /// Why the config file was not used, shown as a toast when the TUI starts.
-    config_problem: Option<String>,
+    config_problem: Option<ConfigProblem>,
 }
 
 fn run_tui_with_client(
@@ -902,8 +919,8 @@ fn run_tui_with_client(
     if let Some(file) = extras.effective_config {
         app = app.with_config_file(file);
     }
-    if let Some(message) = extras.config_problem {
-        app = app.with_config_problem(message);
+    if let Some(problem) = extras.config_problem {
+        app = app.with_config_problem(problem);
     }
     if let Some(message) = skip_notice {
         app.toasts.warn(message);
@@ -1325,7 +1342,42 @@ mod tests {
     #[test]
     fn parse_error_names_the_line_and_column() {
         let err = parse_config_text("[audio]\nvolume = [\n").unwrap_err();
-        assert_eq!(err, "line 3, column 1: invalid array, expected `]`");
+        assert_eq!(
+            err,
+            ConfigProblem::Parse {
+                line: 3,
+                column: 1,
+                message: "invalid array, expected `]`".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn type_error_points_at_the_value() {
+        let err = parse_config_text("[audio]\nbit_perfect = \"yes\"\n").unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ConfigProblem::Parse {
+                    line: 2,
+                    column: 15,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn first_start_write_skips_config_subcommands_and_explicit_config() {
+        let parse = |args: &[&str]| Cli::try_parse_from(args).unwrap();
+        assert!(should_write_default(&parse(&["znicz"])));
+        assert!(should_write_default(&parse(&["znicz", "scan"])));
+        assert!(!should_write_default(&parse(&[
+            "znicz", "--config", "x.toml"
+        ])));
+        assert!(!should_write_default(&parse(&["znicz", "config", "init"])));
+        assert!(!should_write_default(&parse(&["znicz", "config", "path"])));
     }
 
     #[test]
@@ -1350,7 +1402,17 @@ mod tests {
         let (config, problem) = load_config(Some(&path));
 
         let problem = problem.expect("a problem for a broken file");
-        assert!(problem.starts_with("line 1, column "), "{problem}");
+        assert!(
+            matches!(
+                &problem,
+                ConfigProblem::Parse {
+                    line: 1,
+                    column: 5,
+                    ..
+                }
+            ),
+            "{problem:?}"
+        );
         assert!(tui_config(&config).marquee);
     }
 
@@ -1372,8 +1434,11 @@ mod tests {
     fn load_config_reports_an_unreadable_file() {
         let dir = TempDir::new().unwrap();
         let (_, problem) = load_config(Some(dir.path()));
-        let message = problem.expect("a problem");
-        assert!(message.starts_with("cannot read"), "{message}");
+        let problem = problem.expect("a problem");
+        assert!(
+            matches!(problem, ConfigProblem::Unreadable { .. }),
+            "{problem:?}"
+        );
     }
 
     #[test]
