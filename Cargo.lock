@@ -4700,6 +4700,8 @@ dependencies = [
  "ratatui",
  "ratatui-image",
  "tempfile",
+ "toml",
+ "toml_edit 0.22.27",
  "tracing",
  "unicode-width",
  "znicz-core",

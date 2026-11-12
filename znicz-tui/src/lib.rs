@@ -6,6 +6,7 @@
 //! `znicz player` over IPC in production), so the interface owns no copy of it.
 
 pub mod app;
+pub mod config_file;
 pub mod cover;
 pub mod cursor;
 pub mod folder_complete;
@@ -30,5 +31,6 @@ pub mod views;
 pub use app::{
     App, Focus, Modal, PlaylistPrompt, RadioPrompt, Resume, RunOutcome, StationField, View,
 };
+pub use config_file::ConfigFile;
 pub use tui_config::{CoverProtocol, IconSet, LibraryLayout, TuiConfig};
 pub use update::{Release, Updates};
