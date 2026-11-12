@@ -121,8 +121,10 @@ pub fn stage_layout(
         height: slot_h,
     };
     let scaled = scaled_cover(slot, size);
+    // Top-aligned (no empty band above it), centred horizontally.
     let cover = Rect {
         x: area.x + (area.width - scaled.width) / 2,
+        y: area.y,
         ..scaled
     };
     let top = cover.y + cover.height + 1;
@@ -388,12 +390,12 @@ mod tests {
     }
 
     #[test]
-    fn half_size_stacked_cover_is_centred_in_its_slot_and_details_follow_it() {
-        // Full cover 30×15 at (15,0) in a 60×30 area; half is 15×7.
+    fn half_size_stacked_cover_is_top_aligned_and_centred_and_details_follow_it() {
+        // Full cover 30×15 at (15,0) in a 60×30 area; half is 15×7 at the top.
         let area = Rect::new(0, 0, 60, 30);
         let s = stage_layout(area, FW, FH, true, CoverSize::P50);
         let cover = s.cover.expect("cover");
-        assert_eq!(cover, Rect::new(22, 4, 15, 7), "centred in the 15-row slot");
+        assert_eq!(cover, Rect::new(22, 0, 15, 7), "top of the slot, centred");
         assert_eq!(s.details.y, cover.y + cover.height + 1, "right below it");
         assert_eq!(s.details.x, 1);
         assert_eq!(s.details.width, 58);
@@ -404,7 +406,7 @@ mod tests {
     fn scaled_cover_is_at_least_four_by_two_cells() {
         // Full cover 8×4 at (12,0) in a 33×9 area; 25% would be 2×1, raised to 4×2.
         let s = stage_layout(Rect::new(0, 0, 33, 9), FW, FH, true, CoverSize::P25);
-        assert_eq!(s.cover, Some(Rect::new(14, 1, 4, 2)));
+        assert_eq!(s.cover, Some(Rect::new(14, 0, 4, 2)));
     }
 
     #[test]
