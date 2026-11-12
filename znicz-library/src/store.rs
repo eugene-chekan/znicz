@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::error::Result;
+use crate::error::{LibraryError, Result};
 use crate::track::{AlbumSummary, ArtistSummary, SearchHit, SearchLimits, Track};
 
 /// Synthetic browse root for compilation albums (see `browse_artists`).
@@ -651,18 +651,24 @@ impl Library {
 
     /// Forget a remembered folder and delete every track in it or below it, in
     /// one transaction. Returns how many tracks went.
+    ///
+    /// Remembered folders below `folder` are forgotten too, since their tracks
+    /// go. A filesystem root is refused: removing it would empty the library.
     pub fn remove_folder(&mut self, folder: &Path) -> Result<usize> {
         let Some((key, prefix)) = folder_match(folder) else {
             return Ok(0);
         };
+        if Path::new(&key).parent().is_none() {
+            return Err(LibraryError::NotAMusicFolder(key));
+        }
         let transaction = self.conn.transaction()?;
         let removed = transaction.execute(
             &format!("DELETE FROM tracks WHERE {UNDER_FOLDER}"),
             params![key, like_prefix(&prefix), prefix],
         )?;
         transaction.execute(
-            "DELETE FROM folders WHERE path = ?1 OR path = ?2",
-            params![key, prefix],
+            &format!("DELETE FROM folders WHERE {UNDER_FOLDER}"),
+            params![key, like_prefix(&prefix), prefix],
         )?;
         transaction.commit()?;
         Ok(removed)
@@ -727,7 +733,7 @@ fn escape_like(query: &str) -> String {
 /// A folder as it is stored (trailing separators trimmed, a root kept) and the
 /// prefix every track below it starts with. `None` for an empty path, which
 /// would otherwise match every absolute path.
-fn folder_match(folder: &Path) -> Option<(String, String)> {
+pub(crate) fn folder_match(folder: &Path) -> Option<(String, String)> {
     let text = path_str(folder);
     if text.is_empty() {
         return None;
@@ -972,6 +978,31 @@ mod tests {
         assert_eq!(library.remove_folder(Path::new(&input)).unwrap(), 2);
         assert_eq!(library.folders().unwrap(), [PathBuf::from("/music2")]);
         assert_eq!(library.track_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn removing_a_folder_forgets_remembered_folders_below_it() {
+        let mut library = Library::open_in_memory().unwrap();
+        for folder in ["/music", "/music/jazz", "/music2"] {
+            library.remember_folder(Path::new(folder)).unwrap();
+        }
+        for path in ["/music/a.flac", "/music/jazz/b.flac", "/music2/c.flac"] {
+            add_track(&mut library, path);
+        }
+        assert_eq!(library.remove_folder(Path::new("/music")).unwrap(), 2);
+        assert_eq!(library.folders().unwrap(), [PathBuf::from("/music2")]);
+        assert_eq!(library.track_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn remove_folder_refuses_a_filesystem_root() {
+        let mut library = Library::open_in_memory().unwrap();
+        library.remember_folder(Path::new("/")).unwrap();
+        add_track(&mut library, "/a.flac");
+        let err = library.remove_folder(Path::new("/")).expect_err("refused");
+        assert!(err.to_string().starts_with("not a music folder: "), "{err}");
+        assert_eq!(library.track_count().unwrap(), 1);
+        assert_eq!(library.folders().unwrap(), [PathBuf::from("/")]);
     }
 
     #[test]

@@ -108,7 +108,24 @@ impl LibraryHost for LibraryService {
             }
             LibraryOp::Prune => state.queue.push_back(Job::Prune),
             LibraryOp::RemoveFolder { path } => {
-                state.status.folders.retain(|folder| folder != &path);
+                // Only a remembered folder that is not a filesystem root. Compared
+                // as the store compares, so a trailing separator does not matter.
+                let key = crate::store::folder_match(&path).map(|(key, _)| key);
+                let allowed = key.as_deref().is_some_and(|key| {
+                    Path::new(key).parent().is_some()
+                        && state.status.folders.iter().any(|folder| {
+                            crate::store::folder_match(folder)
+                                .map(|(k, _)| k)
+                                .as_deref()
+                                == Some(key)
+                        })
+                });
+                if !allowed {
+                    return Err(ZniczError::Library(format!(
+                        "not a music folder: {}",
+                        path.display()
+                    )));
+                }
                 state.queue.push_back(Job::RemoveFolder(path));
             }
         }
@@ -158,9 +175,15 @@ fn run(mut library: Library, shared: Arc<Shared>) {
                 ..ScanSummary::default()
             }
         });
+        // The database is the truth: a job may have changed the folder list
+        // (a removal also forgets nested folders), even if it then failed.
+        let folders = library.folders().ok();
         let Ok(mut state) = shared.state.lock() else {
             return;
         };
+        if let Some(folders) = folders {
+            state.status.folders = folders;
+        }
         state.status.scanning = None;
         state.status.running = false;
         state.rescan_running = false;
@@ -479,14 +502,65 @@ mod tests {
                 path: music.clone(),
             })
             .unwrap();
-        assert!(!service.status().folders.contains(&music));
-        let last = wait(&service, 1).last.unwrap();
+        let status = wait(&service, 1);
+        let last = status.last.unwrap();
         assert!(last.error.is_none(), "{last:?}");
         assert_eq!(last.removed, 2);
         assert_eq!(last.removed_folder, Some(music.clone()));
+        assert_eq!(status.folders, [root.join("music2")]);
         let reader = Library::open(&db).unwrap();
         assert_eq!(reader.folders().unwrap(), [root.join("music2")]);
         assert_eq!(reader.track_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn removal_refuses_folders_that_are_not_remembered() {
+        let dir = temp_dir();
+        let root = dir.path();
+        let db = root.join("library.db");
+        let jazz = root.join("music").join("jazz");
+        {
+            let mut writer = Library::open(&db).unwrap();
+            writer.remember_folder(&jazz).unwrap();
+            writer
+                .upsert_track_for_test(&jazz.join("a.flac"), "t", None, None, None)
+                .unwrap();
+        }
+        let service = LibraryService::open(&db).unwrap();
+        // A parent of a remembered folder, and a folder that was never remembered.
+        for path in [root.join("music"), root.join("elsewhere")] {
+            let err = service
+                .apply(LibraryOp::RemoveFolder { path: path.clone() })
+                .expect_err("refused");
+            assert_eq!(
+                err.to_string(),
+                format!("not a music folder: {}", path.display())
+            );
+        }
+        assert_eq!(service.status().queued, 0);
+        assert_eq!(service.status().scans_finished, 0);
+        assert_eq!(Library::open(&db).unwrap().track_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn removal_refuses_a_filesystem_root_even_when_remembered() {
+        let dir = temp_dir();
+        let db = dir.path().join("library.db");
+        {
+            let mut writer = Library::open(&db).unwrap();
+            writer.remember_folder(Path::new("/")).unwrap();
+            writer
+                .upsert_track_for_test(Path::new("/a.flac"), "t", None, None, None)
+                .unwrap();
+        }
+        let service = LibraryService::open(&db).unwrap();
+        let err = service
+            .apply(LibraryOp::RemoveFolder {
+                path: PathBuf::from("/"),
+            })
+            .expect_err("refused");
+        assert!(err.to_string().contains("not a music folder: /"), "{err}");
+        assert_eq!(Library::open(&db).unwrap().track_count().unwrap(), 1);
     }
 
     #[test]

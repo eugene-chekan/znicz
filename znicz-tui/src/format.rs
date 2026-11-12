@@ -4,6 +4,12 @@ use std::time::Duration;
 
 use crate::tui_config::IconSet;
 
+/// `1 track`, `1,240 tracks`.
+pub fn tracks_label(n: usize) -> String {
+    let noun = if n == 1 { "track" } else { "tracks" };
+    format!("{} {noun}", crate::scan_status::grouped(n))
+}
+
 /// `M:SS`, or `H:MM:SS` for anything an hour or longer.
 pub fn duration(d: Duration) -> String {
     let secs = d.as_secs();
@@ -144,6 +150,14 @@ pub fn position_of(index: usize, total: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tracks_are_singular_for_one_and_grouped_otherwise() {
+        assert_eq!(tracks_label(0), "0 tracks");
+        assert_eq!(tracks_label(1), "1 track");
+        assert_eq!(tracks_label(2), "2 tracks");
+        assert_eq!(tracks_label(1240), "1,240 tracks");
+    }
 
     #[test]
     fn the_volume_icon_follows_the_level_and_mute() {

@@ -65,7 +65,10 @@ pub fn finish_message(summary: &ScanSummary, home: Option<&Path>) -> (Level, Str
             ),
             None => (
                 Level::Success,
-                format!("Removed {shown} ({} tracks)", grouped(summary.removed)),
+                format!(
+                    "Removed {shown} ({})",
+                    crate::format::tracks_label(summary.removed)
+                ),
             ),
         };
     }
