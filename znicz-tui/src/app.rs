@@ -44,19 +44,24 @@ fn load_output_devices() -> Vec<AudioDeviceInfo> {
     AudioOutput::list_devices().unwrap_or_default()
 }
 
-fn make_picker(protocol: CoverProtocol) -> ratatui_image::picker::Picker {
+/// The picker for a configured cover protocol, and the protocol the terminal
+/// query reported. The query runs only for auto, kitty and sixel, so the second
+/// value is `None` otherwise. It is read before a forced protocol replaces it.
+fn make_picker(protocol: CoverProtocol) -> (ratatui_image::picker::Picker, Option<ProtocolType>) {
+    use ratatui_image::picker::Picker;
     use ratatui_image::picker::cap_parser::QueryStdioOptions;
-    use ratatui_image::picker::{Picker, ProtocolType};
 
-    let mut picker = match protocol {
-        CoverProtocol::Halfblocks | CoverProtocol::Off => Picker::halfblocks(),
+    let (mut picker, queried) = match protocol {
+        CoverProtocol::Halfblocks | CoverProtocol::Off => (Picker::halfblocks(), None),
         CoverProtocol::Auto | CoverProtocol::Kitty | CoverProtocol::Sixel => {
             // Also ask for the background colour so the cover slot can match it.
-            Picker::from_query_stdio_with_options(QueryStdioOptions {
+            let picker = Picker::from_query_stdio_with_options(QueryStdioOptions {
                 terminal_background_color_osc: true,
                 ..QueryStdioOptions::default()
             })
-            .unwrap_or_else(|_| Picker::halfblocks())
+            .unwrap_or_else(|_| Picker::halfblocks());
+            let queried = picker.protocol_type();
+            (picker, Some(queried))
         }
     };
     match protocol {
@@ -67,7 +72,7 @@ fn make_picker(protocol: CoverProtocol) -> ratatui_image::picker::Picker {
         }
         CoverProtocol::Auto => {}
     }
-    picker
+    (picker, queried)
 }
 
 /// Longest wait between redraws while nothing happens. Fast enough for a
@@ -428,7 +433,7 @@ pub struct App {
     /// The "apply to this run only" toast has been shown.
     run_only_warned: bool,
     /// A folder removal waiting for Enter in Settings: the folder and its track count.
-    pub(crate) settings_confirm: Option<(PathBuf, usize)>,
+    pub(crate) settings_confirm: Option<(PathBuf, Option<usize>)>,
     /// The folder prompt was opened from Settings, so closing it returns there.
     folder_prompt_from_settings: bool,
     pub covers: CoverCache,
@@ -797,14 +802,9 @@ impl App {
     pub fn run(&mut self) -> color_eyre::Result<RunOutcome> {
         let mut terminal = ratatui::init();
         let _mouse = MouseCapture::enable();
-        self.picker = Some(make_picker(self.tui.cover_protocol));
-        // `make_picker` queries the terminal only for auto, kitty and sixel.
-        if matches!(
-            self.tui.cover_protocol,
-            CoverProtocol::Auto | CoverProtocol::Kitty | CoverProtocol::Sixel
-        ) {
-            self.queried_protocol = self.picker.as_ref().map(|p| p.protocol_type());
-        }
+        let (picker, queried) = make_picker(self.tui.cover_protocol);
+        self.picker = Some(picker);
+        self.queried_protocol = queried;
         self.cover_protocol_at_start = self.tui.cover_protocol;
         tracing::info!(
             protocol = ?self.picker.as_ref().map(|p| p.protocol_type()),
@@ -1101,6 +1101,11 @@ impl App {
     // --- mouse handling ---
 
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
+        self.handle_mouse(mouse);
+        self.drop_removal_outside_settings();
+    }
+
+    fn handle_mouse(&mut self, mouse: MouseEvent) {
         self.library.set_preferred_layout(self.tui.library_layout);
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => self.on_left_click(mouse.column, mouse.row),
@@ -1269,7 +1274,7 @@ impl App {
                     Modal::Settings
                         if self.settings_rows.get(index).is_some_and(Row::selectable) =>
                     {
-                        self.settings_cursor = index;
+                        self.set_settings_cursor(index);
                     }
                     _ => {}
                 }
@@ -1283,6 +1288,19 @@ impl App {
     ///
     /// Public so the bindings can be driven from tests without a real terminal.
     pub fn on_key(&mut self, key: KeyEvent) {
+        self.handle_key(key);
+        self.drop_removal_outside_settings();
+    }
+
+    /// A removal question belongs to the Settings modal: once that modal is no
+    /// longer on screen (closed, or replaced by another modal or a prompt), it goes.
+    fn drop_removal_outside_settings(&mut self) {
+        if self.modal != Modal::Settings {
+            self.settings_confirm = None;
+        }
+    }
+
+    fn handle_key(&mut self, key: KeyEvent) {
         self.library.set_preferred_layout(self.tui.library_layout);
         if self.modal == Modal::Help {
             self.on_help_key(key);
@@ -1800,6 +1818,7 @@ impl App {
 
     /// Close whatever modal is open, tidying what it leaves behind.
     fn close_modal(&mut self) {
+        self.settings_confirm = None;
         if self.modal == Modal::Help {
             self.modal = self.help.return_to;
             return;
@@ -2370,22 +2389,29 @@ impl App {
         }
         self.leave_messages();
         self.settings_rows = settings::rows(&self.library_status.folders);
-        self.settings_cursor = settings::first_selectable(&self.settings_rows);
+        let first = settings::first_selectable(&self.settings_rows);
+        self.set_settings_cursor(first);
         self.settings_scroll = 0;
         self.modal = Modal::Settings;
     }
 
     /// Move the Settings cursor `delta` selectable rows, stopping at either end.
     fn settings_move(&mut self, delta: isize) {
-        self.settings_confirm = None;
         for _ in 0..delta.unsigned_abs() {
             let next =
                 settings::next_selectable(&self.settings_rows, self.settings_cursor, delta > 0);
             if next == self.settings_cursor {
                 break;
             }
-            self.settings_cursor = next;
+            self.set_settings_cursor(next);
         }
+    }
+
+    /// Put the Settings cursor on `index`. A pending removal question was asked
+    /// about the row the cursor was on, so it is dropped here.
+    pub(crate) fn set_settings_cursor(&mut self, index: usize) {
+        self.settings_confirm = None;
+        self.settings_cursor = index;
     }
 
     /// Keys that change the highlighted row. Returns false for the rest, which
@@ -2457,6 +2483,8 @@ impl App {
             }
             self.toasts.success(format!("output: {name}"));
         }
+        // The device has switched already. If the save below fails, the old
+        // setting comes back but the device stays switched for this run.
         let before = self.settings_snapshot();
         self.default_device = device.map(|(id, _)| id);
         self.devices_mode = DevicesMode::Switch;
@@ -2468,7 +2496,7 @@ impl App {
     /// Put the Settings cursor on `row`, when the list has it.
     fn select_setting(&mut self, row: &Row) {
         if let Some(index) = self.settings_rows.iter().position(|r| r == row) {
-            self.settings_cursor = index;
+            self.set_settings_cursor(index);
         }
     }
 
@@ -2493,7 +2521,8 @@ impl App {
 
     /// `d` on a folder: ask in the strip, with the number of tracks it removes.
     fn ask_remove_folder(&mut self, path: PathBuf) {
-        let tracks = self.library.count_under(&path).unwrap_or(0);
+        // Without a count (the library cannot be read) the question names no number.
+        let tracks = self.library.count_under(&path);
         self.settings_confirm = Some((path, tracks));
     }
 
@@ -2521,12 +2550,12 @@ impl App {
         }
         let current = self.settings_rows.get(self.settings_cursor).cloned();
         self.settings_rows = rows;
-        self.settings_confirm = None;
-        self.settings_cursor =
-            match current.and_then(|row| self.settings_rows.iter().position(|r| *r == row)) {
-                Some(index) => index,
-                None => settings::nearest_selectable(&self.settings_rows, self.settings_cursor),
-            };
+        let index = match current.and_then(|row| self.settings_rows.iter().position(|r| *r == row))
+        {
+            Some(index) => index,
+            None => settings::nearest_selectable(&self.settings_rows, self.settings_cursor),
+        };
+        self.set_settings_cursor(index);
     }
 
     /// Change `row` the way `change` asks, then save it. A save that fails puts
@@ -2544,12 +2573,17 @@ impl App {
     fn apply_setting(&mut self, row: &Row, change: Change) -> bool {
         match row.kind() {
             Kind::Switch => {
+                let Some(slot) = self.switch_slot(row) else {
+                    return false;
+                };
                 let value = match change {
-                    Change::Activate => !self.switch_value(row),
+                    Change::Activate => !*slot,
                     Change::Forward => true,
                     Change::Back => false,
                 };
-                self.set_switch(row, value)
+                let changed = *slot != value;
+                *slot = value;
+                changed
             }
             Kind::Choice => {
                 let (forward, wrap) = match change {
@@ -2564,29 +2598,16 @@ impl App {
         }
     }
 
-    fn switch_value(&self, row: &Row) -> bool {
+    /// The stored flag behind a switch row, or `None` for other rows.
+    fn switch_slot(&mut self, row: &Row) -> Option<&mut bool> {
         match row {
-            Row::ShowCover => self.tui.show_cover,
-            Row::CoverSearch => self.tui.cover_search,
-            Row::Marquee => self.tui.marquee,
-            Row::BitPerfect => self.bit_perfect,
-            Row::UpdateCheck => self.check_for_updates,
-            _ => false,
+            Row::ShowCover => Some(&mut self.tui.show_cover),
+            Row::CoverSearch => Some(&mut self.tui.cover_search),
+            Row::Marquee => Some(&mut self.tui.marquee),
+            Row::BitPerfect => Some(&mut self.bit_perfect),
+            Row::UpdateCheck => Some(&mut self.check_for_updates),
+            _ => None,
         }
-    }
-
-    fn set_switch(&mut self, row: &Row, value: bool) -> bool {
-        let slot = match row {
-            Row::ShowCover => &mut self.tui.show_cover,
-            Row::CoverSearch => &mut self.tui.cover_search,
-            Row::Marquee => &mut self.tui.marquee,
-            Row::BitPerfect => &mut self.bit_perfect,
-            Row::UpdateCheck => &mut self.check_for_updates,
-            _ => return false,
-        };
-        let changed = *slot != value;
-        *slot = value;
-        changed
     }
 
     /// Bit-perfect differs from the value the player started with.
@@ -2633,17 +2654,15 @@ impl App {
     }
 
     /// The value a Settings row saves, as the config file takes it.
-    fn stored_value(&self, row: &Row) -> Option<Stored> {
+    fn stored_value(&mut self, row: &Row) -> Option<Stored> {
+        if let Some(flag) = self.switch_slot(row) {
+            return Some(Stored::Bool(*flag));
+        }
         Some(match row {
-            Row::ShowCover => Stored::Bool(self.tui.show_cover),
             Row::CoverSize => Stored::Int(i64::from(self.tui.cover_size.percent())),
             Row::CoverProtocol => Stored::Str(settings::protocol_name(self.tui.cover_protocol)),
-            Row::CoverSearch => Stored::Bool(self.tui.cover_search),
             Row::LibraryLayout => Stored::Str(settings::layout_name(self.tui.library_layout)),
-            Row::Marquee => Stored::Bool(self.tui.marquee),
             Row::Icons => Stored::Str(settings::icons_name(self.tui.icons)),
-            Row::BitPerfect => Stored::Bool(self.bit_perfect),
-            Row::UpdateCheck => Stored::Bool(self.check_for_updates),
             Row::DefaultDevice => match &self.default_device {
                 Some(id) => Stored::Text(id.clone()),
                 None => Stored::Remove,
@@ -2856,7 +2875,8 @@ impl App {
 
     fn go_first(&mut self) {
         if self.modal == Modal::Settings {
-            self.settings_cursor = settings::first_selectable(&self.settings_rows);
+            let first = settings::first_selectable(&self.settings_rows);
+            self.set_settings_cursor(first);
             return;
         }
         if self.modal == Modal::Messages {
@@ -2878,7 +2898,8 @@ impl App {
 
     fn go_last(&mut self) {
         if self.modal == Modal::Settings {
-            self.settings_cursor = settings::last_selectable(&self.settings_rows);
+            let last = settings::last_selectable(&self.settings_rows);
+            self.set_settings_cursor(last);
             return;
         }
         let len = self.list_len();
@@ -4509,10 +4530,15 @@ mod tests {
         select(&mut app, Row::Folder(PathBuf::from("/music/a")));
         press(&mut app, KeyCode::Char('d'));
 
-        assert_eq!(app.settings_confirm, Some((PathBuf::from("/music/a"), 1)));
+        assert_eq!(
+            app.settings_confirm,
+            Some((PathBuf::from("/music/a"), Some(1)))
+        );
         let screen = screen_rows(&mut app).join("\n");
+        // The strip wraps this sentence over two lines, so check its pieces.
+        assert!(screen.contains("Enter remove · Esc keep"), "{screen}");
         assert!(
-            screen.contains("Remove /music/a and its 1 track from the library? Enter yes · Esc no"),
+            screen.contains("Remove /music/a and its 1 track"),
             "{screen}"
         );
 
@@ -4579,5 +4605,85 @@ mod tests {
             Row::AddFolder,
             "the cursor lands on the next row"
         );
+    }
+
+    /// Click a visible Settings row other than `avoid`, as a user would.
+    fn click_another_setting_row(app: &mut App, avoid: usize) {
+        screen_rows(app);
+        let hit = app.hits.overlay_list.expect("the list is drawn");
+        let column = hit.inner.x + 1;
+        for row in hit.inner.y..hit.inner.y + hit.inner.height {
+            if let Some(index) = hit.row_at(column, row) {
+                if index != avoid && app.settings_rows[index].selectable() {
+                    click(app, column, row);
+                    return;
+                }
+            }
+        }
+        panic!("no other row is on screen");
+    }
+
+    #[test]
+    fn a_removal_question_does_not_survive_closing_and_reopening_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, host) = host_app(&dir, &["/music/a"]);
+        press(&mut app, KeyCode::Char('S'));
+        select(&mut app, Row::Folder(PathBuf::from("/music/a")));
+        press(&mut app, KeyCode::Char('d'));
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('S'));
+        assert!(app.settings_confirm.is_none());
+        press(&mut app, KeyCode::Enter);
+
+        assert!(sent(&host).is_empty(), "Enter must not remove the folder");
+    }
+
+    #[test]
+    fn a_removal_question_does_not_survive_a_click_on_another_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, host) = host_app(&dir, &["/music/a"]);
+        press(&mut app, KeyCode::Char('S'));
+        let folder = app
+            .settings_rows
+            .iter()
+            .position(|r| matches!(r, Row::Folder(_)))
+            .unwrap();
+        select(&mut app, Row::Folder(PathBuf::from("/music/a")));
+        press(&mut app, KeyCode::Char('d'));
+        click_another_setting_row(&mut app, folder);
+        press(&mut app, KeyCode::Enter);
+
+        assert!(sent(&host).is_empty(), "Enter must not remove the folder");
+    }
+
+    #[test]
+    fn a_removal_question_does_not_survive_jumping_to_the_last_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, host) = host_app(&dir, &["/music/a"]);
+        press(&mut app, KeyCode::Char('S'));
+        select(&mut app, Row::Folder(PathBuf::from("/music/a")));
+        press(&mut app, KeyCode::Char('d'));
+        press(&mut app, KeyCode::Char('G'));
+        assert_eq!(app.settings_rows[app.settings_cursor], Row::UpdateCheck);
+        press(&mut app, KeyCode::Enter);
+
+        assert!(sent(&host).is_empty(), "Enter must not remove the folder");
+    }
+
+    #[test]
+    fn a_removal_question_without_a_count_names_no_number() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _host) = host_app(&dir, &["/music/a"]);
+        press(&mut app, KeyCode::Char('S'));
+        select(&mut app, Row::Folder(PathBuf::from("/music/a")));
+        press(&mut app, KeyCode::Char('d'));
+
+        assert_eq!(
+            app.settings_confirm,
+            Some((PathBuf::from("/music/a"), None))
+        );
+        let screen = screen_rows(&mut app).join("\n");
+        assert!(screen.contains("Remove /music/a"), "{screen}");
+        assert!(screen.contains("and its tracks from the"), "{screen}");
     }
 }

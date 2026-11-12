@@ -163,16 +163,19 @@ fn config_path_label(app: &App, popup_width: u16) -> Option<String> {
     Some(format!(" {} ", cut_left(&path, room)))
 }
 
-/// The question a folder removal asks, with the tracks it takes out.
-fn removal_question(path: &Path, tracks: usize) -> String {
+/// The question a folder removal asks. The keys come first, so they stay
+/// visible when a one-line strip cuts the end. The count is left out when the
+/// library could not be read.
+fn removal_question(path: &Path, tracks: Option<usize>) -> String {
     let shown = match dirs::home_dir() {
         Some(home) => folder_complete::tilde(path, &home),
         None => path.display().to_string(),
     };
-    format!(
-        "Remove {shown} and its {} from the library? Enter yes · Esc no",
-        format::tracks_label(tracks)
-    )
+    let tracks = match tracks {
+        Some(count) => format::tracks_label(count),
+        None => "tracks".to_string(),
+    };
+    format!("Enter remove · Esc keep — Remove {shown} and its {tracks} from the library?")
 }
 
 /// Keep the end of `text` that fits in `max` columns, marked with a leading `…`.
