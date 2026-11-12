@@ -155,6 +155,7 @@ any file without a scan first.
 - **`AddFolder`**: scan one folder and remember it.
 - **`RescanAll`**: scan every remembered folder.
 - **`Prune`**: drop rows whose file is gone.
+- **`RemoveFolder`**: forget a remembered folder and delete its tracks (Settings → Library → `d`).
 
 The protocol (`LibraryOp`, `LibraryStatus`, `ScanProgress`, `ScanSummary`,
 `LibraryHost`) lives in `znicz-core/src/library_host.rs`. Front ends send
@@ -174,6 +175,11 @@ Remembered folders live in a `folders` table. Rescan rules:
   a symlinked `~/Music` keeps its path and older indexes are not duplicated.
 - A job that panics is reported as `library job crashed` and the worker goes on.
 - Prune after a rescan removes rows only under the folders that were scanned.
+- Remove folder (`Store::remove_folder`, one transaction) takes the path of a **remembered**
+  folder (Settings only offers those). Tracks at or under it are deleted, and remembered
+  folders nested below it are forgotten too, since their tracks go. A filesystem root is
+  refused (`NotAMusicFolder`), because it would empty the library. The files on disk are
+  never touched, and the result reports how many tracks went.
 - Progress is published at least every 100 files.
 - While a job runs the service is `busy()`, which holds off the player's idle
   exit.

@@ -80,7 +80,8 @@ toasts no longer float over the list. Long titles pan horizontally with
 `Alt-←` and `Alt-→` on the highlighted row only. `<` and `>` are unbound.
 Browse transport is text only (no cover). Hints stay on their own line and are
 never replaced by a message. Config: `[tui]` in `config.toml` (`show_cover`,
-`cover_protocol`, `library_layout`, `marquee`, `icons`).
+`cover_size`, `cover_protocol`, `library_layout`, `marquee`, `icons`). The file is
+written with the defaults on first start; see the README's Configuration section.
 
 ### Responsive behaviour
 
@@ -252,6 +253,8 @@ A marker comes before it, chosen by `[tui] icons` (`format::volume_icon`):
 | `emoji` | 🔈 | 🔉 | 🔊 | 🔇 |
 | `nerd` | 󰕿 | 󰖀 | 󰕾 | 󰝟 |
 
+`nerd` needs a Nerd Font set as the terminal font; the README's
+[Nerd Font icons](../../README.md#nerd-font-icons) section has the install steps and a check.
 Muted shows the marker, the bar at the level it returns to (dimmed on Stage),
 and `muted` instead of the percentage. Transport widths use display width
 (`unicode-width`), so a two-cell emoji still lets the volume segment drop first
@@ -266,10 +269,12 @@ quickest way to find a device that will take your files unconverted.
 ### Settings
 
 `S` opens a centered modal with the display and audio settings, the music
-folders, and the update check, grouped under headings the cursor skips. `Enter`
+folders, and the update check, grouped under headings the cursor skips. `j` / `k`
+(or the arrows, `g` / `G`, `Ctrl-d` / `Ctrl-u`) move between rows. `Enter`
 or `Space` changes the highlighted row: a switch flips, a choice steps forward
 and wraps. `h` / `l` (or `←` / `→`) step a choice back or forward and stop at
-the ends, and turn a switch off or on.
+the ends, and turn a switch off or on. `Esc` closes the modal, or cancels a
+pending folder removal first.
 
 Each change applies at once and is saved to `config.toml` in place, so comments
 and other keys stay. The strip above the bottom border explains the highlighted
