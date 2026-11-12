@@ -108,8 +108,8 @@ fn values(app: &App) -> Values<'_> {
         }),
         bit_perfect: app.bit_perfect,
         update_check: app.check_for_updates,
-        protocol_needs_restart: app.protocol_needs_restart,
-        bit_perfect_changed: app.bit_perfect_changed,
+        protocol_needs_restart: app.protocol_needs_restart(),
+        bit_perfect_changed: app.bit_perfect_changed(),
     }
 }
 

@@ -308,8 +308,6 @@ struct SettingsSnapshot {
     tui: TuiConfig,
     bit_perfect: bool,
     update_check: bool,
-    bit_perfect_changed: bool,
-    protocol_needs_restart: bool,
     protocol: Option<ProtocolType>,
 }
 
@@ -405,10 +403,10 @@ pub struct App {
     pub check_for_updates: bool,
     /// `[audio] device`; `None` is the system default.
     pub default_device: Option<String>,
-    /// Bit-perfect changed this run, so it takes effect when the player next starts.
-    pub(crate) bit_perfect_changed: bool,
-    /// A cover protocol was chosen that cannot be applied until the next start.
-    pub(crate) protocol_needs_restart: bool,
+    /// `[audio] bit_perfect` as the player started with it.
+    pub(crate) bit_perfect_at_start: bool,
+    /// The cover protocol as the TUI started with it.
+    pub(crate) cover_protocol_at_start: CoverProtocol,
     /// The protocol the start-up terminal query picked; `None` when no query ran.
     pub(crate) queried_protocol: Option<ProtocolType>,
     /// The "apply to this run only" toast has been shown.
@@ -676,6 +674,7 @@ impl App {
     /// The config values Settings shows that the TUI does not own.
     pub fn with_settings_values(mut self, values: SettingsValues) -> Self {
         self.bit_perfect = values.bit_perfect;
+        self.bit_perfect_at_start = values.bit_perfect;
         self.check_for_updates = values.update_check;
         self.default_device = values.default_device;
         self
@@ -731,8 +730,8 @@ impl App {
             bit_perfect: true,
             check_for_updates: true,
             default_device: None,
-            bit_perfect_changed: false,
-            protocol_needs_restart: false,
+            bit_perfect_at_start: true,
+            cover_protocol_at_start: TuiConfig::default().cover_protocol,
             queried_protocol: None,
             run_only_warned: false,
             covers: CoverCache::new(),
@@ -778,6 +777,7 @@ impl App {
         ) {
             self.queried_protocol = self.picker.as_ref().map(|p| p.protocol_type());
         }
+        self.cover_protocol_at_start = self.tui.cover_protocol;
         tracing::info!(
             protocol = ?self.picker.as_ref().map(|p| p.protocol_type()),
             "cover renderer"
@@ -2403,35 +2403,46 @@ impl App {
         changed
     }
 
+    /// Bit-perfect differs from the value the player started with.
+    pub(crate) fn bit_perfect_changed(&self) -> bool {
+        self.bit_perfect != self.bit_perfect_at_start
+    }
+
+    /// The cover protocol differs from the start and needs the start-up terminal
+    /// query, which did not run: it takes effect at the next start.
+    pub(crate) fn protocol_needs_restart(&self) -> bool {
+        self.queried_protocol.is_none()
+            && self.tui.cover_protocol != self.cover_protocol_at_start
+            && matches!(
+                self.tui.cover_protocol,
+                CoverProtocol::Auto | CoverProtocol::Kitty | CoverProtocol::Sixel
+            )
+    }
+
     /// What a changed row needs beyond its new value.
     fn after_setting_changed(&mut self, row: &Row) {
         match row {
             Row::ShowCover | Row::CoverSize => self.cover_draw_key = None,
             Row::CoverProtocol => self.apply_cover_protocol(),
             Row::LibraryLayout => self.library.set_preferred_layout(self.tui.library_layout),
-            Row::BitPerfect => self.bit_perfect_changed = true,
             _ => {}
         }
     }
 
     /// Point the picker at the new cover protocol. Without a start-up query the
-    /// terminal's answer is unknown, so a protocol that needs one waits for a restart.
+    /// terminal's answer is unknown, so auto, kitty and sixel wait for a restart.
     fn apply_cover_protocol(&mut self) {
         self.cover_draw_key = None;
         let wanted = self.tui.cover_protocol;
-        match (self.queried_protocol, wanted) {
-            (Some(queried), _) => {
-                if let Some(picker) = self.picker.as_mut() {
-                    picker.set_protocol_type(picker_protocol(wanted, queried));
-                }
-            }
-            (None, CoverProtocol::Halfblocks | CoverProtocol::Off) => {
-                if let Some(picker) = self.picker.as_mut() {
-                    picker.set_protocol_type(ProtocolType::Halfblocks);
-                }
-                self.protocol_needs_restart = false;
-            }
-            (None, _) => self.protocol_needs_restart = true,
+        let protocol = match self.queried_protocol {
+            Some(queried) => picker_protocol(wanted, queried),
+            None => match wanted {
+                CoverProtocol::Halfblocks | CoverProtocol::Off => ProtocolType::Halfblocks,
+                _ => return,
+            },
+        };
+        if let Some(picker) = self.picker.as_mut() {
+            picker.set_protocol_type(protocol);
         }
     }
 
@@ -2490,8 +2501,6 @@ impl App {
             tui: self.tui,
             bit_perfect: self.bit_perfect,
             update_check: self.check_for_updates,
-            bit_perfect_changed: self.bit_perfect_changed,
-            protocol_needs_restart: self.protocol_needs_restart,
             protocol: self.picker.as_ref().map(|p| p.protocol_type()),
         }
     }
@@ -2500,8 +2509,6 @@ impl App {
         self.tui = before.tui;
         self.bit_perfect = before.bit_perfect;
         self.check_for_updates = before.update_check;
-        self.bit_perfect_changed = before.bit_perfect_changed;
-        self.protocol_needs_restart = before.protocol_needs_restart;
         if let (Some(picker), Some(protocol)) = (self.picker.as_mut(), before.protocol) {
             picker.set_protocol_type(protocol);
         }
@@ -4033,7 +4040,7 @@ mod tests {
         press(&mut app, KeyCode::Enter);
 
         assert!(!app.bit_perfect);
-        assert!(app.bit_perfect_changed);
+        assert!(app.bit_perfect_changed());
         assert_eq!(saved(&dir)["audio"]["bit_perfect"].as_bool(), Some(false));
         let screen = screen_rows(&mut app).join("\n");
         assert!(screen.contains("on restart"), "{screen}");
@@ -4062,14 +4069,14 @@ mod tests {
 
         press(&mut app, KeyCode::Enter);
         assert_eq!(app.tui.cover_protocol, CoverProtocol::Kitty);
-        assert!(app.protocol_needs_restart);
+        assert!(app.protocol_needs_restart());
         let screen = screen_rows(&mut app).join("\n");
         assert!(screen.contains("on restart"), "{screen}");
 
         press(&mut app, KeyCode::Enter);
-        assert!(app.protocol_needs_restart, "sixel also needs a restart");
+        assert!(app.protocol_needs_restart(), "sixel also needs a restart");
         press(&mut app, KeyCode::Enter);
-        assert!(!app.protocol_needs_restart, "halfblocks works now");
+        assert!(!app.protocol_needs_restart(), "halfblocks works now");
         assert_eq!(
             saved(&dir)["tui"]["cover_protocol"].as_str(),
             Some("halfblocks")
@@ -4097,5 +4104,42 @@ mod tests {
             modifiers: KeyModifiers::NONE,
         });
         assert_eq!(app.settings_rows[app.settings_cursor], Row::CoverProtocol);
+    }
+
+    #[test]
+    fn bit_perfect_back_at_its_start_value_drops_the_restart_hint() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir).with_settings_values(SettingsValues {
+            bit_perfect: true,
+            ..SettingsValues::default()
+        });
+        press(&mut app, KeyCode::Char('S'));
+        select(&mut app, Row::BitPerfect);
+        press(&mut app, KeyCode::Enter);
+        assert!(app.bit_perfect_changed());
+        press(&mut app, KeyCode::Enter);
+        assert!(
+            !app.bit_perfect_changed(),
+            "the player still has bit-perfect on"
+        );
+        let screen = screen_rows(&mut app).join("\n");
+        assert!(!screen.contains("on restart"), "{screen}");
+    }
+
+    #[test]
+    fn a_cover_protocol_back_at_its_start_value_drops_the_restart_hint() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        select(&mut app, Row::CoverProtocol);
+        // Auto is the start value; five steps (auto, kitty, sixel, halfblocks, off)
+        // come back to it.
+        press(&mut app, KeyCode::Enter);
+        assert!(app.protocol_needs_restart());
+        for _ in 0..4 {
+            press(&mut app, KeyCode::Enter);
+        }
+        assert_eq!(app.tui.cover_protocol, CoverProtocol::Auto);
+        assert!(!app.protocol_needs_restart(), "auto is what the start used");
     }
 }
