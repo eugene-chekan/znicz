@@ -19,6 +19,7 @@ use znicz_core::{
 };
 use znicz_library::{Library, Track};
 
+use crate::config_file::ConfigFile;
 use crate::cover::CoverCache;
 use crate::cursor::Cursor;
 use crate::help_state::{HELP_PAGE, HelpState};
@@ -345,6 +346,10 @@ pub struct App {
     pub meta: MetaCache,
     pub toasts: Toasts,
     pub tui: TuiConfig,
+    /// The config file the settings write to; `None` when there is no file.
+    pub config_file: Option<ConfigFile>,
+    /// Why the config file was not used (it is broken or unreadable), reported at start.
+    pub config_problem: Option<String>,
     pub covers: CoverCache,
     pub picker: Option<ratatui_image::picker::Picker>,
     pub(crate) cover_image: Option<ratatui_image::protocol::StatefulProtocol>,
@@ -593,6 +598,27 @@ impl App {
         self
     }
 
+    /// The config file to show and edit in Settings.
+    pub fn with_config_file(mut self, file: ConfigFile) -> Self {
+        self.config_file = Some(file);
+        self
+    }
+
+    /// Why the config file was not used; shown as an error toast when the TUI starts.
+    pub fn with_config_problem(mut self, message: String) -> Self {
+        self.config_problem = Some(message);
+        self
+    }
+
+    /// Tell the user the config file did not load; the app runs on the defaults.
+    pub(crate) fn announce_config_problem(&mut self) {
+        if let Some(message) = &self.config_problem {
+            self.toasts.error(format!(
+                "config.toml has an error ({message}). Using the defaults."
+            ));
+        }
+    }
+
     fn with_engine(player: Engine, library: Option<Library>) -> Self {
         Self {
             player,
@@ -628,6 +654,8 @@ impl App {
             meta: MetaCache::new(),
             toasts: Toasts::new(),
             tui: TuiConfig::default(),
+            config_file: None,
+            config_problem: None,
             covers: CoverCache::new(),
             picker: Some(ratatui_image::picker::Picker::halfblocks()),
             cover_image: None,
@@ -669,6 +697,7 @@ impl App {
             "cover renderer"
         );
         self.spawn_update_check();
+        self.announce_config_problem();
         let result = self.run_loop(&mut terminal);
         ratatui::restore();
         result?;
@@ -2949,6 +2978,32 @@ mod tests {
 
     fn toast_texts(app: &App) -> Vec<String> {
         app.toasts.recent().iter().map(|t| t.text.clone()).collect()
+    }
+
+    #[test]
+    fn a_broken_config_file_is_reported_as_an_error_toast_at_start() {
+        let mut app = App::with_library(test_player(), None)
+            .with_config_problem("line 2, column 5: expected a value".into());
+        assert!(
+            toast_texts(&app).is_empty(),
+            "nothing is shown before start"
+        );
+
+        app.announce_config_problem();
+
+        let toast = app.toasts.recent().last().expect("a toast");
+        assert_eq!(
+            toast.text,
+            "config.toml has an error (line 2, column 5: expected a value). Using the defaults."
+        );
+        assert_eq!(toast.level, crate::toast::Level::Error);
+    }
+
+    #[test]
+    fn a_good_config_file_shows_no_toast() {
+        let mut app = App::with_library(test_player(), None);
+        app.announce_config_problem();
+        assert!(toast_texts(&app).is_empty());
     }
 
     #[test]
