@@ -22,6 +22,7 @@ pub mod marquee;
 pub mod meta;
 pub mod playing;
 pub mod scan_status;
+pub mod settings;
 pub mod theme;
 pub mod toast;
 pub mod tui_config;
