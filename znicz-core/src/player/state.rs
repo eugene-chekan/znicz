@@ -222,6 +222,11 @@ impl Queue {
             revision,
         }
     }
+
+    /// Stamp the revision a player reported for these items, without copying them.
+    pub(crate) fn set_revision(&mut self, revision: u64) {
+        self.revision = revision;
+    }
 }
 
 impl std::ops::Deref for Queue {
