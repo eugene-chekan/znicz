@@ -325,8 +325,9 @@ use one, or the glyphs show as boxes or `?`.
      archive, select the `.ttf` files, right-click, and choose Install.
 3. **Set it as the terminal's font.** Kitty: `font_family JetBrainsMono Nerd Font` in `kitty.conf`.
    WezTerm: `config.font = wezterm.font 'JetBrainsMono Nerd Font'`. Alacritty: under `[font.normal]`,
-   `family = "JetBrainsMono Nerd Font"`. Other terminals: choose the font in the profile or
-   preference settings. Restart the terminal afterwards.
+   `family = "JetBrainsMono Nerd Font"`. Windows Terminal: Settings → your profile →
+   Appearance → Font face. GNOME Terminal and Konsole: the profile's font setting. Other terminals:
+   choose the font in the profile or preference settings. Restart the terminal afterwards.
 4. **Check it.** In bash or zsh, `printf '\U000F057E\n'`. In PowerShell,
    `[char]::ConvertFromUtf32(0xF057E)`. U+F057E is the volume-high glyph (󰕾). A speaker means
    the font works; boxes or `?` mean it does not.
