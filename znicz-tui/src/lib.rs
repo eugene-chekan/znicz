@@ -32,5 +32,5 @@ pub use app::{
     App, Focus, Modal, PlaylistPrompt, RadioPrompt, Resume, RunOutcome, StationField, View,
 };
 pub use config_file::{ConfigFile, ConfigProblem};
-pub use tui_config::{CoverProtocol, IconSet, LibraryLayout, TuiConfig};
+pub use tui_config::{CoverProtocol, CoverSize, IconSet, LibraryLayout, TuiConfig};
 pub use update::{Release, Updates};

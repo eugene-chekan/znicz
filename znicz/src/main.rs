@@ -16,7 +16,9 @@ use znicz_core::{
 use znicz_library::Library;
 use znicz_mcp::run_stdio;
 use znicz_tui::app::Engine;
-use znicz_tui::{App, ConfigFile, ConfigProblem, Resume, RunOutcome, TuiConfig, Updates};
+use znicz_tui::{
+    App, ConfigFile, ConfigProblem, CoverSize, Resume, RunOutcome, TuiConfig, Updates,
+};
 
 mod daemon;
 mod update;
@@ -222,6 +224,8 @@ struct LibrarySection {
 #[derive(Debug, Deserialize, Default)]
 struct TuiSection {
     show_cover: Option<bool>,
+    /// Percent of the largest fitting cover: 100, 75, 50 or 25.
+    cover_size: Option<i64>,
     cover_protocol: Option<String>,
     library_layout: Option<String>,
     marquee: Option<bool>,
@@ -231,6 +235,7 @@ struct TuiSection {
 fn tui_config(config: &Config) -> TuiConfig {
     TuiConfig {
         show_cover: config.tui.show_cover.unwrap_or(true),
+        cover_size: CoverSize::from_percent(config.tui.cover_size.unwrap_or(100)),
         cover_protocol: znicz_tui::CoverProtocol::parse(
             config.tui.cover_protocol.as_deref().unwrap_or("auto"),
         ),
@@ -1337,6 +1342,16 @@ mod tests {
         assert!(parsed.updates.check.unwrap_or(true));
         assert!(parsed.mcp.skills_dirs.is_empty());
         assert_eq!(parsed.library.path, None);
+        assert_eq!(parsed.tui.cover_size, Some(100));
+        assert_eq!(tui_config(&parsed).cover_size, CoverSize::P100);
+    }
+
+    #[test]
+    fn cover_size_is_read_as_a_percent() {
+        let half = parse_config_text("[tui]\ncover_size = 50\n").unwrap();
+        assert_eq!(tui_config(&half).cover_size, CoverSize::P50);
+        let odd = parse_config_text("[tui]\ncover_size = 60\n").unwrap();
+        assert_eq!(tui_config(&odd).cover_size, CoverSize::P100);
     }
 
     #[test]

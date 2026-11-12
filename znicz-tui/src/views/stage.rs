@@ -27,7 +27,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState)
         .picker
         .get_or_insert_with(Picker::halfblocks)
         .font_size();
-    let layout = crate::layout::stage_layout(area, font.width, font.height, app.tui.show_cover);
+    let layout = crate::layout::stage_layout(
+        area,
+        font.width,
+        font.height,
+        app.tui.show_cover,
+        app.tui.cover_size,
+    );
     if let Some(cover) = layout.cover {
         render_cover(frame, cover, app, state);
     }

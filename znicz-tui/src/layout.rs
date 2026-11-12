@@ -2,6 +2,8 @@
 
 use ratatui::layout::Rect;
 
+use crate::tui_config::CoverSize;
+
 pub const DRAWER_WIDTH: u16 = 41;
 pub const MIN_STRIP: u16 = 40;
 /// Minimum library strip inner width (characters) for three-column browse.
@@ -59,6 +61,9 @@ pub const STAGE_WIDE_MIN_W: u16 = 70;
 pub const STAGE_WIDE_MIN_H: u16 = 14;
 /// Below this many rows Stage shows no cover.
 const STAGE_COVER_MIN_H: u16 = 8;
+/// A scaled-down cover is never smaller than this many cells.
+const MIN_COVER_W: u16 = 4;
+const MIN_COVER_H: u16 = 2;
 /// Details never get wider than this when centred without a cover.
 const STAGE_DETAILS_MAX_W: u16 = 80;
 
@@ -69,7 +74,13 @@ pub struct StageLayout {
     pub details: Rect,
 }
 
-pub fn stage_layout(area: Rect, font_w: u16, font_h: u16, show_cover: bool) -> StageLayout {
+pub fn stage_layout(
+    area: Rect,
+    font_w: u16,
+    font_h: u16,
+    show_cover: bool,
+    size: CoverSize,
+) -> StageLayout {
     if !show_cover || area.height < STAGE_COVER_MIN_H || area.width < 4 {
         let width = area.width.saturating_sub(2).min(STAGE_DETAILS_MAX_W);
         return StageLayout {
@@ -83,38 +94,63 @@ pub fn stage_layout(area: Rect, font_w: u16, font_h: u16, show_cover: bool) -> S
         };
     }
     if area.width >= STAGE_WIDE_MIN_W && area.height >= STAGE_WIDE_MIN_H {
-        let cover_w = cover_width(area.height, font_w, font_h, area.width);
+        let slot = Rect {
+            x: area.x,
+            y: area.y,
+            width: cover_width(area.height, font_w, font_h, area.width),
+            height: area.height,
+        };
+        let cover = scaled_cover(slot, size);
         let gap = 2;
+        let details_x = cover.x + cover.width + gap;
         return StageLayout {
-            cover: Some(Rect {
-                x: area.x,
-                y: area.y,
-                width: cover_w,
-                height: area.height,
-            }),
+            cover: Some(cover),
             details: Rect {
-                x: area.x + cover_w + gap,
+                x: details_x,
                 y: area.y,
-                width: area.width.saturating_sub(cover_w + gap),
+                width: (area.x + area.width).saturating_sub(details_x),
                 height: area.height,
             },
         };
     }
-    let cover_h = area.height / 2;
-    let cover_w = cover_width(cover_h, font_w, font_h, area.width);
+    let slot_h = area.height / 2;
+    let slot = Rect {
+        x: area.x,
+        y: area.y,
+        width: cover_width(slot_h, font_w, font_h, area.width),
+        height: slot_h,
+    };
+    let scaled = scaled_cover(slot, size);
+    let cover = Rect {
+        x: area.x + (area.width - scaled.width) / 2,
+        ..scaled
+    };
+    let top = cover.y + cover.height + 1;
     StageLayout {
-        cover: Some(Rect {
-            x: area.x + (area.width - cover_w) / 2,
-            y: area.y,
-            width: cover_w,
-            height: cover_h,
-        }),
+        cover: Some(cover),
         details: Rect {
             x: area.x + 1,
-            y: area.y + cover_h + 1,
+            y: top,
             width: area.width.saturating_sub(2),
-            height: area.height - cover_h - 1,
+            height: (area.y + area.height).saturating_sub(top),
         },
+    }
+}
+
+/// `slot` scaled to `size`: width and height rounded down, but at least 4×2
+/// cells (and never more than the slot itself), and vertically centred in it.
+/// The horizontal position is left to the caller.
+fn scaled_cover(slot: Rect, size: CoverSize) -> Rect {
+    let scale = |full: u16, min: u16| {
+        let scaled = u32::from(full) * u32::from(size.percent()) / 100;
+        (scaled as u16).max(min.min(full))
+    };
+    let height = scale(slot.height, MIN_COVER_H);
+    Rect {
+        x: slot.x,
+        y: slot.y + (slot.height - height) / 2,
+        width: scale(slot.width, MIN_COVER_W),
+        height,
     }
 }
 
@@ -170,7 +206,7 @@ mod tests {
     #[test]
     fn a_wide_stage_puts_the_cover_left_at_full_height() {
         let area = Rect::new(0, 0, 120, 40);
-        let s = stage_layout(area, FW, FH, true);
+        let s = stage_layout(area, FW, FH, true, CoverSize::P100);
         let cover = s.cover.expect("cover");
         assert_eq!((cover.x, cover.y, cover.height), (0, 0, 40));
         assert_eq!(cover.width, 60, "80 wanted, capped at half the width");
@@ -181,7 +217,7 @@ mod tests {
     #[test]
     fn a_narrow_stage_stacks_the_cover_on_top() {
         let area = Rect::new(0, 0, 60, 30);
-        let s = stage_layout(area, FW, FH, true);
+        let s = stage_layout(area, FW, FH, true, CoverSize::P100);
         let cover = s.cover.expect("cover");
         assert_eq!(cover.y, 0);
         assert_eq!(cover.height, 15, "half the height");
@@ -192,7 +228,7 @@ mod tests {
 
     #[test]
     fn a_short_wide_stage_also_stacks() {
-        let s = stage_layout(Rect::new(0, 0, 100, 12), FW, FH, true);
+        let s = stage_layout(Rect::new(0, 0, 100, 12), FW, FH, true, CoverSize::P100);
         let cover = s.cover.expect("cover");
         assert!(cover.height <= 6, "{cover:?}");
     }
@@ -200,11 +236,11 @@ mod tests {
     #[test]
     fn a_tiny_stage_or_show_cover_off_has_no_cover() {
         assert!(
-            stage_layout(Rect::new(0, 0, 50, 7), FW, FH, true)
+            stage_layout(Rect::new(0, 0, 50, 7), FW, FH, true, CoverSize::P100)
                 .cover
                 .is_none()
         );
-        let s = stage_layout(Rect::new(0, 0, 120, 40), FW, FH, false);
+        let s = stage_layout(Rect::new(0, 0, 120, 40), FW, FH, false, CoverSize::P100);
         assert!(s.cover.is_none());
         assert!(s.details.width <= 80, "details centred, at most 80 wide");
         assert!(s.details.x > 0);
@@ -290,6 +326,85 @@ mod tests {
         assert_eq!(transport_height(20), 3);
         assert_eq!(transport_height(19), 2);
         assert_eq!(transport_height(15), 2);
+    }
+
+    /// Recorded from the layout before cover size existed: `(x, y, w, h)`.
+    type R = (u16, u16, u16, u16);
+
+    fn rect((x, y, w, h): R) -> Rect {
+        Rect::new(x, y, w, h)
+    }
+
+    #[test]
+    fn full_size_cover_matches_the_recorded_layout() {
+        // (font w, font h, area w, area h, show cover, cover, details)
+        type Case = (u16, u16, u16, u16, bool, Option<R>, R);
+        let cases: [Case; 18] = [
+            // wide
+            (10, 20, 120, 40, true, Some((3, 2, 60, 40)), (65, 2, 58, 40)),
+            (10, 20, 101, 31, true, Some((3, 2, 50, 31)), (55, 2, 49, 31)),
+            (10, 20, 70, 14, true, Some((3, 2, 28, 14)), (33, 2, 40, 14)),
+            (8, 16, 120, 40, true, Some((3, 2, 60, 40)), (65, 2, 58, 40)),
+            (8, 16, 101, 31, true, Some((3, 2, 50, 31)), (55, 2, 49, 31)),
+            (10, 20, 80, 22, true, Some((3, 2, 40, 22)), (45, 2, 38, 22)),
+            // stacked
+            (10, 20, 69, 40, true, Some((20, 2, 34, 20)), (4, 23, 67, 19)),
+            (10, 20, 60, 30, true, Some((18, 2, 30, 15)), (4, 18, 58, 14)),
+            (8, 16, 69, 40, true, Some((20, 2, 34, 20)), (4, 23, 67, 19)),
+            (10, 20, 100, 12, true, Some((47, 2, 12, 6)), (4, 9, 98, 5)),
+            (10, 20, 33, 9, true, Some((15, 2, 8, 4)), (4, 7, 31, 4)),
+            // too small: no cover, details below the first row
+            (10, 20, 50, 7, true, None, (4, 3, 48, 6)),
+            // cover off: details centred, at most 80 wide
+            (10, 20, 120, 40, false, None, (23, 3, 80, 39)),
+            (10, 20, 101, 31, false, None, (13, 3, 80, 30)),
+            (10, 20, 69, 40, false, None, (4, 3, 67, 39)),
+            (10, 20, 60, 30, false, None, (4, 3, 58, 29)),
+            (10, 20, 100, 12, false, None, (13, 3, 80, 11)),
+            (10, 20, 50, 7, false, None, (4, 3, 48, 6)),
+        ];
+        for (fw, fh, w, h, show, cover, details) in cases {
+            let s = stage_layout(Rect::new(3, 2, w, h), fw, fh, show, CoverSize::P100);
+            let label = format!("font {fw}x{fh}, area {w}x{h}, show {show}");
+            assert_eq!(s.cover, cover.map(rect), "{label}: cover");
+            assert_eq!(s.details, rect(details), "{label}: details");
+        }
+    }
+
+    #[test]
+    fn half_size_wide_cover_is_half_as_wide_and_centred_vertically() {
+        // Full cover 60×40 at the top left; half is 30×20, centred in 40 rows.
+        let s = stage_layout(Rect::new(0, 0, 120, 40), FW, FH, true, CoverSize::P50);
+        assert_eq!(s.cover, Some(Rect::new(0, 10, 30, 20)));
+        assert_eq!(s.details, Rect::new(32, 0, 88, 40), "after cover + gap");
+    }
+
+    #[test]
+    fn half_size_wide_cover_rounds_down_and_keeps_the_offset() {
+        // Full cover 50×31 at (3,2); half is 25×15 (rounded down), (31-15)/2 = 8 rows down.
+        let s = stage_layout(Rect::new(3, 2, 101, 31), FW, FH, true, CoverSize::P50);
+        assert_eq!(s.cover, Some(Rect::new(3, 10, 25, 15)));
+        assert_eq!(s.details, Rect::new(30, 2, 74, 31));
+    }
+
+    #[test]
+    fn half_size_stacked_cover_is_centred_in_its_slot_and_details_follow_it() {
+        // Full cover 30×15 at (15,0) in a 60×30 area; half is 15×7.
+        let area = Rect::new(0, 0, 60, 30);
+        let s = stage_layout(area, FW, FH, true, CoverSize::P50);
+        let cover = s.cover.expect("cover");
+        assert_eq!(cover, Rect::new(22, 4, 15, 7), "centred in the 15-row slot");
+        assert_eq!(s.details.y, cover.y + cover.height + 1, "right below it");
+        assert_eq!(s.details.x, 1);
+        assert_eq!(s.details.width, 58);
+        assert_eq!(s.details.y + s.details.height, area.y + area.height);
+    }
+
+    #[test]
+    fn scaled_cover_is_at_least_four_by_two_cells() {
+        // Full cover 8×4 at (12,0) in a 33×9 area; 25% would be 2×1, raised to 4×2.
+        let s = stage_layout(Rect::new(0, 0, 33, 9), FW, FH, true, CoverSize::P25);
+        assert_eq!(s.cover, Some(Rect::new(14, 1, 4, 2)));
     }
 
     #[test]

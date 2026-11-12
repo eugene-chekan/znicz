@@ -118,10 +118,15 @@ fn the_cover_slot_is_fully_painted_when_nothing_is_playing() {
         .draw(|frame| views::render(frame, &mut app, &state))
         .expect("draw");
     let buf = terminal.backend().buffer();
-    let cover =
-        znicz_tui::layout::stage_layout(ratatui::layout::Rect::new(0, 0, 80, 22), 10, 20, true)
-            .cover
-            .expect("a cover at 80x22");
+    let cover = znicz_tui::layout::stage_layout(
+        ratatui::layout::Rect::new(0, 0, 80, 22),
+        10,
+        20,
+        true,
+        znicz_tui::CoverSize::P100,
+    )
+    .cover
+    .expect("a cover at 80x22");
     let mut painted = 0u16;
     for y in cover.y..cover.y + cover.height {
         for x in cover.x..cover.x + cover.width {
