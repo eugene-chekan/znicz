@@ -2,7 +2,8 @@
 
 **Date:** 2026-11-12
 **Status:** Approved in chat (display + audio scope; `S`; `toml_edit`; folder
-removal; cover size; per-row explanations). Fades are #90.
+removal; cover size; per-row explanations; default config written on first
+start with active values). Fades are #90.
 **Crates:** `znicz-tui`, `znicz` (binary), `znicz-core` (library op),
 `znicz-library` (folder removal)
 **Version:** 0.16.0
@@ -124,6 +125,46 @@ next frame shows it.
   `Settings apply to this run only (no config file path)`.
 - Dependency: `toml_edit` (workspace), licence regenerated.
 
+## Default config file
+
+The dist installers cannot run a post-install step, so Znicz creates the file
+on its **first start**:
+
+- At every start (any subcommand), when `--config` is not given and the default
+  path (`dirs::config_dir()/znicz/config.toml`: `~/.config/znicz/config.toml`,
+  `%APPDATA%\znicz\config.toml`) does not exist, write the default config there
+  (create the directory; temp file + rename). Log at `info`: `Created <path>
+  with the default settings`. A write failure is logged at `warn` and Znicz runs
+  on the built-in defaults. An existing file is never touched.
+- The file holds **active values**: every setting with its default, plus a
+  short comment per key, grouped by section like the README's config block.
+  Keys with no fixed default stay commented with an example: `# device =
+  "default"` (system default output) and `# path =
+  "~/.local/share/znicz/library.db"` (user data directory). It starts with:
+  `# Znicz settings. Edit here or in the TUI (S). Reference:
+  https://github.com/eugene-chekan/znicz#configuration`.
+- The text is one template, `znicz/src/default-config.toml`, loaded with
+  `include_str!`. A test parses it and checks every effective value equals the
+  built-in default (`tui_config(&parsed) == tui_config(&Config::default())`,
+  audio volume and bit-perfect, idle seconds, cover search, update check,
+  skills dirs), so the file and the code cannot drift.
+- `znicz config init` writes the same file on demand; it refuses when the file
+  exists unless `--force`, which first copies the old file to
+  `config.toml.bak`. `znicz config path` prints the effective path.
+- README's configuration section shows the template's content (or says the
+  file is created on first start and lists it).
+
+## Broken config files
+
+- `load_config` today silently falls back to defaults on a parse error. It now
+  keeps the error: on a parse error Znicz still runs on defaults, logs `warn`,
+  and the TUI shows an error toast at start: `config.toml has an error (line
+  12, column 5): <message>. Using the defaults.` (`toml` error span → line and
+  column).
+- Settings does not write into a file that does not parse: the change applies
+  for this run and the toast says `Not saved: config.toml has an error (line
+  12, column 5)`.
+
 ## Testing
 
 - `ConfigFile`: keeps comments and unrelated keys; creates the file, the
@@ -144,6 +185,12 @@ next frame shows it.
   sibling with the same prefix), forgets the folder, returns the count.
   `RemoveFolder` through the library host.
 - Help lists `S`.
+- Default config: first start writes the template when missing, leaves an
+  existing file alone, skips with `--config`; the template parses to the
+  defaults; `config init` refuses without `--force`, and `--force` keeps a
+  `.bak`.
+- A config with a syntax error gives defaults plus the error with line and
+  column; Settings refuses to write into it.
 
 ## Docs
 
