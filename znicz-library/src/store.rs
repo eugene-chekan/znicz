@@ -734,7 +734,7 @@ fn escape_like(query: &str) -> String {
 /// prefix every track below it starts with. `None` for an empty path, which
 /// would otherwise match every absolute path.
 pub(crate) fn folder_match(folder: &Path) -> Option<(String, String)> {
-    let text = path_str(folder);
+    let text = normalize_separators(&path_str(folder));
     if text.is_empty() {
         return None;
     }
@@ -752,6 +752,18 @@ pub(crate) fn folder_match(folder: &Path) -> Option<(String, String)> {
     Some((key, prefix))
 }
 
+/// Windows accepts `/` as well as `\` in paths, so folder matching treats
+/// them alike there. On Unix a backslash is an ordinary file name character.
+#[cfg(windows)]
+fn normalize_separators(text: &str) -> String {
+    text.replace('/', "\\")
+}
+
+#[cfg(not(windows))]
+fn normalize_separators(text: &str) -> String {
+    text.to_string()
+}
+
 /// The LIKE pattern for a folder prefix. LIKE folds ASCII case, so
 /// `UNDER_FOLDER` also compares the prefix exactly.
 fn like_prefix(prefix: &str) -> String {
@@ -759,8 +771,15 @@ fn like_prefix(prefix: &str) -> String {
 }
 
 /// Parameters: the folder key, the LIKE pattern, the exact prefix.
+#[cfg(not(windows))]
 const UNDER_FOLDER: &str =
     "path = ?1 OR (path LIKE ?2 ESCAPE '\\' AND substr(path, 1, length(?3)) = ?3)";
+
+/// As on Unix, but a stored `/` counts as `\` (see `normalize_separators`).
+#[cfg(windows)]
+const UNDER_FOLDER: &str = "replace(path, '/', '\\') = ?1 OR \
+     (replace(path, '/', '\\') LIKE ?2 ESCAPE '\\' \
+      AND substr(replace(path, '/', '\\'), 1, length(?3)) = ?3)";
 
 /// Unicode-aware lowercase for search. Unlike SQLite's `lower()`, this folds
 /// Cyrillic and other non-ASCII letters.
@@ -1024,6 +1043,8 @@ mod tests {
         assert!(library.folders().unwrap().is_empty());
     }
 
+    /// On Windows a backslash is a separator, not a name character.
+    #[cfg(not(windows))]
     #[test]
     fn a_backslash_in_the_folder_name_is_literal() {
         let mut library = Library::open_in_memory().unwrap();
