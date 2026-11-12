@@ -62,7 +62,7 @@ start with active values). Fades are #90.
 | Cover search for streams | switch | on/off | `[covers] search` | now | Look up radio cover art by artist and title on Deezer and MusicBrainz. |
 | Library layout | choice | columns · tree | `[tui] library_layout` | now | Columns shows artists, albums and tracks side by side (when wide enough); tree nests them in one list. |
 | Scroll long titles | switch | on/off | `[tui] marquee` | now | Scroll now-playing titles that don't fit. Off cuts them with "…". |
-| Icons | choice | unicode · emoji · nerd | `[tui] icons` | now | Symbols used for icons such as the volume marker. Nerd needs a Nerd Font. |
+| Icons | choice | unicode · emoji · nerd | `[tui] icons` | now | Symbols used for icons such as the volume marker. Nerd needs a Nerd Font set as the terminal font (README: Nerd Font). |
 | Default output device | action | device name / System default | `[audio] device` | now | The output Znicz starts with. Choosing one also switches to it now. |
 | Bit-perfect | switch | on/off | `[audio] bit_perfect` | on player restart (hint `on restart`) | Open the device at each file's own sample rate and channels, so samples reach it unchanged. |
 | *folder* (one per folder) | folder | path | library database | now | A folder Znicz indexes. d removes it and its tracks from the library (files are not touched). |
@@ -193,6 +193,36 @@ on its **first start**:
   column; Settings refuses to write into it.
 
 ## Docs
+
+### Nerd Font guide
+
+A README section **Nerd Font icons** (linked from the `icons` line in the
+config block, the default config template's `icons` comment, and the TUI wiki
+page's icon table):
+
+- What it is: a font patched with extra icon glyphs; `icons = "nerd"` needs the
+  terminal to use one, otherwise the marker shows as boxes or `?`.
+- Pick one font (example: JetBrainsMono Nerd Font) from
+  https://www.nerdfonts.com/font-downloads or the `ryanoasis/nerd-fonts`
+  GitHub releases.
+- Install, per platform:
+  - Linux: unzip the release archive into `~/.local/share/fonts/`, then
+    `fc-cache -f`; or the distro package where one exists (e.g. Arch
+    `ttf-jetbrains-mono-nerd`).
+  - macOS: `brew install --cask font-jetbrains-mono-nerd-font`.
+  - Windows: unzip, select the `.ttf` files, right-click → Install (or
+    `winget` / `scoop` package where available).
+- Set it as the terminal's font: Windows Terminal (Settings → profile →
+  Appearance → Font face), GNOME Terminal / Konsole (profile → font), Kitty
+  (`font_family` in `kitty.conf`), WezTerm (`config.font`), Alacritty
+  (`[font.normal] family`). Restart the terminal.
+- Check: run `echo -e "\uf028"` (or open Settings and pick Icons → nerd);
+  a speaker glyph means it works.
+- Package names and commands are checked against the Nerd Fonts docs and the
+  package managers when the section is written; names that cannot be verified
+  are left out rather than guessed.
+
+### Other docs
 
 `wiki/Architecture/TUI.md` (Settings modal, keys), config reference in the wiki
 and README (`[tui] cover_size`), `wiki/Architecture/Library.md` (remove folder),
