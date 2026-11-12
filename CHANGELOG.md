@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.15.0 - 2026-11-12
+
+- The TUI no longer receives the whole queue from the player on every frame;
+  the player sends it only when it changed. Long queues stay responsive.
+- The queue and library lists draw only the rows on screen.
+- Moving through artists no longer rereads the whole library; album lookups
+  use case-insensitive indexes (older databases are migrated on open).
+
 ## 0.14.2 - 2026-11-12
 
 - The footer keeps saying a new release is available (`? more · 0.14.2 available`) after the toast fades.

@@ -75,6 +75,14 @@ Browse APIs for the TUI (not MCP/CLI):
   `album_artist = "Various Artists"`, or untagged multi-artist albums).
 - **`albums_for_browse_artist`** — albums attributed to one browse artist.
 
+Both start from the same attributed album list, which `Library` caches. The
+cache key is SQLite's `PRAGMA data_version` (changes when another connection,
+such as the player's library writer, commits) with the connection's own
+`total_changes()`, so a step through the artist column reads no table unless
+the library changed. `album` and `artist` lookups use `COLLATE NOCASE` indexes
+(`tracks_album_nocase_idx`, `tracks_artist_nocase_idx`); opening an older
+database drops the old case-sensitive ones.
+
 Both use the same Unicode fold. Matching uses **Unicode-lowercased** copies of
 the tag fields (`title_folded`, and the same for artist / album / album artist).
 SQLite's own `LIKE` only folds ASCII `A–Z`, so a lowercase Cyrillic query would
