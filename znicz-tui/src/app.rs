@@ -3108,6 +3108,37 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
+    fn perf_queue_render_2000() {
+        let mut app = App::with_library(test_player(), None);
+        let items: Vec<QueueItem> = (0..2000)
+            .map(|i| QueueItem::File {
+                path: PathBuf::from(format!("/music/{i}.flac")),
+            })
+            .collect();
+        app.player
+            .send_blocking(Command::QueueAdd(items))
+            .expect("queue add");
+        press(&mut app, KeyCode::Char(']'));
+        assert!(app.queue_open, "] should open the queue drawer");
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 40)).unwrap();
+        let state = app.player.state();
+        assert_eq!(state.queue.len(), 2000);
+
+        const FRAMES: u32 = 100;
+        let start = Instant::now();
+        for _ in 0..FRAMES {
+            terminal
+                .draw(|frame| views::render(frame, &mut app, &state))
+                .unwrap();
+        }
+        let mean_us = start.elapsed().as_secs_f64() * 1e6 / f64::from(FRAMES);
+        println!("PERF perf_queue_render_2000: {mean_us:.1} µs");
+    }
+
+    #[test]
     fn enter_installs_the_offered_version_and_then_asks_to_restart() {
         let fake = Arc::new(FakeUpdates::offering("9.9.9"));
         let mut app = app_offering(fake.clone());

@@ -912,6 +912,32 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
+    fn perf_ipc_state_2000_queue() {
+        let (_dir, path) = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let _server = IpcServer::start(player, &path).expect("start ipc");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        let items: Vec<crate::QueueItem> = (0..2000)
+            .map(|i| crate::QueueItem::File {
+                path: PathBuf::from(format!("/music/{i}.flac")),
+            })
+            .collect();
+        client
+            .send_blocking(Command::QueueAdd(items))
+            .expect("queue add");
+        assert_eq!(client.state().expect("state").queue.len(), 2000);
+
+        const CALLS: u32 = 100;
+        let start = Instant::now();
+        for _ in 0..CALLS {
+            std::hint::black_box(client.state().expect("state"));
+        }
+        let mean_us = start.elapsed().as_secs_f64() * 1e6 / f64::from(CALLS);
+        println!("PERF perf_ipc_state_2000_queue: {mean_us:.1} µs");
+    }
+
+    #[test]
     fn recent_outcomes_keep_the_last_request_per_client_and_cap_the_clients() {
         let mut recent = RecentOutcomes::default();
         let id = |client, seq| RequestId { client, seq };

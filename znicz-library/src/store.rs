@@ -1209,6 +1209,33 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
+    fn perf_albums_for_browse_artist_50k() {
+        let mut library = Library::open_in_memory().unwrap();
+        // One transaction keeps 50k autocommit inserts from dominating setup.
+        library.conn.execute_batch("BEGIN").unwrap();
+        for i in 0..50_000 {
+            upsert_simple(
+                &mut library,
+                &format!("/music/{i}.flac"),
+                &format!("Track {i}"),
+                Some(&format!("Artist {}", i % 500)),
+                Some(&format!("Album {}", i % 5000)),
+                None,
+            );
+        }
+        library.conn.execute_batch("COMMIT").unwrap();
+
+        const CALLS: u32 = 100;
+        let start = std::time::Instant::now();
+        for _ in 0..CALLS {
+            std::hint::black_box(library.albums_for_browse_artist("Artist 7").unwrap());
+        }
+        let mean_us = start.elapsed().as_secs_f64() * 1e6 / f64::from(CALLS);
+        println!("PERF perf_albums_for_browse_artist_50k: {mean_us:.1} µs");
+    }
+
+    #[test]
     fn browse_artists_includes_various_artists_for_tagged_compilation() {
         let mut library = Library::open_in_memory().unwrap();
         upsert_simple(
