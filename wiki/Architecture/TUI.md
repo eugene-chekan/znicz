@@ -420,8 +420,10 @@ station name.
 Repeat is `e`, shuffle is `z`. The full keymap lives in `znicz-tui/src/keys.rs`
 and in the `?` overlay.
 
-The `?` overlay also shows the build in its bottom-left corner
-(` znicz 0.y.z `); `znicz --version` prints the same number.
+The footer always ends with the running version: `? more · v0.y.z`, or the
+version alone at the right end where there is no `? more` (Help, prompts).
+Hints give way to it on narrow terminals; it goes only when the row cannot hold
+`? more · v0.y.z`. `znicz --version` prints the same number.
 
 ## Adding music
 
@@ -451,11 +453,11 @@ it never writes the database itself.
 
 ## Updates
 
-When a newer release is known, a toast says so once, Help's bottom title reads
-`znicz 0.13.4 → 0.14.0`, and `u` in Help opens the **Update** modal: the
-release notes, `Enter` to install, then an offer to restart Znicz (and the
-player, resuming where it was). While the update is known, the footer's
-`? more` shows `· 0.14.2 available` after it, so the news outlasts the toast.
+When a newer release is known, a toast says so once, and `u` in Help opens the
+**Update** modal: the release notes, `Enter` to install, then an offer to
+restart Znicz (and the player, resuming where it was). While the update is
+known, the footer's version reads `v0.16.0 → 0.17.0 available` (highlighted;
+`v0.16.0 → 0.17.0` when space is short), so the news outlasts the toast.
 When no update is known, `u` in Help checks
 GitHub right away (even with `[updates] check = false`) and says what it found.
 Details: [Updates](Updates.md).
