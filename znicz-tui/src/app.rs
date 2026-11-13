@@ -979,44 +979,10 @@ impl App {
         }
     }
 
-    /// Draw one frame; `full` clears the screen first.
-    ///
-    /// A Kitty cover row is one escape sequence in the row's first cell that
-    /// paints the whole row. When the cover is drawn again under an open
-    /// modal or drawer, those rows land on the overlay, whose unchanged cells
-    /// ratatui does not send again. Then the frame is drawn once more, inside
-    /// the same synchronized update: cleared, the cover alone, then the
-    /// overlay, whose cells all differ from the cover's and so are all sent on
-    /// top (as when a modal opens over a cover).
-    fn draw_frame(
-        &mut self,
-        terminal: &mut ratatui::DefaultTerminal,
-        state: &PlayerState,
-        full: bool,
-    ) -> color_eyre::Result<()> {
-        let cover_before = self.cover_draw_key.clone();
-        if full {
-            terminal.clear()?;
-        }
-        terminal.draw(|frame| views::render(frame, self, state))?;
-        let cover_changed = cover_before != self.cover_draw_key;
-        if !cover_change_needs_repaint(self.view, self.overlays(), cover_changed) {
-            return Ok(());
-        }
-        if cover_needs_retransmit(self.picker.as_ref().map(|p| p.protocol_type())) {
-            self.cover_draw_key = None;
-        }
-        terminal.clear()?;
-        self.hide_overlays = true;
-        let cover_only = terminal.draw(|frame| views::render(frame, self, state));
-        self.hide_overlays = false;
-        cover_only?;
-        terminal.draw(|frame| views::render(frame, self, state))?;
-        Ok(())
-    }
-
     fn run_loop(&mut self, terminal: &mut ratatui::DefaultTerminal) -> color_eyre::Result<()> {
         let mut repaint = false;
+        // Repaint as two passes: the screen without overlays, then with them.
+        let mut layered = false;
         loop {
             self.poll_player_events();
             self.poll_updates();
@@ -1025,14 +991,45 @@ impl App {
             self.toasts.tick();
 
             let state = self.player.state();
-            // Every frame is one synchronized update (ignored where
-            // unsupported), so a clear or a corrected redraw below is never
-            // seen half done.
-            execute!(terminal.backend_mut(), BeginSynchronizedUpdate)?;
-            let drawn = self.draw_frame(terminal, &state, repaint);
-            execute!(terminal.backend_mut(), EndSynchronizedUpdate)?;
-            drawn?;
-            repaint = false;
+            let repainting = repaint;
+            let cover_before = self.cover_draw_key.clone();
+            if repaint {
+                repaint = false;
+                // Clear and redraw as one update, so the terminal never shows
+                // the blank screen in between (ignored where unsupported).
+                execute!(terminal.backend_mut(), BeginSynchronizedUpdate)?;
+                terminal.clear()?;
+                let mut drawn = Ok(());
+                if layered {
+                    // A Kitty cover row is one escape sequence that paints the
+                    // whole row. Draw the cover first; the overlay's cells then
+                    // all differ from the cover's and are sent on top of it, as
+                    // when a modal opens over a cover.
+                    layered = false;
+                    self.hide_overlays = true;
+                    drawn = terminal
+                        .draw(|frame| views::render(frame, self, &state))
+                        .map(|_| ());
+                    self.hide_overlays = false;
+                }
+                if drawn.is_ok() {
+                    drawn = terminal
+                        .draw(|frame| views::render(frame, self, &state))
+                        .map(|_| ());
+                }
+                execute!(terminal.backend_mut(), EndSynchronizedUpdate)?;
+                drawn?;
+            } else {
+                terminal.draw(|frame| views::render(frame, self, &state))?;
+            }
+            let cover_changed = cover_before != self.cover_draw_key;
+            if cover_change_needs_repaint(self.view, self.overlays(), cover_changed, repainting) {
+                if cover_needs_retransmit(self.picker.as_ref().map(|p| p.protocol_type())) {
+                    self.cover_draw_key = None;
+                }
+                repaint = true;
+                layered = true;
+            }
 
             // Wake up for input, or on the tick to move the seek bar along.
             if event::poll(TICK_RATE)? {
@@ -2819,13 +2816,16 @@ pub(crate) fn needs_full_redraw(view: View, before: Overlays, after: Overlays) -
 
 /// A cover drawn again under an open modal or drawer (a Settings change) is
 /// sent as whole rows that paint over the overlay's unchanged cells, which
-/// ratatui does not send again (see `App::draw_frame`).
+/// ratatui does not send again. Repaint the whole screen once, so every cell
+/// goes out in row order and the overlay ends up on top. The repaint frame
+/// itself does not ask again.
 pub(crate) fn cover_change_needs_repaint(
     view: View,
     overlays: Overlays,
     cover_changed: bool,
+    repainting: bool,
 ) -> bool {
-    view == View::Stage && (overlays.modal || overlays.drawer) && cover_changed
+    view == View::Stage && (overlays.modal || overlays.drawer) && cover_changed && !repainting
 }
 
 /// After a full clear, Sixel and iTerm2 covers are re-sent from the encoded
@@ -2943,7 +2943,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cover_redrawn_under_an_overlay_is_drawn_again() {
+    fn a_cover_redrawn_under_an_overlay_repaints_once() {
         let modal = Overlays {
             modal: true,
             drawer: false,
@@ -2956,11 +2956,23 @@ mod tests {
             modal: false,
             drawer: false,
         };
-        assert!(cover_change_needs_repaint(View::Stage, modal, true));
-        assert!(cover_change_needs_repaint(View::Stage, drawer, true));
-        assert!(!cover_change_needs_repaint(View::Stage, modal, false));
-        assert!(!cover_change_needs_repaint(View::Stage, none, true));
-        assert!(!cover_change_needs_repaint(View::Browse, modal, true));
+        assert!(cover_change_needs_repaint(View::Stage, modal, true, false));
+        assert!(cover_change_needs_repaint(View::Stage, drawer, true, false));
+        // The repaint frame draws the cover again; that must not loop.
+        assert!(!cover_change_needs_repaint(View::Stage, modal, true, true));
+        assert!(!cover_change_needs_repaint(
+            View::Stage,
+            modal,
+            false,
+            false
+        ));
+        assert!(!cover_change_needs_repaint(View::Stage, none, true, false));
+        assert!(!cover_change_needs_repaint(
+            View::Browse,
+            modal,
+            true,
+            false
+        ));
     }
 
     #[test]
