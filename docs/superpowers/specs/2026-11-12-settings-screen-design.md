@@ -78,12 +78,11 @@ next frame shows it.
 - **Cover size**: `TuiConfig.cover_size: CoverSize` (`P100`, `P75`, `P50`,
   `P25`; parsed from the integer, anything else → `P100`). `stage_layout` gets
   the percentage: the cover rect it computes today is scaled (width and height,
-  rounded down, at least 4×2 cells). In the wide layout it is vertically
-  centred in the original slot, and the details start right after the scaled
-  cover (plus the gap) and take the rest of the width. In the stacked layout it
-  is top-aligned in the original slot (no empty band above it) and centred
-  horizontally; the details start right below it and take the rest of the
-  height. A change clears `cover_draw_key` so the cover is redrawn.
+  rounded down, at least 4×2 cells) and always sits in the top-left corner of
+  the original slot, in both layouts (the image is drawn from the top-left of
+  its rect too). In the wide layout the details start right after the scaled
+  cover (plus the gap) and take the rest of the width; in the stacked layout
+  they start right below it and take the rest of the height. A change clears `cover_draw_key` so the cover is redrawn.
 - **Cover protocol**: the terminal can only be queried before the event loop
   starts (a query mid-run would race with key input). At start the TUI keeps
   the queried picker's protocol type when it ran a query (config `auto`,

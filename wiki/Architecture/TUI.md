@@ -312,6 +312,8 @@ in `layout::stage_layout`.
 - **Wide** (Stage area at least 70 x 14): a square cover on the left at full
   height (capped at half the width), details on the right.
 - **Narrow**: cover on top (at most half the height), details below.
+- **Cover size** (`[tui] cover_size`, 100 / 75 / 50 / 25 %) scales the cover;
+  it always stays in the top-left corner and the details follow it.
 - **No cover**: under 8 rows, or `show_cover = false`; details are centred (at
   most 80 columns wide).
 
