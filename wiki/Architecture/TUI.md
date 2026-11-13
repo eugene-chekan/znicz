@@ -281,7 +281,18 @@ and other keys stay. The strip above the bottom border explains the highlighted
 row in two lines; the border shows the config file's path. Bit-perfect is read
 when the player starts, so after a change the row says `on restart`. A cover
 protocol that needs the terminal's answer also says `on restart` after a change
-when the TUI started without asking the terminal. With no config file the change applies for this run only,
+when the TUI started without asking the terminal. Cover protocol offers only
+the protocols the terminal reported at start (Windows Terminal: no `kitty`); a
+value from the file that the terminal did not report is shown with `not
+supported`.
+
+On the Stage, cover changes wait while a modal, or a queue drawer that overlaps
+the cover, is open: the row shows the new value at once, and the cover follows
+when the overlay closes. A Kitty or Sixel cover is sent as whole rows, so
+drawing it again under an overlay would paint over the overlay. This also holds
+for a new stream cover that arrives while Help or Settings is open.
+
+With no config file the change applies for this run only,
 and the first such change says so. A config file with an error is never written
 to; the change applies for the run and the toast gives the line and column.
 

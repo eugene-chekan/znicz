@@ -260,7 +260,12 @@ impl App {
                     Change::Forward => (true, false),
                     Change::Back => (false, false),
                 };
-                settings::step_choice(row, &mut self.tui, forward, wrap)
+                if *row == Row::CoverProtocol {
+                    let choices = settings::protocol_choices(self.protocol_support);
+                    settings::step_protocol(&mut self.tui, &choices, forward, wrap)
+                } else {
+                    settings::step_choice(row, &mut self.tui, forward, wrap)
+                }
             }
             // Actions and folder rows are run by `on_settings_key`, not changed here.
             Kind::Action | Kind::Folder | Kind::Heading => false,
@@ -480,6 +485,57 @@ mod tests {
     fn saved(dir: &tempfile::TempDir) -> toml::Table {
         let text = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
         toml::from_str(&text).unwrap()
+    }
+
+    #[test]
+    fn stage_keeps_its_cover_settings_while_settings_is_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        app.view = crate::app::View::Stage;
+        press(&mut app, KeyCode::Char('S'));
+        screen_rows(&mut app);
+        select(&mut app, Row::ShowCover);
+        press(&mut app, KeyCode::Enter);
+        screen_rows(&mut app);
+        // Saved and shown in the row, but the Stage still draws the cover.
+        assert!(!app.tui.show_cover);
+        assert!(app.shown_tui().show_cover);
+        press(&mut app, KeyCode::Esc);
+        screen_rows(&mut app);
+        assert!(app.stage_frozen.is_none());
+        assert!(!app.shown_tui().show_cover);
+    }
+
+    #[test]
+    fn protocols_the_terminal_did_not_report_are_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        app.protocol_support = Some(crate::settings::ProtocolSupport {
+            kitty: false,
+            sixel: true,
+        });
+        press(&mut app, KeyCode::Char('S'));
+        select(&mut app, Row::CoverProtocol);
+        press(&mut app, KeyCode::Char('l'));
+        assert_eq!(app.tui.cover_protocol, crate::CoverProtocol::Sixel);
+        press(&mut app, KeyCode::Char('h'));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.tui.cover_protocol, crate::CoverProtocol::Sixel);
+    }
+
+    #[test]
+    fn an_unsupported_protocol_from_the_file_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        app.tui.cover_protocol = crate::CoverProtocol::Kitty;
+        app.protocol_support = Some(crate::settings::ProtocolSupport::default());
+        press(&mut app, KeyCode::Char('S'));
+        let rows = screen_rows(&mut app);
+        let row = rows
+            .iter()
+            .find(|line| line.contains("Cover protocol"))
+            .expect("protocol row drawn");
+        assert!(row.contains("not supported"), "{row}");
     }
 
     #[test]

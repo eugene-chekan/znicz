@@ -165,6 +165,8 @@ pub struct Values<'a> {
     pub protocol_needs_restart: bool,
     /// Bit-perfect was changed this run, so it applies at the next player start.
     pub bit_perfect_changed: bool,
+    /// The configured protocol is one the terminal did not report.
+    pub protocol_unsupported: bool,
 }
 
 fn on_off(value: bool) -> String {
@@ -221,6 +223,7 @@ pub fn hint_text(row: &Row, v: &Values) -> Option<&'static str> {
     match row {
         Row::DefaultDevice => Some("↵ choose"),
         Row::BitPerfect => v.bit_perfect_changed.then_some("on restart"),
+        Row::CoverProtocol if v.protocol_unsupported => Some("not supported"),
         Row::CoverProtocol => v.protocol_needs_restart.then_some("on restart"),
         Row::Folder(_) => Some("d remove"),
         Row::AddFolder | Row::RescanAll => Some("↵"),
@@ -252,6 +255,44 @@ fn step<T: Copy + PartialEq>(all: &[T], current: T, forward: bool, wrap: bool) -
         (false, false) => i,
     };
     all[j]
+}
+
+/// Which image protocols the terminal reported at start. `None` (no query
+/// ran: the config said halfblocks or off) offers every protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ProtocolSupport {
+    pub kitty: bool,
+    pub sixel: bool,
+}
+
+/// Whether `protocol` can be offered. Auto, halfblocks and off always can.
+pub fn protocol_supported(protocol: CoverProtocol, support: Option<ProtocolSupport>) -> bool {
+    match (protocol, support) {
+        (_, None) => true,
+        (CoverProtocol::Kitty, Some(s)) => s.kitty,
+        (CoverProtocol::Sixel, Some(s)) => s.sixel,
+        _ => true,
+    }
+}
+
+/// The protocols the Cover protocol row steps through.
+pub fn protocol_choices(support: Option<ProtocolSupport>) -> Vec<CoverProtocol> {
+    PROTOCOLS
+        .into_iter()
+        .filter(|p| protocol_supported(*p, support))
+        .collect()
+}
+
+/// Step the cover protocol through `choices`. A current value missing from
+/// them (set in the file) steps from the first choice.
+pub fn step_protocol(
+    tui: &mut TuiConfig,
+    choices: &[CoverProtocol],
+    forward: bool,
+    wrap: bool,
+) -> bool {
+    let new = step(choices, tui.cover_protocol, forward, wrap);
+    replace(&mut tui.cover_protocol, new)
 }
 
 /// Step a choice row's value in `tui`. Returns whether the value changed.
@@ -360,7 +401,31 @@ mod tests {
             update_check: true,
             protocol_needs_restart: false,
             bit_perfect_changed: false,
+            protocol_unsupported: false,
         }
+    }
+
+    #[test]
+    fn protocol_choices_follow_what_the_terminal_reported() {
+        use CoverProtocol::*;
+        assert_eq!(
+            protocol_choices(None),
+            vec![Auto, Kitty, Sixel, Halfblocks, Off]
+        );
+        let sixel_only = Some(ProtocolSupport {
+            kitty: false,
+            sixel: true,
+        });
+        assert_eq!(
+            protocol_choices(sixel_only),
+            vec![Auto, Sixel, Halfblocks, Off]
+        );
+        assert_eq!(
+            protocol_choices(Some(ProtocolSupport::default())),
+            vec![Auto, Halfblocks, Off]
+        );
+        assert!(!protocol_supported(Kitty, sixel_only));
+        assert!(protocol_supported(Off, sixel_only));
     }
 
     #[test]

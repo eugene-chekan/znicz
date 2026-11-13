@@ -235,3 +235,17 @@ page's icon table):
 `wiki/Architecture/TUI.md` (Settings modal, keys), config reference in the wiki
 and README (`[tui] cover_size`), `wiki/Architecture/Library.md` (remove folder),
 CHANGELOG 0.16.0, version 0.16.0.
+
+## Changes after review in a real terminal
+
+- Cover changes do not redraw the cover while an overlay covers it (Settings
+  or another modal; the queue drawer when it overlaps the cover). The Stage
+  keeps the cover settings it had when the overlay opened (`App::stage_frozen`)
+  and follows on close, through the full repaint closing already does.
+  Redrawing under the overlay painted the cover over it (Kitty and Sixel send
+  whole rows), and a repaint in the same or the next frame still showed it
+  for a moment on Windows Terminal.
+- Cover protocol offers only what the terminal reported at start
+  (`ProtocolSupport` from the picker's capabilities; all when no query ran).
+  A configured protocol the terminal did not report shows `not supported`.
+

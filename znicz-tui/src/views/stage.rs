@@ -23,17 +23,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState)
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let font = app
-        .picker
-        .get_or_insert_with(Picker::halfblocks)
-        .font_size();
-    let layout = crate::layout::stage_layout(
-        area,
-        font.width,
-        font.height,
-        app.tui.show_cover,
-        app.tui.cover_size,
-    );
+    let layout = stage_layout_for(area, app, app.shown_tui());
     if let Some(cover) = layout.cover {
         render_cover(frame, cover, app, state);
     }
@@ -433,12 +423,32 @@ pub(crate) fn keep_previous(
     }
 }
 
+/// The Stage layout for the given cover settings.
+pub(crate) fn stage_layout_for(
+    area: Rect,
+    app: &mut App,
+    tui: crate::TuiConfig,
+) -> crate::layout::StageLayout {
+    let font = app
+        .picker
+        .get_or_insert_with(Picker::halfblocks)
+        .font_size();
+    crate::layout::stage_layout(
+        area,
+        font.width,
+        font.height,
+        tui.show_cover,
+        tui.cover_size,
+    )
+}
+
 pub(crate) fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState) {
     if area.width == 0 || area.height == 0 {
         return;
     }
+    let shown = app.shown_tui();
 
-    let use_logo_only = app.tui.cover_protocol == CoverProtocol::Off;
+    let use_logo_only = shown.cover_protocol == CoverProtocol::Off;
     let ready = match (use_logo_only, state.current_track.as_ref()) {
         (true, _) | (_, None) => {
             app.last_stream_cover = None;
@@ -449,7 +459,7 @@ pub(crate) fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, state: 
                 app.last_stream_cover = None;
                 app.covers.get(CoverKey::File(p.to_path_buf()))
             } else {
-                let query = stream_query(state, track, &app.stations, app.tui.cover_search);
+                let query = stream_query(state, track, &app.stations, shown.cover_search);
                 let stream_url = query.stream_url.clone();
                 let ready = app.covers.get(CoverKey::Stream(query));
                 keep_previous(&mut app.last_stream_cover, &stream_url, ready)
@@ -459,7 +469,9 @@ pub(crate) fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, state: 
 
     let key = cover_draw_label(&ready);
     let draw_key = (key, area.width, area.height);
-    if app.cover_draw_key.as_ref() != Some(&draw_key) {
+    // Under an overlay, keep the cover already drawn (see `App::stage_frozen`).
+    let frozen = app.stage_frozen.is_some() && app.cover_image.is_some();
+    if !frozen && app.cover_draw_key.as_ref() != Some(&draw_key) {
         let image = match ready {
             CoverReady::Embedded(img) => img.as_ref().clone(),
             CoverReady::Pending | CoverReady::Logo => app.covers.logo_image().clone(),

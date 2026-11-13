@@ -118,6 +118,10 @@ fn values(app: &App) -> Values<'_> {
         bit_perfect: app.bit_perfect,
         update_check: app.check_for_updates,
         protocol_needs_restart: app.protocol_needs_restart(),
+        protocol_unsupported: !crate::settings::protocol_supported(
+            app.tui.cover_protocol,
+            app.protocol_support,
+        ),
         bit_perfect_changed: app.bit_perfect_changed(),
     }
 }

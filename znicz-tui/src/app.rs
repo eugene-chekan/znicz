@@ -351,6 +351,10 @@ pub struct App {
     pub queue_cursor: Cursor,
     pub library: LibraryPane,
     pub hits: HitMap,
+    /// The cover settings the Stage shows while an overlay covers the cover:
+    /// changes (Settings, a new stream cover) wait until it closes, because a
+    /// cover drawn again would paint over the overlay.
+    pub(crate) stage_frozen: Option<TuiConfig>,
     pub devices: Vec<AudioDeviceInfo>,
     pub device_cursor: Cursor,
     /// Whether the Devices modal switches the output or picks the default.
@@ -390,6 +394,8 @@ pub struct App {
     pub(crate) cover_protocol_at_start: CoverProtocol,
     /// The protocol the start-up terminal query picked; `None` when no query ran.
     pub(crate) queried_protocol: Option<ProtocolType>,
+    /// The protocols the start-up terminal query reported; `None` when no query ran.
+    pub(crate) protocol_support: Option<crate::settings::ProtocolSupport>,
     /// The "apply to this run only" toast has been shown.
     run_only_warned: bool,
     /// A folder removal waiting for Enter in Settings: the folder and its track count.
@@ -464,6 +470,12 @@ impl Drop for MouseCapture {
 }
 
 impl App {
+    /// The cover settings the Stage draws with: frozen while an overlay
+    /// covers the cover, otherwise the current ones.
+    pub(crate) fn shown_tui(&self) -> TuiConfig {
+        self.stage_frozen.unwrap_or(self.tui)
+    }
+
     /// Read the library writer's status: reload and report finished jobs, and
     /// offer the first-run prompt. Called once per frame.
     pub fn poll_library(&mut self) {
@@ -695,6 +707,7 @@ impl App {
             queue_cursor: Cursor::new(),
             library: LibraryPane::new(library),
             hits: HitMap::default(),
+            stage_frozen: None,
             devices: load_output_devices(),
             device_cursor: Cursor::new(),
             devices_mode: DevicesMode::Switch,
@@ -724,6 +737,7 @@ impl App {
             bit_perfect_at_start: true,
             cover_protocol_at_start: TuiConfig::default().cover_protocol,
             queried_protocol: None,
+            protocol_support: None,
             run_only_warned: false,
             settings_confirm: None,
             folder_prompt_from_settings: false,
@@ -765,6 +779,14 @@ impl App {
         let (picker, queried) = make_picker(self.tui.cover_protocol);
         self.picker = Some(picker);
         self.queried_protocol = queried;
+        self.protocol_support = queried.and(self.picker.as_ref()).map(|picker| {
+            use ratatui_image::picker::Capability;
+            let caps = picker.capabilities();
+            crate::settings::ProtocolSupport {
+                kitty: caps.contains(&Capability::Kitty),
+                sixel: caps.contains(&Capability::Sixel),
+            }
+        });
         self.cover_protocol_at_start = self.tui.cover_protocol;
         tracing::info!(
             protocol = ?self.picker.as_ref().map(|p| p.protocol_type()),
