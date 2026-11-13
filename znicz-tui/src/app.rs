@@ -985,6 +985,8 @@ impl App {
             self.toasts.tick();
 
             let state = self.player.state();
+            let repainting = repaint;
+            let cover_before = self.cover_draw_key.clone();
             if repaint {
                 repaint = false;
                 // Clear and redraw as one update, so the terminal never shows
@@ -998,6 +1000,13 @@ impl App {
                 drawn?;
             } else {
                 terminal.draw(|frame| views::render(frame, self, &state))?;
+            }
+            let cover_changed = cover_before != self.cover_draw_key;
+            if cover_change_needs_repaint(self.view, self.overlays(), cover_changed, repainting) {
+                if cover_needs_retransmit(self.picker.as_ref().map(|p| p.protocol_type())) {
+                    self.cover_draw_key = None;
+                }
+                repaint = true;
             }
 
             // Wake up for input, or on the tick to move the seek bar along.
@@ -2783,6 +2792,20 @@ pub(crate) fn needs_full_redraw(view: View, before: Overlays, after: Overlays) -
     view == View::Stage && (modal_closed || drawer_closed)
 }
 
+/// A cover drawn again under an open modal or drawer (a Settings change) is
+/// sent as whole rows that paint over the overlay's unchanged cells, which
+/// ratatui does not send again. Repaint the whole screen once, so every cell
+/// goes out in row order and the overlay ends up on top. The repaint frame
+/// itself does not ask again.
+pub(crate) fn cover_change_needs_repaint(
+    view: View,
+    overlays: Overlays,
+    cover_changed: bool,
+    repainting: bool,
+) -> bool {
+    view == View::Stage && (overlays.modal || overlays.drawer) && cover_changed && !repainting
+}
+
 /// After a full clear, Sixel and iTerm2 covers are re-sent from the encoded
 /// data ratatui-image keeps in the image cell, so they need no new encode.
 /// Kitty transmits an image once and only places it afterwards: encode it
@@ -2886,6 +2909,39 @@ mod tests {
         assert!(!cover_needs_retransmit(Some(ProtocolType::Iterm2)));
         assert!(!cover_needs_retransmit(Some(ProtocolType::Halfblocks)));
         assert!(!cover_needs_retransmit(None));
+    }
+
+    #[test]
+    fn a_cover_redrawn_under_an_overlay_repaints_once() {
+        let modal = Overlays {
+            modal: true,
+            drawer: false,
+        };
+        let drawer = Overlays {
+            modal: false,
+            drawer: true,
+        };
+        let none = Overlays {
+            modal: false,
+            drawer: false,
+        };
+        assert!(cover_change_needs_repaint(View::Stage, modal, true, false));
+        assert!(cover_change_needs_repaint(View::Stage, drawer, true, false));
+        // The repaint frame draws the cover again; that must not loop.
+        assert!(!cover_change_needs_repaint(View::Stage, modal, true, true));
+        assert!(!cover_change_needs_repaint(
+            View::Stage,
+            modal,
+            false,
+            false
+        ));
+        assert!(!cover_change_needs_repaint(View::Stage, none, true, false));
+        assert!(!cover_change_needs_repaint(
+            View::Browse,
+            modal,
+            true,
+            false
+        ));
     }
 
     #[test]
