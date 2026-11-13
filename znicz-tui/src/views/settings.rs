@@ -122,6 +122,7 @@ fn values(app: &App) -> Values<'_> {
             app.tui.cover_protocol,
             app.protocol_support,
         ),
+        stage_shows: app.stage_frozen.as_ref(),
         bit_perfect_changed: app.bit_perfect_changed(),
     }
 }

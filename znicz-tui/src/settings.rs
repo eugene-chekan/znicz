@@ -167,6 +167,9 @@ pub struct Values<'a> {
     pub bit_perfect_changed: bool,
     /// The configured protocol is one the terminal did not report.
     pub protocol_unsupported: bool,
+    /// The cover settings the Stage behind the modal still shows; a cover row
+    /// whose value differs applies when the modal closes.
+    pub stage_shows: Option<&'a TuiConfig>,
 }
 
 fn on_off(value: bool) -> String {
@@ -224,7 +227,10 @@ pub fn hint_text(row: &Row, v: &Values) -> Option<&'static str> {
         Row::DefaultDevice => Some("↵ choose"),
         Row::BitPerfect => v.bit_perfect_changed.then_some("on restart"),
         Row::CoverProtocol if v.protocol_unsupported => Some("not supported"),
-        Row::CoverProtocol => v.protocol_needs_restart.then_some("on restart"),
+        Row::CoverProtocol if v.protocol_needs_restart => Some("on restart"),
+        Row::ShowCover | Row::CoverSize | Row::CoverProtocol | Row::CoverSearch => {
+            applies_on_close(row, v).then_some("on close")
+        }
         Row::Folder(_) => Some("d remove"),
         Row::AddFolder | Row::RescanAll => Some("↵"),
         _ => None,
@@ -255,6 +261,20 @@ fn step<T: Copy + PartialEq>(all: &[T], current: T, forward: bool, wrap: bool) -
         (false, false) => i,
     };
     all[j]
+}
+
+/// A cover row whose value the Stage behind the modal does not show yet.
+fn applies_on_close(row: &Row, v: &Values) -> bool {
+    let Some(shown) = v.stage_shows else {
+        return false;
+    };
+    match row {
+        Row::ShowCover => shown.show_cover != v.tui.show_cover,
+        Row::CoverSize => shown.cover_size != v.tui.cover_size,
+        Row::CoverProtocol => shown.cover_protocol != v.tui.cover_protocol,
+        Row::CoverSearch => shown.cover_search != v.tui.cover_search,
+        _ => false,
+    }
 }
 
 /// Which image protocols the terminal reported at start. `None` (no query
@@ -402,7 +422,34 @@ mod tests {
             protocol_needs_restart: false,
             bit_perfect_changed: false,
             protocol_unsupported: false,
+            stage_shows: None,
         }
+    }
+
+    #[test]
+    fn cover_rows_say_on_close_until_the_stage_shows_them() {
+        let shown = TuiConfig::default();
+        let tui = TuiConfig {
+            cover_size: CoverSize::P50,
+            ..TuiConfig::default()
+        };
+        let values = Values {
+            tui: &tui,
+            default_device: None,
+            bit_perfect: true,
+            update_check: true,
+            protocol_needs_restart: false,
+            bit_perfect_changed: false,
+            protocol_unsupported: false,
+            stage_shows: Some(&shown),
+        };
+        assert_eq!(hint_text(&Row::CoverSize, &values), Some("on close"));
+        assert_eq!(hint_text(&Row::ShowCover, &values), None);
+        let no_stage = Values {
+            stage_shows: None,
+            ..values
+        };
+        assert_eq!(hint_text(&Row::CoverSize, &no_stage), None);
     }
 
     #[test]

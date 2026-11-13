@@ -496,10 +496,15 @@ mod tests {
         screen_rows(&mut app);
         select(&mut app, Row::ShowCover);
         press(&mut app, KeyCode::Enter);
-        screen_rows(&mut app);
+        let rows = screen_rows(&mut app);
         // Saved and shown in the row, but the Stage still draws the cover.
         assert!(!app.tui.show_cover);
         assert!(app.shown_tui().show_cover);
+        let row = rows
+            .iter()
+            .find(|line| line.contains("Show cover"))
+            .expect("row drawn");
+        assert!(row.contains("on close"), "{row}");
         press(&mut app, KeyCode::Esc);
         screen_rows(&mut app);
         assert!(app.stage_frozen.is_none());
