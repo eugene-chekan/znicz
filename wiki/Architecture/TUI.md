@@ -8,6 +8,10 @@ experience lives. The interface is an **immediate-mode** loop:
 3. Wait for a key, a mouse event, or for the tick that advances the seek bar
 4. Repeat until `q`
 
+The seek bar (`format::progress_bar`) fills in half-cell steps: `━` for each
+played cell, `╾` for a played half cell, then `─`. The player publishes the
+position every 200 ms, and the TUI redraws on the same tick.
+
 While the TUI is up it also **captures the mouse**. A left click on a visible
 library, queue, or overlay list row **selects** that row (it does not play or
 open). The wheel moves the focused list one row, like `j` / `k`. Help,

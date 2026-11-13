@@ -19,6 +19,7 @@
 - On the Stage, cover changes made while Settings (or another modal) is open
   show when it closes, so the cover never draws over the modal. Cover protocol
   offers only what the terminal supports.
+- The seek bar moves in half-cell steps (`━━━╾───`), twice as smoothly.
 - README: a Nerd Font icons guide for `icons = "nerd"`.
 
 ## 0.15.0 - 2026-11-12

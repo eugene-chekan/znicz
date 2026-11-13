@@ -101,17 +101,25 @@ pub fn display_width(text: &str) -> usize {
     unicode_width::UnicodeWidthStr::width(text)
 }
 
-/// A seek bar: filled track, a knob at the playhead, then the rest.
+/// A seek bar `width` cells wide: the played part (`━`, ending in `╾` on a
+/// half cell), then the rest (`─`).
 ///
-/// Returns the three pieces separately so each can be styled on its own.
+/// Returns the two parts separately so each can be styled on its own.
 pub fn progress_bar(ratio: f64, width: usize) -> (String, String) {
     if width == 0 {
         return (String::new(), String::new());
     }
     let ratio = ratio.clamp(0.0, 1.0);
-    let filled = ((ratio * width as f64).round() as usize).min(width);
-    let done = "━".repeat(filled);
-    let todo = "─".repeat(width - filled);
+    // Half-cell steps: a heavy-to-light piece (`╾`) ends an odd count, so the
+    // bar moves twice as often as whole cells allow.
+    let halves = ((ratio * width as f64 * 2.0).round() as usize).min(width * 2);
+    let full = halves / 2;
+    let half = halves % 2;
+    let mut done = "━".repeat(full);
+    if half == 1 {
+        done.push('╾');
+    }
+    let todo = "─".repeat(width - full - half);
     (done, todo)
 }
 
@@ -248,6 +256,21 @@ mod tests {
         assert_eq!(done.chars().count(), 10, "a finished track fills the bar");
         let (done, _) = progress_bar(0.0, 10);
         assert!(done.is_empty(), "a fresh track has nothing filled");
+    }
+
+    #[test]
+    fn the_bar_moves_in_half_cells() {
+        // 10 cells = 20 half steps; 0.25 is 5 half steps: 2 full cells and a half.
+        assert_eq!(
+            progress_bar(0.25, 10),
+            ("━━╾".to_string(), "───────".to_string())
+        );
+        assert_eq!(
+            progress_bar(0.3, 10),
+            ("━━━".to_string(), "───────".to_string())
+        );
+        // The half piece never spills past the end.
+        assert_eq!(progress_bar(0.99, 10).0, "━━━━━━━━━━");
     }
 
     #[test]
