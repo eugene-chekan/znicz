@@ -351,6 +351,9 @@ pub struct App {
     pub queue_cursor: Cursor,
     pub library: LibraryPane,
     pub hits: HitMap,
+    /// Draw the screen without the drawer and modal (first pass of a
+    /// layered repaint, see `run_loop`).
+    pub(crate) hide_overlays: bool,
     pub devices: Vec<AudioDeviceInfo>,
     pub device_cursor: Cursor,
     /// Whether the Devices modal switches the output or picks the default.
@@ -695,6 +698,7 @@ impl App {
             queue_cursor: Cursor::new(),
             library: LibraryPane::new(library),
             hits: HitMap::default(),
+            hide_overlays: false,
             devices: load_output_devices(),
             device_cursor: Cursor::new(),
             devices_mode: DevicesMode::Switch,
@@ -977,6 +981,8 @@ impl App {
 
     fn run_loop(&mut self, terminal: &mut ratatui::DefaultTerminal) -> color_eyre::Result<()> {
         let mut repaint = false;
+        // Repaint as two passes: the screen without overlays, then with them.
+        let mut layered = false;
         loop {
             self.poll_player_events();
             self.poll_updates();
@@ -993,9 +999,24 @@ impl App {
                 // the blank screen in between (ignored where unsupported).
                 execute!(terminal.backend_mut(), BeginSynchronizedUpdate)?;
                 terminal.clear()?;
-                let drawn = terminal
-                    .draw(|frame| views::render(frame, self, &state))
-                    .map(|_| ());
+                let mut drawn = Ok(());
+                if layered {
+                    // A Kitty cover row is one escape sequence that paints the
+                    // whole row. Draw the cover first; the overlay's cells then
+                    // all differ from the cover's and are sent on top of it, as
+                    // when a modal opens over a cover.
+                    layered = false;
+                    self.hide_overlays = true;
+                    drawn = terminal
+                        .draw(|frame| views::render(frame, self, &state))
+                        .map(|_| ());
+                    self.hide_overlays = false;
+                }
+                if drawn.is_ok() {
+                    drawn = terminal
+                        .draw(|frame| views::render(frame, self, &state))
+                        .map(|_| ());
+                }
                 execute!(terminal.backend_mut(), EndSynchronizedUpdate)?;
                 drawn?;
             } else {
@@ -1007,6 +1028,7 @@ impl App {
                     self.cover_draw_key = None;
                 }
                 repaint = true;
+                layered = true;
             }
 
             // Wake up for input, or on the tick to move the seek bar along.
@@ -2909,6 +2931,15 @@ mod tests {
         assert!(!cover_needs_retransmit(Some(ProtocolType::Iterm2)));
         assert!(!cover_needs_retransmit(Some(ProtocolType::Halfblocks)));
         assert!(!cover_needs_retransmit(None));
+    }
+
+    #[test]
+    fn hidden_overlays_are_not_drawn() {
+        let mut app = App::with_library(test_player(), None);
+        app.modal = Modal::Settings;
+        assert!(rendered(&mut app).contains("Settings"));
+        app.hide_overlays = true;
+        assert!(!rendered(&mut app).contains("Settings"));
     }
 
     #[test]

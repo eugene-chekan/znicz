@@ -107,7 +107,12 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
         now_playing::render_transport(frame, chunks[1], app, state, !compact);
     }
 
-    match crate::layout::drawer(drawer_area, app.queue_open) {
+    let drawer = if app.hide_overlays {
+        crate::layout::Drawer::Closed
+    } else {
+        crate::layout::drawer(drawer_area, app.queue_open)
+    };
+    match drawer {
         crate::layout::Drawer::Overlay(rect) | crate::layout::Drawer::Sheet(rect) => {
             frame.render_widget(Clear, rect);
             let stats = queue::stats(app, &state.queue);
@@ -121,6 +126,9 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
 
     status::render_footer(frame, chunks[2], app);
 
+    if app.hide_overlays {
+        return;
+    }
     match app.modal {
         Modal::Help => help::render(frame, list, app),
         Modal::Devices => devices::render_modal(frame, list, app, state),
