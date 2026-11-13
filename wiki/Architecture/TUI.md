@@ -287,8 +287,9 @@ value from the file that the terminal did not report is shown with `not
 supported`.
 
 On the Stage, cover changes wait while a modal, or a queue drawer that overlaps
-the cover, is open: the row shows the new value at once, and the cover follows
-when the overlay closes. A Kitty or Sixel cover is sent as whole rows, so
+the cover, is open: the row shows the new value at once with a dim `on close`
+hint (Show cover, Cover size, Cover protocol, Cover search), and the cover
+follows when the overlay closes. A Kitty or Sixel cover is sent as whole rows, so
 drawing it again under an overlay would paint over the overlay. This also holds
 for a new stream cover that arrives while Help or Settings is open.
 
