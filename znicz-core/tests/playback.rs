@@ -105,6 +105,79 @@ fn track_plays_for_its_real_duration() {
     );
 }
 
+/// Play `files` as a queue from the first row and collect when each track
+/// started, until the last one ends or `limit` passes.
+fn play_queue(files: Vec<std::path::PathBuf>, limit: Duration) -> (Vec<Duration>, usize, Duration) {
+    let count = files.len();
+    let (player, _thread) = spawn_player(AudioConfig::default());
+    player
+        .send_blocking(Command::ReplaceQueue {
+            items: files.into_iter().map(znicz_core::QueueItem::file).collect(),
+            position: 0,
+        })
+        .expect("queue");
+
+    let started = Instant::now();
+    player
+        .send_blocking(Command::QueuePlayIndex(0))
+        .expect("play");
+
+    let mut starts = Vec::new();
+    let mut ended = 0;
+    while started.elapsed() < limit && ended < count {
+        for event in player.drain_events() {
+            match event {
+                PlayerEvent::TrackStarted(_) => starts.push(started.elapsed()),
+                PlayerEvent::TrackEnded => ended += 1,
+                _ => {}
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    player.send(Command::Stop).ok();
+    (starts, ended, started.elapsed())
+}
+
+#[test]
+fn same_format_tracks_play_back_to_back() {
+    if skip_hardware_playback() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.wav");
+    let b = dir.path().join("b.wav");
+    write_silent_wav(&a, 44_100, 2, 2);
+    write_silent_wav(&b, 44_100, 2, 2);
+
+    let (starts, ended, total) = play_queue(vec![a, b], Duration::from_secs(10));
+
+    assert_eq!(starts.len(), 2, "each track starts once: {starts:?}");
+    assert_eq!(ended, 2, "each track ends once");
+    let second = starts[1];
+    assert!(
+        second >= Duration::from_millis(1700) && second <= Duration::from_millis(2500),
+        "the second track must start at the boundary, started at {second:?}"
+    );
+    assert!(total < Duration::from_millis(5000), "took {total:?}");
+}
+
+#[test]
+fn a_format_change_falls_back_and_plays_both() {
+    if skip_hardware_playback() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a44.wav");
+    let b = dir.path().join("b48.wav");
+    write_silent_wav(&a, 44_100, 2, 1);
+    write_silent_wav(&b, 48_000, 2, 1);
+
+    let (starts, ended, _) = play_queue(vec![a, b], Duration::from_secs(10));
+
+    assert_eq!(starts.len(), 2, "both tracks start: {starts:?}");
+    assert_eq!(ended, 2, "both tracks end");
+}
+
 /// Tags must reach the player state, not just the file name.
 #[test]
 fn track_info_carries_tags() {
