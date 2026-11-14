@@ -20,6 +20,8 @@ pub enum LibraryOp {
     RescanAll,
     /// Drop entries whose files no longer exist, anywhere in the library.
     Prune,
+    /// Forget the folder and delete every track in it or below it.
+    RemoveFolder { path: PathBuf },
 }
 
 impl LibraryOp {
@@ -28,6 +30,7 @@ impl LibraryOp {
         match self {
             Self::AddFolder { .. } | Self::RescanAll => format!("scan failed: {error}"),
             Self::Prune => format!("library job failed: {error}"),
+            Self::RemoveFolder { .. } => format!("could not remove the folder: {error}"),
         }
     }
 }
@@ -51,8 +54,11 @@ pub struct ScanSummary {
     pub failed: usize,
     /// Remembered folders that did not exist and were skipped.
     pub skipped: Vec<PathBuf>,
-    /// Entries removed by a prune, if one ran.
+    /// Entries removed by a prune, or tracks removed with a folder.
     pub removed: usize,
+    /// The folder a remove job cleared; `removed` counts its tracks.
+    #[serde(default)]
+    pub removed_folder: Option<PathBuf>,
     /// Set when the job failed outright.
     pub error: Option<String>,
 }
@@ -258,6 +264,10 @@ mod tests {
         assert_eq!(
             LibraryOp::Prune.failure_text("boom"),
             "library job failed: boom"
+        );
+        assert_eq!(
+            LibraryOp::RemoveFolder { path: "/m".into() }.failure_text("boom"),
+            "could not remove the folder: boom"
         );
     }
 

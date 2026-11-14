@@ -92,10 +92,13 @@ path = "~/.local/share/znicz/library.db"
 
 [tui]
 show_cover = true
+cover_size = 100          # Stage cover, % of the largest fit: 100 | 75 | 50 | 25
 cover_protocol = "auto"   # Stage cover: auto | kitty | sixel | halfblocks | off
 marquee = true
-icons = "unicode"         # unicode | emoji | nerd (volume marker)
+icons = "unicode"         # unicode | emoji | nerd (volume marker; see README "Nerd Font icons")
 ```
+
+The first start writes this file with the full default template (`znicz/src/default-config.toml`), so every key is listed there. `znicz config path` prints the path and `znicz config init [--force]` rewrites the defaults. The Settings screen (`S`) saves changes to this file in place.
 
 `bit_perfect` is a flag for later policy (skip software volume, refuse resampling). Phase 1 still has a software volume control.
 

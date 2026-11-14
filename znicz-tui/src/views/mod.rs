@@ -8,6 +8,8 @@ mod now_playing;
 mod playlists;
 mod queue;
 mod radio;
+mod settings;
+
 pub mod stage;
 mod status;
 mod update;
@@ -80,6 +82,20 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
             height: transport.height.min(1),
             ..transport
         };
+        let covered = app.modal != Modal::None
+            || match crate::layout::drawer(drawer_area, app.queue_open) {
+                crate::layout::Drawer::Overlay(rect) | crate::layout::Drawer::Sheet(rect) => {
+                    stage::stage_layout_for(stage_area, app, app.shown_tui())
+                        .cover
+                        .is_some_and(|cover| cover.intersects(rect))
+                }
+                crate::layout::Drawer::Closed => false,
+            };
+        app.stage_frozen = match (covered, app.stage_frozen) {
+            (true, Some(frozen)) => Some(frozen),
+            (true, None) => Some(app.tui),
+            (false, _) => None,
+        };
         stage::render(frame, stage_area, app, state);
         let scanning = app.library_status.scanning.clone();
         frame.render_widget(
@@ -91,6 +107,7 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
             message_row,
         );
     } else {
+        app.stage_frozen = None;
         app.title_slot = library::title_slot(
             &app.library,
             crate::layout::strip_inner(list, app.queue_open),
@@ -126,6 +143,7 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
         Modal::Radio => radio::render_modal(frame, list, app),
         Modal::Messages => messages::render_modal(frame, list, app),
         Modal::Update => update::render_modal(frame, list, app),
+        Modal::Settings => settings::render(frame, list, app),
         Modal::None => {}
     }
 }

@@ -1,0 +1,34 @@
+# Znicz settings. Edit here or in the TUI (S).
+# Reference: https://github.com/eugene-chekan/znicz#configuration
+
+[audio]
+# Output device id; leave unset for the system default (see `znicz devices`).
+# device = "default"
+volume = 1.0
+# Open the device at each file's own sample rate and channels.
+bit_perfect = true
+
+[player]
+# Seconds the player stays up while stopped with no UI; 0 never exits.
+idle_secs = 900
+
+[library]
+# Where the library database lives; unset uses the user data directory.
+# path = "~/.local/share/znicz/library.db"
+
+[tui]
+show_cover = true          # album art on the Stage
+cover_size = 100           # Stage art size, % of the largest fit: 100 | 75 | 50 | 25
+cover_protocol = "auto"    # auto | kitty | sixel | halfblocks | off
+library_layout = "columns" # columns | tree
+marquee = true             # scroll long now-playing titles; false cuts with …
+icons = "unicode"          # unicode | emoji | nerd (needs a Nerd Font: see README "Nerd Font icons")
+
+[covers]
+search = true              # look radio covers up by artist / title (Deezer, iTunes, MusicBrainz)
+
+[updates]
+check = true               # ask GitHub for a new release once a day
+
+[mcp]
+skills_dirs = []

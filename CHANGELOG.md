@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.16.0 - 2026-11-13
+
+- Settings (`S`): display and audio options, the default output device, music
+  folders (add, rescan, remove) and the update check. Each change is saved to
+  `config.toml` in place, so your comments stay.
+- Cover size on the Stage: 100, 75, 50 or 25 percent (`[tui] cover_size`).
+- `config.toml` is written with the defaults on first start. `znicz config path`
+  prints where it is; `znicz config init [--force]` writes the defaults again
+  (the old file is kept as `config.toml.bak`).
+- A `config.toml` that does not parse is reported with its line and column, and
+  Znicz runs on the defaults.
+- Removing a music folder (`d` in Settings) forgets it and deletes its tracks
+  from the library. The files stay.
+- The footer always shows the running version (`? more · v0.16.0`), and
+  `v0.16.0 → 0.17.0 available` while an update is known. Help no longer shows
+  the version.
+- On the Stage, cover changes made while Settings (or another modal) is open
+  show when it closes, so the cover never draws over the modal. Cover protocol
+  offers only what the terminal supports.
+- The seek bar moves in half-cell steps (`━━━╾───`), twice as smoothly.
+- README: a Nerd Font icons guide for `icons = "nerd"`.
+
 ## 0.15.0 - 2026-11-12
 
 - The TUI no longer receives the whole queue from the player on every frame;

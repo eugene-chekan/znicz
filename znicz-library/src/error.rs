@@ -10,6 +10,9 @@ pub enum LibraryError {
 
     #[error("{0} is not a directory")]
     NotADirectory(String),
+
+    #[error("not a music folder: {0}")]
+    NotAMusicFolder(String),
 }
 
 pub type Result<T> = std::result::Result<T, LibraryError>;

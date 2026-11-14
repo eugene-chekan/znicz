@@ -1,12 +1,12 @@
 #[cfg(test)]
 use std::cell::Cell;
 use std::cell::RefCell;
-use std::path::{Path, PathBuf};
+use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 use std::sync::Arc;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::error::Result;
+use crate::error::{LibraryError, Result};
 use crate::track::{AlbumSummary, ArtistSummary, SearchHit, SearchLimits, Track};
 
 /// Synthetic browse root for compilation albums (see `browse_artists`).
@@ -636,6 +636,44 @@ impl Library {
         Ok(removed)
     }
 
+    /// How many tracks lie in `folder` or below it.
+    pub fn count_under(&self, folder: &Path) -> Result<usize> {
+        let Some((key, prefix)) = folder_match(folder) else {
+            return Ok(0);
+        };
+        let count: i64 = self.conn.query_row(
+            &format!("SELECT COUNT(*) FROM tracks WHERE {UNDER_FOLDER}"),
+            params![key, like_prefix(&prefix), prefix],
+            |row| row.get(0),
+        )?;
+        Ok(count as usize)
+    }
+
+    /// Forget a remembered folder and delete every track in it or below it, in
+    /// one transaction. Returns how many tracks went.
+    ///
+    /// Remembered folders below `folder` are forgotten too, since their tracks
+    /// go. A filesystem root is refused: removing it would empty the library.
+    pub fn remove_folder(&mut self, folder: &Path) -> Result<usize> {
+        let Some((key, prefix)) = folder_match(folder) else {
+            return Ok(0);
+        };
+        if Path::new(&key).parent().is_none() {
+            return Err(LibraryError::NotAMusicFolder(key));
+        }
+        let transaction = self.conn.transaction()?;
+        let removed = transaction.execute(
+            &format!("DELETE FROM tracks WHERE {UNDER_FOLDER}"),
+            params![key, like_prefix(&prefix), prefix],
+        )?;
+        transaction.execute(
+            &format!("DELETE FROM folders WHERE {UNDER_FOLDER}"),
+            params![key, like_prefix(&prefix), prefix],
+        )?;
+        transaction.commit()?;
+        Ok(removed)
+    }
+
     pub fn clear(&mut self) -> Result<()> {
         self.conn.execute("DELETE FROM tracks", [])?;
         Ok(())
@@ -691,6 +729,57 @@ fn escape_like(query: &str) -> String {
         .replace('%', "\\%")
         .replace('_', "\\_")
 }
+
+/// A folder as it is stored (trailing separators trimmed, a root kept) and the
+/// prefix every track below it starts with. `None` for an empty path, which
+/// would otherwise match every absolute path.
+pub(crate) fn folder_match(folder: &Path) -> Option<(String, String)> {
+    let text = normalize_separators(&path_str(folder));
+    if text.is_empty() {
+        return None;
+    }
+    let trimmed = text.trim_end_matches(MAIN_SEPARATOR);
+    let key = if trimmed.is_empty() {
+        MAIN_SEPARATOR.to_string()
+    } else {
+        trimmed.to_string()
+    };
+    let prefix = if key.ends_with(MAIN_SEPARATOR) {
+        key.clone()
+    } else {
+        format!("{key}{MAIN_SEPARATOR}")
+    };
+    Some((key, prefix))
+}
+
+/// Windows accepts `/` as well as `\` in paths, so folder matching treats
+/// them alike there. On Unix a backslash is an ordinary file name character.
+#[cfg(windows)]
+fn normalize_separators(text: &str) -> String {
+    text.replace('/', "\\")
+}
+
+#[cfg(not(windows))]
+fn normalize_separators(text: &str) -> String {
+    text.to_string()
+}
+
+/// The LIKE pattern for a folder prefix. LIKE folds ASCII case, so
+/// `UNDER_FOLDER` also compares the prefix exactly.
+fn like_prefix(prefix: &str) -> String {
+    format!("{}%", escape_like(prefix))
+}
+
+/// Parameters: the folder key, the LIKE pattern, the exact prefix.
+#[cfg(not(windows))]
+const UNDER_FOLDER: &str =
+    "path = ?1 OR (path LIKE ?2 ESCAPE '\\' AND substr(path, 1, length(?3)) = ?3)";
+
+/// As on Unix, but a stored `/` counts as `\` (see `normalize_separators`).
+#[cfg(windows)]
+const UNDER_FOLDER: &str = "replace(path, '/', '\\') = ?1 OR \
+     (replace(path, '/', '\\') LIKE ?2 ESCAPE '\\' \
+      AND substr(replace(path, '/', '\\'), 1, length(?3)) = ?3)";
 
 /// Unicode-aware lowercase for search. Unlike SQLite's `lower()`, this folds
 /// Cyrillic and other non-ASCII letters.
@@ -869,6 +958,130 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    fn add_track(library: &mut Library, path: &str) {
+        library
+            .upsert_track_for_test(Path::new(path), "t", None, None, None)
+            .unwrap();
+    }
+
+    #[test]
+    fn remove_folder_drops_its_tracks_and_forgets_it() {
+        let mut library = Library::open_in_memory().unwrap();
+        library.remember_folder(Path::new("/music")).unwrap();
+        library.remember_folder(Path::new("/music2")).unwrap();
+        for path in ["/music/a.flac", "/music/sub/b.flac", "/music2/c.flac"] {
+            add_track(&mut library, path);
+        }
+        assert_eq!(library.remove_folder(Path::new("/music")).unwrap(), 2);
+        assert_eq!(library.folders().unwrap(), [PathBuf::from("/music2")]);
+        assert_eq!(library.track_count().unwrap(), 1);
+        assert!(
+            library
+                .get_by_path(Path::new("/music2/c.flac"))
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn remove_folder_accepts_a_trailing_separator() {
+        let mut library = Library::open_in_memory().unwrap();
+        library.remember_folder(Path::new("/music")).unwrap();
+        library.remember_folder(Path::new("/music2")).unwrap();
+        for path in ["/music/a.flac", "/music/sub/b.flac", "/music2/c.flac"] {
+            add_track(&mut library, path);
+        }
+        let input = format!("/music{MAIN_SEPARATOR}");
+        assert_eq!(library.remove_folder(Path::new(&input)).unwrap(), 2);
+        assert_eq!(library.folders().unwrap(), [PathBuf::from("/music2")]);
+        assert_eq!(library.track_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn removing_a_folder_forgets_remembered_folders_below_it() {
+        let mut library = Library::open_in_memory().unwrap();
+        for folder in ["/music", "/music/jazz", "/music2"] {
+            library.remember_folder(Path::new(folder)).unwrap();
+        }
+        for path in ["/music/a.flac", "/music/jazz/b.flac", "/music2/c.flac"] {
+            add_track(&mut library, path);
+        }
+        assert_eq!(library.remove_folder(Path::new("/music")).unwrap(), 2);
+        assert_eq!(library.folders().unwrap(), [PathBuf::from("/music2")]);
+        assert_eq!(library.track_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn remove_folder_refuses_a_filesystem_root() {
+        let mut library = Library::open_in_memory().unwrap();
+        library.remember_folder(Path::new("/")).unwrap();
+        add_track(&mut library, "/a.flac");
+        let err = library.remove_folder(Path::new("/")).expect_err("refused");
+        assert!(err.to_string().starts_with("not a music folder: "), "{err}");
+        assert_eq!(library.track_count().unwrap(), 1);
+        assert_eq!(library.folders().unwrap(), [PathBuf::from("/")]);
+    }
+
+    #[test]
+    fn a_folder_name_with_wildcards_matches_only_itself() {
+        let mut library = Library::open_in_memory().unwrap();
+        library.remember_folder(Path::new("/m/100%_mix")).unwrap();
+        for path in [
+            "/m/100%_mix/a.flac",
+            "/m/100%_mix/deep/b.flac",
+            "/m/100x_mix/c.flac",
+            "/m/100%_mixed/d.flac",
+            "/m/100abc/e.flac",
+        ] {
+            add_track(&mut library, path);
+        }
+        assert_eq!(library.count_under(Path::new("/m/100%_mix")).unwrap(), 2);
+        assert_eq!(library.remove_folder(Path::new("/m/100%_mix")).unwrap(), 2);
+        assert_eq!(library.track_count().unwrap(), 3);
+        assert!(library.folders().unwrap().is_empty());
+    }
+
+    /// On Windows a backslash is a separator, not a name character.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_backslash_in_the_folder_name_is_literal() {
+        let mut library = Library::open_in_memory().unwrap();
+        add_track(&mut library, "/m/a\\b/x.flac");
+        add_track(&mut library, "/m/axb/y.flac");
+        assert_eq!(library.remove_folder(Path::new("/m/a\\b")).unwrap(), 1);
+        assert_eq!(library.track_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn folder_match_is_case_sensitive() {
+        let mut library = Library::open_in_memory().unwrap();
+        add_track(&mut library, "/Music/a.flac");
+        assert_eq!(library.count_under(Path::new("/music")).unwrap(), 0);
+        assert_eq!(library.remove_folder(Path::new("/music")).unwrap(), 0);
+        assert_eq!(library.track_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn count_under_counts_the_folder_and_its_subfolders_only() {
+        let mut library = Library::open_in_memory().unwrap();
+        for path in ["/music/a.flac", "/music/sub/b.flac", "/music2/c.flac"] {
+            add_track(&mut library, path);
+        }
+        assert_eq!(library.count_under(Path::new("/music")).unwrap(), 2);
+        assert_eq!(library.count_under(Path::new("/music/")).unwrap(), 2);
+        assert_eq!(library.count_under(Path::new("/nope")).unwrap(), 0);
+        assert_eq!(library.track_count().unwrap(), 3);
+    }
+
+    #[test]
+    fn an_empty_folder_path_removes_nothing() {
+        let mut library = Library::open_in_memory().unwrap();
+        add_track(&mut library, "/music/a.flac");
+        assert_eq!(library.remove_folder(Path::new("")).unwrap(), 0);
+        assert_eq!(library.count_under(Path::new("")).unwrap(), 0);
+        assert_eq!(library.track_count().unwrap(), 1);
     }
 
     #[test]

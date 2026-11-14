@@ -157,7 +157,7 @@ The index is a SQLite file, by default `~/.local/share/znicz/library.db`
 ## The interface
 
 The library is the home screen. The queue is a side overlay (`]`), devices
-are a modal (`,`), `P` opens saved playlists, and `R` opens radio stations.
+are a modal (`,`), `S` opens Settings, `P` opens saved playlists, and `R` opens radio stations.
 Those two overlays share a keymap: `n` new, `e` edit, `c` copy, `d` delete.
 While they are open, `n` and `e` are not next/repeat; close with Esc to get
 the global keys back.
@@ -180,7 +180,7 @@ Under an artist, album rows read `Kind of Blue (1959)` and track rows `1. So Wha
 multi-disc albums); the artist appears only when a track's artist differs (compilations, guests).
 An artist's albums run oldest first, albums without a year last. Search results keep `— Artist`.
 The volume bar starts with a marker (`◢`, `×` when muted); `icons = "emoji"` or `"nerd"` swaps in
-🔈 🔉 🔊 / 🔇 or Nerd Font glyphs.
+🔈 🔉 🔊 / 🔇 or Nerd Font glyphs (`"nerd"` needs a [Nerd Font](#nerd-font-icons) in the terminal).
 
 Press `?` in the player for the keymap: the keys for where you are come first,
 and `/` filters by key or action. The overlay footer shows the running version.
@@ -216,6 +216,7 @@ The essentials:
 | Alt-← / Alt-→ | Pan a long title |
 | v / i | Stage: full-screen now playing (cover, details, signal path); again to return to Browse |
 | , | Devices |
+| S | Settings: display, audio, music folders, update check (saved to `config.toml`) |
 | ? / q | Help / quit TUI (`s` stops playback) |
 
 Some terminals do not send Alt-arrows (for example macOS Terminal until you
@@ -233,37 +234,60 @@ misbehaves. That log is not `session.toml` (the saved queue).
 
 ## Configuration
 
-`~/.config/znicz/config.toml`:
+Znicz writes this file with the defaults below on first start, unless a file is already there.
+Edit it by hand or in the TUI (`S`, Settings). Settings writes the same file in place and keeps your comments.
+
+| Platform | Path |
+|----------|------|
+| Linux | `~/.config/znicz/config.toml` (or `$XDG_CONFIG_HOME/znicz/config.toml`) |
+| macOS | `~/Library/Application Support/znicz/config.toml` |
+| Windows | `%APPDATA%\znicz\config.toml` |
+
+Default file (`znicz/src/default-config.toml`):
 
 ```toml
+# Znicz settings. Edit here or in the TUI (S).
+# Reference: https://github.com/eugene-chekan/znicz#configuration
+
 [audio]
-device = "default"
+# Output device id; leave unset for the system default (see `znicz devices`).
+# device = "default"
 volume = 1.0
+# Open the device at each file's own sample rate and channels.
 bit_perfect = true
 
-[mcp]
-skills_dirs = []
-
 [player]
+# Seconds the player stays up while stopped with no UI; 0 never exits.
 idle_secs = 900
 
 [library]
-# Optional. Defaults to the user data directory.
-path = "~/.local/share/znicz/library.db"
+# Where the library database lives; unset uses the user data directory.
+# path = "~/.local/share/znicz/library.db"
 
 [tui]
-show_cover = true         # cover on the Stage view
-cover_protocol = "auto"   # Stage cover: auto | kitty | sixel | halfblocks | off
-library_layout = "columns"  # columns | tree
-marquee = true            # scroll long now-playing titles; false truncates with …
-icons = "unicode"         # volume marker: unicode (◢ ×) | emoji (🔈 🔉 🔊 🔇) | nerd (Nerd Font)
+show_cover = true          # album art on the Stage
+cover_size = 100           # Stage art size, % of the largest fit: 100 | 75 | 50 | 25
+cover_protocol = "auto"    # auto | kitty | sixel | halfblocks | off
+library_layout = "columns" # columns | tree
+marquee = true             # scroll long now-playing titles; false cuts with …
+icons = "unicode"          # unicode | emoji | nerd (needs a Nerd Font: see README "Nerd Font icons")
 
 [covers]
-search = true   # look stream covers up by artist / title (Deezer, iTunes, MusicBrainz)
+search = true              # look radio covers up by artist / title (Deezer, iTunes, MusicBrainz)
 
 [updates]
-check = true    # ask GitHub for a new release once a day (TUI)
+check = true               # ask GitHub for a new release once a day
+
+[mcp]
+skills_dirs = []
 ```
+
+- `znicz config path` prints the file Znicz uses (`--config FILE` on the command line overrides it).
+- `znicz config init` writes the defaults to that file. It refuses to overwrite an existing file;
+  `znicz config init --force` copies the old file to `config.toml.bak` first.
+- A file that does not parse is not used: Znicz runs on the defaults and shows a toast with the line
+  and column, for example `config.toml has an error (line 2, column 5): expected a value. Using the defaults.`
+  While the file is broken, Settings applies changes for the run but does not save them.
 
 A station in `stations.toml` can opt out with `cover_search = false`.
 With search on, the playing stream's ICY title is sent to Deezer, then to Apple
@@ -282,6 +306,32 @@ The player process writes it after those fields settle, and on exit.
 Opening the player restores it **Stopped**; it does not auto-play.
 `znicz file.flac` / playlist or station play without `--append` does not load
 the old queue. This is not the stderr log above.
+
+## Nerd Font icons
+
+`icons = "nerd"` (in `[tui]`, or the Icons row in Settings) draws the volume marker with
+Nerd Font glyphs. A Nerd Font is a font patched with extra icon glyphs. The terminal has to
+use one, or the glyphs show as boxes or `?`.
+
+1. **Pick a font.** JetBrainsMono Nerd Font is one option. Download it from
+   [nerdfonts.com/font-downloads](https://www.nerdfonts.com/font-downloads), or from the
+   [`ryanoasis/nerd-fonts` releases](https://github.com/ryanoasis/nerd-fonts/releases)
+   (`JetBrainsMono.zip` or `JetBrainsMono.tar.xz`).
+2. **Install it.**
+   - **Arch Linux:** `sudo pacman -S ttf-jetbrains-mono-nerd` (package in the Extra repository).
+   - **Other Linux:** unzip into `~/.local/share/fonts/`, then run `fc-cache -f`.
+   - **macOS:** `brew install --cask font-jetbrains-mono-nerd-font`.
+   - **Windows:** `winget install --id DEVCOM.JetBrainsMonoNerdFont --exact`, or unzip the
+     archive, select the `.ttf` files, right-click, and choose Install.
+3. **Set it as the terminal's font.** Kitty: `font_family JetBrainsMono Nerd Font` in `kitty.conf`.
+   WezTerm: `config.font = wezterm.font 'JetBrainsMono Nerd Font'`. Alacritty: under `[font.normal]`,
+   `family = "JetBrainsMono Nerd Font"`. Windows Terminal: Settings → your profile →
+   Appearance → Font face. GNOME Terminal and Konsole: the profile's font setting. Other terminals:
+   choose the font in the profile or preference settings. Restart the terminal afterwards.
+4. **Check it.** In bash or zsh, `printf '\U000F057E\n'`. In PowerShell,
+   `[char]::ConvertFromUtf32(0xF057E)`. U+F057E is the volume-high glyph (󰕾). A speaker means
+   the font works; boxes or `?` mean it does not.
+5. **Turn it on.** Open Settings (`S`), set Icons to `nerd`, or write `icons = "nerd"` under `[tui]`.
 
 ## MCP (Cursor)
 

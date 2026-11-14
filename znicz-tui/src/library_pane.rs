@@ -1489,6 +1489,11 @@ impl LibraryPane {
         }
     }
 
+    /// How many tracks lie in `folder` or below it, from the TUI's read connection.
+    pub fn count_under(&self, folder: &std::path::Path) -> Option<usize> {
+        self.library.as_ref()?.count_under(folder).ok()
+    }
+
     /// Compatibility alias used by reload key.
     pub fn reload_albums(&mut self) {
         self.reload_browse();

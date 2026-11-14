@@ -7,6 +7,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use znicz_core::{AudioConfig, Command, PlayerHandle, spawn_player};
@@ -118,10 +119,15 @@ fn the_cover_slot_is_fully_painted_when_nothing_is_playing() {
         .draw(|frame| views::render(frame, &mut app, &state))
         .expect("draw");
     let buf = terminal.backend().buffer();
-    let cover =
-        znicz_tui::layout::stage_layout(ratatui::layout::Rect::new(0, 0, 80, 22), 10, 20, true)
-            .cover
-            .expect("a cover at 80x22");
+    let cover = znicz_tui::layout::stage_layout(
+        ratatui::layout::Rect::new(0, 0, 80, 22),
+        10,
+        20,
+        true,
+        znicz_tui::CoverSize::P100,
+    )
+    .cover
+    .expect("a cover at 80x22");
     let mut painted = 0u16;
     for y in cover.y..cover.y + cover.height {
         for x in cover.x..cover.x + cover.width {
@@ -226,6 +232,25 @@ fn every_view_draws_at_every_size() {
 }
 
 #[test]
+fn the_settings_modal_draws_at_every_size() {
+    let mut app = App::with_library(player(), None);
+    app.library_status.folders = vec![PathBuf::from("/music/a")];
+    app.on_key(KeyEvent::new(KeyCode::Char('S'), KeyModifiers::NONE));
+    // Last row, so the list has to scroll to show the cursor.
+    app.on_key(KeyEvent::new(KeyCode::Char('G'), KeyModifiers::NONE));
+
+    for &(width, height) in SIZES {
+        let screen = draw(&mut app, width, height);
+        assert_eq!(screen.lines().count(), height as usize);
+    }
+
+    let screen = draw(&mut app, 100, 30);
+    assert!(screen.contains(" Settings "), "{screen}");
+    assert!(screen.contains("Check for updates daily"), "{screen}");
+    assert!(screen.contains("Ask GitHub once a day"), "{screen}");
+}
+
+#[test]
 fn the_help_overlay_draws_at_every_size() {
     let mut app = App::with_library(player(), None);
     app.modal = Modal::Help;
@@ -243,13 +268,22 @@ fn the_help_overlay_draws_at_every_size() {
 }
 
 #[test]
-fn the_help_overlay_shows_the_app_version_and_close_hint() {
+fn the_help_overlay_shows_the_close_hint_and_the_footer_the_version() {
     let mut app = App::with_library(player(), None);
     app.modal = Modal::Help;
     let screen = draw(&mut app, 120, 40);
+    let version = format!("v{}", env!("CARGO_PKG_VERSION"));
+    let (body, footer) = screen
+        .trim_end_matches('\n')
+        .rsplit_once('\n')
+        .expect("a footer row");
     assert!(
-        screen.contains(&format!("znicz {}", env!("CARGO_PKG_VERSION"))),
-        "version missing from help:\n{screen}"
+        footer.contains(&version),
+        "version missing from footer:\n{screen}"
+    );
+    assert!(
+        !body.contains(&format!("znicz {}", env!("CARGO_PKG_VERSION"))),
+        "help still shows the version:\n{screen}"
     );
     assert!(
         screen.contains("/ filter · Esc close"),
@@ -633,17 +667,18 @@ fn footer(screen: &str) -> &str {
 fn the_footer_keeps_more_and_drops_low_priority_hints_when_narrow() {
     let mut app = App::with_library(player(), None);
 
-    let wide = draw(&mut app, 80, 24);
+    let version = format!("? more · v{}", env!("CARGO_PKG_VERSION"));
+    let wide = draw(&mut app, 120, 24);
     let row = footer(&wide);
     assert!(row.starts_with("Space pause · / search"), "{row}");
     assert!(row.contains("R radio"), "{row}");
-    assert!(row.trim_end().ends_with("? more"), "{row}");
+    assert!(row.trim_end().ends_with(&version), "{row}");
 
     let narrow = draw(&mut app, 40, 12);
     let row = footer(&narrow);
     assert!(row.starts_with("Space pause"), "{row}");
     assert!(!row.contains("R radio"), "{row}");
-    assert!(row.trim_end().ends_with("? more"), "{row}");
+    assert!(row.trim_end().ends_with(&version), "{row}");
 }
 
 #[test]
@@ -716,6 +751,7 @@ fn no_modal_covers_the_transport_or_footer() {
         Modal::Playlists,
         Modal::Radio,
         Modal::Messages,
+        Modal::Settings,
     ];
     for &(width, height) in &[(80u16, 24u16), (120, 40), (60, 18), (40, 12)] {
         let mut app = App::with_library(player(), None);
@@ -777,7 +813,7 @@ fn the_help_border_says_keep_and_clear_while_filtering() {
     let screen = draw(&mut app, 100, 40);
     let border = screen
         .lines()
-        .find(|line| line.contains("znicz "))
+        .find(|line| line.contains("Enter keep"))
         .expect("help bottom border");
     assert!(border.contains("Enter keep · Esc clear"), "{border}");
 }

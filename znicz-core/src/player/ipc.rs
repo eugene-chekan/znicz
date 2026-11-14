@@ -84,7 +84,7 @@ enum IpcResponse {
         state: Box<PlayerState>,
         /// The library writer's status, when this player hosts one.
         #[serde(default)]
-        library: Option<LibraryStatus>,
+        library: Option<Box<LibraryStatus>>,
         /// The queue revision the player reported; set by State replies.
         #[serde(default)]
         queue_revision: Option<u64>,
@@ -114,7 +114,7 @@ impl Shared {
     fn ok(&self) -> IpcResponse {
         IpcResponse::Ok {
             state: Box::new(self.player.state()),
-            library: self.library.as_ref().map(|host| host.status()),
+            library: self.library.as_ref().map(|host| Box::new(host.status())),
             queue_revision: None,
             queue_unchanged: false,
         }
@@ -519,7 +519,7 @@ fn handle_session(stream: TcpStream, shared: Arc<Shared>) {
                 }
                 let response = IpcResponse::Ok {
                     state: Box::new(state),
-                    library: shared.library.as_ref().map(|host| host.status()),
+                    library: shared.library.as_ref().map(|host| Box::new(host.status())),
                     queue_revision: Some(current),
                     queue_unchanged: unchanged,
                 };
@@ -632,7 +632,7 @@ impl LibraryHost for IpcClient {
                     queue_unchanged,
                 } => {
                     sync_queue(live, &mut state.queue, queue_revision, queue_unchanged);
-                    Ok(library.unwrap_or_default())
+                    Ok(library.map(|status| *status).unwrap_or_default())
                 }
                 IpcResponse::Err { message } => Err(ZniczError::Library(message)),
             },

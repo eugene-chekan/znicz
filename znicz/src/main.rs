@@ -16,10 +16,16 @@ use znicz_core::{
 use znicz_library::Library;
 use znicz_mcp::run_stdio;
 use znicz_tui::app::Engine;
-use znicz_tui::{App, Resume, RunOutcome, TuiConfig, Updates};
+use znicz_tui::{
+    App, ConfigFile, ConfigProblem, CoverSize, Resume, RunOutcome, SettingsValues, TuiConfig,
+    Updates,
+};
 
 mod daemon;
 mod update;
+
+/// The file written on first start and by `znicz config init`.
+const DEFAULT_CONFIG: &str = include_str!("default-config.toml");
 
 use daemon::{
     PLAYER_EXIT_TIMEOUT, acquire_player_lock, clear_stale_player_files, ensure_player, player_is_up,
@@ -101,6 +107,24 @@ enum Commands {
         #[arg(long, help = "Only check and print the release notes")]
         check: bool,
     },
+
+    /// Write or locate config.toml
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ConfigAction {
+    /// Write the default config.toml (refuses to overwrite unless --force)
+    Init {
+        /// Overwrite the file; the old one is kept as config.toml.bak
+        #[arg(long)]
+        force: bool,
+    },
+    /// Print the config.toml path in use
+    Path,
 }
 
 #[derive(Debug, Subcommand)]
@@ -201,6 +225,8 @@ struct LibrarySection {
 #[derive(Debug, Deserialize, Default)]
 struct TuiSection {
     show_cover: Option<bool>,
+    /// Percent of the largest fitting cover: 100, 75, 50 or 25.
+    cover_size: Option<i64>,
     cover_protocol: Option<String>,
     library_layout: Option<String>,
     marquee: Option<bool>,
@@ -210,6 +236,7 @@ struct TuiSection {
 fn tui_config(config: &Config) -> TuiConfig {
     TuiConfig {
         show_cover: config.tui.show_cover.unwrap_or(true),
+        cover_size: CoverSize::from_percent(config.tui.cover_size.unwrap_or(100)),
         cover_protocol: znicz_tui::CoverProtocol::parse(
             config.tui.cover_protocol.as_deref().unwrap_or("auto"),
         ),
@@ -258,7 +285,10 @@ fn main() -> color_eyre::Result<()> {
     update::remove_old_exe();
 
     let cli = Cli::parse();
-    let config = load_config(cli.config.as_deref());
+    if should_write_default(&cli) {
+        ensure_default_config();
+    }
+    let (config, config_problem) = load_config(cli.config.as_deref());
 
     if cli.list_devices {
         list_devices()?;
@@ -278,6 +308,13 @@ fn main() -> color_eyre::Result<()> {
         resume: cli.resume.as_deref().and_then(parse_resume),
         config_file: cli.config.clone(),
         cli_device: cli.device.clone(),
+        effective_config: config_path(cli.config.as_deref()).map(ConfigFile::new),
+        config_problem,
+        settings: SettingsValues {
+            bit_perfect: config.audio.bit_perfect.unwrap_or(true),
+            update_check: config.updates.check.unwrap_or(true),
+            default_device: config.audio.device.clone(),
+        },
     };
     let config_file = cli.config.clone();
 
@@ -327,6 +364,12 @@ fn main() -> color_eyre::Result<()> {
             list_albums(library_path)?;
         }
         Some(Commands::Update { check }) => update::run_cli(check)?,
+        Some(Commands::Config { action }) => {
+            if let Err(message) = run_config(action, cli.config.as_deref()) {
+                eprintln!("{message}");
+                std::process::exit(1);
+            }
+        }
         Some(Commands::Playlist { command }) => match command {
             PlaylistCmd::List => list_playlists()?,
             PlaylistCmd::Save { name: _ } => {
@@ -445,18 +488,145 @@ fn open_library(path: Option<PathBuf>) -> color_eyre::Result<Library> {
     Ok(Library::open(&path)?)
 }
 
-fn load_config(path: Option<&std::path::Path>) -> Config {
-    let path = path.map(PathBuf::from).or_else(default_config_path);
-    if let Some(path) = path {
-        if path.is_file() {
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                if let Ok(cfg) = toml::from_str::<Config>(&text) {
-                    return cfg;
-                }
-            }
+/// Read the config file. A missing file is not a problem. A broken or
+/// unreadable one gives the defaults, a warning, and the problem: either
+/// "line L, column C: <toml message>" or "cannot read: <io error>".
+fn load_config(path: Option<&Path>) -> (Config, Option<ConfigProblem>) {
+    let Some(path) = config_path(path) else {
+        return (Config::default(), None);
+    };
+    let parsed = match std::fs::read_to_string(&path) {
+        Ok(text) => parse_config_text(&text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return (Config::default(), None);
+        }
+        Err(e) => Err(ConfigProblem::Unreadable {
+            message: e.to_string(),
+        }),
+    };
+    match parsed {
+        Ok(config) => (config, None),
+        Err(problem) => {
+            tracing::warn!(path = %path.display(), ?problem, "config.toml not used");
+            (Config::default(), Some(problem))
         }
     }
-    Config::default()
+}
+
+/// Parse config text. A parse error carries its 1-based line and column.
+/// The message is one line, since it is shown in a toast.
+fn parse_config_text(text: &str) -> Result<Config, ConfigProblem> {
+    toml::from_str::<Config>(text).map_err(|e| {
+        let message = e.message().lines().collect::<Vec<_>>().join(", ");
+        // toml gives a span for every error from text; (1, 1) only guards a missing one.
+        let (line, column) = e
+            .span()
+            .map_or((1, 1), |span| line_and_column(text, span.start));
+        ConfigProblem::Parse {
+            line,
+            column,
+            message,
+        }
+    })
+}
+
+/// The 1-based line and column (counted in characters) of byte offset `at`.
+fn line_and_column(text: &str, at: usize) -> (usize, usize) {
+    let before = text.get(..at.min(text.len())).unwrap_or(text);
+    let line = before.matches('\n').count() + 1;
+    let line_start = before.rfind('\n').map_or(0, |i| i + 1);
+    let column = before[line_start..].chars().count() + 1;
+    (line, column)
+}
+
+/// The config file in use: `--config`, or the default location.
+fn config_path(cli_config: Option<&Path>) -> Option<PathBuf> {
+    cli_config.map(PathBuf::from).or_else(default_config_path)
+}
+
+/// Whether this start writes the default config. Not with `--config`, and not
+/// for `config` subcommands: `config init` must find a fresh machine's file absent.
+fn should_write_default(cli: &Cli) -> bool {
+    cli.config.is_none() && !matches!(cli.command, Some(Commands::Config { .. }))
+}
+
+/// First start: write the default config at the default path if it is missing.
+/// Failures only log a warning.
+fn ensure_default_config() {
+    let Some(path) = default_config_path() else {
+        return;
+    };
+    match ensure_default_config_at(&path) {
+        Ok(true) => tracing::info!("Created {} with the default settings", path.display()),
+        Ok(false) => {}
+        Err(e) => {
+            tracing::warn!(path = %path.display(), "cannot write the default config: {e}");
+        }
+    }
+}
+
+/// Write the default config at `path` unless something already exists there
+/// (a dangling symlink counts). Returns whether a file was written.
+fn ensure_default_config_at(path: &Path) -> std::io::Result<bool> {
+    if std::fs::symlink_metadata(path).is_ok() {
+        return Ok(false);
+    }
+    znicz_tui::config_file::write_atomically(path, DEFAULT_CONFIG)
+        .map_err(std::io::Error::other)?;
+    Ok(true)
+}
+
+/// Run `znicz config init` or `znicz config path`. Errors are plain messages
+/// for stderr.
+fn run_config(action: ConfigAction, cli_config: Option<&Path>) -> Result<(), String> {
+    let path = config_path(cli_config)
+        .ok_or("cannot work out where to keep config.toml; pass --config")?;
+    match action {
+        ConfigAction::Init { force } => {
+            let outcome = init_config(&path, force)?;
+            if let Some(backup) = outcome.backup {
+                println!("Backed up the old file to {}", backup.display());
+            }
+            println!("Wrote {}", path.display());
+        }
+        ConfigAction::Path => println!("{}", path.display()),
+    }
+    Ok(())
+}
+
+/// What `znicz config init` did beyond writing the file.
+#[derive(Debug, PartialEq, Eq)]
+struct InitOutcome {
+    /// Where the previous file was copied, when `--force` replaced one.
+    backup: Option<PathBuf>,
+}
+
+/// Write the default config at `path`. An existing file is refused unless
+/// `force`, which first copies it to `<path>.bak`.
+fn init_config(path: &Path, force: bool) -> Result<InitOutcome, String> {
+    if std::fs::symlink_metadata(path).is_err() {
+        znicz_tui::config_file::write_atomically(path, DEFAULT_CONFIG)?;
+        return Ok(InitOutcome { backup: None });
+    }
+    if !force {
+        return Err(format!(
+            "{} already exists (use --force to overwrite)",
+            path.display()
+        ));
+    }
+    let backup = backup_path(path);
+    std::fs::copy(path, &backup).map_err(|e| format!("cannot back up {}: {e}", path.display()))?;
+    znicz_tui::config_file::write_atomically(path, DEFAULT_CONFIG)?;
+    Ok(InitOutcome {
+        backup: Some(backup),
+    })
+}
+
+/// `<path>.bak`, next to the file it copies.
+fn backup_path(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(".bak");
+    PathBuf::from(name)
 }
 
 fn default_config_path() -> Option<PathBuf> {
@@ -725,6 +895,12 @@ struct TuiExtras {
     config_file: Option<PathBuf>,
     /// `--device` as given on this run (not the config file's), for a restart.
     cli_device: Option<String>,
+    /// The config file Settings edits: `--config`, or the default path.
+    effective_config: Option<ConfigFile>,
+    /// Why the config file was not used, shown as a toast when the TUI starts.
+    config_problem: Option<ConfigProblem>,
+    /// Config values the Settings modal shows (bit-perfect, update check, device).
+    settings: SettingsValues,
 }
 
 fn run_tui_with_client(
@@ -753,6 +929,13 @@ fn run_tui_with_client(
     if let Some(updates) = extras.updates {
         app = app.with_updates(updates);
     }
+    if let Some(file) = extras.effective_config {
+        app = app.with_config_file(file);
+    }
+    if let Some(problem) = extras.config_problem {
+        app = app.with_config_problem(problem);
+    }
+    app = app.with_settings_values(extras.settings);
     if let Some(message) = skip_notice {
         app.toasts.warn(message);
     }
@@ -1092,6 +1275,7 @@ fn list_albums(library_path: Option<PathBuf>) -> color_eyre::Result<()> {
 mod tests {
     use super::*;
     use clap::CommandFactory;
+    use tempfile::TempDir;
 
     #[test]
     fn version_is_wired() {
@@ -1146,5 +1330,202 @@ mod tests {
     #[test]
     fn restart_args_are_empty_without_options() {
         assert!(restart_args(None, None, None).is_empty());
+    }
+
+    #[test]
+    fn default_template_parses_to_the_defaults() {
+        let parsed: Config = toml::from_str(DEFAULT_CONFIG).unwrap();
+        let defaults = Config::default();
+        assert_eq!(tui_config(&parsed), tui_config(&defaults));
+        assert_eq!(parsed.audio.device, None);
+        assert_eq!(
+            parsed.audio.volume.unwrap_or(1.0),
+            defaults.audio.volume.unwrap_or(1.0)
+        );
+        assert_eq!(
+            parsed.audio.bit_perfect.unwrap_or(true),
+            defaults.audio.bit_perfect.unwrap_or(true)
+        );
+        assert_eq!(parsed.player.idle_secs.unwrap_or(900), 900);
+        assert!(parsed.covers.search.unwrap_or(true));
+        assert!(parsed.updates.check.unwrap_or(true));
+        assert!(parsed.mcp.skills_dirs.is_empty());
+        assert_eq!(parsed.library.path, None);
+        assert_eq!(parsed.tui.cover_size, Some(100));
+        assert_eq!(tui_config(&parsed).cover_size, CoverSize::P100);
+    }
+
+    #[test]
+    fn cover_size_is_read_as_a_percent() {
+        let half = parse_config_text("[tui]\ncover_size = 50\n").unwrap();
+        assert_eq!(tui_config(&half).cover_size, CoverSize::P50);
+        let odd = parse_config_text("[tui]\ncover_size = 60\n").unwrap();
+        assert_eq!(tui_config(&odd).cover_size, CoverSize::P100);
+    }
+
+    #[test]
+    fn parse_error_names_the_line_and_column() {
+        let err = parse_config_text("[audio]\nvolume = [\n").unwrap_err();
+        assert_eq!(
+            err,
+            ConfigProblem::Parse {
+                line: 3,
+                column: 1,
+                message: "invalid array, expected `]`".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn type_error_points_at_the_value() {
+        let err = parse_config_text("[audio]\nbit_perfect = \"yes\"\n").unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ConfigProblem::Parse {
+                    line: 2,
+                    column: 15,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn first_start_write_skips_config_subcommands_and_explicit_config() {
+        let parse = |args: &[&str]| Cli::try_parse_from(args).unwrap();
+        assert!(should_write_default(&parse(&["znicz"])));
+        assert!(should_write_default(&parse(&["znicz", "scan"])));
+        assert!(!should_write_default(&parse(&[
+            "znicz", "--config", "x.toml"
+        ])));
+        assert!(!should_write_default(&parse(&["znicz", "config", "init"])));
+        assert!(!should_write_default(&parse(&["znicz", "config", "path"])));
+    }
+
+    #[test]
+    fn good_text_parses_without_a_problem() {
+        let config = parse_config_text("[tui]\nmarquee = false\n").unwrap();
+        assert!(!tui_config(&config).marquee);
+    }
+
+    #[test]
+    fn line_and_column_count_characters_from_one() {
+        assert_eq!(line_and_column("abc", 0), (1, 1));
+        assert_eq!(line_and_column("ab\ncd", 4), (2, 2));
+        assert_eq!(line_and_column("é\nx", 3), (2, 1));
+    }
+
+    #[test]
+    fn load_config_reports_a_broken_file_and_uses_defaults() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[tui\nmarquee = true\n").unwrap();
+
+        let (config, problem) = load_config(Some(&path));
+
+        let problem = problem.expect("a problem for a broken file");
+        assert!(
+            matches!(
+                &problem,
+                ConfigProblem::Parse {
+                    line: 1,
+                    column: 5,
+                    ..
+                }
+            ),
+            "{problem:?}"
+        );
+        assert!(tui_config(&config).marquee);
+    }
+
+    #[test]
+    fn load_config_is_quiet_for_good_and_missing_files() {
+        let dir = TempDir::new().unwrap();
+        let good = dir.path().join("good.toml");
+        std::fs::write(&good, "[tui]\nmarquee = false\n").unwrap();
+
+        let (config, problem) = load_config(Some(&good));
+        assert!(problem.is_none());
+        assert!(!tui_config(&config).marquee);
+
+        let (_, problem) = load_config(Some(&dir.path().join("missing.toml")));
+        assert!(problem.is_none());
+    }
+
+    #[test]
+    fn load_config_reports_an_unreadable_file() {
+        let dir = TempDir::new().unwrap();
+        let (_, problem) = load_config(Some(dir.path()));
+        let problem = problem.expect("a problem");
+        assert!(
+            matches!(problem, ConfigProblem::Unreadable { .. }),
+            "{problem:?}"
+        );
+    }
+
+    #[test]
+    fn first_start_writes_the_template_and_keeps_an_existing_file() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("znicz").join("config.toml");
+
+        assert!(ensure_default_config_at(&path).unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), DEFAULT_CONFIG);
+
+        std::fs::write(&path, "[tui]\nmarquee = false\n").unwrap();
+        assert!(!ensure_default_config_at(&path).unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "[tui]\nmarquee = false\n"
+        );
+    }
+
+    #[test]
+    fn config_init_writes_when_missing() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+
+        let outcome = init_config(&path, false).unwrap();
+
+        assert_eq!(outcome, InitOutcome { backup: None });
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), DEFAULT_CONFIG);
+    }
+
+    #[test]
+    fn config_init_refuses_to_overwrite_without_force() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "mine\n").unwrap();
+
+        let err = init_config(&path, false).unwrap_err();
+
+        assert!(
+            err.contains("already exists (use --force to overwrite)"),
+            "{err}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "mine\n");
+        assert!(!backup_path(&path).exists());
+    }
+
+    #[test]
+    fn config_init_force_backs_up_the_old_file_first() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "mine\n").unwrap();
+
+        let outcome = init_config(&path, true).unwrap();
+
+        assert_eq!(
+            outcome,
+            InitOutcome {
+                backup: Some(dir.path().join("config.toml.bak"))
+            }
+        );
+        assert_eq!(
+            std::fs::read_to_string(backup_path(&path)).unwrap(),
+            "mine\n"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), DEFAULT_CONFIG);
     }
 }

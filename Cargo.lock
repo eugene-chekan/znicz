@@ -4613,7 +4613,7 @@ checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
 name = "znicz"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "clap",
  "color-eyre",
@@ -4637,7 +4637,7 @@ dependencies = [
 
 [[package]]
 name = "znicz-core"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "cpal",
  "crossbeam-channel",
@@ -4657,7 +4657,7 @@ dependencies = [
 
 [[package]]
 name = "znicz-library"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "rusqlite",
  "serde",
@@ -4671,7 +4671,7 @@ dependencies = [
 
 [[package]]
 name = "znicz-mcp"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "dirs",
  "rmcp",
@@ -4689,7 +4689,7 @@ dependencies = [
 
 [[package]]
 name = "znicz-tui"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "color-eyre",
  "crossbeam-channel",
@@ -4700,6 +4700,8 @@ dependencies = [
  "ratatui",
  "ratatui-image",
  "tempfile",
+ "toml",
+ "toml_edit 0.22.27",
  "tracing",
  "unicode-width",
  "znicz-core",

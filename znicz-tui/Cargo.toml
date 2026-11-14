@@ -20,7 +20,9 @@ dirs.workspace = true
 image.workspace = true
 ratatui-image.workspace = true
 unicode-width.workspace = true
+toml_edit.workspace = true
 
 [dev-dependencies]
 lofty = "0.25"
 tempfile.workspace = true
+toml.workspace = true

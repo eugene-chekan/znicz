@@ -3,7 +3,7 @@ resolver = "2"
 members = ["znicz-core", "znicz-library", "znicz-tui", "znicz-mcp", "znicz"]
 
 [workspace.package]
-version = "0.15.0"
+version = "0.16.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = ["Eugene Chekan"]
@@ -23,6 +23,7 @@ crossbeam-channel = "0.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
+toml_edit = "0.22"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "2"

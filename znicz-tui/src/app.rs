@@ -19,6 +19,7 @@ use znicz_core::{
 };
 use znicz_library::{Library, Track};
 
+use crate::config_file::{ConfigFile, ConfigProblem};
 use crate::cover::CoverCache;
 use crate::cursor::Cursor;
 use crate::help_state::{HELP_PAGE, HelpState};
@@ -28,8 +29,11 @@ use crate::layout;
 use crate::library_pane::{ColumnFocus, EffectiveLayout, Item, LibraryPane, Mode};
 use crate::line_edit::LineEdit;
 use crate::meta::{Entry, MetaCache};
+use crate::settings::{self, Row, SettingsValues};
 use crate::toast::Toasts;
 use crate::tui_config::{CoverProtocol, TuiConfig};
+
+mod settings_ui;
 use crate::update::{Release, Updates};
 use crate::views;
 
@@ -42,19 +46,24 @@ fn load_output_devices() -> Vec<AudioDeviceInfo> {
     AudioOutput::list_devices().unwrap_or_default()
 }
 
-fn make_picker(protocol: CoverProtocol) -> ratatui_image::picker::Picker {
+/// The picker for a configured cover protocol, and the protocol the terminal
+/// query reported. The query runs only for auto, kitty and sixel, so the second
+/// value is `None` otherwise. It is read before a forced protocol replaces it.
+fn make_picker(protocol: CoverProtocol) -> (ratatui_image::picker::Picker, Option<ProtocolType>) {
+    use ratatui_image::picker::Picker;
     use ratatui_image::picker::cap_parser::QueryStdioOptions;
-    use ratatui_image::picker::{Picker, ProtocolType};
 
-    let mut picker = match protocol {
-        CoverProtocol::Halfblocks | CoverProtocol::Off => Picker::halfblocks(),
+    let (mut picker, queried) = match protocol {
+        CoverProtocol::Halfblocks | CoverProtocol::Off => (Picker::halfblocks(), None),
         CoverProtocol::Auto | CoverProtocol::Kitty | CoverProtocol::Sixel => {
             // Also ask for the background colour so the cover slot can match it.
-            Picker::from_query_stdio_with_options(QueryStdioOptions {
+            let picker = Picker::from_query_stdio_with_options(QueryStdioOptions {
                 terminal_background_color_osc: true,
                 ..QueryStdioOptions::default()
             })
-            .unwrap_or_else(|_| Picker::halfblocks())
+            .unwrap_or_else(|_| Picker::halfblocks());
+            let queried = picker.protocol_type();
+            (picker, Some(queried))
         }
     };
     match protocol {
@@ -65,7 +74,7 @@ fn make_picker(protocol: CoverProtocol) -> ratatui_image::picker::Picker {
         }
         CoverProtocol::Auto => {}
     }
-    picker
+    (picker, queried)
 }
 
 /// Longest wait between redraws while nothing happens. Fast enough for a
@@ -156,6 +165,16 @@ pub enum Focus {
     Queue,
 }
 
+/// What the Devices modal is for: switching the output now, or choosing the
+/// default output from Settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DevicesMode {
+    #[default]
+    Switch,
+    /// Opened from Settings' Default output device; row 0 is System default.
+    Default,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Modal {
     None,
@@ -165,6 +184,7 @@ pub enum Modal {
     Radio,
     Messages,
     Update,
+    Settings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -276,6 +296,7 @@ impl Modal {
                 | Self::Radio
                 | Self::Messages
                 | Self::Update
+                | Self::Settings
         )
     }
 }
@@ -330,8 +351,14 @@ pub struct App {
     pub queue_cursor: Cursor,
     pub library: LibraryPane,
     pub hits: HitMap,
+    /// The cover settings the Stage shows while an overlay covers the cover:
+    /// changes (Settings, a new stream cover) wait until it closes, because a
+    /// cover drawn again would paint over the overlay.
+    pub(crate) stage_frozen: Option<TuiConfig>,
     pub devices: Vec<AudioDeviceInfo>,
     pub device_cursor: Cursor,
+    /// Whether the Devices modal switches the output or picks the default.
+    pub(crate) devices_mode: DevicesMode,
     pub playlists_dir: PathBuf,
     pub playlists: Vec<String>,
     pub playlist_cursor: Cursor,
@@ -345,6 +372,36 @@ pub struct App {
     pub meta: MetaCache,
     pub toasts: Toasts,
     pub tui: TuiConfig,
+    /// The config file the settings write to; `None` when there is no file.
+    pub config_file: Option<ConfigFile>,
+    /// Why the config file was not used (it is broken or unreadable), reported at start.
+    pub config_problem: Option<ConfigProblem>,
+    /// Settings rows as of opening the modal (folders come from the library status).
+    pub(crate) settings_rows: Vec<Row>,
+    /// Index into `settings_rows`; never a heading.
+    pub(crate) settings_cursor: usize,
+    /// First row on screen in the Settings list, kept between frames.
+    pub(crate) settings_scroll: usize,
+    /// `[audio] bit_perfect`, as the config file has it.
+    pub bit_perfect: bool,
+    /// `[updates] check`, as the config file has it.
+    pub check_for_updates: bool,
+    /// `[audio] device`; `None` is the system default.
+    pub default_device: Option<String>,
+    /// `[audio] bit_perfect` as the player started with it.
+    pub(crate) bit_perfect_at_start: bool,
+    /// The cover protocol as the TUI started with it.
+    pub(crate) cover_protocol_at_start: CoverProtocol,
+    /// The protocol the start-up terminal query picked; `None` when no query ran.
+    pub(crate) queried_protocol: Option<ProtocolType>,
+    /// The protocols the start-up terminal query reported; `None` when no query ran.
+    pub(crate) protocol_support: Option<crate::settings::ProtocolSupport>,
+    /// The "apply to this run only" toast has been shown.
+    run_only_warned: bool,
+    /// A folder removal waiting for Enter in Settings: the folder and its track count.
+    pub(crate) settings_confirm: Option<(PathBuf, Option<usize>)>,
+    /// The folder prompt was opened from Settings, so closing it returns there.
+    folder_prompt_from_settings: bool,
     pub covers: CoverCache,
     pub picker: Option<ratatui_image::picker::Picker>,
     pub(crate) cover_image: Option<ratatui_image::protocol::StatefulProtocol>,
@@ -413,6 +470,12 @@ impl Drop for MouseCapture {
 }
 
 impl App {
+    /// The cover settings the Stage draws with: frozen while an overlay
+    /// covers the cover, otherwise the current ones.
+    pub(crate) fn shown_tui(&self) -> TuiConfig {
+        self.stage_frozen.unwrap_or(self.tui)
+    }
+
     /// Read the library writer's status: reload and report finished jobs, and
     /// offer the first-run prompt. Called once per frame.
     pub fn poll_library(&mut self) {
@@ -451,6 +514,9 @@ impl App {
         }
         self.scans_seen = Some(status.scans_finished);
         self.library_status = status;
+        if self.modal == Modal::Settings {
+            self.refresh_settings_rows();
+        }
         if self.wants_first_run_prompt() {
             self.open_folder_prompt();
         }
@@ -481,6 +547,7 @@ impl App {
             KeyCode::Esc => {
                 self.folder_prompt = None;
                 self.first_run_dismissed = true;
+                self.folder_prompt_closed();
             }
             KeyCode::Enter => self.submit_folder(),
             KeyCode::Tab => self.complete_folder(),
@@ -515,6 +582,7 @@ impl App {
                 self.folder_prompt = None;
                 self.first_run_dismissed = true;
                 self.toasts.info(format!("scanning {typed}"));
+                self.folder_prompt_closed();
             }
             Err(e) => self.toasts.error(e.to_string()),
         }
@@ -593,6 +661,34 @@ impl App {
         self
     }
 
+    /// The config file to show and edit in Settings.
+    pub fn with_config_file(mut self, file: ConfigFile) -> Self {
+        self.config_file = Some(file);
+        self
+    }
+
+    /// Why the config file was not used; shown as an error toast when the TUI starts.
+    pub fn with_config_problem(mut self, problem: ConfigProblem) -> Self {
+        self.config_problem = Some(problem);
+        self
+    }
+
+    /// The config values Settings shows that the TUI does not own.
+    pub fn with_settings_values(mut self, values: SettingsValues) -> Self {
+        self.bit_perfect = values.bit_perfect;
+        self.bit_perfect_at_start = values.bit_perfect;
+        self.check_for_updates = values.update_check;
+        self.default_device = values.default_device;
+        self
+    }
+
+    /// Tell the user the config file did not load; the app runs on the defaults.
+    pub(crate) fn announce_config_problem(&mut self) {
+        if let Some(problem) = &self.config_problem {
+            self.toasts.error(problem.toast_text());
+        }
+    }
+
     fn with_engine(player: Engine, library: Option<Library>) -> Self {
         Self {
             player,
@@ -611,8 +707,10 @@ impl App {
             queue_cursor: Cursor::new(),
             library: LibraryPane::new(library),
             hits: HitMap::default(),
+            stage_frozen: None,
             devices: load_output_devices(),
             device_cursor: Cursor::new(),
+            devices_mode: DevicesMode::Switch,
             playlists_dir: znicz_library::default_playlists_dir()
                 .unwrap_or_else(|| temp_fallback("znicz-playlists")),
             playlists: Vec::new(),
@@ -628,6 +726,21 @@ impl App {
             meta: MetaCache::new(),
             toasts: Toasts::new(),
             tui: TuiConfig::default(),
+            config_file: None,
+            config_problem: None,
+            settings_rows: Vec::new(),
+            settings_cursor: 0,
+            settings_scroll: 0,
+            bit_perfect: true,
+            check_for_updates: true,
+            default_device: None,
+            bit_perfect_at_start: true,
+            cover_protocol_at_start: TuiConfig::default().cover_protocol,
+            queried_protocol: None,
+            protocol_support: None,
+            run_only_warned: false,
+            settings_confirm: None,
+            folder_prompt_from_settings: false,
             covers: CoverCache::new(),
             picker: Some(ratatui_image::picker::Picker::halfblocks()),
             cover_image: None,
@@ -663,12 +776,24 @@ impl App {
     pub fn run(&mut self) -> color_eyre::Result<RunOutcome> {
         let mut terminal = ratatui::init();
         let _mouse = MouseCapture::enable();
-        self.picker = Some(make_picker(self.tui.cover_protocol));
+        let (picker, queried) = make_picker(self.tui.cover_protocol);
+        self.picker = Some(picker);
+        self.queried_protocol = queried;
+        self.protocol_support = queried.and(self.picker.as_ref()).map(|picker| {
+            use ratatui_image::picker::Capability;
+            let caps = picker.capabilities();
+            crate::settings::ProtocolSupport {
+                kitty: caps.contains(&Capability::Kitty),
+                sixel: caps.contains(&Capability::Sixel),
+            }
+        });
+        self.cover_protocol_at_start = self.tui.cover_protocol;
         tracing::info!(
             protocol = ?self.picker.as_ref().map(|p| p.protocol_type()),
             "cover renderer"
         );
         self.spawn_update_check();
+        self.announce_config_problem();
         let result = self.run_loop(&mut terminal);
         ratatui::restore();
         result?;
@@ -958,6 +1083,11 @@ impl App {
     // --- mouse handling ---
 
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
+        self.handle_mouse(mouse);
+        self.drop_removal_outside_settings();
+    }
+
+    fn handle_mouse(&mut self, mouse: MouseEvent) {
         self.library.set_preferred_layout(self.tui.library_layout);
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => self.on_left_click(mouse.column, mouse.row),
@@ -976,7 +1106,10 @@ impl App {
             return;
         }
         match self.modal {
-            Modal::Devices => self.device_cursor.step(delta, self.devices.len()),
+            Modal::Devices => {
+                let len = self.device_rows();
+                self.device_cursor.step(delta, len);
+            }
             Modal::Playlists => self.playlist_cursor.step(delta, self.playlists.len()),
             Modal::Radio => self.station_cursor.step(delta, self.stations.len()),
             Modal::Messages => {
@@ -984,6 +1117,7 @@ impl App {
                 self.message_h_offset = 0;
             }
             Modal::Help => self.help.scroll_by(delta),
+            Modal::Settings => self.settings_move(delta),
             Modal::Update => {
                 self.update_scroll = self.update_scroll.saturating_add_signed(delta);
             }
@@ -1108,12 +1242,21 @@ impl App {
         if let Some(hit) = self.hits.overlay_list {
             if let Some(index) = hit.row_at(column, row) {
                 match self.modal {
-                    Modal::Devices => self.device_cursor.set(index, self.devices.len()),
+                    Modal::Devices => {
+                        let len = self.device_rows();
+                        self.device_cursor.set(index, len);
+                    }
                     Modal::Playlists => self.playlist_cursor.set(index, self.playlists.len()),
                     Modal::Radio => self.station_cursor.set(index, self.stations.len()),
                     Modal::Messages => {
                         self.message_cursor.set(index, self.toasts.history_len());
                         self.message_h_offset = 0;
+                    }
+                    // A heading is not a row to select.
+                    Modal::Settings
+                        if self.settings_rows.get(index).is_some_and(Row::selectable) =>
+                    {
+                        self.set_settings_cursor(index);
                     }
                     _ => {}
                 }
@@ -1127,6 +1270,11 @@ impl App {
     ///
     /// Public so the bindings can be driven from tests without a real terminal.
     pub fn on_key(&mut self, key: KeyEvent) {
+        self.handle_key(key);
+        self.drop_removal_outside_settings();
+    }
+
+    fn handle_key(&mut self, key: KeyEvent) {
         self.library.set_preferred_layout(self.tui.library_layout);
         if self.modal == Modal::Help {
             self.on_help_key(key);
@@ -1169,6 +1317,10 @@ impl App {
             return;
         }
 
+        if self.modal == Modal::Settings && self.on_settings_key(key) {
+            return;
+        }
+
         // Named-list overlays steal a/n/e/c/d (and Enter) from the global map
         // so new/edit are not next/repeat while P or R is open.
         if self.modal == Modal::Playlists && self.on_playlists_key(key) {
@@ -1188,6 +1340,11 @@ impl App {
 
         if self.modal == Modal::Devices {
             self.on_devices_key(key);
+            return;
+        }
+
+        // Settings has no list keys of its own; the rest of the keymap stays out.
+        if self.modal == Modal::Settings {
             return;
         }
 
@@ -1215,9 +1372,18 @@ impl App {
     }
 
     fn on_esc(&mut self) {
+        if self.modal == Modal::Settings && self.settings_confirm.is_some() {
+            self.settings_confirm = None;
+            return;
+        }
         if matches!(
             self.modal,
-            Modal::Devices | Modal::Playlists | Modal::Radio | Modal::Messages | Modal::Update
+            Modal::Devices
+                | Modal::Playlists
+                | Modal::Radio
+                | Modal::Messages
+                | Modal::Update
+                | Modal::Settings
         ) {
             self.close_modal();
         } else if self.queue_open && (self.focus == Focus::Queue || self.view == View::Stage) {
@@ -1392,6 +1558,7 @@ impl App {
             KeyCode::Char('v') => self.toggle_stage(),
             KeyCode::Char('P') => self.toggle_playlists_modal(),
             KeyCode::Char('R') => self.toggle_radio_modal(),
+            KeyCode::Char('S') => self.toggle_settings_modal(),
             KeyCode::Char('M') => self.toggle_messages_modal(),
 
             KeyCode::Char(']') if self.modal.blocks_list_focus() => {}
@@ -1533,6 +1700,7 @@ impl App {
             Modal::Help if self.help.editing => Context::HelpFilter,
             Modal::Help => Context::Help,
             Modal::Devices => Context::Devices,
+            Modal::Settings => Context::Settings,
             Modal::Playlists => Context::Playlists,
             Modal::Radio => Context::Radio,
             Modal::Messages => Context::Messages,
@@ -1580,11 +1748,12 @@ impl App {
 
     fn toggle_devices_modal(&mut self) {
         self.leave_messages();
-        self.modal = if self.modal == Modal::Devices {
-            Modal::None
+        if self.modal == Modal::Devices {
+            self.modal = Modal::None;
         } else {
-            Modal::Devices
-        };
+            self.devices_mode = DevicesMode::Switch;
+            self.modal = Modal::Devices;
+        }
     }
 
     fn toggle_playlists_modal(&mut self) {
@@ -1623,8 +1792,15 @@ impl App {
 
     /// Close whatever modal is open, tidying what it leaves behind.
     fn close_modal(&mut self) {
+        self.settings_confirm = None;
         if self.modal == Modal::Help {
             self.modal = self.help.return_to;
+            return;
+        }
+        // The default picker goes back to Settings, not to whatever is behind it.
+        if self.modal == Modal::Devices && self.devices_mode == DevicesMode::Default {
+            self.devices_mode = DevicesMode::Switch;
+            self.modal = Modal::Settings;
             return;
         }
         self.leave_messages();
@@ -1665,11 +1841,12 @@ impl App {
     fn reload_front(&mut self) {
         match self.modal {
             Modal::Radio => self.reload_stations(),
-            Modal::Messages | Modal::Update => {}
+            Modal::Messages | Modal::Update | Modal::Settings => {}
             Modal::Playlists => self.reload_playlists(),
             Modal::Devices => {
                 self.devices = load_output_devices();
-                self.device_cursor.clamp(self.devices.len());
+                let len = self.device_rows();
+                self.device_cursor.clamp(len);
                 self.toasts
                     .info(format!("{} devices found", self.devices.len()));
             }
@@ -2148,17 +2325,37 @@ impl App {
     }
 
     fn on_devices_key(&mut self, key: KeyEvent) {
-        if key.code == KeyCode::Enter {
-            let selected = self
-                .device_cursor
-                .selected(self.devices.len())
-                .and_then(|i| self.devices.get(i))
-                .map(|d| (d.id.clone(), d.name.clone()));
-
-            if let Some((id, name)) = selected {
-                self.apply(Command::SetDevice(id), Some(format!("output: {name}")));
+        if key.code != KeyCode::Enter {
+            return;
+        }
+        let index = self.device_cursor.selected(self.device_rows());
+        match self.devices_mode {
+            DevicesMode::Switch => {
+                let selected = index
+                    .and_then(|i| self.devices.get(i))
+                    .map(|d| (d.id.clone(), d.name.clone()));
+                if let Some((id, name)) = selected {
+                    self.apply(Command::SetDevice(id), Some(format!("output: {name}")));
+                }
+            }
+            DevicesMode::Default => {
+                // Row 0 is System default; the others follow the device list.
+                let device = match index {
+                    None => return,
+                    Some(0) => None,
+                    Some(i) => match self.devices.get(i - 1) {
+                        Some(d) => Some((d.id.clone(), d.name.clone())),
+                        None => return,
+                    },
+                };
+                self.choose_default_device(device);
             }
         }
+    }
+
+    /// Rows in the Devices list: the devices, plus System default in the default mode.
+    pub(crate) fn device_rows(&self) -> usize {
+        self.devices.len() + usize::from(self.devices_mode == DevicesMode::Default)
     }
 
     /// Enter in the library: land from search, drill browse, or play a track.
@@ -2252,7 +2449,7 @@ impl App {
         } else if self.modal == Modal::Playlists {
             self.playlists.len()
         } else if self.modal == Modal::Devices {
-            self.devices.len()
+            self.device_rows()
         } else if self.focus == Focus::Queue && self.queue_open {
             self.player.state().queue.len()
         } else {
@@ -2261,6 +2458,10 @@ impl App {
     }
 
     fn step(&mut self, delta: isize) {
+        if self.modal == Modal::Settings {
+            self.settings_move(delta);
+            return;
+        }
         let len = self.list_len();
         if self.modal == Modal::Messages {
             self.message_cursor.step(delta, len);
@@ -2280,6 +2481,10 @@ impl App {
     }
 
     fn page(&mut self, delta: isize) {
+        if self.modal == Modal::Settings {
+            self.settings_move(delta);
+            return;
+        }
         let len = self.list_len();
         if self.modal == Modal::Messages {
             self.message_cursor.page(delta, len);
@@ -2299,6 +2504,11 @@ impl App {
     }
 
     fn go_first(&mut self) {
+        if self.modal == Modal::Settings {
+            let first = settings::first_selectable(&self.settings_rows);
+            self.set_settings_cursor(first);
+            return;
+        }
         if self.modal == Modal::Messages {
             self.message_cursor.first();
             self.message_h_offset = 0;
@@ -2317,6 +2527,11 @@ impl App {
     }
 
     fn go_last(&mut self) {
+        if self.modal == Modal::Settings {
+            let last = settings::last_selectable(&self.settings_rows);
+            self.set_settings_cursor(last);
+            return;
+        }
         let len = self.list_len();
         if self.modal == Modal::Messages {
             self.message_cursor.last(len);
@@ -2949,6 +3164,49 @@ mod tests {
 
     fn toast_texts(app: &App) -> Vec<String> {
         app.toasts.recent().iter().map(|t| t.text.clone()).collect()
+    }
+
+    #[test]
+    fn a_broken_config_file_is_reported_as_an_error_toast_at_start() {
+        let problem = ConfigProblem::Parse {
+            line: 2,
+            column: 5,
+            message: "expected a value".into(),
+        };
+        let mut app = App::with_library(test_player(), None).with_config_problem(problem);
+        assert!(
+            toast_texts(&app).is_empty(),
+            "nothing is shown before start"
+        );
+
+        app.announce_config_problem();
+
+        let toast = app.toasts.recent().last().expect("a toast");
+        assert_eq!(
+            toast.text,
+            "config.toml has an error (line 2, column 5): expected a value. Using the defaults."
+        );
+        assert_eq!(toast.level, crate::toast::Level::Error);
+    }
+
+    #[test]
+    fn an_unreadable_config_file_is_reported_at_start() {
+        let problem = ConfigProblem::Unreadable {
+            message: "permission denied".into(),
+        };
+        let mut app = App::with_library(test_player(), None).with_config_problem(problem);
+        app.announce_config_problem();
+        assert_eq!(
+            toast_texts(&app),
+            ["config.toml could not be read: permission denied. Using the defaults."]
+        );
+    }
+
+    #[test]
+    fn a_good_config_file_shows_no_toast() {
+        let mut app = App::with_library(test_player(), None);
+        app.announce_config_problem();
+        assert!(toast_texts(&app).is_empty());
     }
 
     #[test]

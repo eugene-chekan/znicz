@@ -8,10 +8,14 @@ experience lives. The interface is an **immediate-mode** loop:
 3. Wait for a key, a mouse event, or for the tick that advances the seek bar
 4. Repeat until `q`
 
+The seek bar (`format::progress_bar`) fills in half-cell steps: `━` for each
+played cell, `╾` for a played half cell, then `─`. The player publishes the
+position every 200 ms, and the TUI redraws on the same tick.
+
 While the TUI is up it also **captures the mouse**. A left click on a visible
 library, queue, or overlay list row **selects** that row (it does not play or
 open). The wheel moves the focused list one row, like `j` / `k`. Help,
-devices, playlists, and radio close with the top-right **X**, or
+devices, settings, playlists, and radio close with the top-right **X**, or
 with `Esc`, or a clickable footer hint — not by clicking outside. The queue
 drawer closes with the **X**, global `]`, or a clickable footer `] close` /
 `] queue` hint; `Esc` closes it when the drawer has queue focus, or on Stage regardless
@@ -80,7 +84,8 @@ toasts no longer float over the list. Long titles pan horizontally with
 `Alt-←` and `Alt-→` on the highlighted row only. `<` and `>` are unbound.
 Browse transport is text only (no cover). Hints stay on their own line and are
 never replaced by a message. Config: `[tui]` in `config.toml` (`show_cover`,
-`cover_protocol`, `library_layout`, `marquee`, `icons`).
+`cover_size`, `cover_protocol`, `library_layout`, `marquee`, `icons`). The file is
+written with the defaults on first start; see the README's Configuration section.
 
 ### Responsive behaviour
 
@@ -252,6 +257,8 @@ A marker comes before it, chosen by `[tui] icons` (`format::volume_icon`):
 | `emoji` | 🔈 | 🔉 | 🔊 | 🔇 |
 | `nerd` | 󰕿 | 󰖀 | 󰕾 | 󰝟 |
 
+`nerd` needs a Nerd Font set as the terminal font; the README's
+[Nerd Font icons](../../README.md#nerd-font-icons) section has the install steps and a check.
 Muted shows the marker, the bar at the level it returns to (dimmed on Stage),
 and `muted` instead of the percentage. Transport widths use display width
 (`unicode-width`), so a two-cell emoji still lets the volume segment drop first
@@ -263,6 +270,45 @@ A centered modal (`,`). Lists the output devices and switches between them with
 `Enter`. The footer shows what the open stream actually settled on, which is the
 quickest way to find a device that will take your files unconverted.
 
+### Settings
+
+`S` opens a centered modal with the display and audio settings, the music
+folders, and the update check, grouped under headings the cursor skips. `j` / `k`
+(or the arrows, `g` / `G`, `Ctrl-d` / `Ctrl-u`) move between rows. `Enter`
+or `Space` changes the highlighted row: a switch flips, a choice steps forward
+and wraps. `h` / `l` (or `←` / `→`) step a choice back or forward and stop at
+the ends, and turn a switch off or on. `Esc` closes the modal, or cancels a
+pending folder removal first.
+
+Each change applies at once and is saved to `config.toml` in place, so comments
+and other keys stay. The strip above the bottom border explains the highlighted
+row in two lines; the border shows the config file's path. Bit-perfect is read
+when the player starts, so after a change the row says `on restart`. A cover
+protocol that needs the terminal's answer also says `on restart` after a change
+when the TUI started without asking the terminal. Cover protocol offers only
+the protocols the terminal reported at start (Windows Terminal: no `kitty`); a
+value from the file that the terminal did not report is shown with `not
+supported`.
+
+On the Stage, cover changes wait while a modal, or a queue drawer that overlaps
+the cover, is open: the row shows the new value at once with a dim `on close`
+hint (Show cover, Cover size, Cover protocol, Cover search), and the cover
+follows when the overlay closes. A Kitty or Sixel cover is sent as whole rows, so
+drawing it again under an overlay would paint over the overlay. This also holds
+for a new stream cover that arrives while Help or Settings is open.
+
+With no config file the change applies for this run only,
+and the first such change says so. A config file with an error is never written
+to; the change applies for the run and the toast gives the line and column.
+
+`Enter` on **Default output device** opens the Devices list with `System default`
+first; choosing a device switches to it, saves `[audio] device`, and returns to
+Settings. `System default` removes the key and switches to the device the OS
+marks as default. `+ Add a folder…` opens the folder prompt and returns to
+Settings when it closes, `Rescan all folders` runs the same rescan as `U`, and
+`d` on a folder asks in the strip how many tracks it takes out. `Enter` removes
+the folder and its tracks from the library (the files stay); `Esc` cancels.
+
 ### Stage
 
 Full-screen now playing (`v` / `i`), drawn by `views/stage.rs` with the geometry
@@ -271,6 +317,8 @@ in `layout::stage_layout`.
 - **Wide** (Stage area at least 70 x 14): a square cover on the left at full
   height (capped at half the width), details on the right.
 - **Narrow**: cover on top (at most half the height), details below.
+- **Cover size** (`[tui] cover_size`, 100 / 75 / 50 / 25 %) scales the cover;
+  it always stays in the top-left corner and the details follow it.
 - **No cover**: under 8 rows, or `show_cover = false`; details are centred (at
   most 80 columns wide).
 
@@ -379,8 +427,10 @@ station name.
 Repeat is `e`, shuffle is `z`. The full keymap lives in `znicz-tui/src/keys.rs`
 and in the `?` overlay.
 
-The `?` overlay also shows the build in its bottom-left corner
-(` znicz 0.y.z `); `znicz --version` prints the same number.
+The footer always ends with the running version: `? more · v0.y.z`, or the
+version alone at the right end where there is no `? more` (Help, prompts).
+Hints give way to it on narrow terminals; it goes only when the row cannot hold
+`? more · v0.y.z`. `znicz --version` prints the same number.
 
 ## Adding music
 
@@ -410,11 +460,11 @@ it never writes the database itself.
 
 ## Updates
 
-When a newer release is known, a toast says so once, Help's bottom title reads
-`znicz 0.13.4 → 0.14.0`, and `u` in Help opens the **Update** modal: the
-release notes, `Enter` to install, then an offer to restart Znicz (and the
-player, resuming where it was). While the update is known, the footer's
-`? more` shows `· 0.14.2 available` after it, so the news outlasts the toast.
+When a newer release is known, a toast says so once, and `u` in Help opens the
+**Update** modal: the release notes, `Enter` to install, then an offer to
+restart Znicz (and the player, resuming where it was). While the update is
+known, the footer's version reads `v0.16.0 → 0.17.0 available` (highlighted;
+`v0.16.0 → 0.17.0` when space is short), so the news outlasts the toast.
 When no update is known, `u` in Help checks
 GitHub right away (even with `[updates] check = false`) and says what it found.
 Details: [Updates](Updates.md).
@@ -475,6 +525,8 @@ top of the player.
 | `views/radio.rs` | saved stations overlay (`R`) |
 | `views/status.rs` | footer hint line for the current context |
 | `views/help.rs` | help overlay: context first, scroll, filter row |
+| `settings.rs` | Settings rows, their values, and how a choice steps (pure) |
+| `views/settings.rs` | Settings modal (`S`): list, explanation strip, config path |
 | `help_state.rs` | help context, scroll, and filter text |
 | `footer_hits.rs` | footer hint placement and click targets |
 | `theme.rs` | every colour, in one place (16 ANSI colours, tuned for dark palettes; themes: [#68](https://github.com/eugene-chekan/znicz/issues/68)) |

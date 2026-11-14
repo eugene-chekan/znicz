@@ -10,8 +10,6 @@ use crate::help_state::HelpState;
 use crate::keys::{self, Section};
 use crate::theme;
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-const VERSION_PREFIX: &str = " znicz ";
 const CLOSE_HINT: &str = " / filter · Esc close ";
 const FILTER_HINT: &str = " Enter keep · Esc clear ";
 
@@ -31,16 +29,12 @@ pub fn render(frame: &mut Frame, list: Rect, app: &mut App) {
     app.hits.close = crate::views::close_button_rect(popup);
 
     let hint = border_hint(app.help.editing);
-    let mut block = Block::default()
+    let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme::border_active())
         .title(Span::styled(title(&app.help), theme::title()))
         .title(crate::views::close_title())
         .title_bottom(Line::from(Span::styled(hint, theme::dim())).right_aligned());
-    let update = app.update.as_ref().map(|release| release.version.as_str());
-    if let Some(version) = version_title(popup.width, hint, update) {
-        block = block.title_bottom(version);
-    }
     let inner = block.inner(popup);
 
     // Clear first, or the pane underneath shows through the overlay.
@@ -117,24 +111,6 @@ fn split_prompt(inner: Rect, show_prompt: bool) -> (Rect, Option<Rect>) {
     (list, Some(prompt))
 }
 
-/// The bottom-left version title, or `None` when both titles cannot fit.
-///
-/// With a newer release known, the title shows the arrow to it.
-///
-/// The close hint is functional, so it keeps the row when a tiny popup has no
-/// room for the version.
-fn version_title(popup_width: u16, hint: &str, update: Option<&str>) -> Option<Line<'static>> {
-    let label = match update {
-        Some(version) => format!("{VERSION_PREFIX}{VERSION} → {version} "),
-        None => format!("{VERSION_PREFIX}{VERSION} "),
-    };
-    let budget = popup_width.saturating_sub(2) as usize;
-    if label.chars().count() + hint.chars().count() > budget {
-        return None;
-    }
-    Some(Line::from(Span::styled(label, theme::dim())).left_aligned())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,6 +131,7 @@ mod tests {
             Search,
             Queue,
             Devices,
+            Settings,
             Stage,
             Playlists,
             Radio,
@@ -199,36 +176,5 @@ mod tests {
         assert_eq!(list.height, 9);
         assert_eq!(prompt, Some(Rect::new(1, 10, 40, 1)));
         assert_eq!(split_prompt(inner, false), (inner, None));
-    }
-
-    #[test]
-    fn the_version_title_names_the_package_version() {
-        let title = version_title(80, CLOSE_HINT, None).expect("a normal popup has room");
-        let text: String = title
-            .spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect();
-        assert_eq!(text, format!(" znicz {} ", env!("CARGO_PKG_VERSION")));
-    }
-
-    #[test]
-    fn an_available_update_shows_the_arrow() {
-        let title = version_title(80, CLOSE_HINT, Some("9.9.9")).expect("room for the title");
-        let text: String = title
-            .spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect();
-        assert_eq!(
-            text,
-            format!(" znicz {} → 9.9.9 ", env!("CARGO_PKG_VERSION"))
-        );
-    }
-
-    #[test]
-    fn a_narrow_popup_drops_the_version_and_keeps_the_close_hint() {
-        assert!(version_title(30, CLOSE_HINT, None).is_none());
-        assert!(version_title(80, CLOSE_HINT, None).is_some());
     }
 }

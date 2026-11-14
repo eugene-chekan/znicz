@@ -4,6 +4,12 @@ use std::time::Duration;
 
 use crate::tui_config::IconSet;
 
+/// `1 track`, `1,240 tracks`.
+pub fn tracks_label(n: usize) -> String {
+    let noun = if n == 1 { "track" } else { "tracks" };
+    format!("{} {noun}", crate::scan_status::grouped(n))
+}
+
 /// `M:SS`, or `H:MM:SS` for anything an hour or longer.
 pub fn duration(d: Duration) -> String {
     let secs = d.as_secs();
@@ -95,17 +101,25 @@ pub fn display_width(text: &str) -> usize {
     unicode_width::UnicodeWidthStr::width(text)
 }
 
-/// A seek bar: filled track, a knob at the playhead, then the rest.
+/// A seek bar `width` cells wide: the played part (`━`, ending in `╾` on a
+/// half cell), then the rest (`─`).
 ///
-/// Returns the three pieces separately so each can be styled on its own.
+/// Returns the two parts separately so each can be styled on its own.
 pub fn progress_bar(ratio: f64, width: usize) -> (String, String) {
     if width == 0 {
         return (String::new(), String::new());
     }
     let ratio = ratio.clamp(0.0, 1.0);
-    let filled = ((ratio * width as f64).round() as usize).min(width);
-    let done = "━".repeat(filled);
-    let todo = "─".repeat(width - filled);
+    // Half-cell steps: a heavy-to-light piece (`╾`) ends an odd count, so the
+    // bar moves twice as often as whole cells allow.
+    let halves = ((ratio * width as f64 * 2.0).round() as usize).min(width * 2);
+    let full = halves / 2;
+    let half = halves % 2;
+    let mut done = "━".repeat(full);
+    if half == 1 {
+        done.push('╾');
+    }
+    let todo = "─".repeat(width - full - half);
     (done, todo)
 }
 
@@ -144,6 +158,14 @@ pub fn position_of(index: usize, total: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tracks_are_singular_for_one_and_grouped_otherwise() {
+        assert_eq!(tracks_label(0), "0 tracks");
+        assert_eq!(tracks_label(1), "1 track");
+        assert_eq!(tracks_label(2), "2 tracks");
+        assert_eq!(tracks_label(1240), "1,240 tracks");
+    }
 
     #[test]
     fn the_volume_icon_follows_the_level_and_mute() {
@@ -234,6 +256,21 @@ mod tests {
         assert_eq!(done.chars().count(), 10, "a finished track fills the bar");
         let (done, _) = progress_bar(0.0, 10);
         assert!(done.is_empty(), "a fresh track has nothing filled");
+    }
+
+    #[test]
+    fn the_bar_moves_in_half_cells() {
+        // 10 cells = 20 half steps; 0.25 is 5 half steps: 2 full cells and a half.
+        assert_eq!(
+            progress_bar(0.25, 10),
+            ("━━╾".to_string(), "───────".to_string())
+        );
+        assert_eq!(
+            progress_bar(0.3, 10),
+            ("━━━".to_string(), "───────".to_string())
+        );
+        // The half piece never spills past the end.
+        assert_eq!(progress_bar(0.99, 10).0, "━━━━━━━━━━");
     }
 
     #[test]
