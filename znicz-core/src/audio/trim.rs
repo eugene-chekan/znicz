@@ -27,7 +27,7 @@ pub fn parse_itunsmpb(value: &str) -> Option<EncoderGap> {
     }
     let delay = u64::from_str_radix(fields[1], 16).ok()?;
     let total = u64::from_str_radix(fields[3], 16).ok()?;
-    if total == 0 {
+    if total == 0 || delay.checked_add(total).is_none() {
         return None;
     }
     Some(EncoderGap { delay, total })
@@ -37,7 +37,7 @@ pub fn parse_itunsmpb(value: &str) -> Option<EncoderGap> {
 /// frame index of the packet's first frame, priming included.
 pub fn trim_window(first_frame: u64, frames: usize, gap: EncoderGap) -> Range<usize> {
     let frames = frames as u64;
-    let audio_end = gap.delay + gap.total;
+    let audio_end = gap.delay.saturating_add(gap.total);
     let start = gap.delay.saturating_sub(first_frame).min(frames);
     let end = audio_end.saturating_sub(first_frame).min(frames).max(start);
     start as usize..end as usize
@@ -64,7 +64,8 @@ pub fn trim_packet(
 pub fn ts_to_frames(ts: u64, time_base: Option<TimeBase>, sample_rate: u32) -> u64 {
     match time_base {
         Some(base) => {
-            let frames = ts as u128 * base.numer as u128 * sample_rate as u128 / base.denom as u128;
+            let frames =
+                ts as u128 * base.numer as u128 * sample_rate as u128 / base.denom.max(1) as u128;
             frames as u64
         }
         None => ts,
@@ -99,6 +100,11 @@ mod tests {
         assert_eq!(parse_itunsmpb(" 00000000 zz 000001CA 1A8DF6"), None);
         // A zero total says nothing about the real length.
         assert_eq!(parse_itunsmpb(" 00000000 00000840 000001CA 0"), None);
+        // Fields that cannot both fit a frame count.
+        assert_eq!(
+            parse_itunsmpb(" 0 FFFFFFFFFFFFFFFF 0 FFFFFFFFFFFFFFFF"),
+            None
+        );
     }
 
     #[test]
