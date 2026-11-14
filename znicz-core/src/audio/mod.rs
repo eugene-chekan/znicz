@@ -6,3 +6,4 @@ pub mod http;
 pub mod icy;
 pub mod output;
 pub mod source;
+pub mod trim;
