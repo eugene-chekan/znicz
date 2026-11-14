@@ -2,15 +2,18 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{CODEC_TYPE_NULL, CodecParameters, CodecType, DecoderOptions};
+use symphonia::core::codecs::{
+    CODEC_TYPE_AAC, CODEC_TYPE_NULL, CodecParameters, CodecType, DecoderOptions,
+};
 use symphonia::core::errors::Error as SymphoniaError;
-use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::{FormatOptions, FormatReader};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
-use symphonia::core::units::Time;
+use symphonia::core::units::{Time, TimeBase};
 
 use crate::audio::icy::{IcyTitle, IcyUrl};
+use crate::audio::trim::{EncoderGap, parse_itunsmpb, trim_packet, ts_to_frames};
 use crate::error::{Result, ZniczError};
 use crate::metadata::{read_metadata, title_from_path};
 use crate::player::state::TrackInfo;
@@ -300,12 +303,31 @@ pub fn probe_track(path: &Path) -> Result<TrackInfo> {
     Ok(track_info(path, &track.codec_params))
 }
 
+/// Encoder delay and padding for AAC, from the `iTunSMPB` tag. Other codecs
+/// either have none or are trimmed by symphonia (MP3, Vorbis).
+fn encoder_gap(format: &mut dyn FormatReader, codec: CodecType) -> Option<EncoderGap> {
+    if codec != CODEC_TYPE_AAC {
+        return None;
+    }
+    let metadata = format.metadata();
+    let revision = metadata.current()?;
+    let tag = revision
+        .tags()
+        .iter()
+        .find(|tag| tag.key.ends_with("iTunSMPB"))?;
+    parse_itunsmpb(&tag.value.to_string())
+}
+
 pub struct AudioDecoder {
     format: Box<dyn symphonia::core::formats::FormatReader>,
     decoder: Box<dyn symphonia::core::codecs::Decoder>,
     track_id: u32,
     sample_rate: u32,
     channels: u16,
+    /// AAC priming and padding to drop, when the file says.
+    gap: Option<EncoderGap>,
+    /// Converts packet timestamps to frames for the trim.
+    time_base: Option<TimeBase>,
     /// True when opened from a URL source. Stream body I/O is not EOF.
     is_stream: bool,
     coded_bytes: u64,
@@ -349,6 +371,9 @@ impl AudioDecoder {
         let sample_rate = codec_params.sample_rate.unwrap_or(44100);
         let channels = codec_params.channels.map(|c| c.count() as u16).unwrap_or(2);
 
+        let mut format = probed.format;
+        let gap = encoder_gap(format.as_mut(), codec_params.codec);
+
         let decoder = symphonia::default::get_codecs()
             .make(&codec_params, &DecoderOptions::default())
             .map_err(|e| ZniczError::Decode(e.to_string()))?;
@@ -358,11 +383,13 @@ impl AudioDecoder {
 
         Ok((
             Self {
-                format: probed.format,
+                format,
                 decoder,
                 track_id,
                 sample_rate,
                 channels,
+                gap,
+                time_base: codec_params.time_base,
                 is_stream,
                 coded_bytes: 0,
                 pcm_frames: 0,
@@ -451,13 +478,18 @@ impl AudioDecoder {
             }
 
             let coded = packet.buf().len() as u64;
+            let packet_ts = packet.ts();
             match self.decoder.decode(&packet) {
                 Ok(decoded) => {
                     let spec = *decoded.spec();
                     let duration = decoded.capacity() as u64;
                     let mut sample_buf = SampleBuffer::<f32>::new(duration, spec);
                     sample_buf.copy_interleaved_ref(decoded);
-                    let samples = sample_buf.samples().to_vec();
+                    let mut samples = sample_buf.samples().to_vec();
+                    if let Some(gap) = self.gap {
+                        let first_frame = ts_to_frames(packet_ts, self.time_base, self.sample_rate);
+                        samples = trim_packet(samples, self.channels as usize, first_frame, gap);
+                    }
                     let channels = self.channels.max(1) as u64;
                     self.coded_bytes += coded;
                     self.pcm_frames += samples.len() as u64 / channels;

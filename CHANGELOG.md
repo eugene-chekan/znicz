@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.17.0 - 2026-11-14
+
+- Gapless playback: consecutive local tracks with the same sample rate and
+  channel count play into the same output stream, with no silence or click
+  between them. The title, cover and seek bar switch when the next track is
+  heard. A format change, radio and repeat-one keep the old stop-and-reopen.
+- AAC (M4A) files are trimmed of encoder delay and padding (`iTunSMPB`), as
+  MP3 and Ogg Vorbis already were.
+
 ## 0.16.0 - 2026-11-13
 
 - Settings (`S`): display and audio options, the default output device, music

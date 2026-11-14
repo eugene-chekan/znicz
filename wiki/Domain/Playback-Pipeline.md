@@ -118,6 +118,22 @@ shows the **coded bitrate** (bytes of compressed packets versus PCM duration).
 That number updates as more of the stream is decoded. Icecast `icy-br` headers
 are not used.
 
+## Gapless playback
+
+When a local track finishes decoding, the engine opens the next queue row
+straight away. If it is a local file with the same sample rate and channel
+count, its samples go into the same ring buffer right after the last sample of
+the previous track: the output stream is not reopened, so nothing is lost at
+the joint. Bit-perfect output stays bit-perfect; samples are not changed.
+
+Encoder delay and padding are trimmed where the file says how much: MP3
+(LAME/Xing header) and Ogg Vorbis by symphonia, AAC in M4A by Znicz from the
+`iTunSMPB` tag. FLAC, WAV, AIFF and ALAC have none.
+
+Old behaviour (drain the buffer, reopen the stream) is kept when the next row
+is radio, has another sample rate or channel count, or fails to open, and with
+repeat-one.
+
 ## Next
 
 - [Architecture overview](../Architecture/Overview.md)

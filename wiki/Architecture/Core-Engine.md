@@ -51,6 +51,26 @@ and wraps the response body as a Symphonia `MediaSource` that cannot seek.
 Decode keeps reading that body on the same thread. Pause stops the pump, so
 bytes are not pulled while paused.
 
+## Gapless joins
+
+`PumpOutcome::Finished` calls `on_decoder_finished`, which calls `chain_next`. It
+picks the next row (`pick_next_after`, starting after the last pending track,
+found again in the queue by item; if it was removed, no join) and opens it. On a
+match the new decoder replaces the old one and a `PendingTrack { index, item,
+info, starts_at }` is queued, `starts_at` being the feeder's pushed count at
+the joint (`player/gapless.rs`).
+
+Each loop pass `advance_pending` compares the played count (pushed − queued)
+with the first pending `starts_at`. When it is reached the engine emits
+`TrackEnded` then `TrackStarted`, sets `current_track` and `queue_position`
+(found again by item if the queue was edited), and rebases the feeder count so
+the position starts at 0:00.
+
+`stop` clears the pending tracks; a seek while one is pending reopens the
+playing row first, and is refused (`nothing to seek in`) when the queue was
+cleared under the chained audio; `SetDevice` and `finish_track` show any left
+at once.
+
 ## Files to read
 
 | File | Role |

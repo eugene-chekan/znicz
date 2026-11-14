@@ -250,6 +250,48 @@ mod tests {
         assert_eq!(outcome, PumpOutcome::Failed("broken".into()));
     }
 
+    #[test]
+    fn a_new_decoder_continues_right_after_the_last_sample() {
+        let first = packets(5, 1000);
+        let first_len: f32 = 5000.0;
+        let second: Vec<Vec<f32>> = packets(8, 1000)
+            .into_iter()
+            .map(|packet| packet.into_iter().map(|v| v + first_len).collect())
+            .collect();
+        let expected: Vec<f32> = first
+            .iter()
+            .chain(second.iter())
+            .flatten()
+            .copied()
+            .collect();
+
+        let mut sink = FakeSink::new(4096);
+        let mut feeder = Feeder::new();
+
+        for source in [first, second] {
+            let mut queue = source.into_iter();
+            loop {
+                let mut decode = || match queue.next() {
+                    Some(samples) => DecodeStep::Samples(samples),
+                    None => DecodeStep::End,
+                };
+                let outcome = feeder.pump(&mut sink, 256, 4, &mut decode);
+                sink.play(1500);
+                if outcome == PumpOutcome::Finished {
+                    assert_eq!(feeder.pending_samples(), 0, "leftover at the joint");
+                    break;
+                }
+            }
+        }
+
+        sink.finish();
+        assert_eq!(
+            sink.played, expected,
+            "samples lost or reordered at the joint"
+        );
+        assert_eq!(feeder.pushed_samples(), expected.len() as u64);
+    }
+
     /// Documents the old behaviour that caused fast-forward playback:
     /// dropping the tail of a packet when the sink is full loses audio.
     #[test]
