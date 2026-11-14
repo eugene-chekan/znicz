@@ -147,7 +147,9 @@ impl App {
         };
         if let Some((id, name)) = target {
             if let Err(e) = self.player.send_blocking(Command::SetDevice(id)) {
+                // Nothing switched and nothing is saved; back to Settings.
                 self.toasts.error(e.to_string());
+                self.return_to_settings_from_devices();
                 return;
             }
             self.toasts.success(format!("output: {name}"));
@@ -156,10 +158,15 @@ impl App {
         // setting comes back but the device stays switched for this run.
         let before = self.settings_snapshot();
         self.default_device = device.map(|(id, _)| id);
+        self.return_to_settings_from_devices();
+        self.save_setting(&Row::DefaultDevice, before);
+    }
+
+    /// Leave the default-device list for Settings, on the device row.
+    fn return_to_settings_from_devices(&mut self) {
         self.devices_mode = DevicesMode::Switch;
         self.modal = Modal::Settings;
         self.select_setting(&Row::DefaultDevice);
-        self.save_setting(&Row::DefaultDevice, before);
     }
 
     /// Put the Settings cursor on `row`, when the list has it.
