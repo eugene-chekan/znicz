@@ -41,9 +41,9 @@ impl PendingTracks {
         self.tracks.is_empty()
     }
 
-    /// Queue row of the last chained track: the next pick follows it.
-    pub fn last_index(&self) -> Option<usize> {
-        self.tracks.back().map(|track| track.index)
+    /// The last chained track: the next pick follows it.
+    pub fn last(&self) -> Option<&PendingTrack> {
+        self.tracks.back()
     }
 
     /// The first pending track once `played` has reached its first sample.
@@ -133,15 +133,15 @@ mod tests {
     }
 
     #[test]
-    fn last_index_follows_the_latest_chain() {
+    fn last_follows_the_latest_chain() {
         let mut tracks = PendingTracks::default();
-        assert_eq!(tracks.last_index(), None);
+        assert!(tracks.last().is_none());
         tracks.push(pending(3, "d", 10));
         tracks.push(pending(4, "e", 20));
-        assert_eq!(tracks.last_index(), Some(4));
+        assert_eq!(tracks.last().map(|track| track.index), Some(4));
         tracks.clear();
         assert!(tracks.is_empty());
-        assert_eq!(tracks.last_index(), None);
+        assert!(tracks.last().is_none());
     }
 
     #[test]
