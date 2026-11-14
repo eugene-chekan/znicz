@@ -13,6 +13,7 @@ use crate::audio::output::AudioOutput;
 use crate::audio::source::{AudioDecoder, AudioSource, LocalFileSource};
 use crate::error::{Result, ZniczError};
 use crate::player::commands::{Command, CommandEnvelope, PlayerEvent};
+use crate::player::gapless::{PendingTrack, PendingTracks, may_chain, resolve_position};
 use crate::player::state::{OutputInfo, PlaybackStatus, PlayerState, QueueItem, RepeatMode};
 
 /// Commands and snapshots used by the TUI, MCP, and the localhost IPC attach.
@@ -160,6 +161,8 @@ struct PlayerEngine {
     decoder: Option<AudioDecoder>,
     feeder: Feeder,
     converter: Option<RateConverter>,
+    /// Chained tracks already in the buffer but not yet heard (gapless).
+    pending: PendingTracks,
     draining_since: Option<Instant>,
     last_position_tick: Instant,
     /// Seed for shuffle picks.
@@ -190,6 +193,7 @@ impl PlayerEngine {
             decoder: None,
             feeder: Feeder::new(),
             converter: None,
+            pending: PendingTracks::default(),
             draining_since: None,
             last_position_tick: Instant::now(),
             rng: seed_from_clock(),
@@ -220,6 +224,7 @@ impl PlayerEngine {
             }
 
             self.pump_decode();
+            self.advance_pending();
 
             if self.drain_complete() {
                 self.finish_track();
@@ -317,6 +322,9 @@ impl PlayerEngine {
                     let ch = decoder.channels();
                     self.output
                         .open_stream(rate, ch, self.config.device_id.as_deref())?;
+                    // The reopened stream starts empty: the chained tracks in
+                    // the old buffer are gone, so show the decoder's track.
+                    self.start_all_pending();
                 }
                 self.emit_state_changed();
             }
@@ -419,6 +427,7 @@ impl PlayerEngine {
         self.decoder = None;
         self.converter = None;
         self.draining_since = None;
+        self.pending.clear();
         self.output.stop_stream();
         self.feeder.reset();
 
@@ -436,6 +445,11 @@ impl PlayerEngine {
     fn seek(&mut self, position: Duration) -> Result<()> {
         if self.queue_row_is_stream() {
             return Err(ZniczError::Player("radio cannot seek".into()));
+        }
+
+        if !self.pending.is_empty() {
+            // The decoder already reads the next track; reopen this one.
+            self.replay_current()?;
         }
 
         if let Some(decoder) = &mut self.decoder {
@@ -460,6 +474,20 @@ impl PlayerEngine {
         Ok(())
     }
 
+    /// Reopen the playing row from the start, keeping it paused if it was.
+    fn replay_current(&mut self) -> Result<()> {
+        let (index, paused) = {
+            let state = self.state.read().unwrap();
+            (state.queue_position, state.status == PlaybackStatus::Paused)
+        };
+        self.play_queue_index(index)?;
+        if paused {
+            self.output.set_paused(true);
+            self.update_status(PlaybackStatus::Paused);
+        }
+        Ok(())
+    }
+
     fn queue_row_is_stream(&self) -> bool {
         let state = self.state.read().unwrap();
         state
@@ -476,19 +504,20 @@ impl PlayerEngine {
         }
     }
 
-    /// Which queue entry to play next, or `None` to stop.
+    /// Which queue entry to play after the playing one, or `None` to stop.
+    fn pick_next(&mut self, auto: bool) -> Option<usize> {
+        let current = self.state.read().unwrap().queue_position;
+        self.pick_next_after(current, auto)
+    }
+
+    /// Which queue entry follows `current`, or `None` to stop.
     ///
     /// `auto` marks the end of a track, where "repeat one" replays it. Pressing
     /// next always moves on instead.
-    fn pick_next(&mut self, auto: bool) -> Option<usize> {
-        let (len, current, repeat, shuffle) = {
+    fn pick_next_after(&mut self, current: usize, auto: bool) -> Option<usize> {
+        let (len, repeat, shuffle) = {
             let state = self.state.read().unwrap();
-            (
-                state.queue.len(),
-                state.queue_position,
-                state.repeat,
-                state.shuffle,
-            )
+            (state.queue.len(), state.repeat, state.shuffle)
         };
 
         if len == 0 {
@@ -507,6 +536,48 @@ impl PlayerEngine {
             return Some(0);
         }
         None
+    }
+
+    /// Open the track after the one that just finished decoding, if it can
+    /// follow it in the same stream: a local file with the same sample rate
+    /// and channel count. `None` means drain and reopen as before; a file that
+    /// fails to open is reported by that path, not here.
+    fn chain_next(&mut self, finished: &AudioDecoder) -> Option<AudioDecoder> {
+        let (repeat, playing) = {
+            let state = self.state.read().unwrap();
+            (state.repeat, state.queue_position)
+        };
+        if !may_chain(repeat, finished.is_stream()) {
+            return None;
+        }
+
+        let after = self.pending.last_index().unwrap_or(playing);
+        let index = self.pick_next_after(after, true)?;
+        let item = self.state.read().unwrap().queue.get(index).cloned()?;
+        let QueueItem::File { path } = &item else {
+            return None;
+        };
+
+        let (decoder, info) = match AudioDecoder::open(&LocalFileSource::new(path.clone())) {
+            Ok(opened) => opened,
+            Err(e) => {
+                tracing::debug!(error = %e, "next track did not open, no gapless join");
+                return None;
+            }
+        };
+        let same_format = decoder.sample_rate() == finished.sample_rate()
+            && decoder.channels() == finished.channels();
+        if !same_format {
+            return None;
+        }
+
+        self.pending.push(PendingTrack {
+            index,
+            item,
+            info,
+            starts_at: self.feeder.pushed_samples(),
+        });
+        Some(decoder)
     }
 
     /// A queue slot other than the current one, so shuffle does not repeat a
@@ -665,10 +736,20 @@ impl PlayerEngine {
             PumpOutcome::Finished => {
                 self.publish_stream_bitrate(&decoder);
                 self.publish_stream_title(&decoder);
-                // The buffer still holds audio. Let it play out, otherwise the
-                // last seconds of the track are cut off.
-                self.converter = None;
-                self.draining_since = Some(Instant::now());
+                match self.chain_next(&decoder) {
+                    Some(next) => {
+                        // Same stream, buffer and converter: the next track's
+                        // first sample follows this one's last.
+                        self.decoder = Some(next);
+                        self.converter = converter;
+                    }
+                    None => {
+                        // The buffer still holds audio. Let it play out,
+                        // otherwise the last seconds of the track are cut off.
+                        self.converter = None;
+                        self.draining_since = Some(Instant::now());
+                    }
+                }
             }
             PumpOutcome::Failed(message) => {
                 self.emit_error(message);
@@ -689,6 +770,9 @@ impl PlayerEngine {
 
     /// Called once the finished track has fully played. Advances the queue.
     fn finish_track(&mut self) {
+        // A chain whose last track was tiny may end before its boundary
+        // check ran; show those tracks so none is skipped.
+        self.start_all_pending();
         self.draining_since = None;
         self.feeder.reset();
         self.converter = None;
@@ -702,6 +786,48 @@ impl PlayerEngine {
                 self.emit_error(e.to_string());
             }
         }
+    }
+
+    /// Samples (all channels) the speakers have played of the current track.
+    fn played_samples(&self) -> u64 {
+        self.feeder
+            .pushed_samples()
+            .saturating_sub(self.output.queued_samples() as u64)
+    }
+
+    /// Show each chained track whose first sample has been played.
+    fn advance_pending(&mut self) {
+        while let Some(track) = self.pending.take_started(self.played_samples()) {
+            self.start_chained(track);
+        }
+    }
+
+    /// Show every chained track now: the buffer holding them is gone or done.
+    fn start_all_pending(&mut self) {
+        while let Some(track) = self.pending.take_started(u64::MAX) {
+            self.start_chained(track);
+        }
+    }
+
+    fn start_chained(&mut self, track: PendingTrack) {
+        // Count the position from the new track's first sample.
+        let pushed = self.feeder.pushed_samples();
+        self.feeder
+            .set_pushed_samples(pushed.saturating_sub(track.starts_at));
+
+        self.event_tx.send(PlayerEvent::TrackEnded).ok();
+        {
+            let mut state = self.state.write().unwrap();
+            if let Some(position) = resolve_position(&state.queue, track.index, &track.item) {
+                state.queue_position = position;
+            }
+            state.current_track = Some(track.info.clone());
+            state.position = Duration::ZERO;
+        }
+        self.event_tx
+            .send(PlayerEvent::TrackStarted(Box::new(track.info)))
+            .ok();
+        self.emit_state_changed();
     }
 
     fn tick_position(&mut self) {
