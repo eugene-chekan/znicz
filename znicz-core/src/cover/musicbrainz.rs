@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use crate::cover::http::{Fetched, get_json, probe, retryable};
-use crate::cover::title::{artist_attempts, artist_matches, search_key, searchable};
+use crate::cover::title::{artist_matches, search_attempts, search_key, searchable};
 use crate::cover::{CoverSource, Found, StreamQuery};
 
 const MUSICBRAINZ: &str = "https://musicbrainz.org";
@@ -106,11 +106,11 @@ impl CoverSource for MusicBrainzSource {
         let Some((artist, title)) = searchable(query) else {
             return Found::NotFound;
         };
-        for attempt in artist_attempts(artist) {
+        for (search_artist, search_title) in search_attempts(artist, title) {
             let search = format!(
                 "artist:\"{}\" AND recording:\"{}\"",
-                quoted(attempt),
-                quoted(title)
+                quoted(search_artist),
+                quoted(search_title)
             );
             self.wait_turn();
             let url = format!("{}/ws/2/recording/", self.musicbrainz);

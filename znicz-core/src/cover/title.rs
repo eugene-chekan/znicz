@@ -90,13 +90,49 @@ pub fn lead_artist(credit: &str) -> &str {
 
 /// Artist texts to search with, in order: the full credit, then its lead
 /// artist when that differs.
-pub(crate) fn artist_attempts(credit: &str) -> Vec<&str> {
+fn artist_attempts(credit: &str) -> Vec<&str> {
     let lead = lead_artist(credit);
     if lead.is_empty() || lead == credit {
         vec![credit]
     } else {
         vec![credit, lead]
     }
+}
+
+/// The title without trailing bracketed notes: `Lover Man (Ramirez)` becomes
+/// `Lover Man`. Stations append composers, versions and remaster years that
+/// the search services do not have in the track name.
+pub fn bare_title(title: &str) -> &str {
+    let mut bare = title.trim_end();
+    loop {
+        let open = match bare.chars().last() {
+            Some(')') => '(',
+            Some(']') => '[',
+            _ => return bare,
+        };
+        let Some(at) = bare.rfind(open) else {
+            return bare;
+        };
+        let rest = bare[..at].trim_end();
+        if rest.is_empty() {
+            return bare;
+        }
+        bare = rest;
+    }
+}
+
+/// `(artist, title)` pairs to search with, in order: as sent, with the bare
+/// title, then the same with the lead artist. Repeats are dropped.
+pub(crate) fn search_attempts<'a>(credit: &'a str, title: &'a str) -> Vec<(&'a str, &'a str)> {
+    let mut attempts = Vec::new();
+    for artist in artist_attempts(credit) {
+        for song in [title, bare_title(title)] {
+            if !attempts.contains(&(artist, song)) {
+                attempts.push((artist, song));
+            }
+        }
+    }
+    attempts
 }
 
 #[cfg(test)]
@@ -185,5 +221,43 @@ mod tests {
             ]
         );
         assert_eq!(artist_attempts("Ben Webster"), vec!["Ben Webster"]);
+    }
+
+    #[test]
+    fn the_bare_title_drops_trailing_bracketed_notes() {
+        assert_eq!(bare_title("Lover Man (Ramirez)"), "Lover Man");
+        assert_eq!(bare_title("So What (Live) [2011 Remaster]"), "So What");
+        assert_eq!(bare_title("Willow Weep For Me"), "Willow Weep For Me");
+        // Brackets inside the title stay.
+        assert_eq!(
+            bare_title("(I Can't Get No) Satisfaction"),
+            "(I Can't Get No) Satisfaction"
+        );
+        // A title that is only a note is kept whole.
+        assert_eq!(bare_title("(Untitled)"), "(Untitled)");
+    }
+
+    #[test]
+    fn attempts_try_the_bare_title_then_the_lead_artist() {
+        assert_eq!(
+            search_attempts("Hans Koller", "Lover Man (Ramirez)"),
+            vec![
+                ("Hans Koller", "Lover Man (Ramirez)"),
+                ("Hans Koller", "Lover Man"),
+            ]
+        );
+        assert_eq!(
+            search_attempts("A & B", "Song (Live)"),
+            vec![
+                ("A & B", "Song (Live)"),
+                ("A & B", "Song"),
+                ("A", "Song (Live)"),
+                ("A", "Song")
+            ]
+        );
+        assert_eq!(
+            search_attempts("Ben Webster", "Willow Weep For Me"),
+            vec![("Ben Webster", "Willow Weep For Me")]
+        );
     }
 }
