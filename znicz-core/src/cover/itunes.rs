@@ -4,7 +4,7 @@
 use serde_json::Value;
 
 use crate::cover::http::{Fetched, get_json, retryable};
-use crate::cover::title::{artist_attempts, artist_matches, search_key, searchable};
+use crate::cover::title::{artist_matches, search_attempts, search_key, searchable};
 use crate::cover::{CoverSource, Found, StreamQuery};
 
 const ORIGIN: &str = "https://itunes.apple.com";
@@ -80,8 +80,8 @@ impl CoverSource for ItunesSource {
         let Some((artist, title)) = searchable(query) else {
             return Found::NotFound;
         };
-        for attempt in artist_attempts(artist) {
-            match self.search(&format!("{attempt} {title}"), artist) {
+        for (search_artist, search_title) in search_attempts(artist, title) {
+            match self.search(&format!("{search_artist} {search_title}"), artist) {
                 Ok(Some(url)) => return Found::Url(url),
                 Ok(None) => {}
                 Err(found) => return found,

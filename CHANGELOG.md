@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.1 - 2026-11-15
+
+- Radio covers are found for titles with a bracketed note after the song name,
+  such as a composer (`Lover Man (Ramirez)`), `(Live)` or `[2011 Remaster]`:
+  the artist / title search tries again without it.
+
 ## 0.17.0 - 2026-11-14
 
 - Gapless playback: consecutive local tracks with the same sample rate and

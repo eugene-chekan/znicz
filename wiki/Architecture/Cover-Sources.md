@@ -57,6 +57,15 @@ credit with no joiner is searched once. Hits are still matched against the full
 credit, so `Pat Metheny` still counts for `Anna Maria Jopek & Friends with Pat
 Metheny`.
 
+**Bracketed notes.** Stations often append a note to the song name: the
+composer (`Lover Man (Ramirez)`), a version (`(Live)`) or a remaster year
+(`[2011 Remaster]`). The services do not have it in the track name, so the
+search finds nothing. Each source then searches again with the bare title:
+trailing `(…)` and `[…]` groups removed, as long as something is left. The
+order is: the credit with the title as sent, the credit with the bare title,
+then the lead artist with each. Repeats are skipped, so a plain title by a
+single artist is still one request.
+
 ## Types
 
 In `cover/mod.rs`:

@@ -3,7 +3,7 @@
 use serde_json::Value;
 
 use crate::cover::http::{Fetched, get_json, retryable};
-use crate::cover::title::{artist_attempts, artist_matches, search_key, searchable};
+use crate::cover::title::{artist_matches, search_attempts, search_key, searchable};
 use crate::cover::{CoverSource, Found, StreamQuery};
 
 const ORIGIN: &str = "https://api.deezer.com";
@@ -89,8 +89,8 @@ impl CoverSource for DeezerSource {
         let Some((artist, title)) = searchable(query) else {
             return Found::NotFound;
         };
-        for attempt in artist_attempts(artist) {
-            match self.search(&format!("{attempt} {title}"), artist) {
+        for (search_artist, search_title) in search_attempts(artist, title) {
+            match self.search(&format!("{search_artist} {search_title}"), artist) {
                 Ok(Some(url)) => return Found::Url(url),
                 Ok(None) => {}
                 Err(found) => return found,
@@ -217,6 +217,26 @@ mod tests {
         let requests = seen.lock().unwrap();
         assert_eq!(requests.len(), 2);
         assert!(!requests[1].lines().next().unwrap().contains("Friends"));
+    }
+
+    #[test]
+    fn a_bracketed_title_is_retried_bare() {
+        let (origin, seen) = serve(|line: &str| {
+            if line.contains("Ramirez") {
+                (200, br#"{"data":[]}"#.to_vec())
+            } else {
+                (
+                    200,
+                    br#"{"data":[{"artist":{"name":"Hans Koller"},
+                    "album":{"cover_xl":"https://cdn/koller.jpg"}}]}"#
+                        .to_vec(),
+                )
+            }
+        });
+        let found =
+            DeezerSource::at(&origin).find(&query(Some("Hans Koller - Lover Man (Ramirez)"), true));
+        assert_eq!(found, Found::Url("https://cdn/koller.jpg".into()));
+        assert_eq!(seen.lock().unwrap().len(), 2);
     }
 
     #[test]
