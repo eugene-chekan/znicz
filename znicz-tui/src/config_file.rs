@@ -36,7 +36,8 @@ impl ConfigFile {
         let Some(mut doc) = self.read_doc()? else {
             return Ok(());
         };
-        let Some(table) = doc.get_mut(section).and_then(Item::as_table_mut) else {
+        let parts: Vec<&str> = section.split('.').collect();
+        let Some(table) = existing_table(doc.as_table_mut(), &parts) else {
             return Ok(());
         };
         if table.remove(key).is_none() {
@@ -75,14 +76,42 @@ impl ConfigFile {
 
     fn edit(&self, section: &str, change: impl FnOnce(&mut Table)) -> Result<(), String> {
         let mut doc = self.read_doc()?.unwrap_or_default();
-        let table = doc
-            .entry(section)
-            .or_insert(Item::Table(Table::new()))
-            .as_table_mut()
-            .ok_or_else(|| format!("[{section}] is not a table"))?;
+        let parts: Vec<&str> = section.split('.').collect();
+        let table = create_table(doc.as_table_mut(), &parts, section)?;
         change(table);
         write_atomically(&self.path, &doc.to_string())
     }
+}
+
+/// The table at the dotted path `parts` (`["audio", "fade"]` for
+/// `[audio.fade]`), or `None` when a part is missing or not a table.
+fn existing_table<'a>(table: &'a mut Table, parts: &[&str]) -> Option<&'a mut Table> {
+    match parts.split_first() {
+        None => Some(table),
+        Some((head, rest)) => existing_table(table.get_mut(head)?.as_table_mut()?, rest),
+    }
+}
+
+/// The table at the dotted path `parts`, creating missing tables on the way.
+/// A parent created only to hold a deeper table is implicit, so `[audio]` is
+/// not written as an empty header just to hold `[audio.fade]`.
+fn create_table<'a>(
+    table: &'a mut Table,
+    parts: &[&str],
+    section: &str,
+) -> Result<&'a mut Table, String> {
+    let Some((head, rest)) = parts.split_first() else {
+        return Ok(table);
+    };
+    let child = table.entry(head).or_insert_with(|| {
+        let mut child = Table::new();
+        child.set_implicit(!rest.is_empty());
+        Item::Table(child)
+    });
+    let child = child
+        .as_table_mut()
+        .ok_or_else(|| format!("[{section}] is not a table"))?;
+    create_table(child, rest, section)
 }
 
 /// Why `config.toml` was not used. The app then runs on the defaults.
@@ -306,6 +335,33 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn a_dotted_section_is_a_nested_table() {
+        let dir = TempDir::new().unwrap();
+        let config = file_in(&dir, "config.toml", "[audio]\n# keep me\nvolume = 1.0\n");
+        config.set_int("audio.fade", "play_ms", 200).unwrap();
+        let text = read(&config);
+        assert!(text.contains("# keep me"));
+        assert!(text.contains("[audio.fade]"), "{text}");
+        assert!(text.contains("play_ms = 200"), "{text}");
+        let parsed: toml::Table = text.parse().unwrap();
+        assert_eq!(parsed["audio"]["fade"]["play_ms"].as_integer(), Some(200));
+    }
+
+    #[test]
+    fn remove_finds_a_nested_key() {
+        let dir = TempDir::new().unwrap();
+        let config = file_in(
+            &dir,
+            "config.toml",
+            "[audio.fade]\nplay_ms = 200\nstop_ms = 300\n",
+        );
+        config.remove("audio.fade", "play_ms").unwrap();
+        let text = read(&config);
+        assert!(!text.contains("play_ms"));
+        assert!(text.contains("stop_ms = 300"));
     }
 
     #[test]
