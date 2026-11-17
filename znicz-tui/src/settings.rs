@@ -3,6 +3,8 @@
 
 use std::path::PathBuf;
 
+use znicz_core::FadeTimes;
+
 use crate::folder_complete;
 use crate::tui_config::{CoverProtocol, CoverSize, IconSet, LibraryLayout, TuiConfig};
 
@@ -353,6 +355,8 @@ pub struct SettingsValues {
     pub update_check: bool,
     /// `[audio] device`; `None` is the system default.
     pub default_device: Option<String>,
+    /// `[audio.fade]`.
+    pub fades: FadeTimes,
 }
 
 impl Default for SettingsValues {
@@ -361,6 +365,7 @@ impl Default for SettingsValues {
             bit_perfect: true,
             update_check: true,
             default_device: None,
+            fades: FadeTimes::default(),
         }
     }
 }
