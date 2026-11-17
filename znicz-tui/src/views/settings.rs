@@ -124,14 +124,12 @@ fn values(app: &App) -> Values<'_> {
         ),
         stage_shows: app.stage_frozen.as_ref(),
         bit_perfect_changed: app.bit_perfect_changed(),
+        fades: app.fades,
     }
 }
 
-/// One row: a heading, or the label with its value and hint flush right.
+/// One row: the label with its value and hint flush right.
 fn row_line(row: &Row, values: &Values, selected: bool, width: usize) -> Line<'static> {
-    if let Row::Heading(title) = row {
-        return Line::from(Span::styled(format!("  {title}"), theme::strong()));
-    }
     let mut tail = vec![Span::styled(value_text(row, values), theme::text())];
     if let Some(hint) = hint_text(row, values) {
         tail.push(Span::styled(format!("  {hint}"), theme::dim()));

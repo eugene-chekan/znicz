@@ -2,16 +2,69 @@
 //! they show and how a choice steps. Pure data; no rendering, no App.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use znicz_core::FadeTimes;
 
 use crate::folder_complete;
 use crate::tui_config::{CoverProtocol, CoverSize, IconSet, LibraryLayout, TuiConfig};
 
-/// One row of the Settings list. Headings group the rows and cannot be selected.
+/// The Settings tabs, in the order the tab bar shows them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tab {
+    Display,
+    Audio,
+    Playback,
+    Library,
+    General,
+}
+
+impl Tab {
+    pub const ALL: [Tab; 5] = [
+        Tab::Display,
+        Tab::Audio,
+        Tab::Playback,
+        Tab::Library,
+        Tab::General,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Tab::Display => "Display",
+            Tab::Audio => "Audio",
+            Tab::Playback => "Playback",
+            Tab::Library => "Library",
+            Tab::General => "General",
+        }
+    }
+
+    /// The tab for a number key `'1'` to `'5'`.
+    pub fn from_key(c: char) -> Option<Tab> {
+        let index = c.to_digit(10)?.checked_sub(1)?;
+        Tab::ALL.get(index as usize).copied()
+    }
+
+    pub fn index(self) -> usize {
+        Tab::ALL
+            .iter()
+            .position(|tab| *tab == self)
+            .unwrap_or_default()
+    }
+
+    /// The next tab to the right, wrapping from the last to the first.
+    pub fn next(self) -> Tab {
+        Tab::ALL[(self.index() + 1) % Tab::ALL.len()]
+    }
+
+    /// The next tab to the left, wrapping from the first to the last.
+    pub fn previous(self) -> Tab {
+        Tab::ALL[(self.index() + Tab::ALL.len() - 1) % Tab::ALL.len()]
+    }
+}
+
+/// One row of a Settings tab.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Row {
-    Heading(&'static str),
     ShowCover,
     CoverSize,
     CoverProtocol,
@@ -21,6 +74,11 @@ pub enum Row {
     Icons,
     DefaultDevice,
     BitPerfect,
+    FadePlay,
+    FadePause,
+    FadeStop,
+    FadeTrack,
+    FadeMute,
     Folder(PathBuf),
     AddFolder,
     RescanAll,
@@ -34,55 +92,81 @@ pub enum Kind {
     Choice,
     Action,
     Folder,
-    Heading,
 }
 
-/// Every row in display order: the headings, then the folders under Library.
-pub fn rows(folders: &[PathBuf]) -> Vec<Row> {
-    let mut rows = vec![
-        Row::Heading("Display"),
-        Row::ShowCover,
-        Row::CoverSize,
-        Row::CoverProtocol,
-        Row::CoverSearch,
-        Row::LibraryLayout,
-        Row::Marquee,
-        Row::Icons,
-        Row::Heading("Audio"),
-        Row::DefaultDevice,
-        Row::BitPerfect,
-        Row::Heading("Library"),
-    ];
-    rows.extend(folders.iter().cloned().map(Row::Folder));
-    rows.extend([Row::AddFolder, Row::RescanAll]);
-    rows.extend([Row::Heading("Updates"), Row::UpdateCheck]);
-    rows
+/// The rows of one tab, in display order. The Library tab lists `folders`.
+pub fn rows(tab: Tab, folders: &[PathBuf]) -> Vec<Row> {
+    match tab {
+        Tab::Display => vec![
+            Row::ShowCover,
+            Row::CoverSize,
+            Row::CoverProtocol,
+            Row::CoverSearch,
+            Row::LibraryLayout,
+            Row::Marquee,
+            Row::Icons,
+        ],
+        Tab::Audio => vec![Row::DefaultDevice, Row::BitPerfect],
+        Tab::Playback => vec![
+            Row::FadePlay,
+            Row::FadePause,
+            Row::FadeStop,
+            Row::FadeTrack,
+            Row::FadeMute,
+        ],
+        Tab::Library => {
+            let mut rows: Vec<Row> = folders.iter().cloned().map(Row::Folder).collect();
+            rows.extend([Row::AddFolder, Row::RescanAll]);
+            rows
+        }
+        Tab::General => vec![Row::UpdateCheck],
+    }
 }
 
 impl Row {
+    /// The tab the row lives on.
+    pub fn tab(&self) -> Tab {
+        match self {
+            Row::ShowCover
+            | Row::CoverSize
+            | Row::CoverProtocol
+            | Row::CoverSearch
+            | Row::LibraryLayout
+            | Row::Marquee
+            | Row::Icons => Tab::Display,
+            Row::DefaultDevice | Row::BitPerfect => Tab::Audio,
+            Row::FadePlay | Row::FadePause | Row::FadeStop | Row::FadeTrack | Row::FadeMute => {
+                Tab::Playback
+            }
+            Row::Folder(_) | Row::AddFolder | Row::RescanAll => Tab::Library,
+            Row::UpdateCheck => Tab::General,
+        }
+    }
+
     pub fn kind(&self) -> Kind {
         match self {
-            Row::Heading(_) => Kind::Heading,
             Row::ShowCover
             | Row::CoverSearch
             | Row::Marquee
             | Row::BitPerfect
             | Row::UpdateCheck => Kind::Switch,
-            Row::CoverSize | Row::CoverProtocol | Row::LibraryLayout | Row::Icons => Kind::Choice,
+            Row::CoverSize
+            | Row::CoverProtocol
+            | Row::LibraryLayout
+            | Row::Icons
+            | Row::FadePlay
+            | Row::FadePause
+            | Row::FadeStop
+            | Row::FadeTrack
+            | Row::FadeMute => Kind::Choice,
             Row::DefaultDevice | Row::AddFolder | Row::RescanAll => Kind::Action,
             Row::Folder(_) => Kind::Folder,
         }
     }
 
-    /// False only for headings.
-    pub fn selectable(&self) -> bool {
-        self.kind() != Kind::Heading
-    }
-
     /// The row's name. A folder shows its path with the home folder as `~`.
     pub fn label(&self) -> String {
         match self {
-            Row::Heading(text) => text.to_string(),
             Row::ShowCover => "Show cover".into(),
             Row::CoverSize => "Cover size".into(),
             Row::CoverProtocol => "Cover protocol".into(),
@@ -92,6 +176,11 @@ impl Row {
             Row::Icons => "Icons".into(),
             Row::DefaultDevice => "Default output device".into(),
             Row::BitPerfect => "Bit-perfect".into(),
+            Row::FadePlay => "Fade in (play, resume)".into(),
+            Row::FadePause => "Fade on pause".into(),
+            Row::FadeStop => "Fade on stop".into(),
+            Row::FadeTrack => "Fade on track change".into(),
+            Row::FadeMute => "Mute fade".into(),
             Row::Folder(path) => match dirs::home_dir() {
                 Some(home) => folder_complete::tilde(path, &home),
                 None => path.display().to_string(),
@@ -105,7 +194,6 @@ impl Row {
     /// The text shown in the explanation strip for the highlighted row.
     pub fn explanation(&self) -> &'static str {
         match self {
-            Row::Heading(_) => "",
             Row::ShowCover => "Show album art on the Stage. Off gives the details the whole width.",
             Row::CoverSize => {
                 "How big the album art is on the Stage, as a share of the largest size that fits."
@@ -129,6 +217,15 @@ impl Row {
             Row::BitPerfect => {
                 "Open the device at each file's own sample rate and channels, so samples reach it unchanged."
             }
+            Row::FadePlay => {
+                "Fade in over this time on play, resume, and after a track change or device switch. Off starts at full volume."
+            }
+            Row::FadePause => "Fade out over this time before pausing. Off pauses at once.",
+            Row::FadeStop => "Fade out over this time before stopping. Off stops at once.",
+            Row::FadeTrack => {
+                "Fade out over this time before Next, Previous, a new track or a device switch. Off cuts at once."
+            }
+            Row::FadeMute => "How long mute and unmute take.",
             Row::Folder(_) => {
                 "A folder Znicz indexes. d removes it and its tracks from the library (files are not touched)."
             }
@@ -151,8 +248,46 @@ impl Row {
             Row::DefaultDevice => Some(("audio", "device")),
             Row::BitPerfect => Some(("audio", "bit_perfect")),
             Row::UpdateCheck => Some(("updates", "check")),
-            Row::Heading(_) | Row::Folder(_) | Row::AddFolder | Row::RescanAll => None,
+            Row::FadePlay => Some(("audio.fade", "play_ms")),
+            Row::FadePause => Some(("audio.fade", "pause_ms")),
+            Row::FadeStop => Some(("audio.fade", "stop_ms")),
+            Row::FadeTrack => Some(("audio.fade", "track_ms")),
+            Row::FadeMute => Some(("audio.fade", "mute_ms")),
+            Row::Folder(_) | Row::AddFolder | Row::RescanAll => None,
         }
+    }
+}
+
+/// The fade ladder, in milliseconds. Fade rows step along it.
+pub const FADE_LADDER_MS: [u64; 11] = [0, 50, 100, 150, 200, 300, 500, 750, 1000, 1500, 2000];
+
+/// One step along the fade ladder. A value between steps moves to the next
+/// step in that direction; at an end it wraps when `wrap` is set.
+pub fn step_fade(current: Duration, forward: bool, wrap: bool) -> Duration {
+    let now = current.as_millis() as u64;
+    let next = if forward {
+        FADE_LADDER_MS.iter().copied().find(|&ms| ms > now)
+    } else {
+        FADE_LADDER_MS.iter().rev().copied().find(|&ms| ms < now)
+    };
+    let ms = match (next, wrap, forward) {
+        (Some(ms), _, _) => ms,
+        (None, true, true) => FADE_LADDER_MS[0],
+        (None, true, false) => FADE_LADDER_MS[FADE_LADDER_MS.len() - 1],
+        (None, false, _) => now,
+    };
+    Duration::from_millis(ms)
+}
+
+/// The `[audio.fade]` time a fade row edits, or `None` for other rows.
+pub fn fade_slot<'a>(row: &Row, fades: &'a mut FadeTimes) -> Option<&'a mut Duration> {
+    match row {
+        Row::FadePlay => Some(&mut fades.play),
+        Row::FadePause => Some(&mut fades.pause),
+        Row::FadeStop => Some(&mut fades.stop),
+        Row::FadeTrack => Some(&mut fades.track),
+        Row::FadeMute => Some(&mut fades.mute),
+        _ => None,
     }
 }
 
@@ -172,6 +307,17 @@ pub struct Values<'a> {
     /// The cover settings the Stage behind the modal still shows; a cover row
     /// whose value differs applies when the modal closes.
     pub stage_shows: Option<&'a TuiConfig>,
+    /// `[audio.fade]` as the player has it.
+    pub fades: FadeTimes,
+}
+
+/// A fade time as a row shows it: `off` for zero, else milliseconds.
+fn fade_text(time: Duration) -> String {
+    if time.is_zero() {
+        "off".into()
+    } else {
+        format!("{} ms", time.as_millis())
+    }
 }
 
 fn on_off(value: bool) -> String {
@@ -219,7 +365,12 @@ pub fn value_text(row: &Row, v: &Values) -> String {
         Row::DefaultDevice => v.default_device.unwrap_or("System default").into(),
         Row::BitPerfect => on_off(v.bit_perfect),
         Row::UpdateCheck => on_off(v.update_check),
-        Row::Heading(_) | Row::Folder(_) | Row::AddFolder | Row::RescanAll => String::new(),
+        Row::FadePlay => fade_text(v.fades.play),
+        Row::FadePause => fade_text(v.fades.pause),
+        Row::FadeStop => fade_text(v.fades.stop),
+        Row::FadeTrack => fade_text(v.fades.track),
+        Row::FadeMute => fade_text(v.fades.mute),
+        Row::Folder(_) | Row::AddFolder | Row::RescanAll => String::new(),
     }
 }
 
@@ -370,46 +521,6 @@ impl Default for SettingsValues {
     }
 }
 
-/// Index of the first selectable row (0 when there is none).
-pub fn first_selectable(rows: &[Row]) -> usize {
-    rows.iter().position(Row::selectable).unwrap_or(0)
-}
-
-/// Index of the last selectable row (0 when there is none).
-pub fn last_selectable(rows: &[Row]) -> usize {
-    rows.iter().rposition(Row::selectable).unwrap_or(0)
-}
-
-/// `index` if that row can be selected, else the nearest selectable row (above
-/// first). Used when the rows change under the cursor.
-pub fn nearest_selectable(rows: &[Row], index: usize) -> usize {
-    if rows.is_empty() {
-        return 0;
-    }
-    let index = index.min(rows.len() - 1);
-    if rows[index].selectable() {
-        return index;
-    }
-    let above = next_selectable(rows, index, false);
-    if above != index {
-        return above;
-    }
-    next_selectable(rows, index, true)
-}
-
-/// The next selectable index from `from` in the given direction, skipping
-/// headings. Stays at `from` when no selectable row lies that way.
-pub fn next_selectable(rows: &[Row], from: usize, forward: bool) -> usize {
-    let found = if forward {
-        (from.saturating_add(1)..rows.len()).find(|&i| rows[i].selectable())
-    } else {
-        (0..from.min(rows.len()))
-            .rev()
-            .find(|&i| rows[i].selectable())
-    };
-    found.unwrap_or(from)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -428,7 +539,75 @@ mod tests {
             bit_perfect_changed: false,
             protocol_unsupported: false,
             stage_shows: None,
+            fades: FadeTimes::default(),
         }
+    }
+
+    #[test]
+    fn each_tab_has_its_rows() {
+        let folders = [folder("jazz")];
+        assert_eq!(
+            rows(Tab::Audio, &folders),
+            vec![Row::DefaultDevice, Row::BitPerfect]
+        );
+        assert_eq!(
+            rows(Tab::Playback, &folders),
+            vec![
+                Row::FadePlay,
+                Row::FadePause,
+                Row::FadeStop,
+                Row::FadeTrack,
+                Row::FadeMute
+            ]
+        );
+        assert_eq!(
+            rows(Tab::Library, &folders),
+            vec![Row::Folder(folder("jazz")), Row::AddFolder, Row::RescanAll]
+        );
+        assert_eq!(rows(Tab::General, &folders), vec![Row::UpdateCheck]);
+        assert_eq!(rows(Tab::Display, &folders)[0], Row::ShowCover);
+    }
+
+    #[test]
+    fn tabs_have_labels_and_number_keys() {
+        assert_eq!(
+            Tab::ALL.map(Tab::label),
+            ["Display", "Audio", "Playback", "Library", "General"]
+        );
+        assert_eq!(Tab::from_key('3'), Some(Tab::Playback));
+        assert_eq!(Tab::from_key('6'), None);
+        assert_eq!(Tab::General.next(), Tab::Display);
+        assert_eq!(Tab::Display.previous(), Tab::General);
+    }
+
+    #[test]
+    fn fade_rows_show_ms_or_off() {
+        let tui = TuiConfig::default();
+        let mut v = values(&tui);
+        v.fades.pause = Duration::ZERO;
+        v.fades.play = Duration::from_millis(240);
+        assert_eq!(value_text(&Row::FadePause, &v), "off");
+        assert_eq!(value_text(&Row::FadePlay, &v), "240 ms");
+        assert_eq!(value_text(&Row::FadeStop, &v), "300 ms");
+    }
+
+    #[test]
+    fn fade_steps_follow_the_ladder_and_snap() {
+        let ms = Duration::from_millis;
+        assert_eq!(step_fade(ms(150), true, false), ms(200));
+        assert_eq!(step_fade(ms(150), false, false), ms(100));
+        assert_eq!(step_fade(Duration::ZERO, false, false), Duration::ZERO);
+        assert_eq!(step_fade(ms(2000), true, false), ms(2000));
+        assert_eq!(step_fade(ms(2000), true, true), Duration::ZERO);
+        // Off the ladder: to the next value in that direction.
+        assert_eq!(step_fade(ms(240), true, false), ms(300));
+        assert_eq!(step_fade(ms(240), false, false), ms(200));
+    }
+
+    #[test]
+    fn fade_rows_save_under_audio_fade() {
+        assert_eq!(Row::FadePlay.config_key(), Some(("audio.fade", "play_ms")));
+        assert_eq!(Row::FadeMute.config_key(), Some(("audio.fade", "mute_ms")));
     }
 
     #[test]
@@ -447,6 +626,7 @@ mod tests {
             bit_perfect_changed: false,
             protocol_unsupported: false,
             stage_shows: Some(&shown),
+            fades: FadeTimes::default(),
         };
         assert_eq!(hint_text(&Row::CoverSize, &values), Some("on close"));
         assert_eq!(hint_text(&Row::ShowCover, &values), None);
@@ -478,42 +658,6 @@ mod tests {
         );
         assert!(!protocol_supported(Kitty, sixel_only));
         assert!(protocol_supported(Off, sixel_only));
-    }
-
-    #[test]
-    fn rows_are_grouped_under_headings_in_spec_order() {
-        let rows = rows(&[folder("a"), folder("b")]);
-        assert_eq!(
-            rows,
-            vec![
-                Row::Heading("Display"),
-                Row::ShowCover,
-                Row::CoverSize,
-                Row::CoverProtocol,
-                Row::CoverSearch,
-                Row::LibraryLayout,
-                Row::Marquee,
-                Row::Icons,
-                Row::Heading("Audio"),
-                Row::DefaultDevice,
-                Row::BitPerfect,
-                Row::Heading("Library"),
-                Row::Folder(folder("a")),
-                Row::Folder(folder("b")),
-                Row::AddFolder,
-                Row::RescanAll,
-                Row::Heading("Updates"),
-                Row::UpdateCheck,
-            ]
-        );
-    }
-
-    #[test]
-    fn headings_are_not_selectable_and_other_rows_are() {
-        for row in rows(&[folder("a")]) {
-            assert_eq!(row.selectable(), !matches!(row, Row::Heading(_)), "{row:?}");
-        }
-        assert_eq!(Row::Heading("Audio").kind(), Kind::Heading);
     }
 
     #[test]
@@ -549,9 +693,9 @@ mod tests {
     }
 
     #[test]
-    fn every_selectable_row_has_an_explanation() {
-        for row in rows(&[folder("a")]) {
-            if row.selectable() {
+    fn every_row_has_an_explanation() {
+        for tab in Tab::ALL {
+            for row in rows(tab, &[folder("a")]) {
                 assert!(!row.explanation().is_empty(), "{row:?}");
             }
         }
@@ -678,7 +822,6 @@ mod tests {
         assert_eq!(value_text(&Row::UpdateCheck, &v), "on");
         assert_eq!(value_text(&Row::AddFolder, &v), "");
         assert_eq!(value_text(&Row::Folder(folder("a")), &v), "");
-        assert_eq!(value_text(&Row::Heading("Audio"), &v), "");
 
         tui.show_cover = false;
         tui.cover_size = CoverSize::P75;
@@ -716,51 +859,11 @@ mod tests {
         assert_eq!(hint_text(&Row::AddFolder, &v), Some("↵"));
         assert_eq!(hint_text(&Row::RescanAll, &v), Some("↵"));
         assert_eq!(hint_text(&Row::ShowCover, &v), None);
-        assert_eq!(hint_text(&Row::Heading("Audio"), &v), None);
 
         v.bit_perfect_changed = true;
         v.protocol_needs_restart = true;
         assert_eq!(hint_text(&Row::BitPerfect, &v), Some("on restart"));
         assert_eq!(hint_text(&Row::CoverProtocol, &v), Some("on restart"));
-    }
-
-    #[test]
-    fn next_selectable_skips_headings_at_both_ends() {
-        let rows = rows(&[folder("a")]);
-        // Index 0 is the "Display" heading, index 1 is Show cover.
-        assert_eq!(next_selectable(&rows, 0, true), 1);
-        assert_eq!(
-            next_selectable(&rows, 1, false),
-            1,
-            "no row above but a heading"
-        );
-        // Over the "Audio" heading (index 8) lands on Default output device.
-        assert_eq!(next_selectable(&rows, 7, true), 9);
-        assert_eq!(next_selectable(&rows, 9, false), 7);
-        // The last row is UpdateCheck; going past it stays put.
-        let last = rows.len() - 1;
-        assert_eq!(next_selectable(&rows, last, true), last);
-        // Stepping back from the Updates heading lands on the RescanAll row.
-        let updates = last - 1;
-        assert_eq!(next_selectable(&rows, updates, false), updates - 1);
-        assert_eq!(next_selectable(&rows, updates, true), last);
-    }
-
-    #[test]
-    fn next_selectable_stays_put_when_nothing_is_selectable() {
-        let rows = vec![Row::Heading("Display"), Row::Heading("Audio")];
-        assert_eq!(next_selectable(&rows, 0, true), 0);
-        assert_eq!(next_selectable(&rows, 1, false), 1);
-        assert_eq!(next_selectable(&[], 0, true), 0);
-    }
-
-    #[test]
-    fn first_and_last_selectable_skip_the_headings() {
-        let rows = rows(&[folder("a")]);
-        assert_eq!(first_selectable(&rows), 1, "Show cover");
-        assert_eq!(last_selectable(&rows), rows.len() - 1, "Check for updates");
-        assert_eq!(first_selectable(&[Row::Heading("x")]), 0);
-        assert_eq!(last_selectable(&[]), 0);
     }
 
     #[test]

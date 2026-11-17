@@ -62,22 +62,18 @@ impl App {
             return;
         }
         self.leave_messages();
-        self.settings_rows = settings::rows(&self.library_status.folders);
-        let first = settings::first_selectable(&self.settings_rows);
-        self.set_settings_cursor(first);
+        self.settings_rows = settings::rows(self.settings_tab, &self.library_status.folders);
+        self.set_settings_cursor(0);
         self.settings_scroll = 0;
         self.modal = Modal::Settings;
     }
 
-    /// Move the Settings cursor `delta` selectable rows, stopping at either end.
+    /// Move the Settings cursor `delta` rows, stopping at either end.
     pub(super) fn settings_move(&mut self, delta: isize) {
-        for _ in 0..delta.unsigned_abs() {
-            let next =
-                settings::next_selectable(&self.settings_rows, self.settings_cursor, delta > 0);
-            if next == self.settings_cursor {
-                break;
-            }
-            self.set_settings_cursor(next);
+        let last = self.settings_rows.len().saturating_sub(1);
+        let target = self.settings_cursor.saturating_add_signed(delta).min(last);
+        if target != self.settings_cursor {
+            self.set_settings_cursor(target);
         }
     }
 
@@ -220,7 +216,7 @@ impl App {
     /// Rebuild the folder rows from the library status. The cursor stays on the
     /// same row when it still exists.
     pub(super) fn refresh_settings_rows(&mut self) {
-        let rows = settings::rows(&self.library_status.folders);
+        let rows = settings::rows(self.settings_tab, &self.library_status.folders);
         if rows == self.settings_rows {
             return;
         }
@@ -229,7 +225,9 @@ impl App {
         let index = match current.and_then(|row| self.settings_rows.iter().position(|r| *r == row))
         {
             Some(index) => index,
-            None => settings::nearest_selectable(&self.settings_rows, self.settings_cursor),
+            None => self
+                .settings_cursor
+                .min(self.settings_rows.len().saturating_sub(1)),
         };
         self.set_settings_cursor(index);
     }
@@ -275,7 +273,7 @@ impl App {
                 }
             }
             // Actions and folder rows are run by `on_settings_key`, not changed here.
-            Kind::Action | Kind::Folder | Kind::Heading => false,
+            Kind::Action | Kind::Folder => false,
         }
     }
 
@@ -479,8 +477,11 @@ mod tests {
             .with_config_file(ConfigFile::new(dir.path().join("config.toml")))
     }
 
-    /// Put the Settings cursor on `row`, as pressing keys to reach it would.
+    /// Put the Settings cursor on `row`, switching to its tab first, as pressing
+    /// keys to reach it would.
     fn select(app: &mut App, row: Row) {
+        app.settings_tab = row.tab();
+        app.settings_rows = settings::rows(app.settings_tab, &app.library_status.folders);
         app.settings_cursor = app
             .settings_rows
             .iter()
@@ -564,7 +565,7 @@ mod tests {
     }
 
     #[test]
-    fn cursor_skips_headings() {
+    fn cursor_moves_within_the_tab_and_stops_at_the_ends() {
         let dir = tempfile::tempdir().unwrap();
         let mut app = settings_app(&dir);
         press(&mut app, KeyCode::Char('S'));
@@ -575,16 +576,18 @@ mod tests {
             Row::ShowCover,
             "k at the top stays put"
         );
-        for _ in 0..7 {
+        for _ in 0..6 {
             press(&mut app, KeyCode::Char('j'));
         }
+        assert_eq!(app.settings_rows[app.settings_cursor], Row::Icons);
+        press(&mut app, KeyCode::Char('j'));
         assert_eq!(
             app.settings_rows[app.settings_cursor],
-            Row::DefaultDevice,
-            "the Audio heading is skipped"
+            Row::Icons,
+            "j at the bottom stays put"
         );
         press(&mut app, KeyCode::Char('k'));
-        assert_eq!(app.settings_rows[app.settings_cursor], Row::Icons);
+        assert_eq!(app.settings_rows[app.settings_cursor], Row::Marquee);
     }
 
     #[test]
@@ -790,10 +793,8 @@ mod tests {
         screen_rows(&mut app);
         let hit = app.hits.overlay_list.expect("the list is drawn");
 
-        // Row 0 is the "Display" heading; row 2 is Cover size.
-        click(&mut app, hit.inner.x + 1, hit.inner.y);
-        assert_eq!(app.settings_cursor, 1, "a heading is not selected");
-        click(&mut app, hit.inner.x + 1, hit.inner.y + 2);
+        // Row 0 is Show cover; row 1 is Cover size.
+        click(&mut app, hit.inner.x + 1, hit.inner.y + 1);
         assert_eq!(app.settings_rows[app.settings_cursor], Row::CoverSize);
 
         app.on_mouse(MouseEvent {
@@ -1099,7 +1100,7 @@ mod tests {
         let column = hit.inner.x + 1;
         for row in hit.inner.y..hit.inner.y + hit.inner.height {
             if let Some(index) = hit.row_at(column, row) {
-                if index != avoid && app.settings_rows[index].selectable() {
+                if index != avoid {
                     click(app, column, row);
                     return;
                 }
@@ -1128,12 +1129,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, host) = host_app(&dir, &["/music/a"]);
         press(&mut app, KeyCode::Char('S'));
+        select(&mut app, Row::Folder(PathBuf::from("/music/a")));
         let folder = app
             .settings_rows
             .iter()
             .position(|r| matches!(r, Row::Folder(_)))
             .unwrap();
-        select(&mut app, Row::Folder(PathBuf::from("/music/a")));
         press(&mut app, KeyCode::Char('d'));
         click_another_setting_row(&mut app, folder);
         press(&mut app, KeyCode::Enter);
@@ -1149,10 +1150,17 @@ mod tests {
         select(&mut app, Row::Folder(PathBuf::from("/music/a")));
         press(&mut app, KeyCode::Char('d'));
         press(&mut app, KeyCode::Char('G'));
-        assert_eq!(app.settings_rows[app.settings_cursor], Row::UpdateCheck);
+        // The Library tab's last row is Rescan all folders; Enter there rescans
+        // and must not remove the folder.
+        assert_eq!(app.settings_rows[app.settings_cursor], Row::RescanAll);
         press(&mut app, KeyCode::Enter);
 
-        assert!(sent(&host).is_empty(), "Enter must not remove the folder");
+        assert!(
+            !sent(&host)
+                .iter()
+                .any(|op| matches!(op, LibraryOp::RemoveFolder { .. })),
+            "Enter must not remove the folder"
+        );
     }
 
     #[test]
