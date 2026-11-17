@@ -36,9 +36,9 @@ later.
 | Automatic track end, gapless join, seek, queue edits, volume change | No fade (volume keeps its 20 ms ramp). |
 
 A time of 0 means no fade: the action runs at once, as today. Starting playback
-while stopped or paused has nothing to fade out, so it only fades in. A
-`ReplaceQueue` or a removal of the playing row stops through the normal stop
-path, which fades with `stop_ms` when something is playing.
+while stopped or paused has nothing to fade out, so it only fades in.
+Replacing the queue or removing the playing row while playing fades out over
+`track_ms` first.
 
 ### Audio layer (`znicz-core/src/audio`)
 
@@ -66,37 +66,45 @@ path, which fades with `stop_ms` when something is playing.
 
 - `FadeTimes { play, pause, stop, track, mute: Duration }`, serde, with
   `Default` = 150, 150, 300, 150, 500 ms.
-- `Deferred`: what runs once a fade-out lands: `Pause`, `Stop`,
-  `Play(QueueItem)`, `PlayIndex(usize)`, `Next`, `Previous`,
-  `SetDevice(String)`.
-- `FadeOut { action: Deferred, generation: u64, deadline: Instant, acks: Vec<Ack> }`.
-- `FadeOut::on_command(...)` decides what a new command does to a pending
-  fade-out:
-  - `Resume` while a pause is pending: cancel it and fade back in from the
-    current gain. Its acks are answered `Ok`.
-  - `Stop`, `Pause`, or another track change or device switch: replace the
-    pending action. The fade keeps going (or restarts with the new time when
-    that time is shorter). The earlier acks are answered once the new action
-    runs.
-  - Anything else (volume, mute, seek, queue edits, repeat, shuffle) runs at
-    once and does not touch the pending fade-out.
+- `fade_out_time(command, &FadeTimes, &Playback) -> Option<Duration>`: how long
+  to fade out before `command` runs, or `None` to run it at once. `Playback`
+  says whether sound is playing (status Playing with a stream) and which row is
+  playing. Only while sound is playing:
+  - `Pause` → `pause`; `Stop` → `stop`;
+  - `NextTrack`, `PreviousTrack`, `Play`, `QueuePlayIndex`, `ReplaceQueue`,
+    `QueueRemove` of the playing row, `SetDevice` → `track`.
+  A time of zero is `None`.
+- `FadeOut { waiting: VecDeque<CommandEnvelope>, generation, deadline }`: the
+  command that started the fade and every command that arrived since, in
+  order, each with its ack.
+- While a fade-out is pending:
+  - `SetVolume`, `SetMuted` and `SetFades` run at once.
+  - `Resume`, when the only waiting command is a `Pause`, cancels it: the fade
+    ramps back up over `play` from wherever it is, and both acks are answered
+    `Ok`.
+  - Every other command waits behind the others. This keeps order: playing an
+    album sends `ReplaceQueue` then `QueuePlayIndex`, and both must run, in
+    that order, once the sound is down.
 - `deadline` is the fade time plus 500 ms. If the callback has not reported
-  the fade landed by then (a dead stream), the action runs anyway.
+  the fade landed by then (a dead stream), the waiting commands run anyway.
 
 The engine:
 
-- keeps `fade_out: Option<FadeOut>` and checks it each loop pass: when
+- keeps `fade_out: Option<FadeOut>` and checks it each loop pass. When
   `output.fade_landed(generation)` or the deadline has passed, it runs the
-  action and answers the acks with its result;
-- applies `Command`s that fade through `FadeOut` instead of at once. An ack is
-  held until the deferred action has run, so "after `send_blocking` returns
-  `Ok`, the state reflects the command" stays true (the MCP server relies on
-  it). A fade-out adds at most `track_ms` (150 ms by default) to the wait;
-  `COMMAND_TIMEOUT` is 20 s;
-- fades in after `play_item` (manual start, resume, track change, device
-  switch): `set_fade_now(0.0)` before the stream starts, then
-  `fade_to(1.0, play)`. `finish_track` (automatic next) and gapless chaining
-  pass "no fade" and set the fade gain to 1.0 at once;
+  waiting commands in order. The first runs without fading (the fade already
+  happened). Later ones are judged afresh: after a `Next` the new track is
+  playing, so a waiting `Stop` fades out again, and the commands after it wait
+  for that fade. Each ack is answered with its command's result once it runs,
+  so "after `send_blocking` returns `Ok`, the state reflects the command"
+  stays true (the MCP server relies on it). A fade-out adds at most `track_ms`
+  or `stop_ms` to the wait; `COMMAND_TIMEOUT` is 20 s;
+- fades in when a track starts from a command (`Play`, `QueuePlayIndex`,
+  `NextTrack`, `PreviousTrack`, `Resume`, a device switch, removing the playing
+  row): `set_fade_now(0.0)` before the stream opens, then `fade_to(1.0, play)`.
+  An automatic next track (`finish_track`), gapless chaining and the reopen
+  before a pending-seek (`replay_current`) do not fade: the fade gain is set to
+  1.0 at once;
 - mute uses `fades.mute` instead of `MUTE_FADE`, which is removed.
 
 `Command::SetFades(FadeTimes)` replaces the times at once. It is not deferred.
@@ -177,9 +185,10 @@ Switching tabs puts the row cursor on the new tab's first row and cancels a
 pending folder removal. Row keys (`d`, Enter on an action) do nothing on the
 tab bar.
 
-Footer hints follow focus: on the tab bar `←/→ tab · ↓ rows · Esc close`; in
-the rows `↑↓ move · ←/→ change · Tab next tab · Esc close`. Help (`?`) lists the
-same keys.
+Footer hints follow focus: on the tab bar `←/→ tab · ↓ rows · Esc close`
+(a new `Context::SettingsTabs`); in the rows today's
+`Enter change · h/l choose · Esc close` plus `Tab next tab`. The Help table
+for Settings lists `Tab / Shift-Tab`, `1–5` and `↑ on the first row`.
 
 ### Fade rows
 
@@ -195,6 +204,8 @@ same keys.
 
 ### Code
 
+- `config_file.rs`: a dotted section (`audio.fade`) is a nested table, so
+  `set_int("audio.fade", "play_ms", 150)` writes `[audio.fade] play_ms = 150`.
 - `settings.rs`: `Tab` enum (`label()`, `key()`, `all()`), `rows(tab, folders)`,
   the five fade rows, `fade_ladder` stepping, hint texts. `Row::Heading` and
   `Kind::Heading` are removed.
@@ -211,8 +222,8 @@ same keys.
   ramp.
 - `output.rs` (`fill_f32` without a device): volume × fade; full volume and
   full fade pass samples through unchanged; a fade-out ends at exactly 0.
-- `fade.rs`: every `on_command` rule; the deadline; acks kept until the action
-  runs.
+- `fade.rs`: `fade_out_time` for every command, playing or not, and with a
+  zero time; the waiting order; the Resume-cancels-Pause rule; the deadline.
 - Engine (`spawn_player` without a device, as the existing tests do): the
   commands that need no stream (`SetFades`) are accepted.
 - `tests/playback.rs` (hardware; skipped on CI): pause takes about `pause_ms`
