@@ -331,6 +331,7 @@ impl PlayerEngine {
                 }
                 self.emit_state_changed();
             }
+            Command::SetFades(_) => {}
         }
         Ok(())
     }
