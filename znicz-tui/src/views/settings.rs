@@ -21,6 +21,10 @@ const TWO_LINE_STRIP_MIN_HEIGHT: u16 = 8;
 /// Columns between two tab labels: ` │ `.
 const TAB_SEPARATOR_WIDTH: u16 = 3;
 
+/// The strip's text while the tab bar has focus.
+const TAB_BAR_HELP: &str =
+    "←/→ choose a tab, ↓ or Enter go to its settings. Tab and 1–5 switch tabs from anywhere.";
+
 /// Columns the row's label is indented by.
 const INDENT: &str = "    ";
 
@@ -120,6 +124,7 @@ pub fn render(frame: &mut Frame, list: Rect, app: &mut App) {
 
     let explanation = match &app.settings_confirm {
         Some((path, tracks)) => removal_question(path, *tracks),
+        None if app.settings_on_tab_bar => TAB_BAR_HELP.to_string(),
         None => app
             .settings_rows
             .get(cursor)

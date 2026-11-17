@@ -159,8 +159,9 @@ Section headings (`Row::Heading`) go away: the tab names replace them.
   style.
 - A rule under the tab bar, then the active tab's rows, then the explanation
   strip as today. The config path stays in the border.
-- The modal's height is the same on every tab: the tallest tab's rows (the
-  Library tab grows with the folder count, capped by the screen as today).
+- The modal's size is the same on every tab: the existing modal rule (70 % of
+  the list region), so it does not jump when you switch. A tab with more rows
+  than fit scrolls, as today.
 
 ### Keys
 
@@ -210,7 +211,7 @@ for Settings lists `Tab / Shift-Tab`, `1–5` and `↑ on the first row`.
   `Kind::Heading` are removed.
 - `app/settings_ui.rs`: `SettingsFocus { tab, on_tab_bar, row }` replacing the
   plain row index; the key table above; `select_setting` finds the row's tab.
-- `views/settings.rs`: the tab bar and fixed height.
+- `views/settings.rs`: the tab bar.
 - `App` gets the five fade values in `Values` / `SettingsValues`, filled from
   the config at start.
 

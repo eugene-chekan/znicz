@@ -1258,7 +1258,7 @@ impl App {
                 .map(|(_, tab)| *tab);
             if let Some(tab) = tab {
                 // Focus stays where it was, as with the Tab keys.
-                self.set_settings_tab(tab);
+                self.switch_settings_tab(tab);
                 return;
             }
         }

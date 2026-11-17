@@ -71,6 +71,14 @@ impl App {
     }
 
     /// Show `tab` with the cursor on its first row. Focus stays where it was.
+    /// Go to `tab` from a key or a click. The tab already shown keeps its
+    /// cursor and any pending removal question.
+    pub(super) fn switch_settings_tab(&mut self, tab: Tab) {
+        if tab != self.settings_tab {
+            self.set_settings_tab(tab);
+        }
+    }
+
     pub(super) fn set_settings_tab(&mut self, tab: Tab) {
         self.settings_tab = tab;
         self.settings_rows = settings::rows(tab, &self.library_status.folders);
@@ -109,7 +117,7 @@ impl App {
             _ => None,
         };
         if let Some(tab) = tab {
-            self.set_settings_tab(tab);
+            self.switch_settings_tab(tab);
             return true;
         }
         if self.settings_on_tab_bar {
@@ -1293,6 +1301,17 @@ mod tests {
         press(&mut app, KeyCode::BackTab);
         press(&mut app, KeyCode::BackTab);
         assert_eq!(app.settings_tab, Tab::General);
+    }
+
+    #[test]
+    fn the_shown_tabs_number_keeps_the_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Char('1'));
+        assert_eq!(app.settings_cursor, 2);
     }
 
     #[test]
