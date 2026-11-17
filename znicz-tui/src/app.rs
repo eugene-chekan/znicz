@@ -382,6 +382,8 @@ pub struct App {
     pub(crate) settings_rows: Vec<Row>,
     /// Index into `settings_rows`.
     pub(crate) settings_cursor: usize,
+    /// The Settings tab bar has focus instead of the rows.
+    pub(crate) settings_on_tab_bar: bool,
     /// First row on screen in the Settings list, kept between frames.
     pub(crate) settings_scroll: usize,
     /// `[audio] bit_perfect`, as the config file has it.
@@ -736,6 +738,7 @@ impl App {
             settings_tab: Tab::Display,
             settings_rows: Vec::new(),
             settings_cursor: 0,
+            settings_on_tab_bar: false,
             settings_scroll: 0,
             bit_perfect: true,
             check_for_updates: true,
@@ -1260,6 +1263,7 @@ impl App {
                         self.message_h_offset = 0;
                     }
                     Modal::Settings if index < self.settings_rows.len() => {
+                        self.settings_on_tab_bar = false;
                         self.set_settings_cursor(index);
                     }
                     _ => {}
@@ -1704,6 +1708,7 @@ impl App {
             Modal::Help if self.help.editing => Context::HelpFilter,
             Modal::Help => Context::Help,
             Modal::Devices => Context::Devices,
+            Modal::Settings if self.settings_on_tab_bar => Context::SettingsTabs,
             Modal::Settings => Context::Settings,
             Modal::Playlists => Context::Playlists,
             Modal::Radio => Context::Radio,
@@ -2509,7 +2514,9 @@ impl App {
 
     fn go_first(&mut self) {
         if self.modal == Modal::Settings {
-            self.set_settings_cursor(0);
+            if !self.settings_on_tab_bar {
+                self.set_settings_cursor(0);
+            }
             return;
         }
         if self.modal == Modal::Messages {
@@ -2531,7 +2538,9 @@ impl App {
 
     fn go_last(&mut self) {
         if self.modal == Modal::Settings {
-            self.set_settings_cursor(self.settings_rows.len().saturating_sub(1));
+            if !self.settings_on_tab_bar {
+                self.set_settings_cursor(self.settings_rows.len().saturating_sub(1));
+            }
             return;
         }
         let len = self.list_len();

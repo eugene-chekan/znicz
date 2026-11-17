@@ -26,6 +26,8 @@ pub enum Context {
     Queue,
     Devices,
     Settings,
+    /// Settings with the tab bar focused.
+    SettingsTabs,
     Stage,
     Playlists,
     Radio,
@@ -77,6 +79,9 @@ const TAB_COMPLETE: Hint = hint("Tab complete", KeyCode::Tab);
 const ENTER_SCAN: Hint = hint("Enter scan", KeyCode::Enter);
 const ENTER_CHANGE: Hint = hint("Enter change", KeyCode::Enter);
 const CHOOSE: Hint = hint("h/l choose", KeyCode::Char('h'));
+const NEXT_TAB: Hint = hint("Tab next tab", KeyCode::Tab);
+const TAB_SWITCH: Hint = hint("←/→ tab", KeyCode::Right);
+const ROWS: Hint = hint("↓ rows", KeyCode::Down);
 /// Opens the Messages list; the footer appends the unread count.
 pub const MESSAGES_OPEN: Hint = hint("M messages", KeyCode::Char('M'));
 
@@ -119,7 +124,8 @@ pub fn context_hints(context: Context) -> &'static [Hint] {
         Context::FolderPrompt => &[TAB_COMPLETE, ENTER_SCAN, CANCEL],
         Context::Queue => &[ENTER_PLAY, REMOVE, JUMP, CLEAR, QUEUE_CLOSE],
         Context::Devices => &[SELECT, RESCAN, CLOSE],
-        Context::Settings => &[ENTER_CHANGE, CHOOSE, CLOSE],
+        Context::Settings => &[ENTER_CHANGE, CHOOSE, NEXT_TAB, CLOSE],
+        Context::SettingsTabs => &[TAB_SWITCH, ROWS, CLOSE],
         Context::Stage => &[SPACE_PAUSE, NEXT, BROWSE, QUEUE_OPEN],
         Context::Playlists | Context::Radio => &[ENTER_PLAY, ADD, NEW, EDIT, DELETE, CLOSE],
         Context::Messages => &[CLEAR, CLOSE],
@@ -234,6 +240,9 @@ pub const SETTINGS: &[Binding] = &[
     b("Enter / Space", "change"),
     b("h / l", "choose"),
     b("d", "remove folder"),
+    b("Tab / Shift-Tab", "next / previous tab"),
+    b("1–5", "go to a tab"),
+    b("↑ on the first row", "tab bar"),
     b("Esc", "close"),
 ];
 
@@ -273,7 +282,7 @@ pub fn context_title(context: Context) -> Option<&'static str> {
         Context::FolderPrompt => None,
         Context::Queue => Some("Queue"),
         Context::Devices => Some("Devices"),
-        Context::Settings => Some("Settings"),
+        Context::Settings | Context::SettingsTabs => Some("Settings"),
         Context::Stage => Some("Stage"),
         Context::Playlists => Some("Playlists"),
         Context::Radio => Some("Radio"),
@@ -367,7 +376,7 @@ mod tests {
         }
     }
 
-    const ALL_CONTEXTS: [Context; 16] = [
+    const ALL_CONTEXTS: [Context; 17] = [
         Context::Library,
         Context::LibraryTree,
         Context::Search,
@@ -375,6 +384,7 @@ mod tests {
         Context::Queue,
         Context::Devices,
         Context::Settings,
+        Context::SettingsTabs,
         Context::Stage,
         Context::Playlists,
         Context::Radio,
@@ -464,6 +474,8 @@ mod tests {
                     "Enter" => KeyCode::Enter,
                     "Esc" => KeyCode::Esc,
                     "Tab" => KeyCode::Tab,
+                    "←/→" => KeyCode::Right,
+                    "↓" => KeyCode::Down,
                     one => KeyCode::Char(one.chars().next().unwrap()),
                 };
                 assert_eq!(hint.key.code, expected, "{context:?}: {}", hint.label);
