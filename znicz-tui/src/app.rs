@@ -1249,6 +1249,19 @@ impl App {
     }
 
     fn on_overlay_click(&mut self, column: u16, row: u16) {
+        if self.modal == Modal::Settings {
+            let tab = self
+                .hits
+                .settings_tabs
+                .iter()
+                .find(|(rect, _)| point_in(*rect, column, row))
+                .map(|(_, tab)| *tab);
+            if let Some(tab) = tab {
+                // Focus stays where it was, as with the Tab keys.
+                self.set_settings_tab(tab);
+                return;
+            }
+        }
         if let Some(hit) = self.hits.overlay_list {
             if let Some(index) = hit.row_at(column, row) {
                 match self.modal {

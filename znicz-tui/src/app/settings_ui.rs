@@ -556,6 +556,7 @@ mod tests {
     }
 
     use crate::settings::{Row, SettingsValues, Tab};
+    use crate::theme;
     use crate::tui_config::{CoverSize, LibraryLayout};
     use znicz_core::FadeTimes;
 
@@ -1437,5 +1438,101 @@ mod tests {
         press(&mut app, KeyCode::Char('S'));
         assert_eq!(app.settings_tab, Tab::Library);
         assert!(!app.settings_on_tab_bar);
+    }
+
+    #[test]
+    fn the_tab_bar_shows_every_tab() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        let screen = screen_rows(&mut app).join("\n");
+        for label in ["Display", "Audio", "Playback", "Library", "General"] {
+            assert!(screen.contains(label), "{label} missing:\n{screen}");
+        }
+    }
+
+    #[test]
+    fn the_modal_keeps_its_height_across_tabs() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        let _ = screen_rows(&mut app);
+        let display = app.hits.overlay;
+        press(&mut app, KeyCode::Char('5'));
+        let _ = screen_rows(&mut app);
+        assert_eq!(app.hits.overlay, display);
+    }
+
+    /// The frame's cells, for checking how a frame is styled.
+    fn screen_buffer(app: &mut App) -> ratatui::buffer::Buffer {
+        let state = app.player.state();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+        terminal
+            .draw(|frame| crate::views::render(frame, app, &state))
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    #[test]
+    fn the_cursor_shows_on_the_rows_or_on_the_tab_bar_never_both() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        let cursor_bg = theme::selected().bg.expect("the cursor has a background");
+        let cursor = screen_buffer(&mut app);
+        let popup = app.hits.overlay.expect("the modal is drawn");
+        let tab = (popup.x + 2, popup.y + 1);
+        let cursor_row = |app: &App| {
+            let hit = app.hits.overlay_list.expect("the list is drawn");
+            (hit.inner.x + 1, hit.inner.y)
+        };
+        let (x, y) = cursor_row(&app);
+        assert_eq!(cursor[(x, y)].bg, cursor_bg, "rows have the cursor");
+        assert_ne!(cursor[tab].bg, cursor_bg, "the tab bar has none");
+
+        press(&mut app, KeyCode::Up);
+        let on_bar = screen_buffer(&mut app);
+        let (x, y) = cursor_row(&app);
+        assert_ne!(on_bar[(x, y)].bg, cursor_bg, "rows lost the cursor");
+        assert_eq!(on_bar[tab].bg, cursor_bg, "the tab bar has it");
+    }
+
+    #[test]
+    fn the_tab_bar_draws_without_panicking_in_tiny_terminals() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        let state = app.player.state();
+        for (width, height) in [(1, 1), (3, 2), (10, 3), (20, 5), (40, 10), (60, 4)] {
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| crate::views::render(frame, &mut app, &state))
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn a_click_on_a_tab_label_shows_that_tab() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        let buffer = screen_buffer(&mut app);
+        for (rect, tab) in app.hits.settings_tabs.clone() {
+            let first = tab.label().chars().next().unwrap().to_string();
+            assert_eq!(buffer[(rect.x, rect.y)].symbol(), first, "{tab:?} is drawn");
+        }
+
+        let (rect, _) = app
+            .hits
+            .settings_tabs
+            .iter()
+            .copied()
+            .find(|(_, tab)| *tab == Tab::Audio)
+            .expect("Audio has a label");
+        click(&mut app, rect.x, rect.y);
+        assert_eq!(app.settings_tab, Tab::Audio);
+        assert!(!app.settings_on_tab_bar, "focus stays on the rows");
     }
 }
