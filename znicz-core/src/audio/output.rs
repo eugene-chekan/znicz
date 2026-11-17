@@ -479,7 +479,6 @@ fn fill_u16(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::gain::MUTE_FADE;
     use cpal::{SampleRate, SupportedBufferSize};
 
     /// Push `input` into a fresh ring and run one stereo callback over it.
@@ -539,7 +538,7 @@ mod tests {
     fn a_fade_applies_one_gain_per_frame_and_never_rises() {
         let fade = Arc::new(GainControl::new(1.0));
         let mut gains = Gains::new(Arc::new(GainControl::new(1.0)), fade.clone(), 48_000);
-        fade.set(0.0, MUTE_FADE);
+        fade.set(0.0, Duration::from_millis(500));
         let input = vec![1.0f32; 2 * 2_000];
         let out = run_gains_with(&input, &mut gains);
         let mut last = 1.0f32;

@@ -322,6 +322,7 @@ fn main() -> color_eyre::Result<()> {
         device_id: cli.device.or(config.audio.device),
         volume: config.audio.volume.unwrap_or(1.0),
         bit_perfect: config.audio.bit_perfect.unwrap_or(true),
+        fades: znicz_core::FadeTimes::default(),
     };
 
     match cli.command {

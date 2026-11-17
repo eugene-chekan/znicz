@@ -8,8 +8,6 @@
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
-/// Fade for mute and unmute.
-pub const MUTE_FADE: Duration = Duration::from_millis(500);
 /// Ramp for every other gain change.
 pub const VOLUME_RAMP: Duration = Duration::from_millis(20);
 
@@ -236,7 +234,7 @@ mod tests {
         let control = GainControl::new(1.0);
         let (_, _, _, generation) = control.snapshot();
         let mut ramp = GainRamp::new(1.0, generation);
-        control.set(0.0, MUTE_FADE);
+        control.set(0.0, Duration::from_millis(500));
         ramp.follow(&control, 1_000);
         let mut g = 1.0;
         for _ in 0..500 {
