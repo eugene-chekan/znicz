@@ -61,6 +61,10 @@ impl GainControl {
 
     /// `(start, target, ramp_ms, generation)`; `start` is `None` when the
     /// ramp begins from the current gain.
+    ///
+    /// Read while the engine is writing, the values can belong to the next
+    /// generation. That is harmless with one writer: the next callback sees
+    /// the newer generation and starts that ramp again.
     pub fn snapshot(&self) -> (Option<f32>, f32, u32, u64) {
         let generation = self.generation.load(Ordering::Acquire);
         let start = f32::from_bits(self.start_bits.load(Ordering::Relaxed));
@@ -71,6 +75,9 @@ impl GainControl {
     }
 
     /// Whether the callback has reached the target set as `generation`.
+    ///
+    /// Reported when the callback writes the samples; the device plays them
+    /// one buffer (10–20 ms) later.
     pub fn has_landed(&self, generation: u64) -> bool {
         self.landed.load(Ordering::Acquire) >= generation
     }

@@ -53,9 +53,8 @@ Replacing the queue or removing the playing row while playing fades out over
 - `AudioOutput` methods: `fade_to(target, ramp) -> u64` (the generation),
   `fade_landed(generation) -> bool`, and `set_fade_now(gain)` (instant, used to
   make a new stream start silent).
-- The paused flag still forces silence. A paused stream's fade ramp does not
-  advance; that is fine, because the engine pauses only after the fade-out
-  landed and resumes before fading in.
+- The paused flag still forces silence. Ramps keep advancing while paused,
+  so a fade-out that started before a pause still lands and is reported.
 - `fill_f32`, `fill_i16` and `fill_u16` share their argument list; the two
   controls and ramps go into one `Gains` struct (volume and fade) so the
   `too_many_arguments` allowances do not grow.
