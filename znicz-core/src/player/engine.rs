@@ -346,8 +346,12 @@ impl PlayerEngine {
                 self.emit_state_changed();
             }
             Command::Resume => {
-                self.output.set_paused(false);
-                self.output.fade_in(self.fades.play);
+                // Only a paused track fades back in; Resume while playing
+                // must not dip the sound.
+                if self.state.read().unwrap().status == PlaybackStatus::Paused {
+                    self.output.set_paused(false);
+                    self.output.fade_in(self.fades.play);
+                }
                 self.update_status(PlaybackStatus::Playing);
                 self.emit_state_changed();
             }
