@@ -295,7 +295,7 @@ fn build_stream(
 ) -> Result<Stream> {
     let err_fn = |err| tracing::error!("audio stream error: {err}");
 
-    let (target, _, generation) = gain.snapshot();
+    let (_, target, _, generation) = gain.snapshot();
     let mut ramp = GainRamp::new(target, generation);
     let channels = usize::from(config.channels.max(1));
     let rate = config.sample_rate.0;
@@ -483,7 +483,7 @@ mod tests {
             producer.push(*s).unwrap();
         }
         let control = GainControl::new(1.0);
-        let (target, _, generation) = control.snapshot();
+        let (_, target, _, generation) = control.snapshot();
         let mut ramp = GainRamp::new(target, generation);
         let out = run_f32(&input, &control, &mut ramp, &mut consumer);
         assert_eq!(out, input, "bit-for-bit at gain 1.0");
@@ -497,7 +497,7 @@ mod tests {
             producer.push(*s).unwrap();
         }
         let control = GainControl::new(1.0);
-        let (target, _, generation) = control.snapshot();
+        let (_, target, _, generation) = control.snapshot();
         let mut ramp = GainRamp::new(target, generation);
         control.set(0.0, MUTE_FADE);
         let out = run_f32(&input, &control, &mut ramp, &mut consumer);
