@@ -241,7 +241,9 @@ impl PlayerEngine {
             self.pump_decode();
             self.advance_pending();
 
-            if self.drain_complete() {
+            // A track that ends during a fade-out waits for it: the waiting
+            // command (pause, stop, next) applies to this track, not the next.
+            if self.fade_out.is_none() && self.drain_complete() {
                 self.finish_track();
             }
 
@@ -349,8 +351,9 @@ impl PlayerEngine {
                 // Only a paused track fades back in; Resume while playing
                 // must not dip the sound.
                 if self.state.read().unwrap().status == PlaybackStatus::Paused {
-                    self.output.set_paused(false);
+                    // Fade gain first, so no frame plays at full gain.
                     self.output.fade_in(self.fades.play);
+                    self.output.set_paused(false);
                 }
                 self.update_status(PlaybackStatus::Playing);
                 self.emit_state_changed();
@@ -425,6 +428,10 @@ impl PlayerEngine {
                     // The reopened stream starts empty: the chained tracks in
                     // the old buffer are gone, so show the decoder's track.
                     self.start_all_pending();
+                } else {
+                    // The tail of a finished track is still playing on the old
+                    // stream; undo the fade-out that came before this switch.
+                    self.output.set_fade_now(1.0);
                 }
                 self.emit_state_changed();
             }
