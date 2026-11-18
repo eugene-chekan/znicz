@@ -216,7 +216,7 @@ The essentials:
 | Alt-← / Alt-→ | Pan a long title |
 | v / i | Stage: full-screen now playing (cover, details, signal path); again to return to Browse |
 | , | Devices |
-| S | Settings: display, audio, music folders, update check (saved to `config.toml`) |
+| S | Settings, in tabs: display, audio, playback (fades), library (music folders), general (update check); saved to `config.toml` |
 | ? / q | Help / quit TUI (`s` stops playback) |
 
 Some terminals do not send Alt-arrows (for example macOS Terminal until you
@@ -255,6 +255,14 @@ Default file (`znicz/src/default-config.toml`):
 volume = 1.0
 # Open the device at each file's own sample rate and channels.
 bit_perfect = true
+
+[audio.fade]
+# Fade times in milliseconds; 0 turns a fade off.
+play_ms = 150    # play and resume (fade in)
+pause_ms = 150
+stop_ms = 300
+track_ms = 150   # manual track change and device switch (fade out)
+mute_ms = 500
 
 [player]
 # Seconds the player stays up while stopped with no UI; 0 never exits.

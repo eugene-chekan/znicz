@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.18.0 - 2026-11-18
+
+- Fades: play and resume fade in; pause, stop, Next/Previous, choosing a new
+  track, removing the playing row and switching the output device fade out
+  first. Times are set in `[audio.fade]` (milliseconds, 0 = off) and in
+  Settings → Playback, where a change applies at once. Defaults: in 150 ms,
+  pause 150 ms, stop 300 ms, track change 150 ms, mute 500 ms. Automatic track
+  changes and gapless joins do not fade. Steady playback stays bit-perfect.
+- Settings has tabs: Display, Audio, Playback, Library, General. `Tab` /
+  `Shift-Tab` or `1`–`5` switch tabs; `↑` on the first row moves to the tab
+  bar, where `←` / `→` switch.
+
 ## 0.17.1 - 2026-11-15
 
 - Radio covers are found for titles with a bracketed note after the song name,

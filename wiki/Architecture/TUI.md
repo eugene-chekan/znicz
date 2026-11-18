@@ -272,13 +272,44 @@ quickest way to find a device that will take your files unconverted.
 
 ### Settings
 
-`S` opens a centered modal with the display and audio settings, the music
-folders, and the update check, grouped under headings the cursor skips. `j` / `k`
-(or the arrows, `g` / `G`, `Ctrl-d` / `Ctrl-u`) move between rows. `Enter`
-or `Space` changes the highlighted row: a switch flips, a choice steps forward
-and wraps. `h` / `l` (or `←` / `→`) step a choice back or forward and stop at
-the ends, and turn a switch off or on. `Esc` closes the modal, or cancels a
-pending folder removal first.
+`S` opens a centered modal with five tabs, in the order the tab bar shows
+them: **Display** (the cover, cover search, library layout, marquee and icons), **Audio**
+(the default output device and bit-perfect), **Playback** (the fade times),
+**Library** (the music folders) and **General** (the update check). The
+modal opens on the tab you last used in this run, with the cursor on its first
+row.
+
+Focus is either on the tab bar (the first line inside the modal) or on the
+rows, never both. The row under the cursor shows the selection bar only while
+the rows have focus. The strip above the bottom border explains the row under the cursor, or,
+while the tab bar has focus, how to use it.
+
+| Key | Action |
+| --- | --- |
+| `Tab` / `Shift-Tab` | Next / previous tab, from either focus; wraps at the ends |
+| `1`–`5` | Show that tab, from either focus |
+| `↑` on the first row (`k`) | Move focus to the tab bar |
+| `←` / `→` (`h` / `l`) on the tab bar | Previous / next tab; stops at the first and last tab |
+| `↓` (`j`) or `Enter` on the tab bar | Move focus into the rows of the shown tab |
+| Click a tab label | Show that tab; focus stays where it was |
+| `↑` / `↓` (`j` / `k`), `g` / `G`, `Ctrl-d` / `Ctrl-u` | Move between rows; `↓` stops at the last row, and `↑` on the first row goes to the tab bar |
+| `Enter` / `Space` | Change the highlighted row: a switch flips, a choice steps forward and wraps |
+| `←` / `→` (`h` / `l`) | Step a choice back or forward and stop at the ends; turn a switch off or on |
+| `d` | On a folder, ask to remove it (`Enter` confirms, `Esc` cancels) |
+| `Esc` | Close the modal, or cancel a pending folder removal first |
+
+The shown tab's own number key keeps the cursor where it is, so `1`–`5` only
+moves the cursor when it goes to another tab. The tab shown when the modal
+closes is the tab it opens on next time.
+
+**Playback** has five rows, one per `[audio.fade]` time: *Fade in (play,
+resume)*, *Fade on pause*, *Fade on stop*, *Fade on track change* and *Mute
+fade*. Each steps along the ladder 0, 50, 100, 150, 200, 300, 500, 750, 1000,
+1500 and 2000 ms; `off` is 0. `←` / `→` stop at the ends, and `Enter` wraps from
+the longest back to `off`. A value in the file that is not on the ladder moves to
+the next step in the direction pressed. A change saves to `[audio.fade]` and
+reaches the player at once, so the next fade uses it. See
+[Playback Pipeline](../Domain/Playback-Pipeline.md) for what each fade covers.
 
 Each change applies at once and is saved to `config.toml` in place, so comments
 and other keys stay. The strip above the bottom border explains the highlighted
