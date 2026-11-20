@@ -30,3 +30,7 @@ Critical or Important findings block the push. They are fed back to the agent, w
 - A review that cannot run lets the push through with a warning.
 - `ZNICZ_SKIP_REVIEW=1 git push …` skips the review, for example for release tags.
 
+A diff over 100 KB is split by file into parts that are reviewed in parallel; any part that blocks blocks the push. `Cargo.lock` and `THIRD-PARTY-LICENSES.html` are not reviewed.
+
+The hook blocks the whole Bash command. Never chain `git commit … && git push`: a blocked push drops the commit too. Commit, check `git status`, then push in a separate command.
+
