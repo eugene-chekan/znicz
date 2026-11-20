@@ -284,7 +284,7 @@ mod tests {
         let later = control.set(1.0, Duration::from_millis(5));
         assert!(
             !control.has_landed(later),
-            "an older landing does not count"
+            "a newer generation has not landed yet"
         );
     }
 

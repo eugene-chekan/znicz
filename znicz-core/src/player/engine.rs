@@ -294,6 +294,7 @@ impl PlayerEngine {
             audible: state.status == PlaybackStatus::Playing
                 && (self.decoder.is_some() || self.draining_since.is_some()),
             position: state.queue_position,
+            decoding: self.decoder.is_some(),
         }
     }
 
@@ -351,9 +352,11 @@ impl PlayerEngine {
                 // Only a paused track fades back in; Resume while playing
                 // must not dip the sound.
                 if self.state.read().unwrap().status == PlaybackStatus::Paused {
-                    // Fade gain first, so no frame plays at full gain.
-                    self.output.fade_in(self.fades.play);
+                    // Silent before unpausing, so no frame plays loud; the
+                    // ramp starts once the stream runs again.
+                    self.output.set_fade_now(0.0);
                     self.output.set_paused(false);
+                    self.output.fade_in(self.fades.play);
                 }
                 self.update_status(PlaybackStatus::Playing);
                 self.emit_state_changed();
@@ -428,10 +431,6 @@ impl PlayerEngine {
                     // The reopened stream starts empty: the chained tracks in
                     // the old buffer are gone, so show the decoder's track.
                     self.start_all_pending();
-                } else {
-                    // The tail of a finished track is still playing on the old
-                    // stream; undo the fade-out that came before this switch.
-                    self.output.set_fade_now(1.0);
                 }
                 self.emit_state_changed();
             }
