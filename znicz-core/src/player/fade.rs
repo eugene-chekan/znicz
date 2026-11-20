@@ -39,6 +39,9 @@ pub struct Playback {
     pub audible: bool,
     /// The queue row that is playing.
     pub position: usize,
+    /// A decoder is open. Without one only the tail of a finished track is
+    /// playing out, and a device switch has no stream to reopen.
+    pub decoding: bool,
 }
 
 /// How long to fade out before `command`, or `None` to run it at once.
@@ -53,8 +56,8 @@ pub fn fade_out_time(command: &Command, times: &FadeTimes, playback: Playback) -
         | Command::PreviousTrack
         | Command::Play(_)
         | Command::QueuePlayIndex(_)
-        | Command::ReplaceQueue { .. }
-        | Command::SetDevice(_) => times.track,
+        | Command::ReplaceQueue { .. } => times.track,
+        Command::SetDevice(_) if playback.decoding => times.track,
         Command::QueueRemove(index) if *index == playback.position => times.track,
         _ => return None,
     };
@@ -118,11 +121,27 @@ mod tests {
     const PLAYING: Playback = Playback {
         audible: true,
         position: 2,
+        decoding: true,
     };
     const SILENT: Playback = Playback {
         audible: false,
         position: 2,
+        decoding: true,
     };
+
+    #[test]
+    fn a_device_switch_during_a_tail_does_not_fade() {
+        let tail = Playback {
+            decoding: false,
+            ..PLAYING
+        };
+        let t = FadeTimes::default();
+        assert_eq!(
+            fade_out_time(&Command::SetDevice("x".into()), &t, tail),
+            None
+        );
+        assert_eq!(fade_out_time(&Command::Pause, &t, tail), Some(t.pause));
+    }
 
     fn ms(n: u64) -> Duration {
         Duration::from_millis(n)

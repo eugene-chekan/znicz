@@ -393,11 +393,10 @@ impl App {
         }
     }
 
-    /// Send all five fade times to the player; the next fade uses them.
+    /// Send all five fade times to the player, the way volume and mute go
+    /// (`App::apply`); the player applies them at once.
     fn apply_fades(&mut self) {
-        if let Err(e) = self.player.send_blocking(Command::SetFades(self.fades)) {
-            self.toasts.error(e.to_string());
-        }
+        self.apply(Command::SetFades(self.fades), None);
     }
 
     /// Point the picker at the new cover protocol. Without a start-up query the
@@ -1301,6 +1300,26 @@ mod tests {
         press(&mut app, KeyCode::BackTab);
         press(&mut app, KeyCode::BackTab);
         assert_eq!(app.settings_tab, Tab::General);
+    }
+
+    #[test]
+    fn switching_tabs_drops_a_pending_folder_removal() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, host) = host_app(&dir, &["/music/jazz"]);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Char('d'));
+        assert!(app.settings_confirm.is_some());
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::BackTab);
+        assert!(app.settings_confirm.is_none());
+        press(&mut app, KeyCode::Enter);
+        assert!(
+            !sent(&host)
+                .iter()
+                .any(|op| matches!(op, LibraryOp::RemoveFolder { .. })),
+            "nothing was removed"
+        );
     }
 
     #[test]
