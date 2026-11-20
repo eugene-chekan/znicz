@@ -14,10 +14,10 @@ Each turn it:
 See `znicz-core/src/player/commands.rs`. Examples:
 
 - `Play(QueueItem)` — stop whatever is playing, then open a local file or an HTTP stream, open output, start decode. A failed open leaves the player Stopped.
-- `Pause` / `Resume` — atomic flag; callback writes silence while paused. Pause also skips `pump_decode`, so a radio stream stops pulling bytes.
+- `Pause` / `Resume` — atomic flag; callback writes silence while paused. Pause fades out first (see [Fade-outs](#fade-outs)). Pause also skips `pump_decode`, so a radio stream stops pulling bytes.
 - `Seek(duration)` — seek the decoder, flush the ring. On a radio row this returns `radio cannot seek`.
 - `QueueMove { from, to }` — move one queue row. The playing row stays playing (the playing index follows it); an index out of range is an error, `from == to` is a no-op. An older running player rejects it, and the client suggests `znicz player stop`.
-- `SetVolume` ramps over 20 ms; `SetMuted` fades over 500 ms.
+- `SetVolume` ramps over 20 ms; `SetMuted` fades over `[audio.fade] mute_ms` (500 ms by default). `SetFades` replaces the fade times at once.
 - `NextTrack`, `QueueAdd`, …
 
 ## Output device
@@ -50,6 +50,28 @@ A local file may treat a read error as end of track (`Ok(None)`). A radio stream
 and wraps the response body as a Symphonia `MediaSource` that cannot seek.
 Decode keeps reading that body on the same thread. Pause stops the pump, so
 bytes are not pulled while paused.
+
+## Fade-outs
+
+`player/fade.rs` decides which commands fade out first. A fade-out runs before
+`Pause`, `Stop`, `NextTrack`, `PreviousTrack`, `Play`, `QueuePlayIndex`,
+`ReplaceQueue`, `SetDevice`, and `QueueRemove` of the playing row. Their times
+come from `[audio.fade]`: `pause_ms`, `stop_ms`, and `track_ms` for the track
+commands; a zero time turns the fade off. Nothing fades when nothing is audible
+(not Playing, or no stream open), and every other command runs at once.
+
+The engine's `apply` holds commands that arrive during a fade-out in a waiting
+list (`FadeOut`), in arrival order. `SetVolume`, `SetMuted` and `SetFades` run
+at once. A `Resume` cancels a waiting `Pause` when that pause is the only
+command waiting; the sound comes back up from where the fade got to. Any other
+command waits. Once the callback reports the fade landed, or the deadline passes
+(the fade time plus 500 ms), the waiting commands run in order. A command that
+starts another fade-out takes the rest of the list along.
+
+A track that ends during a fade-out waits for it, so a waiting `Pause`, `Stop`
+or `NextTrack` applies to the track that was playing, not the next one.
+Automatic track changes and gapless joins do not fade (see [Gapless joins](#gapless-joins)).
+`SetFades` changes the times the next fade uses.
 
 ## Gapless joins
 

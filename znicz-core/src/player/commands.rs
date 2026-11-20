@@ -62,6 +62,8 @@ pub enum Command {
     SetRepeat(crate::player::state::RepeatMode),
     SetShuffle(bool),
     SetDevice(String),
+    /// New fade times; used at once.
+    SetFades(crate::player::fade::FadeTimes),
 }
 
 #[derive(Debug, Clone)]

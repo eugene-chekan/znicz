@@ -8,6 +8,14 @@ volume = 1.0
 # Open the device at each file's own sample rate and channels.
 bit_perfect = true
 
+[audio.fade]
+# Fade times in milliseconds; 0 turns a fade off.
+play_ms = 150    # play and resume (fade in)
+pause_ms = 150
+stop_ms = 300
+track_ms = 150   # manual track change and device switch (fade out)
+mute_ms = 500
+
 [player]
 # Seconds the player stays up while stopped with no UI; 0 never exits.
 idle_secs = 900

@@ -8,9 +8,9 @@ use clap::{Parser, Subcommand};
 use serde::Deserialize;
 use znicz_core::wait_for_library;
 use znicz_core::{
-    AudioConfig, AudioOutput, ClientRole, Command, IpcClient, IpcServer, LibraryHost, LibraryOp,
-    SESSION_SAVE_DEBOUNCE, ScanSummary, apply_to_player, copy_saved, list_saved, load_path,
-    remove_saved, rename_saved, restore_session, save_session_from_player, saved_path,
+    AudioConfig, AudioOutput, ClientRole, Command, FadeTimes, IpcClient, IpcServer, LibraryHost,
+    LibraryOp, SESSION_SAVE_DEBOUNCE, ScanSummary, apply_to_player, copy_saved, list_saved,
+    load_path, remove_saved, rename_saved, restore_session, save_session_from_player, saved_path,
     skipped_notice, spawn_player,
 };
 use znicz_library::Library;
@@ -254,6 +254,8 @@ struct AudioSection {
     device: Option<String>,
     volume: Option<f32>,
     bit_perfect: Option<bool>,
+    #[serde(default)]
+    fade: FadeSection,
 }
 
 impl Default for AudioSection {
@@ -262,7 +264,32 @@ impl Default for AudioSection {
             device: None,
             volume: Some(1.0),
             bit_perfect: Some(true),
+            fade: FadeSection::default(),
         }
+    }
+}
+
+/// `[audio.fade]`: fade times in milliseconds. A missing key keeps its default.
+#[derive(Debug, Deserialize, Default)]
+struct FadeSection {
+    play_ms: Option<u64>,
+    pause_ms: Option<u64>,
+    stop_ms: Option<u64>,
+    track_ms: Option<u64>,
+    mute_ms: Option<u64>,
+}
+
+/// The fade times from `[audio.fade]`, with the defaults for missing keys.
+fn fade_times(config: &Config) -> FadeTimes {
+    let defaults = FadeTimes::default();
+    let fade = &config.audio.fade;
+    let ms = |value: Option<u64>, default: Duration| value.map_or(default, Duration::from_millis);
+    FadeTimes {
+        play: ms(fade.play_ms, defaults.play),
+        pause: ms(fade.pause_ms, defaults.pause),
+        stop: ms(fade.stop_ms, defaults.stop),
+        track: ms(fade.track_ms, defaults.track),
+        mute: ms(fade.mute_ms, defaults.mute),
     }
 }
 
@@ -297,6 +324,7 @@ fn main() -> color_eyre::Result<()> {
 
     let library_path = library_path(&config);
     let tui = tui_config(&config);
+    let fades = fade_times(&config);
     let extras = TuiExtras {
         updates: update::state_path().map(|path| {
             Arc::new(update::GithubUpdates::new(
@@ -314,6 +342,7 @@ fn main() -> color_eyre::Result<()> {
             bit_perfect: config.audio.bit_perfect.unwrap_or(true),
             update_check: config.updates.check.unwrap_or(true),
             default_device: config.audio.device.clone(),
+            fades,
         },
     };
     let config_file = cli.config.clone();
@@ -322,6 +351,7 @@ fn main() -> color_eyre::Result<()> {
         device_id: cli.device.or(config.audio.device),
         volume: config.audio.volume.unwrap_or(1.0),
         bit_perfect: config.audio.bit_perfect.unwrap_or(true),
+        fades,
     };
 
     match cli.command {
@@ -1353,6 +1383,30 @@ mod tests {
         assert_eq!(parsed.library.path, None);
         assert_eq!(parsed.tui.cover_size, Some(100));
         assert_eq!(tui_config(&parsed).cover_size, CoverSize::P100);
+    }
+
+    #[test]
+    fn fade_times_parse_and_default() {
+        let config = parse_config_text("[audio.fade]\nplay_ms = 0\nstop_ms = 800\n").unwrap();
+        let fades = fade_times(&config);
+        assert_eq!(fades.play, Duration::ZERO);
+        assert_eq!(fades.stop, Duration::from_millis(800));
+        assert_eq!(fades.pause, FadeTimes::default().pause);
+    }
+
+    #[test]
+    fn a_bad_fade_value_is_a_config_error() {
+        let err = parse_config_text("[audio.fade]\npause_ms = \"slow\"\n").unwrap_err();
+        assert!(
+            matches!(err, ConfigProblem::Parse { line: 2, .. }),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn the_default_config_file_has_the_default_fades() {
+        let config = parse_config_text(DEFAULT_CONFIG).unwrap();
+        assert_eq!(fade_times(&config), FadeTimes::default());
     }
 
     #[test]

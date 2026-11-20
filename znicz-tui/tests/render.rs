@@ -236,7 +236,7 @@ fn the_settings_modal_draws_at_every_size() {
     let mut app = App::with_library(player(), None);
     app.library_status.folders = vec![PathBuf::from("/music/a")];
     app.on_key(KeyEvent::new(KeyCode::Char('S'), KeyModifiers::NONE));
-    // Last row, so the list has to scroll to show the cursor.
+    // Last row of the Display tab, so the list has to scroll to show the cursor.
     app.on_key(KeyEvent::new(KeyCode::Char('G'), KeyModifiers::NONE));
 
     for &(width, height) in SIZES {
@@ -246,6 +246,16 @@ fn the_settings_modal_draws_at_every_size() {
 
     let screen = draw(&mut app, 100, 30);
     assert!(screen.contains(" Settings "), "{screen}");
+    assert!(screen.contains("Icons"), "{screen}");
+    assert!(screen.contains("Symbols used for icons"), "{screen}");
+
+    // The General tab's only row, so it is drawn at every size too.
+    app.on_key(KeyEvent::new(KeyCode::Char('5'), KeyModifiers::NONE));
+    for &(width, height) in SIZES {
+        let screen = draw(&mut app, width, height);
+        assert_eq!(screen.lines().count(), height as usize);
+    }
+    let screen = draw(&mut app, 100, 30);
     assert!(screen.contains("Check for updates daily"), "{screen}");
     assert!(screen.contains("Ask GitHub once a day"), "{screen}");
 }

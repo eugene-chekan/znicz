@@ -27,6 +27,7 @@ pub use metadata::{
 };
 pub use player::commands::{Command, PlayerEvent};
 pub use player::engine::{AudioConfig, PlayerHandle, PlayerOps, spawn_player};
+pub use player::fade::FadeTimes;
 pub use player::ipc::{ClientRole, IpcClient, IpcServer, try_state as ipc_try_state};
 pub use player::state::{
     AudioDeviceInfo, OutputInfo, PlaybackStatus, PlayerState, Queue, QueueItem, RepeatMode,

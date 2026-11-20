@@ -13,9 +13,10 @@ use ratatui::crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdat
 use ratatui::layout::Rect;
 use ratatui_image::picker::ProtocolType;
 use znicz_core::{
-    AudioDeviceInfo, AudioOutput, Command, IpcClient, LibraryHost, LibraryOp, LibraryStatus,
-    PlaybackStatus, PlayerEvent, PlayerHandle, PlayerOps, PlayerState, QueueItem, RepeatMode,
-    apply_to_player, list_saved, load_path, sanitize_stem, saved_path, skipped_notice, write_path,
+    AudioDeviceInfo, AudioOutput, Command, FadeTimes, IpcClient, LibraryHost, LibraryOp,
+    LibraryStatus, PlaybackStatus, PlayerEvent, PlayerHandle, PlayerOps, PlayerState, QueueItem,
+    RepeatMode, apply_to_player, list_saved, load_path, sanitize_stem, saved_path, skipped_notice,
+    write_path,
 };
 use znicz_library::{Library, Track};
 
@@ -29,7 +30,7 @@ use crate::layout;
 use crate::library_pane::{ColumnFocus, EffectiveLayout, Item, LibraryPane, Mode};
 use crate::line_edit::LineEdit;
 use crate::meta::{Entry, MetaCache};
-use crate::settings::{self, Row, SettingsValues};
+use crate::settings::{Row, SettingsValues, Tab};
 use crate::toast::Toasts;
 use crate::tui_config::{CoverProtocol, TuiConfig};
 
@@ -376,10 +377,13 @@ pub struct App {
     pub config_file: Option<ConfigFile>,
     /// Why the config file was not used (it is broken or unreadable), reported at start.
     pub config_problem: Option<ConfigProblem>,
-    /// Settings rows as of opening the modal (folders come from the library status).
+    /// The Settings tab shown. Its rows are rebuilt when the modal opens (folders come from the library status).
+    pub(crate) settings_tab: Tab,
     pub(crate) settings_rows: Vec<Row>,
-    /// Index into `settings_rows`; never a heading.
+    /// Index into `settings_rows`.
     pub(crate) settings_cursor: usize,
+    /// The Settings tab bar has focus instead of the rows.
+    pub(crate) settings_on_tab_bar: bool,
     /// First row on screen in the Settings list, kept between frames.
     pub(crate) settings_scroll: usize,
     /// `[audio] bit_perfect`, as the config file has it.
@@ -388,6 +392,8 @@ pub struct App {
     pub check_for_updates: bool,
     /// `[audio] device`; `None` is the system default.
     pub default_device: Option<String>,
+    /// `[audio.fade]`, as the config file has it.
+    pub fades: FadeTimes,
     /// `[audio] bit_perfect` as the player started with it.
     pub(crate) bit_perfect_at_start: bool,
     /// The cover protocol as the TUI started with it.
@@ -679,6 +685,7 @@ impl App {
         self.bit_perfect_at_start = values.bit_perfect;
         self.check_for_updates = values.update_check;
         self.default_device = values.default_device;
+        self.fades = values.fades;
         self
     }
 
@@ -728,12 +735,15 @@ impl App {
             tui: TuiConfig::default(),
             config_file: None,
             config_problem: None,
+            settings_tab: Tab::Display,
             settings_rows: Vec::new(),
             settings_cursor: 0,
+            settings_on_tab_bar: false,
             settings_scroll: 0,
             bit_perfect: true,
             check_for_updates: true,
             default_device: None,
+            fades: FadeTimes::default(),
             bit_perfect_at_start: true,
             cover_protocol_at_start: TuiConfig::default().cover_protocol,
             queried_protocol: None,
@@ -1239,6 +1249,19 @@ impl App {
     }
 
     fn on_overlay_click(&mut self, column: u16, row: u16) {
+        if self.modal == Modal::Settings {
+            let tab = self
+                .hits
+                .settings_tabs
+                .iter()
+                .find(|(rect, _)| point_in(*rect, column, row))
+                .map(|(_, tab)| *tab);
+            if let Some(tab) = tab {
+                // Focus stays where it was, as with the Tab keys.
+                self.switch_settings_tab(tab);
+                return;
+            }
+        }
         if let Some(hit) = self.hits.overlay_list {
             if let Some(index) = hit.row_at(column, row) {
                 match self.modal {
@@ -1252,10 +1275,8 @@ impl App {
                         self.message_cursor.set(index, self.toasts.history_len());
                         self.message_h_offset = 0;
                     }
-                    // A heading is not a row to select.
-                    Modal::Settings
-                        if self.settings_rows.get(index).is_some_and(Row::selectable) =>
-                    {
+                    Modal::Settings if index < self.settings_rows.len() => {
+                        self.settings_on_tab_bar = false;
                         self.set_settings_cursor(index);
                     }
                     _ => {}
@@ -1700,6 +1721,7 @@ impl App {
             Modal::Help if self.help.editing => Context::HelpFilter,
             Modal::Help => Context::Help,
             Modal::Devices => Context::Devices,
+            Modal::Settings if self.settings_on_tab_bar => Context::SettingsTabs,
             Modal::Settings => Context::Settings,
             Modal::Playlists => Context::Playlists,
             Modal::Radio => Context::Radio,
@@ -2505,8 +2527,9 @@ impl App {
 
     fn go_first(&mut self) {
         if self.modal == Modal::Settings {
-            let first = settings::first_selectable(&self.settings_rows);
-            self.set_settings_cursor(first);
+            if !self.settings_on_tab_bar {
+                self.set_settings_cursor(0);
+            }
             return;
         }
         if self.modal == Modal::Messages {
@@ -2528,8 +2551,9 @@ impl App {
 
     fn go_last(&mut self) {
         if self.modal == Modal::Settings {
-            let last = settings::last_selectable(&self.settings_rows);
-            self.set_settings_cursor(last);
+            if !self.settings_on_tab_bar {
+                self.set_settings_cursor(self.settings_rows.len().saturating_sub(1));
+            }
             return;
         }
         let len = self.list_len();

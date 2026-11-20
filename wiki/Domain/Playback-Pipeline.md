@@ -37,7 +37,7 @@ Znicz uses `rtrb`: one producer, one consumer, **no mutex**. That is required so
 The OS calls us many times per second: “fill this small buffer **now**.” We may only:
 
 - pop from the ring
-- multiply by volume (atomic)
+- multiply by volume and by the fade gain (both atomic, each ramped)
 - write silence if paused
 
 No file I/O. No `Mutex`. No `Vec` allocation.
@@ -101,6 +101,22 @@ cargo run --release -p znicz-core --example timing -- yourfile.flac
 It prints a speed factor. Anything other than about 1.000× is a bug.
 
 See [Audio threading](../Architecture/Audio-Threading.md).
+
+## Fades
+
+Play and resume fade in, and pause, stop, a manual track change, a removed
+playing row and a device switch fade out first. The sound is scaled by the
+fade gain in the same callback step, so a fade is a short ramp, not a cut. The
+times are `[audio.fade]` (150 ms in, 150 ms pause, 300 ms stop, 150 ms track,
+500 ms mute by default; 0 turns one off). Automatic track changes and gapless
+joins do not fade. See
+[Core engine](../Architecture/Core-Engine.md#fade-outs) for the waiting commands
+and [Audio threading](../Architecture/Audio-Threading.md) for the two gains.
+
+Steady playback is bit-perfect. With no fade and volume 1.0 both gains are
+exactly 1.0, and multiplying by 1.0 leaves every sample unchanged. A fade in
+progress scales the samples on purpose, so the audio is not bit-identical until
+the ramp has landed.
 
 ## Radio (HTTP)
 

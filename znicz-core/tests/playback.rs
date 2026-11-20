@@ -279,6 +279,92 @@ fn mp3_probe_uses_a_real_format_name() {
     );
 }
 
+fn playing(
+    seconds: u32,
+    fades: znicz_core::FadeTimes,
+) -> (znicz_core::PlayerHandle, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let wav = dir.path().join("fade.wav");
+    write_silent_wav(&wav, 44_100, 2, seconds);
+    let (player, _thread) = spawn_player(AudioConfig {
+        fades,
+        ..AudioConfig::default()
+    });
+    player
+        .send_blocking(Command::Play(znicz_core::QueueItem::file(wav)))
+        .expect("play");
+    (player, dir)
+}
+
+#[test]
+fn pause_waits_for_its_fade() {
+    if skip_hardware_playback() {
+        return;
+    }
+    let fades = znicz_core::FadeTimes {
+        pause: Duration::from_millis(300),
+        ..Default::default()
+    };
+    let (player, _dir) = playing(5, fades);
+    std::thread::sleep(Duration::from_millis(300));
+    let started = Instant::now();
+    player.send_blocking(Command::Pause).expect("pause");
+    let took = started.elapsed();
+    assert_eq!(player.state().status, znicz_core::PlaybackStatus::Paused);
+    assert!(
+        took >= Duration::from_millis(250),
+        "pause returned after {took:?}"
+    );
+    assert!(took < Duration::from_millis(1500), "pause took {took:?}");
+}
+
+#[test]
+fn resume_during_a_pause_fade_keeps_playing() {
+    if skip_hardware_playback() {
+        return;
+    }
+    let fades = znicz_core::FadeTimes {
+        pause: Duration::from_millis(500),
+        ..Default::default()
+    };
+    let (player, _dir) = playing(5, fades);
+    std::thread::sleep(Duration::from_millis(300));
+    player.send(Command::Pause).expect("pause");
+    player.send_blocking(Command::Resume).expect("resume");
+    std::thread::sleep(Duration::from_millis(700));
+    assert_eq!(player.state().status, znicz_core::PlaybackStatus::Playing);
+}
+
+#[test]
+fn next_returns_with_the_new_track_playing() {
+    if skip_hardware_playback() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.wav");
+    let b = dir.path().join("b.wav");
+    write_silent_wav(&a, 44_100, 2, 5);
+    write_silent_wav(&b, 44_100, 2, 5);
+    let (player, _thread) = spawn_player(AudioConfig::default());
+    player
+        .send_blocking(Command::ReplaceQueue {
+            items: vec![
+                znicz_core::QueueItem::file(a),
+                znicz_core::QueueItem::file(b.clone()),
+            ],
+            position: 0,
+        })
+        .expect("queue");
+    player
+        .send_blocking(Command::QueuePlayIndex(0))
+        .expect("play");
+    std::thread::sleep(Duration::from_millis(300));
+    player.send_blocking(Command::NextTrack).expect("next");
+    let state = player.state();
+    assert_eq!(state.queue_position, 1);
+    assert_eq!(state.current_track.and_then(|t| t.path), Some(b));
+}
+
 /// Write a silent PCM WAV file.
 fn write_silent_wav(path: &Path, sample_rate: u32, channels: u16, seconds: u32) {
     use std::io::Write;

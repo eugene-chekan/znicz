@@ -6,10 +6,10 @@ use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui_image::picker::ProtocolType;
-use znicz_core::{Command, LibraryOp};
+use znicz_core::{Command, FadeTimes, LibraryOp};
 
 use super::{App, DevicesMode, Modal};
-use crate::settings::{self, Kind, Row};
+use crate::settings::{self, Kind, Row, Tab};
 use crate::tui_config::{CoverProtocol, TuiConfig};
 
 /// How a key changes a Settings row.
@@ -41,6 +41,7 @@ struct SettingsSnapshot {
     update_check: bool,
     default_device: Option<String>,
     protocol: Option<ProtocolType>,
+    fades: FadeTimes,
 }
 
 /// The picker's protocol for a configured cover protocol, given the one the
@@ -62,22 +63,39 @@ impl App {
             return;
         }
         self.leave_messages();
-        self.settings_rows = settings::rows(&self.library_status.folders);
-        let first = settings::first_selectable(&self.settings_rows);
-        self.set_settings_cursor(first);
+        self.settings_on_tab_bar = false;
+        self.settings_rows = settings::rows(self.settings_tab, &self.library_status.folders);
+        self.set_settings_cursor(0);
         self.settings_scroll = 0;
         self.modal = Modal::Settings;
     }
 
-    /// Move the Settings cursor `delta` selectable rows, stopping at either end.
+    /// Show `tab` with the cursor on its first row. Focus stays where it was.
+    /// Go to `tab` from a key or a click. The tab already shown keeps its
+    /// cursor and any pending removal question.
+    pub(super) fn switch_settings_tab(&mut self, tab: Tab) {
+        if tab != self.settings_tab {
+            self.set_settings_tab(tab);
+        }
+    }
+
+    pub(super) fn set_settings_tab(&mut self, tab: Tab) {
+        self.settings_tab = tab;
+        self.settings_rows = settings::rows(tab, &self.library_status.folders);
+        self.settings_scroll = 0;
+        self.set_settings_cursor(0);
+    }
+
+    /// Move the Settings cursor `delta` rows, stopping at either end. The tab
+    /// bar has focus, so there is no row to move to.
     pub(super) fn settings_move(&mut self, delta: isize) {
-        for _ in 0..delta.unsigned_abs() {
-            let next =
-                settings::next_selectable(&self.settings_rows, self.settings_cursor, delta > 0);
-            if next == self.settings_cursor {
-                break;
-            }
-            self.set_settings_cursor(next);
+        if self.settings_on_tab_bar {
+            return;
+        }
+        let last = self.settings_rows.len().saturating_sub(1);
+        let target = self.settings_cursor.saturating_add_signed(delta).min(last);
+        if target != self.settings_cursor {
+            self.set_settings_cursor(target);
         }
     }
 
@@ -88,9 +106,23 @@ impl App {
         self.settings_cursor = index;
     }
 
-    /// Keys that change the highlighted row. Returns false for the rest, which
-    /// move the cursor, close the modal, or are ignored.
+    /// Keys for the Settings modal. Returns false for the rest, which move the
+    /// cursor, close the modal, or are ignored.
     pub(super) fn on_settings_key(&mut self, key: KeyEvent) -> bool {
+        // Tab keys work from either focus, and focus stays where it is.
+        let tab = match key.code {
+            KeyCode::Tab => Some(self.settings_tab.next()),
+            KeyCode::BackTab => Some(self.settings_tab.previous()),
+            KeyCode::Char(c) => Tab::from_key(c),
+            _ => None,
+        };
+        if let Some(tab) = tab {
+            self.switch_settings_tab(tab);
+            return true;
+        }
+        if self.settings_on_tab_bar {
+            return self.on_tab_bar_key(key.code);
+        }
         let Some(row) = self.settings_rows.get(self.settings_cursor).cloned() else {
             return false;
         };
@@ -99,6 +131,10 @@ impl App {
             return true;
         }
         match key.code {
+            KeyCode::Up | KeyCode::Char('k') if self.settings_cursor == 0 => {
+                self.settings_on_tab_bar = true;
+                self.settings_confirm = None;
+            }
             KeyCode::Enter | KeyCode::Char(' ') => match row {
                 Row::DefaultDevice => self.open_default_device_picker(),
                 Row::AddFolder => self.open_folder_prompt_from_settings(),
@@ -112,6 +148,34 @@ impl App {
                     self.ask_remove_folder(path);
                 }
             }
+            _ => return false,
+        }
+        true
+    }
+
+    /// Keys while the tab bar has focus. Returns false for the keys that belong
+    /// to the rest of the modal or the app (Esc, `?`, global keys).
+    fn on_tab_bar_key(&mut self, code: KeyCode) -> bool {
+        match code {
+            KeyCode::Left | KeyCode::Char('h') if self.settings_tab != Tab::Display => {
+                self.set_settings_tab(self.settings_tab.previous());
+            }
+            KeyCode::Right | KeyCode::Char('l') if self.settings_tab != Tab::General => {
+                self.set_settings_tab(self.settings_tab.next());
+            }
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Enter => {
+                self.settings_on_tab_bar = false;
+                self.set_settings_cursor(0);
+            }
+            // The ends of the bar, and row keys, which have no row here.
+            KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Char('h')
+            | KeyCode::Char('l')
+            | KeyCode::Up
+            | KeyCode::Char('k')
+            | KeyCode::Char(' ')
+            | KeyCode::Char('d') => {}
             _ => return false,
         }
         true
@@ -169,8 +233,10 @@ impl App {
         self.select_setting(&Row::DefaultDevice);
     }
 
-    /// Put the Settings cursor on `row`, when the list has it.
+    /// Show the tab `row` lives on, with the cursor on `row`, when the list has it.
     fn select_setting(&mut self, row: &Row) {
+        self.set_settings_tab(row.tab());
+        self.settings_on_tab_bar = false;
         if let Some(index) = self.settings_rows.iter().position(|r| r == row) {
             self.set_settings_cursor(index);
         }
@@ -220,7 +286,7 @@ impl App {
     /// Rebuild the folder rows from the library status. The cursor stays on the
     /// same row when it still exists.
     pub(super) fn refresh_settings_rows(&mut self) {
-        let rows = settings::rows(&self.library_status.folders);
+        let rows = settings::rows(self.settings_tab, &self.library_status.folders);
         if rows == self.settings_rows {
             return;
         }
@@ -229,7 +295,9 @@ impl App {
         let index = match current.and_then(|row| self.settings_rows.iter().position(|r| *r == row))
         {
             Some(index) => index,
-            None => settings::nearest_selectable(&self.settings_rows, self.settings_cursor),
+            None => self
+                .settings_cursor
+                .min(self.settings_rows.len().saturating_sub(1)),
         };
         self.set_settings_cursor(index);
     }
@@ -267,7 +335,12 @@ impl App {
                     Change::Forward => (true, false),
                     Change::Back => (false, false),
                 };
-                if *row == Row::CoverProtocol {
+                if let Some(slot) = settings::fade_slot(row, &mut self.fades) {
+                    let new = settings::step_fade(*slot, forward, wrap);
+                    let changed = *slot != new;
+                    *slot = new;
+                    changed
+                } else if *row == Row::CoverProtocol {
                     let choices = settings::protocol_choices(self.protocol_support);
                     settings::step_protocol(&mut self.tui, &choices, forward, wrap)
                 } else {
@@ -275,7 +348,7 @@ impl App {
                 }
             }
             // Actions and folder rows are run by `on_settings_key`, not changed here.
-            Kind::Action | Kind::Folder | Kind::Heading => false,
+            Kind::Action | Kind::Folder => false,
         }
     }
 
@@ -313,7 +386,17 @@ impl App {
             Row::ShowCover | Row::CoverSize => self.cover_draw_key = None,
             Row::CoverProtocol => self.apply_cover_protocol(),
             Row::LibraryLayout => self.library.set_preferred_layout(self.tui.library_layout),
+            Row::FadePlay | Row::FadePause | Row::FadeStop | Row::FadeTrack | Row::FadeMute => {
+                self.apply_fades();
+            }
             _ => {}
+        }
+    }
+
+    /// Send all five fade times to the player; the next fade uses them.
+    fn apply_fades(&mut self) {
+        if let Err(e) = self.player.send_blocking(Command::SetFades(self.fades)) {
+            self.toasts.error(e.to_string());
         }
     }
 
@@ -338,6 +421,9 @@ impl App {
     fn stored_value(&mut self, row: &Row) -> Option<Stored> {
         if let Some(flag) = self.switch_slot(row) {
             return Some(Stored::Bool(*flag));
+        }
+        if let Some(slot) = settings::fade_slot(row, &mut self.fades) {
+            return Some(Stored::Int(slot.as_millis() as i64));
         }
         Some(match row {
             Row::CoverSize => Stored::Int(i64::from(self.tui.cover_size.percent())),
@@ -394,6 +480,7 @@ impl App {
             update_check: self.check_for_updates,
             default_device: self.default_device.clone(),
             protocol: self.picker.as_ref().map(|p| p.protocol_type()),
+            fades: self.fades,
         }
     }
 
@@ -404,6 +491,11 @@ impl App {
         self.default_device = before.default_device;
         if let (Some(picker), Some(protocol)) = (self.picker.as_mut(), before.protocol) {
             picker.set_protocol_type(protocol);
+        }
+        if self.fades != before.fades {
+            // The player already has the new times; give it the old ones back.
+            self.fades = before.fades;
+            self.apply_fades();
         }
         self.cover_draw_key = None;
         self.library.set_preferred_layout(self.tui.library_layout);
@@ -471,16 +563,21 @@ mod tests {
         });
     }
 
-    use crate::settings::{Row, SettingsValues};
+    use crate::settings::{Row, SettingsValues, Tab};
+    use crate::theme;
     use crate::tui_config::{CoverSize, LibraryLayout};
+    use znicz_core::FadeTimes;
 
     fn settings_app(dir: &tempfile::TempDir) -> App {
         App::with_library(test_player(), None)
             .with_config_file(ConfigFile::new(dir.path().join("config.toml")))
     }
 
-    /// Put the Settings cursor on `row`, as pressing keys to reach it would.
+    /// Put the Settings cursor on `row`, switching to its tab first, as pressing
+    /// keys to reach it would.
     fn select(app: &mut App, row: Row) {
+        app.settings_tab = row.tab();
+        app.settings_rows = settings::rows(app.settings_tab, &app.library_status.folders);
         app.settings_cursor = app
             .settings_rows
             .iter()
@@ -564,7 +661,7 @@ mod tests {
     }
 
     #[test]
-    fn cursor_skips_headings() {
+    fn cursor_moves_within_the_tab_and_stops_at_the_ends() {
         let dir = tempfile::tempdir().unwrap();
         let mut app = settings_app(&dir);
         press(&mut app, KeyCode::Char('S'));
@@ -573,18 +670,26 @@ mod tests {
         assert_eq!(
             app.settings_rows[app.settings_cursor],
             Row::ShowCover,
-            "k at the top stays put"
+            "the cursor stays on the first row"
         );
-        for _ in 0..7 {
+        assert!(
+            app.settings_on_tab_bar,
+            "k on the first row focuses the tab bar"
+        );
+        press(&mut app, KeyCode::Down);
+        assert!(!app.settings_on_tab_bar);
+        for _ in 0..6 {
             press(&mut app, KeyCode::Char('j'));
         }
+        assert_eq!(app.settings_rows[app.settings_cursor], Row::Icons);
+        press(&mut app, KeyCode::Char('j'));
         assert_eq!(
             app.settings_rows[app.settings_cursor],
-            Row::DefaultDevice,
-            "the Audio heading is skipped"
+            Row::Icons,
+            "j at the bottom stays put"
         );
         press(&mut app, KeyCode::Char('k'));
-        assert_eq!(app.settings_rows[app.settings_cursor], Row::Icons);
+        assert_eq!(app.settings_rows[app.settings_cursor], Row::Marquee);
     }
 
     #[test]
@@ -790,10 +895,8 @@ mod tests {
         screen_rows(&mut app);
         let hit = app.hits.overlay_list.expect("the list is drawn");
 
-        // Row 0 is the "Display" heading; row 2 is Cover size.
-        click(&mut app, hit.inner.x + 1, hit.inner.y);
-        assert_eq!(app.settings_cursor, 1, "a heading is not selected");
-        click(&mut app, hit.inner.x + 1, hit.inner.y + 2);
+        // Row 0 is Show cover; row 1 is Cover size.
+        click(&mut app, hit.inner.x + 1, hit.inner.y + 1);
         assert_eq!(app.settings_rows[app.settings_cursor], Row::CoverSize);
 
         app.on_mouse(MouseEvent {
@@ -911,6 +1014,11 @@ mod tests {
         press(&mut app, KeyCode::Char('j'));
         press(&mut app, KeyCode::Enter);
         assert_eq!(app.modal, Modal::Settings, "back to Settings");
+        assert_eq!(
+            app.settings_tab,
+            Tab::Audio,
+            "back on the tab that opened it"
+        );
         assert_eq!(app.default_device.as_deref(), Some("usb"));
         assert_eq!(saved(&dir)["audio"]["device"].as_str(), Some("usb"));
         assert_eq!(app.settings_rows[app.settings_cursor], Row::DefaultDevice);
@@ -1099,7 +1207,7 @@ mod tests {
         let column = hit.inner.x + 1;
         for row in hit.inner.y..hit.inner.y + hit.inner.height {
             if let Some(index) = hit.row_at(column, row) {
-                if index != avoid && app.settings_rows[index].selectable() {
+                if index != avoid {
                     click(app, column, row);
                     return;
                 }
@@ -1128,12 +1236,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, host) = host_app(&dir, &["/music/a"]);
         press(&mut app, KeyCode::Char('S'));
+        select(&mut app, Row::Folder(PathBuf::from("/music/a")));
         let folder = app
             .settings_rows
             .iter()
             .position(|r| matches!(r, Row::Folder(_)))
             .unwrap();
-        select(&mut app, Row::Folder(PathBuf::from("/music/a")));
         press(&mut app, KeyCode::Char('d'));
         click_another_setting_row(&mut app, folder);
         press(&mut app, KeyCode::Enter);
@@ -1149,10 +1257,17 @@ mod tests {
         select(&mut app, Row::Folder(PathBuf::from("/music/a")));
         press(&mut app, KeyCode::Char('d'));
         press(&mut app, KeyCode::Char('G'));
-        assert_eq!(app.settings_rows[app.settings_cursor], Row::UpdateCheck);
+        // The Library tab's last row is Rescan all folders; Enter there rescans
+        // and must not remove the folder.
+        assert_eq!(app.settings_rows[app.settings_cursor], Row::RescanAll);
         press(&mut app, KeyCode::Enter);
 
-        assert!(sent(&host).is_empty(), "Enter must not remove the folder");
+        assert!(
+            !sent(&host)
+                .iter()
+                .any(|op| matches!(op, LibraryOp::RemoveFolder { .. })),
+            "Enter must not remove the folder"
+        );
     }
 
     #[test]
@@ -1170,5 +1285,273 @@ mod tests {
         let screen = screen_rows(&mut app).join("\n");
         assert!(screen.contains("Remove /music/a"), "{screen}");
         assert!(screen.contains("and its tracks from the"), "{screen}");
+    }
+
+    // --- settings: tabs and focus ---
+
+    #[test]
+    fn tab_and_shift_tab_switch_tabs_and_wrap() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        assert_eq!(app.settings_tab, Tab::Display);
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.settings_tab, Tab::Audio);
+        assert_eq!(app.settings_rows[app.settings_cursor], Row::DefaultDevice);
+        press(&mut app, KeyCode::BackTab);
+        press(&mut app, KeyCode::BackTab);
+        assert_eq!(app.settings_tab, Tab::General);
+    }
+
+    #[test]
+    fn the_shown_tabs_number_keeps_the_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Char('1'));
+        assert_eq!(app.settings_cursor, 2);
+    }
+
+    #[test]
+    fn number_keys_jump_to_a_tab() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('3'));
+        assert_eq!(app.settings_tab, Tab::Playback);
+        assert_eq!(app.settings_rows[0], Row::FadePlay);
+    }
+
+    #[test]
+    fn up_on_the_first_row_focuses_the_tab_bar_where_arrows_switch_tabs() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Up);
+        assert!(app.settings_on_tab_bar);
+        press(&mut app, KeyCode::Right);
+        assert_eq!(app.settings_tab, Tab::Audio);
+        press(&mut app, KeyCode::Char('l'));
+        assert_eq!(app.settings_tab, Tab::Playback);
+        press(&mut app, KeyCode::Down);
+        assert!(!app.settings_on_tab_bar);
+        assert_eq!(app.settings_cursor, 0);
+    }
+
+    #[test]
+    fn arrows_on_the_tab_bar_stop_at_the_ends() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Up);
+        press(&mut app, KeyCode::Left);
+        assert_eq!(app.settings_tab, Tab::Display);
+        press(&mut app, KeyCode::Char('5'));
+        press(&mut app, KeyCode::Up);
+        press(&mut app, KeyCode::Right);
+        assert_eq!(app.settings_tab, Tab::General);
+    }
+
+    #[test]
+    fn row_keys_do_nothing_on_the_tab_bar() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        let before = app.tui.show_cover;
+        press(&mut app, KeyCode::Up);
+        press(&mut app, KeyCode::Char(' '));
+        assert_eq!(app.tui.show_cover, before);
+        assert_eq!(app.modal, Modal::Settings);
+    }
+
+    #[test]
+    fn esc_and_help_work_from_the_tab_bar() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Up);
+        press(&mut app, KeyCode::Char('?'));
+        assert_eq!(app.modal, Modal::Help);
+
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Up);
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.modal, Modal::None);
+    }
+
+    #[test]
+    fn a_footer_click_on_the_tab_hint_switches_tabs() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        app.hits.footer_hints = vec![crate::hit::FooterHit {
+            rect: ratatui::layout::Rect::new(0, 0, 10, 1),
+            key: KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+        }];
+        click(&mut app, 0, 0);
+        assert_eq!(app.settings_tab, Tab::Audio);
+    }
+
+    #[test]
+    fn a_fade_change_saves_and_reaches_the_player() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Char('l')); // play 150 -> 200
+        assert_eq!(app.fades.play, Duration::from_millis(200));
+        let saved = saved(&dir);
+        assert_eq!(saved["audio"]["fade"]["play_ms"].as_integer(), Some(200));
+    }
+
+    #[test]
+    fn fade_rows_stop_at_the_ends_and_enter_wraps() {
+        let dir = tempfile::tempdir().unwrap();
+        let fades = FadeTimes {
+            play: Duration::from_millis(2000),
+            ..FadeTimes::default()
+        };
+        let mut app = settings_app(&dir).with_settings_values(SettingsValues {
+            fades,
+            ..SettingsValues::default()
+        });
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Char('l'));
+        assert_eq!(app.fades.play, Duration::from_millis(2000), "stops at 2 s");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.fades.play, Duration::ZERO, "Enter wraps to off");
+        assert_eq!(
+            saved(&dir)["audio"]["fade"]["play_ms"].as_integer(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn a_failed_fade_save_restores_the_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("not-a-folder");
+        std::fs::write(&blocker, "a file").unwrap();
+        let mut app = App::with_library(test_player(), None)
+            .with_config_file(ConfigFile::new(blocker.join("config.toml")));
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Char('l'));
+        assert_eq!(
+            app.fades.play,
+            FadeTimes::default().play,
+            "the old time is back"
+        );
+    }
+
+    #[test]
+    fn the_last_tab_is_kept_for_the_next_opening() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Char('S'));
+        assert_eq!(app.settings_tab, Tab::Library);
+        assert!(!app.settings_on_tab_bar);
+    }
+
+    #[test]
+    fn the_tab_bar_shows_every_tab() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        let screen = screen_rows(&mut app).join("\n");
+        for label in ["Display", "Audio", "Playback", "Library", "General"] {
+            assert!(screen.contains(label), "{label} missing:\n{screen}");
+        }
+    }
+
+    #[test]
+    fn the_modal_keeps_its_height_across_tabs() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        let _ = screen_rows(&mut app);
+        let display = app.hits.overlay;
+        press(&mut app, KeyCode::Char('5'));
+        let _ = screen_rows(&mut app);
+        assert_eq!(app.hits.overlay, display);
+    }
+
+    /// The frame's cells, for checking how a frame is styled.
+    fn screen_buffer(app: &mut App) -> ratatui::buffer::Buffer {
+        let state = app.player.state();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+        terminal
+            .draw(|frame| crate::views::render(frame, app, &state))
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    #[test]
+    fn the_cursor_shows_on_the_rows_or_on_the_tab_bar_never_both() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        let cursor_bg = theme::selected().bg.expect("the cursor has a background");
+        let cursor = screen_buffer(&mut app);
+        let popup = app.hits.overlay.expect("the modal is drawn");
+        let tab = (popup.x + 2, popup.y + 1);
+        let cursor_row = |app: &App| {
+            let hit = app.hits.overlay_list.expect("the list is drawn");
+            (hit.inner.x + 1, hit.inner.y)
+        };
+        let (x, y) = cursor_row(&app);
+        assert_eq!(cursor[(x, y)].bg, cursor_bg, "rows have the cursor");
+        assert_ne!(cursor[tab].bg, cursor_bg, "the tab bar has none");
+
+        press(&mut app, KeyCode::Up);
+        let on_bar = screen_buffer(&mut app);
+        let (x, y) = cursor_row(&app);
+        assert_ne!(on_bar[(x, y)].bg, cursor_bg, "rows lost the cursor");
+        assert_eq!(on_bar[tab].bg, cursor_bg, "the tab bar has it");
+    }
+
+    #[test]
+    fn the_tab_bar_draws_without_panicking_in_tiny_terminals() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        let state = app.player.state();
+        for (width, height) in [(1, 1), (3, 2), (10, 3), (20, 5), (40, 10), (60, 4)] {
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| crate::views::render(frame, &mut app, &state))
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn a_click_on_a_tab_label_shows_that_tab() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        let buffer = screen_buffer(&mut app);
+        for (rect, tab) in app.hits.settings_tabs.clone() {
+            let first = tab.label().chars().next().unwrap().to_string();
+            assert_eq!(buffer[(rect.x, rect.y)].symbol(), first, "{tab:?} is drawn");
+        }
+
+        let (rect, _) = app
+            .hits
+            .settings_tabs
+            .iter()
+            .copied()
+            .find(|(_, tab)| *tab == Tab::Audio)
+            .expect("Audio has a label");
+        click(&mut app, rect.x, rect.y);
+        assert_eq!(app.settings_tab, Tab::Audio);
+        assert!(!app.settings_on_tab_bar, "focus stays on the rows");
     }
 }

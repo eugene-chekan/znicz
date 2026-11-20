@@ -7,13 +7,13 @@ use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded, unbounded};
 
 use crate::audio::convert::{RateConverter, adapt_channels};
 use crate::audio::feeder::{DecodeStep, Feeder, PumpOutcome};
-use crate::audio::gain::MUTE_FADE;
 use crate::audio::http::HttpStreamSource;
 use crate::audio::icy::{IcyTitle, IcyUrl, apply_icy_to_track, apply_icy_url_to_track};
 use crate::audio::output::AudioOutput;
 use crate::audio::source::{AudioDecoder, AudioSource, LocalFileSource};
 use crate::error::{Result, ZniczError};
 use crate::player::commands::{Command, CommandEnvelope, PlayerEvent};
+use crate::player::fade::{FadeOut, FadeTimes, Playback, fade_out_time, runs_during_fade};
 use crate::player::gapless::{PendingTrack, PendingTracks, may_chain, resolve_position};
 use crate::player::state::{
     OutputInfo, PlaybackStatus, PlayerState, QueueItem, RepeatMode, TrackInfo,
@@ -42,6 +42,7 @@ pub struct AudioConfig {
     pub device_id: Option<String>,
     pub volume: f32,
     pub bit_perfect: bool,
+    pub fades: FadeTimes,
 }
 
 impl Default for AudioConfig {
@@ -50,6 +51,7 @@ impl Default for AudioConfig {
             device_id: None,
             volume: 1.0,
             bit_perfect: true,
+            fades: FadeTimes::default(),
         }
     }
 }
@@ -170,6 +172,10 @@ struct PlayerEngine {
     last_position_tick: Instant,
     /// Seed for shuffle picks.
     rng: u64,
+    /// How long each fade takes; `SetFades` replaces it.
+    fades: FadeTimes,
+    /// A fade-out in progress, and the commands waiting for it.
+    fade_out: Option<FadeOut>,
 }
 
 /// Keep some headroom before decoding another packet.
@@ -186,6 +192,7 @@ impl PlayerEngine {
     ) -> Self {
         let output = AudioOutput::new();
         output.set_volume(config.volume);
+        let fades = config.fades;
 
         Self {
             config,
@@ -200,6 +207,8 @@ impl PlayerEngine {
             draining_since: None,
             last_position_tick: Instant::now(),
             rng: seed_from_clock(),
+            fades,
+            fade_out: None,
         }
     }
 
@@ -208,7 +217,9 @@ impl PlayerEngine {
             // Waiting on the channel replaces a plain sleep: commands are
             // picked up the moment they arrive, so an acknowledged command
             // does not wait out a sleep interval.
-            let idle = if self.decoder.is_some() || self.draining_since.is_some() {
+            let busy =
+                self.fade_out.is_some() || self.decoder.is_some() || self.draining_since.is_some();
+            let idle = if busy {
                 Duration::from_millis(5)
             } else {
                 Duration::from_millis(50)
@@ -226,10 +237,13 @@ impl PlayerEngine {
                 Err(RecvTimeoutError::Disconnected) => return,
             }
 
+            self.finish_fade_out();
             self.pump_decode();
             self.advance_pending();
 
-            if self.drain_complete() {
+            // A track that ends during a fade-out waits for it: the waiting
+            // command (pause, stop, next) applies to this track, not the next.
+            if self.fade_out.is_none() && self.drain_complete() {
                 self.finish_track();
             }
 
@@ -237,8 +251,29 @@ impl PlayerEngine {
         }
     }
 
-    /// Run one command and answer the caller if it asked to be told.
+    /// Run one command, or hold it while a fade-out finishes.
     fn apply(&mut self, envelope: CommandEnvelope) {
+        if let Some(fade) = self.fade_out.as_mut() {
+            if runs_during_fade(&envelope.command) {
+                self.run_command(envelope);
+            } else if matches!(envelope.command, Command::Resume) && fade.only_a_pause() {
+                self.cancel_pause(envelope);
+            } else {
+                fade.wait(envelope);
+            }
+            return;
+        }
+        match fade_out_time(&envelope.command, &self.fades, self.playback()) {
+            Some(time) => {
+                let generation = self.output.fade_to(0.0, time);
+                self.fade_out = Some(FadeOut::new(envelope, generation, time, Instant::now()));
+            }
+            None => self.run_command(envelope),
+        }
+    }
+
+    /// Run a command now and answer its caller.
+    fn run_command(&mut self, envelope: CommandEnvelope) {
         let CommandEnvelope { command, ack } = envelope;
         let result = self.handle_command(command);
 
@@ -252,16 +287,74 @@ impl PlayerEngine {
         }
     }
 
+    /// What fading needs to know about the engine now.
+    fn playback(&self) -> Playback {
+        let state = self.state.read().unwrap();
+        Playback {
+            audible: state.status == PlaybackStatus::Playing
+                && (self.decoder.is_some() || self.draining_since.is_some()),
+            position: state.queue_position,
+        }
+    }
+
+    /// Resume during a pause's fade-out: the pause never happens; the sound
+    /// comes back up from where the fade got to.
+    fn cancel_pause(&mut self, resume: CommandEnvelope) {
+        let Some(fade) = self.fade_out.take() else {
+            return;
+        };
+        self.output.fade_to(1.0, self.fades.play);
+        for envelope in fade.into_waiting().into_iter().chain([resume]) {
+            if let Some(ack) = envelope.ack {
+                ack.send(Ok(())).ok();
+            }
+        }
+    }
+
+    /// Once a fade-out landed, run the commands that waited for it, in order.
+    /// A command that starts another fade-out takes the rest along.
+    fn finish_fade_out(&mut self) {
+        let due = self.fade_out.as_ref().is_some_and(|fade| {
+            fade.is_due(self.output.fade_landed(fade.generation), Instant::now())
+        });
+        if !due {
+            return;
+        }
+        let mut waiting = self
+            .fade_out
+            .take()
+            .map(FadeOut::into_waiting)
+            .unwrap_or_default();
+        // The fade for the first command already happened.
+        if let Some(first) = waiting.pop_front() {
+            self.run_command(first);
+        }
+        while let Some(envelope) = waiting.pop_front() {
+            self.apply(envelope);
+            if let Some(fade) = self.fade_out.as_mut() {
+                for rest in waiting.drain(..) {
+                    fade.wait(rest);
+                }
+            }
+        }
+    }
+
     fn handle_command(&mut self, command: Command) -> Result<()> {
         match command {
-            Command::Play(item) => self.play_item(item)?,
+            Command::Play(item) => self.play_item(item, true)?,
             Command::Pause => {
                 self.output.set_paused(true);
                 self.update_status(PlaybackStatus::Paused);
                 self.emit_state_changed();
             }
             Command::Resume => {
-                self.output.set_paused(false);
+                // Only a paused track fades back in; Resume while playing
+                // must not dip the sound.
+                if self.state.read().unwrap().status == PlaybackStatus::Paused {
+                    // Fade gain first, so no frame plays at full gain.
+                    self.output.fade_in(self.fades.play);
+                    self.output.set_paused(false);
+                }
                 self.update_status(PlaybackStatus::Playing);
                 self.emit_state_changed();
             }
@@ -288,7 +381,7 @@ impl PlayerEngine {
                     state.muted = muted;
                     state.effective_volume()
                 };
-                self.output.set_gain(effective, MUTE_FADE);
+                self.output.set_gain(effective, self.fades.mute);
                 self.emit_state_changed();
             }
             Command::NextTrack => self.next_track()?,
@@ -306,7 +399,7 @@ impl PlayerEngine {
                 self.event_tx.send(PlayerEvent::QueueChanged).ok();
                 self.emit_state_changed();
             }
-            Command::QueuePlayIndex(index) => self.play_queue_index(index)?,
+            Command::QueuePlayIndex(index) => self.play_queue_index(index, true)?,
             Command::QueueRemove(index) => self.remove_from_queue(index)?,
             Command::QueueMove { from, to } => self.move_in_queue(from, to)?,
             Command::ReplaceQueue { items, position } => self.replace_queue(items, position)?,
@@ -323,19 +416,33 @@ impl PlayerEngine {
                 if let Some(decoder) = &self.decoder {
                     let rate = decoder.sample_rate();
                     let ch = decoder.channels();
+                    let playing = self.state.read().unwrap().status == PlaybackStatus::Playing;
+                    // A reopened stream starts from the fade gain it is given:
+                    // silent when it fades in, full when paused (Resume fades).
+                    self.output.set_fade_now(if playing { 0.0 } else { 1.0 });
                     self.output
                         .open_stream(rate, ch, self.config.device_id.as_deref())?;
+                    if playing {
+                        self.output.fade_in(self.fades.play);
+                    }
                     // The reopened stream starts empty: the chained tracks in
                     // the old buffer are gone, so show the decoder's track.
                     self.start_all_pending();
+                } else {
+                    // The tail of a finished track is still playing on the old
+                    // stream; undo the fade-out that came before this switch.
+                    self.output.set_fade_now(1.0);
                 }
                 self.emit_state_changed();
             }
+            Command::SetFades(times) => self.fades = times,
         }
         Ok(())
     }
 
-    fn play_item(&mut self, item: crate::player::state::QueueItem) -> Result<()> {
+    /// Open `item` and start it. `fade_in` fades the sound up from silence;
+    /// a track that follows another without a command does not.
+    fn play_item(&mut self, item: crate::player::state::QueueItem, fade_in: bool) -> Result<()> {
         // Stop first so a failed open cannot leave the previous file playing.
         self.stop()?;
 
@@ -351,9 +458,14 @@ impl PlayerEngine {
         let sample_rate = decoder.sample_rate();
         let channels = decoder.channels();
 
+        // Set before the stream opens: a stream starts from this gain.
+        self.output.set_fade_now(if fade_in { 0.0 } else { 1.0 });
         self.output
             .open_stream(sample_rate, channels, self.config.device_id.as_deref())?;
         self.output.set_paused(false);
+        if fade_in {
+            self.output.fade_in(self.fades.play);
+        }
         self.output
             .set_volume(self.state.read().unwrap().effective_volume());
 
@@ -491,7 +603,7 @@ impl PlayerEngine {
             // The queue was cleared under the chained audio: nothing to reopen.
             return Err(ZniczError::Player("nothing to seek in".into()));
         }
-        self.play_queue_index(index)?;
+        self.play_queue_index(index, false)?;
         if paused {
             self.output.set_paused(true);
             self.update_status(PlaybackStatus::Paused);
@@ -510,7 +622,7 @@ impl PlayerEngine {
 
     fn next_track(&mut self) -> Result<()> {
         match self.pick_next(false) {
-            Some(index) => self.play_queue_index(index),
+            Some(index) => self.play_queue_index(index, true),
             None => Ok(()),
         }
     }
@@ -619,7 +731,7 @@ impl PlayerEngine {
         if pick >= current { pick + 1 } else { pick }
     }
 
-    fn play_queue_index(&mut self, index: usize) -> Result<()> {
+    fn play_queue_index(&mut self, index: usize, fade_in: bool) -> Result<()> {
         let item = {
             let state = self.state.read().unwrap();
             match state.queue.get(index) {
@@ -628,7 +740,7 @@ impl PlayerEngine {
             }
         };
         self.state.write().unwrap().queue_position = index;
-        self.play_item(item)?;
+        self.play_item(item, fade_in)?;
         let mut state = self.state.write().unwrap();
         if index < state.queue.len() {
             state.queue_position = index;
@@ -692,7 +804,7 @@ impl PlayerEngine {
                 (state.queue_position, state.queue.len())
             };
             if pos < len {
-                self.play_queue_index(pos)?;
+                self.play_queue_index(pos, true)?;
             } else {
                 self.state.write().unwrap().queue_position = len.saturating_sub(1);
             }
@@ -715,7 +827,7 @@ impl PlayerEngine {
         let item = state.queue[prev_pos].clone();
         drop(state);
         self.state.write().unwrap().queue_position = prev_pos;
-        self.play_item(item)
+        self.play_item(item, true)
     }
 
     fn pump_decode(&mut self) {
@@ -789,7 +901,7 @@ impl PlayerEngine {
         self.emit_state_changed();
 
         if let Some(next) = self.pick_next(true) {
-            if let Err(e) = self.play_queue_index(next) {
+            if let Err(e) = self.play_queue_index(next, false) {
                 self.emit_error(e.to_string());
             }
         }
@@ -1054,6 +1166,14 @@ mod tests {
         player.send_blocking(Command::Pause).expect("pause");
 
         assert_eq!(revision(&player), before);
+    }
+
+    #[test]
+    fn fade_times_are_accepted() {
+        let player = player();
+        player
+            .send_blocking(Command::SetFades(crate::player::fade::FadeTimes::default()))
+            .expect("set fades");
     }
 
     #[test]
