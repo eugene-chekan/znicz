@@ -23,8 +23,9 @@ its start.
 Albums are not special: every automatic change crossfades. Turn crossfade off
 for albums that run continuously.
 
-The crossfade is cut to half of the shorter track's length, so short tracks do
-not blend into the ones around them.
+The crossfade is cut to half of the current track's length. A next track
+whose length is known and shorter than twice the crossfade is not crossfaded
+into: it gets the gapless join, so short interludes do not blend away.
 
 When a rule fails, the change happens as today: a gapless join (same format),
 or drain and reopen. Manual changes (Next, Previous, choosing a row, replacing
@@ -57,28 +58,40 @@ change.
 - The incoming track's samples go through `adapt_channels` and its converter
   exactly as the main decoder's do.
 
-The curve and the frame bookkeeping are pure functions with unit tests:
-`crossfade_gains(t) -> (f32, f32)`, and the mixer is tested with synthetic
-sample sources (a trait `FrameSource` that `AudioDecoder` implements).
+The curve and the frame bookkeeping are pure and unit-tested:
+`crossfade_gains(t) -> (f32, f32)`, and `CrossfadeMix`, which takes the
+outgoing packet and a closure that yields incoming packets, so tests feed it
+synthetic samples. Incoming samples decoded but not mixed when the crossfade
+ends are pushed before the incoming decoder takes over, so nothing is lost.
 
 ### Engine (`player/engine.rs`)
 
 - `AudioDecoder::position_frames()`: the frame index of the next decoded
   frame, from the packet timestamps (`ts_to_frames`), so it is right after a
   seek.
-- Each pump pass, while no crossfade runs: if the rules above hold and the
-  frames left (`duration` in frames − `position_frames`) are at most the
-  crossfade length, start one:
+- When a decoder becomes current (play, gapless join, end of a crossfade) or
+  the crossfade time changes, the engine works out `crossfade_from`: the frame
+  where the crossfade should start (`total − min(crossfade, total / 2)`), or
+  none when a rule fails. The main decode step yields (a new
+  `DecodeStep::Yield`, `PumpOutcome::Yielded`) as soon as the decoder's
+  position reaches it, so the crossfade starts on time and not up to a pump
+  pass (32 packets) late. On a yield the engine starts the crossfade:
   - pick the next row with `pick_next_after` (as gapless; for repeat-one this
     is the playing row);
-  - open it; check the format; give up (and do nothing until the track ends)
-    if it fails;
+  - open it; check the format and the incoming length; on a failure,
+    clear `crossfade_from` for this track and carry on (the end of the track
+    then joins as today);
+  - the length is `min(crossfade, frames left)`, so a seek past
+    `crossfade_from` still gets a shorter crossfade;
   - queue a `PendingTrack` with `starts_at = feeder.pushed_samples()`, so the
     title, cover and seek bar switch when the crossfade starts to be heard and
     the new track's position counts from its first sample.
-- While a crossfade runs, the pump's decode step mixes: an outgoing packet goes
-  through `Crossfade::mix`; when the outgoing decoder ends, the mix continues
-  with silence for the outgoing side until `t = 1`.
+- While a crossfade runs, `self.crossfade` owns both decoders and
+  `self.decoder` is empty; checks that ask "is a decoder open" (audible,
+  decoding, the device switch's format, the idle wait) also count a running
+  crossfade. The pump's decode step mixes: an outgoing packet goes through the
+  mixer; when the outgoing decoder ends, the mix continues with silence for
+  the outgoing side until `t = 1`.
 - When the crossfade ends, its decoder becomes `self.decoder` and no drain or
   gapless chain runs for the old track.
 
