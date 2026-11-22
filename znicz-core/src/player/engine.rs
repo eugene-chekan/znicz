@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded, unbounded};
 
-use crate::audio::convert::{RateConverter, adapt_channels};
+use crate::audio::convert::RateConverter;
+use crate::audio::crossfade::{Crossfade, DecodedTrack, next_packet, output_frames};
 use crate::audio::feeder::{DecodeStep, Feeder, PumpOutcome};
 use crate::audio::http::HttpStreamSource;
 use crate::audio::icy::{IcyTitle, IcyUrl, apply_icy_to_track, apply_icy_url_to_track};
@@ -13,7 +14,7 @@ use crate::audio::output::AudioOutput;
 use crate::audio::source::{AudioDecoder, AudioSource, LocalFileSource};
 use crate::error::{Result, ZniczError};
 use crate::player::commands::{Command, CommandEnvelope, PlayerEvent};
-use crate::player::fade::{FadeOut, FadeTimes, Playback, fade_out_time, runs_during_fade};
+use crate::player::fade::{self, FadeOut, FadeTimes, Playback, fade_out_time, runs_during_fade};
 use crate::player::gapless::{PendingTrack, PendingTracks, may_chain, resolve_position};
 use crate::player::state::{
     OutputInfo, PlaybackStatus, PlayerState, QueueItem, RepeatMode, TrackInfo,
@@ -176,6 +177,12 @@ struct PlayerEngine {
     fades: FadeTimes,
     /// A fade-out in progress, and the commands waiting for it.
     fade_out: Option<FadeOut>,
+    /// A crossfade in progress. It owns both decoders while it runs.
+    crossfade: Option<Crossfade>,
+    /// Frame where the current decoder starts a crossfade, if it does.
+    crossfade_from: Option<u64>,
+    /// Stated length of the current track, for working out a crossfade.
+    track_duration: Option<Duration>,
 }
 
 /// Keep some headroom before decoding another packet.
@@ -209,6 +216,9 @@ impl PlayerEngine {
             rng: seed_from_clock(),
             fades,
             fade_out: None,
+            crossfade: None,
+            crossfade_from: None,
+            track_duration: None,
         }
     }
 
@@ -218,7 +228,7 @@ impl PlayerEngine {
             // picked up the moment they arrive, so an acknowledged command
             // does not wait out a sleep interval.
             let busy =
-                self.fade_out.is_some() || self.decoder.is_some() || self.draining_since.is_some();
+                self.fade_out.is_some() || self.has_source() || self.draining_since.is_some();
             let idle = if busy {
                 Duration::from_millis(5)
             } else {
@@ -292,9 +302,9 @@ impl PlayerEngine {
         let state = self.state.read().unwrap();
         Playback {
             audible: state.status == PlaybackStatus::Playing
-                && (self.decoder.is_some() || self.draining_since.is_some()),
+                && (self.has_source() || self.draining_since.is_some()),
             position: state.queue_position,
-            decoding: self.decoder.is_some(),
+            decoding: self.has_source(),
         }
     }
 
@@ -416,9 +426,7 @@ impl PlayerEngine {
             }
             Command::SetDevice(id) => {
                 self.config.device_id = Some(id);
-                if let Some(decoder) = &self.decoder {
-                    let rate = decoder.sample_rate();
-                    let ch = decoder.channels();
+                if let Some((rate, ch)) = self.source_format() {
                     let playing = self.state.read().unwrap().status == PlaybackStatus::Playing;
                     // A reopened stream starts from the fade gain it is given:
                     // silent when it fades in, full when paused (Resume fades).
@@ -434,7 +442,10 @@ impl PlayerEngine {
                 }
                 self.emit_state_changed();
             }
-            Command::SetFades(times) => self.fades = times,
+            Command::SetFades(times) => {
+                self.fades = times;
+                self.arm_crossfade(self.track_duration);
+            }
         }
         Ok(())
     }
@@ -502,6 +513,7 @@ impl PlayerEngine {
         };
 
         self.decoder = Some(decoder);
+        self.arm_crossfade(track_info.duration);
         self.draining_since = None;
         self.feeder.reset();
         self.last_position_tick = Instant::now();
@@ -540,6 +552,9 @@ impl PlayerEngine {
     fn stop(&mut self) -> Result<()> {
         self.decoder = None;
         self.converter = None;
+        self.crossfade = None;
+        self.crossfade_from = None;
+        self.track_duration = None;
         self.draining_since = None;
         self.pending.clear();
         self.output.stop_stream();
@@ -561,6 +576,7 @@ impl PlayerEngine {
             return Err(ZniczError::Player("radio cannot seek".into()));
         }
 
+        self.end_heard_crossfade();
         if !self.pending.is_empty() {
             // The decoder already reads the next track; reopen this one.
             self.replay_current()?;
@@ -665,14 +681,23 @@ impl PlayerEngine {
     /// and channel count. `None` means drain and reopen as before; a file that
     /// fails to open is reported by that path, not here.
     fn chain_next(&mut self, finished: &AudioDecoder) -> Option<AudioDecoder> {
+        if !may_chain(finished.is_stream()) {
+            return None;
+        }
+        let (track, decoder) = self.open_next_row(finished)?;
+        self.pending.push(track);
+        Some(decoder)
+    }
+
+    /// The queue row after the last chained track (or after the playing row),
+    /// opened if it is a local file that matches `finished`. Shared by gapless
+    /// chaining and crossfades; the caller queues the track as pending.
+    fn open_next_row(&mut self, finished: &AudioDecoder) -> Option<(PendingTrack, AudioDecoder)> {
         let after = {
             let state = self.state.read().unwrap();
-            if !may_chain(finished.is_stream()) {
-                return None;
-            }
             match self.pending.last() {
                 // Pick after the last chained row where it is now; if it was
-                // removed, drain and let the normal path pick.
+                // removed, the caller gives up and the normal path picks.
                 Some(last) => resolve_position(&state.queue, last.index, &last.item)?,
                 None => state.queue_position,
             }
@@ -683,28 +708,31 @@ impl PlayerEngine {
             return None;
         };
         let (decoder, info) = open_matching(path, finished)?;
-
-        self.pending.push(PendingTrack {
+        let track = PendingTrack {
             index,
             item,
             info,
             starts_at: self.feeder.pushed_samples(),
-        });
-        Some(decoder)
+        };
+        Some((track, decoder))
     }
 
     /// What the engine does when the playing decoder runs out of packets.
     fn on_decoder_finished(&mut self, decoder: AudioDecoder, converter: Option<RateConverter>) {
         self.publish_stream_bitrate(&decoder);
         self.publish_stream_title(&decoder);
+        // The track ended before its crossfade point: the end is the join.
+        self.crossfade_from = None;
         match self.chain_next(&decoder) {
             Some(next) => {
                 // Same stream, buffer and converter: the next track's first
                 // sample follows this one's last. The converter's few frames
                 // of filter latency still belong to the old track, so the
                 // switch lands a few milliseconds early; that is inaudible.
+                let duration = self.pending.last().and_then(|track| track.info.duration);
                 self.decoder = Some(next);
                 self.converter = converter;
+                self.arm_crossfade(duration);
             }
             None => {
                 // The buffer still holds audio. Let it play out, otherwise
@@ -834,24 +862,29 @@ impl PlayerEngine {
             return;
         }
 
+        if let Some(crossfade) = self.crossfade.take() {
+            self.pump_crossfade(crossfade);
+            return;
+        }
+
         let Some(mut decoder) = self.decoder.take() else {
             return;
         };
 
         let mut converter = self.converter.take();
-        let source_channels = decoder.channels().max(1) as usize;
-        let output_channels = self.output.channels().max(1) as usize;
+        let output_channels = self.output_channels();
+        let crossfade_from = self.crossfade_from;
 
-        let mut decode = || match decoder.decode_next() {
-            Ok(Some(samples)) => {
-                let matched = adapt_channels(&samples, source_channels, output_channels);
-                match converter.as_mut() {
-                    Some(converter) => DecodeStep::Samples(converter.process(&matched)),
-                    None => DecodeStep::Samples(matched),
-                }
+        let mut decode = || {
+            // The crossfade point: stop here, the engine starts the crossfade.
+            if crossfade_from.is_some_and(|from| decoder.position_frames() >= from) {
+                return DecodeStep::Yield;
             }
-            Ok(None) => DecodeStep::End,
-            Err(e) => DecodeStep::Failed(e.to_string()),
+            match next_packet(&mut decoder, converter.as_mut(), output_channels) {
+                Ok(Some(samples)) => DecodeStep::Samples(samples),
+                Ok(None) => DecodeStep::End,
+                Err(e) => DecodeStep::Failed(e.to_string()),
+            }
         };
 
         let outcome = self.feeder.pump(
@@ -862,18 +895,155 @@ impl PlayerEngine {
         );
 
         match outcome {
-            PumpOutcome::SinkFull | PumpOutcome::Yielded => {
+            PumpOutcome::SinkFull => {
                 self.publish_stream_bitrate(&decoder);
                 self.publish_stream_title(&decoder);
                 self.decoder = Some(decoder);
                 self.converter = converter;
             }
+            PumpOutcome::Yielded => self.start_crossfade(decoder, converter),
             PumpOutcome::Finished => self.on_decoder_finished(decoder, converter),
             PumpOutcome::Failed(message) => {
                 self.emit_error(message);
                 let _ = self.stop();
             }
         }
+    }
+
+    /// Pump a running crossfade in place of the main decoder.
+    fn pump_crossfade(&mut self, mut crossfade: Crossfade) {
+        let output_channels = self.output_channels();
+        let mut step = || crossfade.next_step(output_channels);
+        let outcome = self.feeder.pump(
+            &mut self.output,
+            MIN_WRITE_SLOTS,
+            MAX_PACKETS_PER_PUMP,
+            &mut step,
+        );
+
+        match outcome {
+            PumpOutcome::SinkFull => self.crossfade = Some(crossfade),
+            // A crossfade step only yields once it is done; a `Finished` would
+            // mean the same: the incoming track is what plays on.
+            PumpOutcome::Yielded | PumpOutcome::Finished => self.hand_over(crossfade),
+            PumpOutcome::Failed(message) => {
+                self.emit_error(message);
+                let _ = self.stop();
+            }
+        }
+    }
+
+    /// The playing track reached its crossfade point: open the next row and
+    /// mix the two. When that is not possible the track plays on, and its end
+    /// joins or drains as usual.
+    fn start_crossfade(&mut self, outgoing: AudioDecoder, converter: Option<RateConverter>) {
+        let file_rate = outgoing.sample_rate();
+        let length = fade::crossfade_length(
+            self.fades.crossfade,
+            self.track_duration,
+            outgoing.position_frames(),
+            file_rate,
+        );
+        let Some((track, incoming)) = self.open_crossfade_track(&outgoing, length) else {
+            // No retry for this track: its end joins or drains as usual.
+            self.crossfade_from = None;
+            self.decoder = Some(outgoing);
+            self.converter = converter;
+            return;
+        };
+
+        let output_rate = self.output.sample_rate();
+        let output_channels = self.output_channels();
+        // Same format as the outgoing track (checked when it was opened), so
+        // the incoming side needs a converter exactly when the file's rate
+        // differs from the output's.
+        let incoming_converter = (file_rate != output_rate)
+            .then(|| RateConverter::new(file_rate, output_rate, output_channels));
+        let duration = track.info.duration;
+
+        self.pending.push(track);
+        self.crossfade_from = None;
+        self.crossfade = Some(Crossfade::new(
+            DecodedTrack {
+                decoder: outgoing,
+                converter,
+            },
+            DecodedTrack {
+                decoder: incoming,
+                converter: incoming_converter,
+            },
+            duration,
+            output_frames(length, file_rate, output_rate),
+            output_channels,
+        ));
+    }
+
+    /// The next row, opened, if a crossfade of `length` frames (in the file's
+    /// rate) fits: a local file of the same format, long enough for it.
+    fn open_crossfade_track(
+        &mut self,
+        outgoing: &AudioDecoder,
+        length: u64,
+    ) -> Option<(PendingTrack, AudioDecoder)> {
+        if length == 0 {
+            return None;
+        }
+        let (track, incoming) = self.open_next_row(outgoing)?;
+        fade::incoming_long_enough(track.info.duration, length, outgoing.sample_rate())
+            .then_some((track, incoming))
+    }
+
+    /// The crossfade is over: the incoming track becomes the current decoder.
+    fn hand_over(&mut self, crossfade: Crossfade) {
+        let (incoming, duration) = crossfade.into_incoming();
+        self.decoder = Some(incoming.decoder);
+        self.converter = incoming.converter;
+        self.arm_crossfade(duration);
+    }
+
+    /// A crossfade whose incoming track is already playing ends now, so that
+    /// a seek applies to that track. Before it is heard, the reopen in `seek`
+    /// drops the crossfade instead.
+    fn end_heard_crossfade(&mut self) {
+        if !self.pending.is_empty() {
+            return;
+        }
+        if let Some(crossfade) = self.crossfade.take() {
+            self.hand_over(crossfade);
+        }
+    }
+
+    /// Work out where the current decoder's crossfade starts, if it has one.
+    /// The decoder must already be set.
+    fn arm_crossfade(&mut self, duration: Option<Duration>) {
+        self.track_duration = duration;
+        self.crossfade_from = self.decoder.as_ref().and_then(|decoder| {
+            fade::crossfade_from(
+                self.fades.crossfade,
+                duration,
+                decoder.sample_rate(),
+                decoder.is_stream(),
+            )
+        });
+    }
+
+    /// A source is open: a decoder, or a crossfade that owns both decoders.
+    fn has_source(&self) -> bool {
+        self.decoder.is_some() || self.crossfade.is_some()
+    }
+
+    /// Sample rate and channel count of the open source.
+    fn source_format(&self) -> Option<(u32, u16)> {
+        if let Some(crossfade) = &self.crossfade {
+            return Some(crossfade.format());
+        }
+        self.decoder
+            .as_ref()
+            .map(|decoder| (decoder.sample_rate(), decoder.channels()))
+    }
+
+    fn output_channels(&self) -> usize {
+        self.output.channels().max(1) as usize
     }
 
     /// True once the buffered tail of a finished track has been played.
@@ -959,7 +1129,7 @@ impl PlayerEngine {
         }
         self.last_position_tick = Instant::now();
 
-        if self.decoder.is_none() && self.draining_since.is_none() {
+        if !self.has_source() && self.draining_since.is_none() {
             return;
         }
 

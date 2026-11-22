@@ -5,9 +5,152 @@
 //! bookkeeping; the engine supplies the samples.
 
 use std::f32::consts::FRAC_PI_2;
+use std::time::Duration;
+
+use crate::audio::convert::{RateConverter, adapt_channels};
+use crate::audio::feeder::DecodeStep;
+use crate::audio::source::AudioDecoder;
+use crate::error::Result;
 
 /// Frames mixed per step once the outgoing track has ended.
 pub const TAIL_CHUNK_FRAMES: usize = 1024;
+
+/// `frames` at `file_rate`, as frames at `output_rate` once resampled.
+pub fn output_frames(frames: u64, file_rate: u32, output_rate: u32) -> u64 {
+    if file_rate == 0 || file_rate == output_rate {
+        return frames;
+    }
+    frames * u64::from(output_rate) / u64::from(file_rate)
+}
+
+/// The next packet of `decoder`, with channels adapted to `output_channels`
+/// and resampled by `converter`; `None` at the end. The main decode path and
+/// a crossfade both go through here, so the two cannot drift apart.
+pub fn next_packet(
+    decoder: &mut AudioDecoder,
+    converter: Option<&mut RateConverter>,
+    output_channels: usize,
+) -> Result<Option<Vec<f32>>> {
+    let Some(samples) = decoder.decode_next()? else {
+        return Ok(None);
+    };
+    let source_channels = decoder.channels().max(1) as usize;
+    let matched = adapt_channels(&samples, source_channels, output_channels);
+    Ok(Some(match converter {
+        Some(converter) => converter.process(&matched),
+        None => matched,
+    }))
+}
+
+/// A decoder with its own rate converter: one side of a crossfade.
+pub struct DecodedTrack {
+    pub decoder: AudioDecoder,
+    pub converter: Option<RateConverter>,
+}
+
+impl DecodedTrack {
+    /// The next packet in the output's channel count and rate; `None` at the end.
+    pub fn next_packet(&mut self, output_channels: usize) -> Result<Option<Vec<f32>>> {
+        next_packet(&mut self.decoder, self.converter.as_mut(), output_channels)
+    }
+}
+
+/// A running crossfade: the outgoing track (until it ends), the incoming one,
+/// and the mix between them. The engine pumps it in place of the main decoder.
+pub struct Crossfade {
+    outgoing: Option<DecodedTrack>,
+    incoming: DecodedTrack,
+    incoming_duration: Option<Duration>,
+    mix: CrossfadeMix,
+    leftover_sent: bool,
+}
+
+impl Crossfade {
+    /// `length` is in output frames; `channels` is the output channel count.
+    pub fn new(
+        outgoing: DecodedTrack,
+        incoming: DecodedTrack,
+        incoming_duration: Option<Duration>,
+        length: u64,
+        channels: usize,
+    ) -> Self {
+        Self {
+            outgoing: Some(outgoing),
+            incoming,
+            incoming_duration,
+            mix: CrossfadeMix::new(length, channels),
+            leftover_sent: false,
+        }
+    }
+
+    /// The mix is done and the incoming leftover has been handed on.
+    pub fn is_done(&self) -> bool {
+        self.mix.is_done() && self.leftover_sent
+    }
+
+    /// One pump step: a mixed packet while mixing; then the incoming leftover;
+    /// then `Yield`, which hands the crossfade over to the incoming track.
+    pub fn next_step(&mut self, output_channels: usize) -> DecodeStep {
+        if self.mix.is_done() {
+            return self.finish_step();
+        }
+
+        let packet = match self
+            .outgoing
+            .as_mut()
+            .map(|t| t.next_packet(output_channels))
+        {
+            Some(Ok(packet)) => packet,
+            Some(Err(e)) => return DecodeStep::Failed(e.to_string()),
+            None => None,
+        };
+        if packet.is_none() {
+            self.outgoing = None;
+        }
+
+        // The mix pulls incoming packets on demand. A decode error ends the
+        // incoming side early; the error is reported once the step is mixed.
+        let mut error = None;
+        let incoming = &mut self.incoming;
+        let mut pull = || match incoming.next_packet(output_channels) {
+            Ok(packet) => packet,
+            Err(e) => {
+                error = Some(e.to_string());
+                None
+            }
+        };
+        let samples = self.mix.mix(packet.as_deref(), &mut pull);
+
+        match error {
+            Some(message) => DecodeStep::Failed(message),
+            None => DecodeStep::Samples(samples),
+        }
+    }
+
+    fn finish_step(&mut self) -> DecodeStep {
+        if !self.leftover_sent {
+            self.leftover_sent = true;
+            let rest = self.mix.take_leftover();
+            if !rest.is_empty() {
+                return DecodeStep::Samples(rest);
+            }
+        }
+        DecodeStep::Yield
+    }
+
+    /// The incoming track (with its converter) and its stated duration, for
+    /// the engine to take over.
+    pub fn into_incoming(self) -> (DecodedTrack, Option<Duration>) {
+        (self.incoming, self.incoming_duration)
+    }
+
+    /// Sample rate and channel count of the incoming track, which is the one
+    /// playing once the crossfade ends.
+    pub fn format(&self) -> (u32, u16) {
+        let decoder = &self.incoming.decoder;
+        (decoder.sample_rate(), decoder.channels())
+    }
+}
 
 /// Equal-power gains `(outgoing, incoming)` at `t` in 0..=1: the loudness
 /// stays even through the crossfade (a² + b² = 1).
@@ -196,6 +339,92 @@ mod tests {
         let out = mix.mix(Some(&[1.0; 5]), &mut pull);
         assert_eq!(out.len(), 2);
         assert!(mix.is_done());
+    }
+
+    /// A mono 16-bit WAV file of `frames` frames, all at `sample`.
+    fn write_wav(path: &std::path::Path, frames: u32, sample: i16) {
+        let data_len = frames * 2;
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&44_100u32.to_le_bytes());
+        bytes.extend_from_slice(&88_200u32.to_le_bytes());
+        bytes.extend_from_slice(&2u16.to_le_bytes());
+        bytes.extend_from_slice(&16u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&data_len.to_le_bytes());
+        for _ in 0..frames {
+            bytes.extend_from_slice(&sample.to_le_bytes());
+        }
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    fn track(path: &std::path::Path) -> DecodedTrack {
+        let (decoder, _) = AudioDecoder::open_path(path).unwrap();
+        DecodedTrack {
+            decoder,
+            converter: None,
+        }
+    }
+
+    /// Run steps until the engine would hand over; returns the samples.
+    fn run_to_yield(fade: &mut Crossfade) -> Vec<f32> {
+        let mut out = Vec::new();
+        loop {
+            match fade.next_step(1) {
+                DecodeStep::Samples(samples) => out.extend(samples),
+                DecodeStep::Yield => return out,
+                DecodeStep::End => panic!("a crossfade never ends by itself"),
+                DecodeStep::Failed(message) => panic!("crossfade failed: {message}"),
+            }
+        }
+    }
+
+    #[test]
+    fn output_frames_follow_the_resampling_ratio() {
+        assert_eq!(output_frames(1000, 44_100, 44_100), 1000);
+        assert_eq!(output_frames(1000, 0, 48_000), 1000);
+        assert_eq!(output_frames(44_100, 44_100, 48_000), 48_000);
+    }
+
+    #[test]
+    fn a_crossfade_mixes_its_length_then_hands_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a.wav"), dir.path().join("b.wav"));
+        write_wav(&a, 4410, 16_384); // 0.5
+        write_wav(&b, 4410, 8_192); // 0.25
+        let mut fade = Crossfade::new(track(&a), track(&b), None, 2000, 1);
+
+        let out = run_to_yield(&mut fade);
+        assert!(fade.is_done());
+        // The mix is 2000 frames; the incoming leftover follows it.
+        assert!(out.len() >= 2000, "got {} samples", out.len());
+        assert!((out[0] - 0.5).abs() < 0.01, "starts on the outgoing track");
+        assert!(
+            (out[1999] - 0.25).abs() < 0.05,
+            "ends on the incoming track"
+        );
+        assert!((out[out.len() - 1] - 0.25).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_short_outgoing_track_fades_out_on_the_curve() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a.wav"), dir.path().join("b.wav"));
+        write_wav(&a, 300, 16_384);
+        write_wav(&b, 8000, 8_192);
+        let mut fade = Crossfade::new(track(&a), track(&b), None, 2000, 1);
+
+        let out = run_to_yield(&mut fade);
+        assert!(fade.is_done());
+        assert!(out.len() >= 2000, "the mix runs its full length");
+        // Once the outgoing track is gone the incoming one keeps rising.
+        assert!(out[1900] > out[1000], "the incoming track keeps rising");
+        assert!((out[1999] - 0.25).abs() < 0.05);
     }
 
     #[test]

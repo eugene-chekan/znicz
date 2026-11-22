@@ -53,6 +53,21 @@ pub fn crossfade_from(
     (fade > 0).then(|| total - fade)
 }
 
+/// Frames a crossfade starting at `position` lasts: the crossfade time, cut
+/// short when less of the track is left. Zero when the length is unknown.
+pub fn crossfade_length(
+    length: Duration,
+    track: Option<Duration>,
+    position: u64,
+    rate: u32,
+) -> u64 {
+    let Some(track) = track else {
+        return 0;
+    };
+    let left = frames(track, rate).saturating_sub(position);
+    frames(length, rate).min(left)
+}
+
 /// The next track is long enough to crossfade into: at least twice the
 /// crossfade. An unknown length is given the benefit of the doubt.
 pub fn incoming_long_enough(track: Option<Duration>, fade_frames: u64, rate: u32) -> bool {
@@ -290,6 +305,17 @@ mod tests {
         );
         assert_eq!(crossfade_from(s(5), Some(s(60)), 1000, true), None);
         assert_eq!(crossfade_from(s(5), None, 1000, false), None);
+    }
+
+    #[test]
+    fn a_late_crossfade_is_cut_short_to_the_track_end() {
+        let s = |n| Duration::from_secs(n);
+        // 60 s track at 1 kHz: a 5 s crossfade from the start, and one that
+        // begins 2 s before the end is cut to 2 s.
+        assert_eq!(crossfade_length(s(5), Some(s(60)), 0, 1000), 5_000);
+        assert_eq!(crossfade_length(s(5), Some(s(60)), 58_000, 1000), 2_000);
+        assert_eq!(crossfade_length(s(5), Some(s(60)), 61_000, 1000), 0);
+        assert_eq!(crossfade_length(s(5), None, 0, 1000), 0);
     }
 
     #[test]
