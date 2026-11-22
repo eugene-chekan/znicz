@@ -108,8 +108,16 @@ fn track_plays_for_its_real_duration() {
 /// Play `files` as a queue from the first row and collect when each track
 /// started, until the last one ends or `limit` passes.
 fn play_queue(files: Vec<std::path::PathBuf>, limit: Duration) -> (Vec<Duration>, usize, Duration) {
+    play_queue_with(AudioConfig::default(), files, limit)
+}
+
+fn play_queue_with(
+    config: AudioConfig,
+    files: Vec<std::path::PathBuf>,
+    limit: Duration,
+) -> (Vec<Duration>, usize, Duration) {
     let count = files.len();
-    let (player, _thread) = spawn_player(AudioConfig::default());
+    let (player, _thread) = spawn_player(config);
     player
         .send_blocking(Command::ReplaceQueue {
             items: files.into_iter().map(znicz_core::QueueItem::file).collect(),
@@ -176,6 +184,88 @@ fn a_format_change_falls_back_and_plays_both() {
 
     assert_eq!(starts.len(), 2, "both tracks start: {starts:?}");
     assert_eq!(ended, 2, "both tracks end");
+}
+
+#[test]
+fn crossfaded_tracks_overlap() {
+    if skip_hardware_playback() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.wav");
+    let b = dir.path().join("b.wav");
+    write_silent_wav(&a, 44_100, 2, 3);
+    write_silent_wav(&b, 44_100, 2, 3);
+
+    let config = AudioConfig {
+        fades: znicz_core::FadeTimes {
+            crossfade: Duration::from_secs(1),
+            ..Default::default()
+        },
+        ..AudioConfig::default()
+    };
+    let (starts, ended, total) = play_queue_with(config, vec![a, b], Duration::from_secs(12));
+
+    assert_eq!(starts.len(), 2, "both tracks start: {starts:?}");
+    assert_eq!(ended, 2, "both tracks end");
+    let second = starts[1];
+    assert!(
+        second >= Duration::from_millis(1700) && second <= Duration::from_millis(2500),
+        "the second track must start during the 1 s overlap, started at {second:?}"
+    );
+    assert!(total < Duration::from_millis(5500), "took {total:?}");
+}
+
+#[test]
+fn repeat_one_crossfades_into_itself() {
+    if skip_hardware_playback() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let wav = dir.path().join("loop.wav");
+    write_silent_wav(&wav, 44_100, 2, 2);
+
+    let config = AudioConfig {
+        fades: znicz_core::FadeTimes {
+            crossfade: Duration::from_millis(500),
+            ..Default::default()
+        },
+        ..AudioConfig::default()
+    };
+    let (player, _thread) = spawn_player(config);
+    player
+        .send_blocking(Command::ReplaceQueue {
+            items: vec![znicz_core::QueueItem::file(wav.clone())],
+            position: 0,
+        })
+        .expect("queue");
+    player
+        .send_blocking(Command::SetRepeat(znicz_core::RepeatMode::One))
+        .expect("repeat one");
+    player
+        .send_blocking(Command::QueuePlayIndex(0))
+        .expect("play");
+
+    let started = Instant::now();
+    let mut track_starts = 0;
+    while started.elapsed() < Duration::from_secs(4) {
+        track_starts += player
+            .drain_events()
+            .iter()
+            .filter(|e| matches!(e, PlayerEvent::TrackStarted(_)))
+            .count();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    let state = player.state();
+    player.send(Command::Stop).ok();
+
+    assert_eq!(state.status, znicz_core::PlaybackStatus::Playing);
+    assert_eq!(state.current_track.and_then(|t| t.path), Some(wav));
+    assert!(
+        track_starts >= 2,
+        "a 2 s loop over 4 s must start at least twice, started {track_starts} times"
+    );
 }
 
 /// Tags must reach the player state, not just the file name.

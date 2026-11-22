@@ -16,6 +16,8 @@ pub trait SampleSink {
 /// One step of decoding.
 pub enum DecodeStep {
     Samples(Vec<f32>),
+    /// Stop pumping here and resume on the next call, with nothing queued.
+    Yield,
     End,
     Failed(String),
 }
@@ -24,6 +26,8 @@ pub enum DecodeStep {
 pub enum PumpOutcome {
     /// Output is full for now. Call again later.
     SinkFull,
+    /// The decoder asked to stop at a yield point. Call again later.
+    Yielded,
     /// The track finished.
     Finished,
     /// The decoder failed.
@@ -94,6 +98,7 @@ impl Feeder {
                         return PumpOutcome::SinkFull;
                     }
                 }
+                DecodeStep::Yield => return PumpOutcome::Yielded,
                 DecodeStep::End => return PumpOutcome::Finished,
                 DecodeStep::Failed(message) => return PumpOutcome::Failed(message),
             }
@@ -238,6 +243,24 @@ mod tests {
         assert_eq!(outcome, PumpOutcome::SinkFull);
         assert_eq!(sink.queued.len(), 10);
         assert_eq!(feeder.pending_samples(), 15, "leftover must be preserved");
+    }
+
+    #[test]
+    fn a_yield_stops_the_pump_and_keeps_nothing_back() {
+        let mut sink = FakeSink::new(1024);
+        let mut feeder = Feeder::new();
+        let mut steps = vec![DecodeStep::Yield, DecodeStep::Samples(vec![1.0; 4])].into_iter();
+        let mut decode = || steps.next().unwrap_or(DecodeStep::End);
+        assert_eq!(
+            feeder.pump(&mut sink, 1, 8, &mut decode),
+            PumpOutcome::Yielded
+        );
+        assert_eq!(feeder.pending_samples(), 0);
+        assert_eq!(
+            feeder.pump(&mut sink, 1, 8, &mut decode),
+            PumpOutcome::Finished
+        );
+        assert_eq!(sink.queued, vec![1.0; 4]);
     }
 
     #[test]

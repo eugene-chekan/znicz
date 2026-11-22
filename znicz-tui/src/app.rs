@@ -406,6 +406,8 @@ pub struct App {
     run_only_warned: bool,
     /// A folder removal waiting for Enter in Settings: the folder and its track count.
     pub(crate) settings_confirm: Option<(PathBuf, Option<usize>)>,
+    /// A slider row's typed value, open in the Settings strip.
+    pub(crate) settings_prompt: Option<settings_ui::SliderPrompt>,
     /// The folder prompt was opened from Settings, so closing it returns there.
     folder_prompt_from_settings: bool,
     pub covers: CoverCache,
@@ -750,6 +752,7 @@ impl App {
             protocol_support: None,
             run_only_warned: false,
             settings_confirm: None,
+            settings_prompt: None,
             folder_prompt_from_settings: false,
             covers: CoverCache::new(),
             picker: Some(ratatui_image::picker::Picker::halfblocks()),
@@ -1110,6 +1113,7 @@ impl App {
     fn on_wheel(&mut self, delta: isize) {
         if self.library.is_typing()
             || self.folder_prompt.is_some()
+            || self.settings_prompt.is_some()
             || self.playlist_prompt.is_some()
             || self.radio_prompt.is_some()
         {
@@ -1156,7 +1160,7 @@ impl App {
             self.on_key(key);
             return;
         }
-        if self.folder_prompt.is_some() {
+        if self.folder_prompt.is_some() || self.settings_prompt.is_some() {
             return;
         }
         if self.library.is_typing() {
@@ -1393,6 +1397,11 @@ impl App {
     }
 
     fn on_esc(&mut self) {
+        // Esc cancels the typed value and leaves Settings open.
+        if self.modal == Modal::Settings && self.settings_prompt.is_some() {
+            self.settings_prompt = None;
+            return;
+        }
         if self.modal == Modal::Settings && self.settings_confirm.is_some() {
             self.settings_confirm = None;
             return;
@@ -1721,6 +1730,7 @@ impl App {
             Modal::Help if self.help.editing => Context::HelpFilter,
             Modal::Help => Context::Help,
             Modal::Devices => Context::Devices,
+            Modal::Settings if self.settings_prompt.is_some() => Context::SettingsPrompt,
             Modal::Settings if self.settings_on_tab_bar => Context::SettingsTabs,
             Modal::Settings => Context::Settings,
             Modal::Playlists => Context::Playlists,

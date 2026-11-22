@@ -277,6 +277,7 @@ struct FadeSection {
     stop_ms: Option<u64>,
     track_ms: Option<u64>,
     mute_ms: Option<u64>,
+    crossfade_ms: Option<u64>,
 }
 
 /// The fade times from `[audio.fade]`, with the defaults for missing keys.
@@ -290,6 +291,7 @@ fn fade_times(config: &Config) -> FadeTimes {
         stop: ms(fade.stop_ms, defaults.stop),
         track: ms(fade.track_ms, defaults.track),
         mute: ms(fade.mute_ms, defaults.mute),
+        crossfade: ms(fade.crossfade_ms, defaults.crossfade),
     }
 }
 
@@ -1392,6 +1394,22 @@ mod tests {
         assert_eq!(fades.play, Duration::ZERO);
         assert_eq!(fades.stop, Duration::from_millis(800));
         assert_eq!(fades.pause, FadeTimes::default().pause);
+    }
+
+    #[test]
+    fn crossfade_ms_parses_into_the_crossfade() {
+        let config = parse_config_text("[audio.fade]\ncrossfade_ms = 3500\n").unwrap();
+        assert_eq!(fade_times(&config).crossfade, Duration::from_millis(3500));
+        assert_eq!(
+            fade_times(&parse_config_text("").unwrap()).crossfade,
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn the_default_config_has_crossfade_off() {
+        let config = parse_config_text(DEFAULT_CONFIG).unwrap();
+        assert_eq!(fade_times(&config).crossfade, Duration::ZERO);
     }
 
     #[test]

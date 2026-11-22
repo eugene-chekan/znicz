@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.19.0 - 2026-11-22
+
+- Crossfade: when one track follows another on its own, the two overlap for
+  the set time with an equal-power curve (`[audio.fade] crossfade_ms`,
+  Settings → Playback; off by default, up to 12 s). Repeat-one crossfades
+  into itself. Radio, a change of sample rate or channels, a current track of
+  unknown length, or a next track shorter than twice the crossfade join as
+  before. Manual changes keep their fades.
+- Gapless playback also loops a repeat-one track without reopening the stream.
+- Settings → Playback rows are sliders: `h` / `l` step (50 ms for fades,
+  0.5 s for crossfade). Enter or Space types an exact value (`150`, `0.2s`,
+  `3.5`).
+
 ## 0.18.0 - 2026-11-18
 
 - Fades: play and resume fade in; pause, stop, Next/Previous, choosing a new

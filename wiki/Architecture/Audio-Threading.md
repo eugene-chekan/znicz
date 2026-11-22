@@ -39,6 +39,14 @@ sample is ever lost. See [the playback pipeline](../Domain/Playback-Pipeline.md#
 
 Seek cannot “rewind” the ring from the producer side. The player sets a **flush** flag. The callback throws away queued samples, then decode continues from the new position. The leftover held by the feeder is dropped too, because it belongs to the old position. Radio streams cannot seek: the engine returns `radio cannot seek` instead of moving the HTTP cursor.
 
+## Crossfade
+
+A crossfade mixes the two tracks on the player thread, before the samples go into
+the ring (`audio/crossfade.rs`, driven from `player/engine/crossfade.rs`). The
+callback does not change: it still pops samples, scales them by the gains and
+writes. The mix goes through the same feeder as a decoded packet, so its leftover
+is kept under the back-pressure rule above.
+
 ## End of track
 
 When the decoder reaches the end, up to two seconds of music are still in the

@@ -108,8 +108,8 @@ Play and resume fade in, and pause, stop, a manual track change, a removed
 playing row and a device switch fade out first. The sound is scaled by the
 fade gain in the same callback step, so a fade is a short ramp, not a cut. The
 times are `[audio.fade]` (150 ms in, 150 ms pause, 300 ms stop, 150 ms track,
-500 ms mute by default; 0 turns one off). Automatic track changes and gapless
-joins do not fade. See
+500 ms mute by default; 0 turns one off). Automatic track changes do not fade:
+they crossfade (below) or join gaplessly. See
 [Core engine](../Architecture/Core-Engine.md#fade-outs) for the waiting commands
 and [Audio threading](../Architecture/Audio-Threading.md) for the two gains.
 
@@ -146,9 +146,52 @@ Encoder delay and padding are trimmed where the file says how much: MP3
 (LAME/Xing header) and Ogg Vorbis by symphonia, AAC in M4A by Znicz from the
 `iTunSMPB` tag. FLAC, WAV, AIFF and ALAC have none.
 
+Repeat-one joins the track to itself the same way: the file is opened again
+and its first sample follows the last one.
+
 Old behaviour (drain the buffer, reopen the stream) is kept when the next row
-is radio, has another sample rate or channel count, or fails to open, and with
-repeat-one.
+is radio, has another sample rate or channel count, or fails to open.
+
+## Crossfade
+
+With `[audio.fade] crossfade_ms` above zero (Settings → Playback, up to 12 s;
+off by default) an automatic track change overlaps the two tracks: the outgoing
+track fades out while the incoming one fades in. The curve is equal power,
+`cos` and `sin` of `t·π/2` over the crossfade, so the loudness stays even.
+Repeat-one crossfades into itself: the same file is opened again from its
+start.
+
+A crossfade happens only when all of these hold:
+
+- the crossfade time is not zero;
+- the current track and the next row are both local files (not radio);
+- they have the same sample rate and channel count;
+- the current track's length is known.
+
+The crossfade is cut to half of the current track's length. A next track whose
+length is known and shorter than twice the crossfade is not crossfaded into:
+it gets the gapless join, so short interludes do not blend away. Albums are not
+special; turn the crossfade off for albums that run on without a break.
+
+When a rule fails, the change happens as before: a gapless join (same format),
+or drain and reopen. Manual changes (Next, Previous, choosing a row, replacing
+the queue) keep the fade-out and fade-in from [Fades](#fades).
+
+The mix is done before the samples enter the ring buffer, so the audio callback
+is unchanged. The engine starts the crossfade on the frame where it should begin
+(`crossfade_from`, from the packet timestamps), opens the next row, and mixes:
+each frame is the outgoing sample times `cos` plus the incoming sample times
+`sin`. If the outgoing track ends before the crossfade does, its side is
+silence and the incoming track keeps rising. The title, cover and seek bar
+switch when the crossfade starts to be heard. Samples change only while a
+crossfade runs; steady playback stays bit-perfect.
+
+**Shuffle:** when a crossfade is declined (the next track is too short, or it is
+another format), the end-of-track join picks the next row again. With shuffle
+that can be a different random row from the one the crossfade looked at.
+
+See [Core engine](../Architecture/Core-Engine.md#crossfades) for the commands
+that interrupt a crossfade.
 
 ## Next
 

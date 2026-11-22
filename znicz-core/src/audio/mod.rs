@@ -1,5 +1,6 @@
 pub mod buffer;
 pub mod convert;
+pub mod crossfade;
 pub mod feeder;
 pub mod gain;
 pub mod http;

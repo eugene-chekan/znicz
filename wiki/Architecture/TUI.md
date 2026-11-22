@@ -274,7 +274,7 @@ quickest way to find a device that will take your files unconverted.
 
 `S` opens a centered modal with five tabs, in the order the tab bar shows
 them: **Display** (the cover, cover search, library layout, marquee and icons), **Audio**
-(the default output device and bit-perfect), **Playback** (the fade times),
+(the default output device and bit-perfect), **Playback** (the fade times and the crossfade),
 **Library** (the music folders) and **General** (the update check). The
 modal opens on the tab you last used in this run, with the cursor on its first
 row.
@@ -293,23 +293,36 @@ while the tab bar has focus, how to use it.
 | `↓` (`j`) or `Enter` on the tab bar | Move focus into the rows of the shown tab |
 | Click a tab label | Show that tab; focus stays where it was |
 | `↑` / `↓` (`j` / `k`), `g` / `G`, `Ctrl-d` / `Ctrl-u` | Move between rows; `↓` stops at the last row, and `↑` on the first row goes to the tab bar |
-| `Enter` / `Space` | Change the highlighted row: a switch flips, a choice steps forward and wraps |
-| `←` / `→` (`h` / `l`) | Step a choice back or forward and stop at the ends; turn a switch off or on |
+| `Enter` / `Space` | Change the highlighted row: a switch flips, a choice steps forward and wraps; a slider opens its typed-value prompt |
+| `←` / `→` (`h` / `l`) | Step a choice or a slider back or forward and stop at the ends; turn a switch off or on |
 | `d` | On a folder, ask to remove it (`Enter` confirms, `Esc` cancels) |
-| `Esc` | Close the modal, or cancel a pending folder removal first |
+| `Esc` | Close the modal, or cancel an open slider prompt or a pending folder removal first |
 
 The shown tab's own number key keeps the cursor where it is, so `1`–`5` only
 moves the cursor when it goes to another tab. The tab shown when the modal
 closes is the tab it opens on next time.
 
-**Playback** has five rows, one per `[audio.fade]` time: *Fade in (play,
+**Playback** has six rows, one per `[audio.fade]` time: *Fade in (play,
 resume)*, *Fade on pause*, *Fade on stop*, *Fade on track change* and *Mute
-fade*. Each steps along the ladder 0, 50, 100, 150, 200, 300, 500, 750, 1000,
-1500 and 2000 ms; `off` is 0. `←` / `→` stop at the ends, and `Enter` wraps from
-the longest back to `off`. A value in the file that is not on the ladder moves to
-the next step in the direction pressed. A change saves to `[audio.fade]` and
-reaches the player at once, so the next fade uses it. See
-[Playback Pipeline](../Domain/Playback-Pipeline.md) for what each fade covers.
+fade*, then *Crossfade*. Each row is a slider: a bar about 16 cells wide, then
+the value (`off`, `150 ms`, `3.5 s`). The fades run 0–2000 ms in 50 ms steps;
+the crossfade runs 0–12 s in 0.5 s steps. `←` / `→` (`h` / `l`) move one step and
+stop at the ends. A value that is not on the grid (typed, or in the file) moves
+to the next grid value in the direction pressed.
+
+`Enter` or `Space` opens a prompt in the strip with the current value, for
+example `Crossfade (0–12 s): 3.5`. Type a number in the row's unit (seconds for
+the crossfade, milliseconds for the fades), or with a unit: `3.5s`, `3500ms`,
+`150 ms`. `Enter` saves, `Esc` cancels. A value that is not a number, or out of
+range, keeps the prompt open and the strip says why (`must be 0–12 s`). While
+the prompt is open the keys type into it (`←` / `→`, Home / End, Backspace,
+Delete); tabs and rows do not move, `Ctrl-d` / `Ctrl-u` do nothing, and the
+footer shows `Enter save · Esc cancel`.
+
+A change saves to `[audio.fade]` and reaches the player at once. A new crossfade
+time applies to the next crossfade, not one that is running. See
+[Playback Pipeline](../Domain/Playback-Pipeline.md) for what each fade and the
+crossfade cover.
 
 Each change applies at once and is saved to `config.toml` in place, so comments
 and other keys stay. The strip above the bottom border explains the highlighted
@@ -563,7 +576,7 @@ top of the player.
 | `theme.rs` | every colour, in one place (16 ANSI colours, tuned for dark palettes; themes: [#68](https://github.com/eugene-chekan/znicz/issues/68)) |
 | `keys.rs` | the keymap as data |
 | `cursor.rs` | list cursor movement |
-| `line_edit.rs` | one-line prompt caret (search, playlist save, radio) |
+| `line_edit.rs` | one-line prompt caret (search, playlist save, radio, a Settings slider value) |
 | `meta.rs` | background tag cache |
 | `cover.rs` | background cover cache + logo |
 | `tui_config.rs` | `show_cover` / `cover_protocol` / `library_layout` / `marquee` / `icons` |

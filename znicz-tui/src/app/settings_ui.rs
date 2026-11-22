@@ -3,12 +3,14 @@
 //! `impl App`.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui_image::picker::ProtocolType;
 use znicz_core::{Command, FadeTimes, LibraryOp};
 
 use super::{App, DevicesMode, Modal};
+use crate::line_edit::LineEdit;
 use crate::settings::{self, Kind, Row, Tab};
 use crate::tui_config::{CoverProtocol, TuiConfig};
 
@@ -42,6 +44,15 @@ struct SettingsSnapshot {
     default_device: Option<String>,
     protocol: Option<ProtocolType>,
     fades: FadeTimes,
+}
+
+/// A slider row's typed value, being entered in the Settings strip.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SliderPrompt {
+    pub row: Row,
+    pub text: LineEdit,
+    /// The last Enter was refused: the row's range, which the strip shows.
+    pub error: Option<String>,
 }
 
 /// The picker's protocol for a configured cover protocol, given the one the
@@ -89,7 +100,9 @@ impl App {
     /// Move the Settings cursor `delta` rows, stopping at either end. The tab
     /// bar has focus, so there is no row to move to.
     pub(super) fn settings_move(&mut self, delta: isize) {
-        if self.settings_on_tab_bar {
+        // On the tab bar there is no row to move to; while a value is typed
+        // the row stays put.
+        if self.settings_on_tab_bar || self.settings_prompt.is_some() {
             return;
         }
         let last = self.settings_rows.len().saturating_sub(1);
@@ -99,16 +112,22 @@ impl App {
         }
     }
 
-    /// Put the Settings cursor on `index`. A pending removal question was asked
-    /// about the row the cursor was on, so it is dropped here.
+    /// Put the Settings cursor on `index`. A pending removal question or typed
+    /// slider value was about the row the cursor was on, so both are dropped here.
     pub(super) fn set_settings_cursor(&mut self, index: usize) {
         self.settings_confirm = None;
+        self.settings_prompt = None;
         self.settings_cursor = index;
     }
 
     /// Keys for the Settings modal. Returns false for the rest, which move the
     /// cursor, close the modal, or are ignored.
     pub(super) fn on_settings_key(&mut self, key: KeyEvent) -> bool {
+        // An open slider prompt takes every key: tabs and rows stay put.
+        if self.settings_prompt.is_some() {
+            self.on_slider_prompt_key(key);
+            return true;
+        }
         // Tab keys work from either focus, and focus stays where it is.
         let tab = match key.code {
             KeyCode::Tab => Some(self.settings_tab.next()),
@@ -139,6 +158,7 @@ impl App {
                 Row::DefaultDevice => self.open_default_device_picker(),
                 Row::AddFolder => self.open_folder_prompt_from_settings(),
                 Row::RescanAll => self.rescan_folders(),
+                _ if settings::slider(&row).is_some() => self.open_slider_prompt(&row),
                 _ => self.change_setting(&row, Change::Activate),
             },
             KeyCode::Char('l') | KeyCode::Right => self.change_setting(&row, Change::Forward),
@@ -305,12 +325,80 @@ impl App {
     /// Change `row` the way `change` asks, then save it. A save that fails puts
     /// the previous values back.
     fn change_setting(&mut self, row: &Row, change: Change) {
+        self.change_with(row, |app| app.apply_setting(row, change));
+    }
+
+    /// Run `apply` on the in-memory value of `row`. When it reports a change, do
+    /// what the row needs and save it, so a step and a typed value share one path.
+    /// A save that fails puts the previous values back.
+    fn change_with(&mut self, row: &Row, apply: impl FnOnce(&mut Self) -> bool) {
         let before = self.settings_snapshot();
-        if !self.apply_setting(row, change) {
+        if !apply(self) {
             return;
         }
         self.after_setting_changed(row);
         self.save_setting(row, before);
+    }
+
+    /// Enter or Space on a slider row: a prompt holding the current value, in
+    /// the row's unit, with the caret at the end.
+    fn open_slider_prompt(&mut self, row: &Row) {
+        let (Some(slider), Some(time)) = (
+            settings::slider(row),
+            settings::slider_time(row, &self.fades),
+        ) else {
+            return;
+        };
+        self.settings_prompt = Some(SliderPrompt {
+            row: row.clone(),
+            text: LineEdit::from_text(settings::unit_number(time, slider.unit)),
+            error: None,
+        });
+    }
+
+    /// Keys while a slider prompt is open. Enter saves the typed value, Esc
+    /// cancels it, and every other key edits the text.
+    fn on_slider_prompt_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => self.settings_prompt = None,
+            KeyCode::Enter => self.submit_slider_prompt(),
+            _ => {
+                if let Some(prompt) = self.settings_prompt.as_mut() {
+                    prompt.text.on_key(key);
+                    prompt.error = None;
+                }
+            }
+        }
+    }
+
+    /// Enter in the slider prompt. A value in range closes the prompt and is
+    /// saved like a step; anything else keeps the prompt open with the range.
+    fn submit_slider_prompt(&mut self) {
+        let Some(prompt) = self.settings_prompt.as_mut() else {
+            return;
+        };
+        let Some(slider) = settings::slider(&prompt.row) else {
+            self.settings_prompt = None;
+            return;
+        };
+        match settings::parse_slider_value(slider, prompt.text.as_str()) {
+            Err(range) => prompt.error = Some(range),
+            Ok(time) => {
+                let row = prompt.row.clone();
+                self.settings_prompt = None;
+                self.change_with(&row, |app| app.set_slider_time(&row, time));
+            }
+        }
+    }
+
+    /// Set a slider row's time to `time`. Returns whether it changed.
+    fn set_slider_time(&mut self, row: &Row, time: Duration) -> bool {
+        let Some(slot) = settings::fade_slot(row, &mut self.fades) else {
+            return false;
+        };
+        let changed = *slot != time;
+        *slot = time;
+        changed
     }
 
     /// Change the value in memory. Returns whether it changed.
@@ -335,17 +423,28 @@ impl App {
                     Change::Forward => (true, false),
                     Change::Back => (false, false),
                 };
-                if let Some(slot) = settings::fade_slot(row, &mut self.fades) {
-                    let new = settings::step_fade(*slot, forward, wrap);
-                    let changed = *slot != new;
-                    *slot = new;
-                    changed
-                } else if *row == Row::CoverProtocol {
+                if *row == Row::CoverProtocol {
                     let choices = settings::protocol_choices(self.protocol_support);
                     settings::step_protocol(&mut self.tui, &choices, forward, wrap)
                 } else {
                     settings::step_choice(row, &mut self.tui, forward, wrap)
                 }
+            }
+            // Enter and Space open the typed-value prompt (`open_slider_prompt`);
+            // here only the arrows step, one grid value at a time, and stop at the ends.
+            Kind::Slider(slider) => {
+                let forward = match change {
+                    Change::Forward => true,
+                    Change::Back => false,
+                    Change::Activate => return false,
+                };
+                let Some(slot) = settings::fade_slot(row, &mut self.fades) else {
+                    return false;
+                };
+                let new = settings::step_slider(slider, *slot, forward);
+                let changed = *slot != new;
+                *slot = new;
+                changed
             }
             // Actions and folder rows are run by `on_settings_key`, not changed here.
             Kind::Action | Kind::Folder => false,
@@ -386,9 +485,12 @@ impl App {
             Row::ShowCover | Row::CoverSize => self.cover_draw_key = None,
             Row::CoverProtocol => self.apply_cover_protocol(),
             Row::LibraryLayout => self.library.set_preferred_layout(self.tui.library_layout),
-            Row::FadePlay | Row::FadePause | Row::FadeStop | Row::FadeTrack | Row::FadeMute => {
-                self.apply_fades();
-            }
+            Row::FadePlay
+            | Row::FadePause
+            | Row::FadeStop
+            | Row::FadeTrack
+            | Row::FadeMute
+            | Row::Crossfade => self.apply_fades(),
             _ => {}
         }
     }
@@ -500,11 +602,13 @@ impl App {
         self.library.set_preferred_layout(self.tui.library_layout);
     }
 
-    /// A removal question belongs to the Settings modal: once that modal is no
-    /// longer on screen (closed, or replaced by another modal or a prompt), it goes.
+    /// A removal question and a slider prompt belong to the Settings modal: once
+    /// that modal is no longer on screen (closed, or replaced by another modal),
+    /// they go.
     pub(super) fn drop_removal_outside_settings(&mut self) {
         if self.modal != Modal::Settings {
             self.settings_confirm = None;
+            self.settings_prompt = None;
         }
     }
 }
@@ -1427,7 +1531,7 @@ mod tests {
     }
 
     #[test]
-    fn fade_rows_stop_at_the_ends_and_enter_wraps() {
+    fn fade_rows_stop_at_the_ends() {
         let dir = tempfile::tempdir().unwrap();
         let fades = FadeTimes {
             play: Duration::from_millis(2000),
@@ -1441,11 +1545,11 @@ mod tests {
         press(&mut app, KeyCode::Char('3'));
         press(&mut app, KeyCode::Char('l'));
         assert_eq!(app.fades.play, Duration::from_millis(2000), "stops at 2 s");
-        press(&mut app, KeyCode::Enter);
-        assert_eq!(app.fades.play, Duration::ZERO, "Enter wraps to off");
+        press(&mut app, KeyCode::Char('h'));
+        assert_eq!(app.fades.play, Duration::from_millis(1950), "one step back");
         assert_eq!(
             saved(&dir)["audio"]["fade"]["play_ms"].as_integer(),
-            Some(0)
+            Some(1950)
         );
     }
 
@@ -1572,5 +1676,186 @@ mod tests {
         click(&mut app, rect.x, rect.y);
         assert_eq!(app.settings_tab, Tab::Audio);
         assert!(!app.settings_on_tab_bar, "focus stays on the rows");
+    }
+
+    /// Settings on the Playback tab with the Crossfade prompt open.
+    fn open_crossfade_prompt(app: &mut App) {
+        press(app, KeyCode::Char('S'));
+        press(app, KeyCode::Char('3'));
+        press(app, KeyCode::Char('G'));
+        press(app, KeyCode::Enter);
+        assert!(app.settings_prompt.is_some());
+    }
+
+    // --- settings: slider prompt ---
+
+    /// Type each character of `text` as a key press.
+    fn type_text(app: &mut App, text: &str) {
+        for c in text.chars() {
+            press(app, KeyCode::Char(c));
+        }
+    }
+
+    #[test]
+    fn enter_on_a_slider_opens_a_prompt_and_saves_a_typed_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Char('G')); // Crossfade, last row
+        press(&mut app, KeyCode::Enter);
+        assert!(app.settings_prompt.is_some());
+        for _ in 0..4 {
+            press(&mut app, KeyCode::Backspace);
+        }
+        type_text(&mut app, "3.5");
+        press(&mut app, KeyCode::Enter);
+        assert!(app.settings_prompt.is_none());
+        assert_eq!(app.fades.crossfade, Duration::from_millis(3500));
+        assert_eq!(
+            saved(&dir)["audio"]["fade"]["crossfade_ms"].as_integer(),
+            Some(3500)
+        );
+    }
+
+    #[test]
+    fn a_bad_value_keeps_the_prompt_open_with_the_range() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Char('G'));
+        press(&mut app, KeyCode::Enter);
+        for _ in 0..4 {
+            press(&mut app, KeyCode::Backspace);
+        }
+        type_text(&mut app, "20");
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.settings_prompt.is_some(), "the prompt stays open");
+        assert_eq!(app.fades.crossfade, Duration::ZERO, "nothing changed");
+        let screen = screen_rows(&mut app).join("\n");
+        assert!(screen.contains("0–12 s"), "{screen}");
+    }
+
+    #[test]
+    fn paging_keys_leave_the_row_alone_while_a_value_is_typed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Enter);
+        assert!(app.settings_prompt.is_some());
+        app.on_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+        assert_eq!(app.settings_cursor, 0);
+        assert!(app.settings_prompt.is_some());
+    }
+
+    #[test]
+    fn esc_closes_the_prompt_without_saving_and_keeps_settings_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Enter); // Fade in, the first row
+        assert!(app.settings_prompt.is_some());
+        for _ in 0..3 {
+            press(&mut app, KeyCode::Backspace);
+        }
+        type_text(&mut app, "999");
+        press(&mut app, KeyCode::Esc);
+
+        assert!(app.settings_prompt.is_none());
+        assert_eq!(app.fades.play, FadeTimes::default().play, "value unchanged");
+        assert_eq!(app.modal, Modal::Settings, "Esc closed only the prompt");
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.modal, Modal::None, "a second Esc closes Settings");
+    }
+
+    #[test]
+    fn keys_type_into_the_prompt_instead_of_switching_tabs() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(
+            app.settings_tab,
+            Tab::Playback,
+            "the digit and Tab did not switch"
+        );
+        let text = app
+            .settings_prompt
+            .as_ref()
+            .unwrap()
+            .text
+            .as_str()
+            .to_string();
+        assert_eq!(text, "1502");
+
+        press(&mut app, KeyCode::Char('h'));
+        press(&mut app, KeyCode::Char('l'));
+        assert_eq!(app.settings_tab, Tab::Playback);
+        let text = app
+            .settings_prompt
+            .as_ref()
+            .unwrap()
+            .text
+            .as_str()
+            .to_string();
+        assert_eq!(text, "1502hl");
+    }
+
+    #[test]
+    fn a_slider_row_draws_a_bar_and_its_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('3'));
+        let screen = screen_rows(&mut app);
+        let row = screen
+            .iter()
+            .find(|line| line.contains("Fade on stop"))
+            .expect("row drawn");
+        assert!(row.contains("━"), "{row}");
+        assert!(row.contains("300 ms"), "{row}");
+    }
+
+    #[test]
+    fn the_prompt_strip_shows_the_label_range_and_caret() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        open_crossfade_prompt(&mut app);
+        let screen = screen_rows(&mut app).join("\n");
+        assert!(screen.contains("Crossfade (0–12 s): 0█"), "{screen}");
+        assert!(!screen.contains("Overlap the end of a track"), "{screen}");
+    }
+
+    #[test]
+    fn a_prompt_does_not_outlive_its_settings_modal() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        open_crossfade_prompt(&mut app);
+        app.modal = Modal::None;
+        press(&mut app, KeyCode::F(12));
+        assert!(app.settings_prompt.is_none());
+    }
+
+    #[test]
+    fn the_wheel_does_not_move_the_cursor_while_a_prompt_is_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        open_crossfade_prompt(&mut app);
+        let before = app.settings_cursor;
+        app.on_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.settings_cursor, before);
+        assert!(app.settings_prompt.is_some());
     }
 }
