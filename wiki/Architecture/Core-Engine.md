@@ -17,7 +17,7 @@ See `znicz-core/src/player/commands.rs`. Examples:
 - `Pause` / `Resume` — atomic flag; callback writes silence while paused. Pause fades out first (see [Fade-outs](#fade-outs)). Pause also skips `pump_decode`, so a radio stream stops pulling bytes.
 - `Seek(duration)` — seek the decoder, flush the ring. On a radio row this returns `radio cannot seek`.
 - `QueueMove { from, to }` — move one queue row. The playing row stays playing (the playing index follows it); an index out of range is an error, `from == to` is a no-op. An older running player rejects it, and the client suggests `znicz player stop`.
-- `SetVolume` ramps over 20 ms; `SetMuted` fades over `[audio.fade] mute_ms` (500 ms by default). `SetFades` replaces the fade times at once.
+- `SetVolume` ramps over 20 ms; `SetMuted` fades over `[audio.fade] mute_ms` (500 ms by default). `SetFades` replaces the fade times at once; a new crossfade time applies to the next crossfade, not a running one.
 - `NextTrack`, `QueueAdd`, …
 
 ## Output device
@@ -70,7 +70,7 @@ starts another fade-out takes the rest of the list along.
 
 A track that ends during a fade-out waits for it, so a waiting `Pause`, `Stop`
 or `NextTrack` applies to the track that was playing, not the next one.
-Automatic track changes and gapless joins do not fade (see [Gapless joins](#gapless-joins)).
+Automatic track changes do not fade: they crossfade or join (see [Gapless joins](#gapless-joins) and [Crossfades](#crossfades)).
 `SetFades` changes the times the next fade uses.
 
 ## Gapless joins
@@ -93,6 +93,49 @@ playing row first, and is refused (`nothing to seek in`) when the queue was
 cleared under the chained audio; `SetDevice` and `finish_track` show any left
 at once.
 
+`may_chain` allows any local file, repeat-one included. With repeat-one the
+pick is the playing row itself, so the same file follows its own end in the
+same stream and nothing is reopened.
+
+## Crossfades
+
+`player/engine/crossfade.rs` drives a crossfade; the mix itself is in
+`audio/crossfade.rs` (`Crossfade`, `CrossfadeMix`, `crossfade_gains`). The rules
+and the curve are in [Playback pipeline](../Domain/Playback-Pipeline.md#crossfade).
+
+- `arm_crossfade` runs whenever a decoder becomes current (play, a gapless join,
+  the end of a crossfade) and on `SetFades`. It sets `crossfade_from` (in
+  `player/fade.rs`): the frame where the crossfade starts, `length` before the
+  end and at most half the track, or none when a rule fails.
+- A track whose crossfade failed (the next row did not open or does not match,
+  or it is too short) is marked `crossfade_declined`. `SetFades` does not re-arm
+  it, and the flag is cleared when the next track starts.
+- The main decode step yields (`DecodeStep::Yield`) at `crossfade_from`, judged by
+  `AudioDecoder::position_frames`. `start_crossfade` picks the next row with
+  `open_next_row` (the same pick as gapless), queues it as a pending track whose
+  `starts_at` is the pushed count, and builds the `Crossfade`. The length is
+  `min(crossfade, frames left)`, so a seek past `crossfade_from` still gets a
+  shorter crossfade.
+- While it runs, `self.crossfade` owns both decoders and `self.decoder` is empty.
+  `has_source` and `source_format` look at the crossfade too, so the device
+  switch and the idle check see it. `pump_decode` pumps the crossfade in place of
+  the main decoder; pause stops the pump, so the mix waits and resumes with the
+  track.
+- When the mix is done (after its leftover is sent) the step yields and `hand_over`
+  makes the incoming decoder current and arms its own crossfade.
+
+Commands while a crossfade runs:
+
+| Command | Effect |
+|---|---|
+| Seek before the incoming track is heard (pending track exists) | `replay_current` reopens the playing row; `play_item` stops first, which drops the crossfade and its pending track; then the seek. |
+| Seek after it is heard | `end_heard_crossfade` ends it at once (the incoming track becomes current), then the seek. |
+| Next, Previous, Play, Stop, replacing the queue | They go through `stop()`, which drops the crossfade; their fades apply. |
+| Pause / Resume | Decoding waits; the mix continues on resume. |
+| `SetDevice` | `end_running_crossfade` first, so the incoming track is current; then the stream reopens for the new device. The mix was built for the old device's channels and rate. |
+| Queue edits | The pending row is found again by item (`resolve_position`). |
+| `SetFades` | The new time applies to the next crossfade; a running one keeps its length. |
+
 ## Files to read
 
 | File | Role |
@@ -101,6 +144,9 @@ at once.
 | `audio/output.rs` | cpal stream, config pick |
 | `audio/buffer.rs` | ring size and pair |
 | `audio/source.rs` | Symphonia, `AudioSource` |
+| `audio/crossfade.rs` | Equal-power curve, the crossfade mix |
+| `player/engine/crossfade.rs` | Starting, handing over and ending a crossfade |
+| `player/fade.rs` | Fade-out commands, crossfade start frame and length |
 | `audio/http.rs` | HTTP GET, unseekable body |
 | `station.rs` | `stations.toml`, `play_station` |
 | `player/state.rs` | snapshots for UI and MCP (`QueueItem`, `Queue`) |

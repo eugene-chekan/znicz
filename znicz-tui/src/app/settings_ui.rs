@@ -430,8 +430,8 @@ impl App {
                     settings::step_choice(row, &mut self.tui, forward, wrap)
                 }
             }
-            // Enter opens the typed-value prompt instead (Task 7); here only the
-            // arrows step, one grid value at a time, and stop at the ends.
+            // Enter and Space open the typed-value prompt (`open_slider_prompt`);
+            // here only the arrows step, one grid value at a time, and stop at the ends.
             Kind::Slider(slider) => {
                 let forward = match change {
                     Change::Forward => true,

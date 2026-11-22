@@ -216,7 +216,7 @@ The essentials:
 | Alt-← / Alt-→ | Pan a long title |
 | v / i | Stage: full-screen now playing (cover, details, signal path); again to return to Browse |
 | , | Devices |
-| S | Settings, in tabs: display, audio, playback (fades), library (music folders), general (update check); saved to `config.toml` |
+| S | Settings, in tabs: display, audio, playback (fades and crossfade), library (music folders), general (update check); saved to `config.toml` |
 | ? / q | Help / quit TUI (`s` stops playback) |
 
 Some terminals do not send Alt-arrows (for example macOS Terminal until you
@@ -257,13 +257,13 @@ volume = 1.0
 bit_perfect = true
 
 [audio.fade]
-# Fade times in milliseconds; 0 turns a fade off.
+# Times in milliseconds; 0 turns that fade (or the crossfade) off.
 play_ms = 150    # play and resume (fade in)
 pause_ms = 150
 stop_ms = 300
 track_ms = 150   # manual track change and device switch (fade out)
 mute_ms = 500
-crossfade_ms = 0  # automatic track changes overlap by this much; 0 = off
+crossfade_ms = 0  # automatic track changes overlap by this long, up to 12000; 0 = off
 
 [player]
 # Seconds the player stays up while stopped with no UI; 0 never exits.
