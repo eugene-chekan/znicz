@@ -8,7 +8,7 @@
 
 use std::collections::VecDeque;
 
-use crate::player::state::{QueueItem, RepeatMode, TrackInfo};
+use crate::player::state::{QueueItem, TrackInfo};
 
 /// A chained track waiting for its first sample to be played.
 #[derive(Debug, Clone)]
@@ -62,9 +62,9 @@ impl PendingTracks {
 }
 
 /// Whether the track after the one that just finished decoding may join it
-/// in the same stream. Repeat-one and radio keep the old stop-and-reopen.
-pub fn may_chain(repeat: RepeatMode, current_is_stream: bool) -> bool {
-    repeat != RepeatMode::One && !current_is_stream
+/// in the same stream. Repeat-one loops seamlessly; radio keeps stop-and-reopen.
+pub fn may_chain(current_is_stream: bool) -> bool {
+    !current_is_stream
 }
 
 /// Where a chained track sits in the queue now. The queue may have been
@@ -145,11 +145,9 @@ mod tests {
     }
 
     #[test]
-    fn repeat_one_and_radio_do_not_chain() {
-        assert!(may_chain(RepeatMode::Off, false));
-        assert!(may_chain(RepeatMode::All, false));
-        assert!(!may_chain(RepeatMode::One, false));
-        assert!(!may_chain(RepeatMode::Off, true));
+    fn radio_does_not_chain() {
+        assert!(may_chain(false));
+        assert!(!may_chain(true));
     }
 
     #[test]

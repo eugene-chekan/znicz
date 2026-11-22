@@ -18,6 +18,9 @@ pub struct FadeTimes {
     /// Fade out before a manual track change or a device switch.
     pub track: Duration,
     pub mute: Duration,
+    /// Automatic track changes overlap by this much. Zero turns it off.
+    #[serde(default)]
+    pub crossfade: Duration,
 }
 
 impl Default for FadeTimes {
@@ -28,8 +31,36 @@ impl Default for FadeTimes {
             stop: Duration::from_millis(300),
             track: Duration::from_millis(150),
             mute: Duration::from_millis(500),
+            crossfade: Duration::ZERO,
         }
     }
+}
+
+/// The frame where a crossfade into the next track starts: `length` before
+/// the end, at most half the track. `None` when crossfade is off, for radio,
+/// or when the track's length is unknown.
+pub fn crossfade_from(
+    length: Duration,
+    track: Option<Duration>,
+    rate: u32,
+    stream: bool,
+) -> Option<u64> {
+    if length.is_zero() || stream {
+        return None;
+    }
+    let total = frames(track?, rate);
+    let fade = frames(length, rate).min(total / 2);
+    (fade > 0).then(|| total - fade)
+}
+
+/// The next track is long enough to crossfade into: at least twice the
+/// crossfade. An unknown length is given the benefit of the doubt.
+pub fn incoming_long_enough(track: Option<Duration>, fade_frames: u64, rate: u32) -> bool {
+    track.is_none_or(|t| frames(t, rate) >= 2 * fade_frames)
+}
+
+fn frames(time: Duration, rate: u32) -> u64 {
+    (time.as_secs_f64() * f64::from(rate)).round() as u64
 }
 
 /// What the engine is doing, as far as fading is concerned.
@@ -238,6 +269,38 @@ mod tests {
         assert!(!fade.is_due(false, now));
         assert!(fade.is_due(true, now));
         assert!(fade.is_due(false, now + ms(300) + LANDING_GRACE + ms(1)));
+    }
+
+    #[test]
+    fn crossfade_is_off_by_default() {
+        assert_eq!(FadeTimes::default().crossfade, Duration::ZERO);
+    }
+
+    #[test]
+    fn the_crossfade_starts_its_length_before_the_end() {
+        let s = |n| Duration::from_secs(n);
+        // 60 s track at 1 kHz, 5 s crossfade: start at frame 55_000.
+        assert_eq!(crossfade_from(s(5), Some(s(60)), 1000, false), Some(55_000));
+        // Capped at half the track.
+        assert_eq!(crossfade_from(s(5), Some(s(6)), 1000, false), Some(3_000));
+        // Off, radio, or an unknown length: none.
+        assert_eq!(
+            crossfade_from(Duration::ZERO, Some(s(60)), 1000, false),
+            None
+        );
+        assert_eq!(crossfade_from(s(5), Some(s(60)), 1000, true), None);
+        assert_eq!(crossfade_from(s(5), None, 1000, false), None);
+    }
+
+    #[test]
+    fn a_short_next_track_is_not_crossfaded_into() {
+        let s = |n| Duration::from_secs(n);
+        assert!(incoming_long_enough(Some(s(10)), 5_000, 1000));
+        assert!(!incoming_long_enough(Some(s(9)), 5_000, 1000));
+        assert!(
+            incoming_long_enough(None, 5_000, 1000),
+            "unknown length: try"
+        );
     }
 
     #[test]

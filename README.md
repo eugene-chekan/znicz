@@ -263,6 +263,7 @@ pause_ms = 150
 stop_ms = 300
 track_ms = 150   # manual track change and device switch (fade out)
 mute_ms = 500
+crossfade_ms = 0  # automatic track changes overlap by this much; 0 = off
 
 [player]
 # Seconds the player stays up while stopped with no UI; 0 never exits.

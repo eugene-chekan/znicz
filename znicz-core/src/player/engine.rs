@@ -667,7 +667,7 @@ impl PlayerEngine {
     fn chain_next(&mut self, finished: &AudioDecoder) -> Option<AudioDecoder> {
         let after = {
             let state = self.state.read().unwrap();
-            if !may_chain(state.repeat, finished.is_stream()) {
+            if !may_chain(finished.is_stream()) {
                 return None;
             }
             match self.pending.last() {
