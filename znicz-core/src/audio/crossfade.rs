@@ -83,11 +83,6 @@ impl Crossfade {
         }
     }
 
-    /// The mix is done and the incoming leftover has been handed on.
-    pub fn is_done(&self) -> bool {
-        self.mix.is_done() && self.leftover_sent
-    }
-
     /// One pump step: a mixed packet while mixing; then the incoming leftover;
     /// then `Yield`, which hands the crossfade over to the incoming track.
     pub fn next_step(&mut self, output_channels: usize) -> DecodeStep {
@@ -230,7 +225,9 @@ impl CrossfadeMix {
     /// The next incoming sample, pulling a packet when the buffer is used up.
     /// Silence once the incoming track has ended.
     fn next_incoming(&mut self, pull: &mut dyn FnMut() -> Option<Vec<f32>>) -> f32 {
-        if self.incoming_offset >= self.incoming.len() && !self.incoming_ended {
+        // An empty packet holds no samples; keep pulling so the next sample
+        // still comes from the same channel it would have.
+        while self.incoming_offset >= self.incoming.len() && !self.incoming_ended {
             match pull() {
                 Some(packet) => {
                     self.incoming = packet;
@@ -260,7 +257,7 @@ impl CrossfadeMix {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn close(a: f32, b: f32) -> bool {
@@ -342,7 +339,7 @@ mod tests {
     }
 
     /// A mono 16-bit WAV file of `frames` frames, all at `sample`.
-    fn write_wav(path: &std::path::Path, frames: u32, sample: i16) {
+    pub(crate) fn write_wav(path: &std::path::Path, frames: u32, sample: i16) {
         let data_len = frames * 2;
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"RIFF");
@@ -363,7 +360,7 @@ mod tests {
         std::fs::write(path, bytes).unwrap();
     }
 
-    fn track(path: &std::path::Path) -> DecodedTrack {
+    pub(crate) fn track(path: &std::path::Path) -> DecodedTrack {
         let (decoder, _) = AudioDecoder::open_path(path).unwrap();
         DecodedTrack {
             decoder,
@@ -371,7 +368,9 @@ mod tests {
         }
     }
 
-    /// Run steps until the engine would hand over; returns the samples.
+    /// Run steps until the engine would hand over; returns the samples. A
+    /// `Yield` only comes once the mix is done and its leftover sent, so
+    /// returning at all means the crossfade completed.
     fn run_to_yield(fade: &mut Crossfade) -> Vec<f32> {
         let mut out = Vec::new();
         loop {
@@ -400,7 +399,6 @@ mod tests {
         let mut fade = Crossfade::new(track(&a), track(&b), None, 2000, 1);
 
         let out = run_to_yield(&mut fade);
-        assert!(fade.is_done());
         // The mix is 2000 frames; the incoming leftover follows it.
         assert!(out.len() >= 2000, "got {} samples", out.len());
         assert!((out[0] - 0.5).abs() < 0.01, "starts on the outgoing track");
@@ -420,7 +418,6 @@ mod tests {
         let mut fade = Crossfade::new(track(&a), track(&b), None, 2000, 1);
 
         let out = run_to_yield(&mut fade);
-        assert!(fade.is_done());
         assert!(out.len() >= 2000, "the mix runs its full length");
         // Once the outgoing track is gone the incoming one keeps rising.
         assert!(out[1900] > out[1000], "the incoming track keeps rising");
@@ -434,5 +431,26 @@ mod tests {
         let out = mix.mix(Some(&[1.0; 4]), &mut pull);
         assert_eq!(out[0], 1.0);
         assert!(out[3] < 1.0);
+    }
+
+    #[test]
+    fn an_empty_incoming_packet_does_not_shift_the_channels() {
+        // Stereo, L = 1.0 and R = 2.0 throughout. The first packet is empty
+        // (an AAC priming packet trimmed to nothing); the rest are stereo.
+        let mut mix = CrossfadeMix::new(16, 2);
+        let mut packets =
+            std::iter::once(Vec::new()).chain(std::iter::repeat_with(|| [1.0, 2.0].repeat(16)));
+        let mut pull = || packets.next();
+        // Silent outgoing side, so the output is the incoming gain times the sample.
+        let out = mix.mix(Some(&[0.0; 32]), &mut pull);
+        assert_eq!(out.len(), 32);
+        for frame in 1..16 {
+            let (l, r) = (out[2 * frame], out[2 * frame + 1]);
+            assert!(l > 0.0, "frame {frame}: left is mixed");
+            assert!(
+                close(l / r, 0.5),
+                "frame {frame}: left {l} and right {r} keep L and R order"
+            );
+        }
     }
 }

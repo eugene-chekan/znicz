@@ -103,7 +103,7 @@ Commands while a crossfade runs:
 | Seek after it is heard | End the crossfade at once (the incoming decoder becomes current, the outgoing one is dropped), then seek. |
 | Next, Previous, Play, Stop, replacing the queue | They go through `stop()`, which drops the crossfade; their v0.18.0 fades apply. |
 | Pause / Resume | Decoding waits; the mix continues on resume. |
-| Device switch | The buffer is lost; the mix continues from where decoding is (as gapless). |
+| Device switch | The crossfade ends at once (the incoming track becomes current, the outgoing one is dropped), then the stream reopens for the new device as for a normal track. The mix was built for the old device's channels and rate. |
 | Queue edits | The pending row is found again by item, as gapless. |
 | `SetFades` | A new crossfade time applies to the next crossfade, not the running one. |
 

@@ -181,6 +181,9 @@ struct PlayerEngine {
     crossfade: Option<Crossfade>,
     /// Frame where the current decoder starts a crossfade, if it does.
     crossfade_from: Option<u64>,
+    /// The crossfade into the next track failed for the current decoder: no
+    /// retry, not even when `SetFades` re-arms it.
+    crossfade_declined: bool,
     /// Stated length of the current track, for working out a crossfade.
     track_duration: Option<Duration>,
 }
@@ -218,6 +221,7 @@ impl PlayerEngine {
             fade_out: None,
             crossfade: None,
             crossfade_from: None,
+            crossfade_declined: false,
             track_duration: None,
         }
     }
@@ -426,6 +430,9 @@ impl PlayerEngine {
             }
             Command::SetDevice(id) => {
                 self.config.device_id = Some(id);
+                // A crossfade mixes for the old device's channels and rate:
+                // the incoming track takes over before the stream reopens.
+                self.end_running_crossfade();
                 if let Some((rate, ch)) = self.source_format() {
                     let playing = self.state.read().unwrap().status == PlaybackStatus::Playing;
                     // A reopened stream starts from the fade gain it is given:
@@ -444,7 +451,9 @@ impl PlayerEngine {
             }
             Command::SetFades(times) => {
                 self.fades = times;
-                self.arm_crossfade(self.track_duration);
+                if !self.crossfade_declined {
+                    self.arm_crossfade(self.track_duration);
+                }
             }
         }
         Ok(())
@@ -513,6 +522,7 @@ impl PlayerEngine {
         };
 
         self.decoder = Some(decoder);
+        self.crossfade_declined = false;
         self.arm_crossfade(track_info.duration);
         self.draining_since = None;
         self.feeder.reset();
@@ -732,6 +742,7 @@ impl PlayerEngine {
                 let duration = self.pending.last().and_then(|track| track.info.duration);
                 self.decoder = Some(next);
                 self.converter = converter;
+                self.crossfade_declined = false;
                 self.arm_crossfade(duration);
             }
             None => {
@@ -947,6 +958,7 @@ impl PlayerEngine {
         let Some((track, incoming)) = self.open_crossfade_track(&outgoing, length) else {
             // No retry for this track: its end joins or drains as usual.
             self.crossfade_from = None;
+            self.crossfade_declined = true;
             self.decoder = Some(outgoing);
             self.converter = converter;
             return;
@@ -998,6 +1010,7 @@ impl PlayerEngine {
         let (incoming, duration) = crossfade.into_incoming();
         self.decoder = Some(incoming.decoder);
         self.converter = incoming.converter;
+        self.crossfade_declined = false;
         self.arm_crossfade(duration);
     }
 
@@ -1005,9 +1018,13 @@ impl PlayerEngine {
     /// a seek applies to that track. Before it is heard, the reopen in `seek`
     /// drops the crossfade instead.
     fn end_heard_crossfade(&mut self) {
-        if !self.pending.is_empty() {
-            return;
+        if self.pending.is_empty() {
+            self.end_running_crossfade();
         }
+    }
+
+    /// End a running crossfade now: the incoming track becomes current.
+    fn end_running_crossfade(&mut self) {
         if let Some(crossfade) = self.crossfade.take() {
             self.hand_over(crossfade);
         }
@@ -1231,7 +1248,10 @@ pub(crate) fn moved_position(position: usize, from: usize, to: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{AudioConfig, PlayerHandle, moved_position, spawn_player};
+    use super::{
+        Arc, AudioConfig, AudioDecoder, Crossfade, Duration, FadeTimes, PlayerEngine, PlayerHandle,
+        PlayerState, RwLock, moved_position, spawn_player,
+    };
     use crate::player::commands::Command;
     use crate::player::state::QueueItem;
 
@@ -1381,5 +1401,60 @@ mod tests {
     fn rows_that_do_not_cross_leave_it_alone() {
         assert_eq!(moved_position(2, 0, 1), 2);
         assert_eq!(moved_position(2, 3, 4), 2);
+    }
+
+    fn engine() -> PlayerEngine {
+        let (_, command_rx) = crossbeam_channel::unbounded();
+        let (event_tx, _) = crossbeam_channel::unbounded();
+        PlayerEngine::new(
+            AudioConfig::default(),
+            Arc::new(RwLock::new(PlayerState::default())),
+            command_rx,
+            event_tx,
+        )
+    }
+
+    #[test]
+    fn set_fades_does_not_re_arm_a_declined_crossfade() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.wav");
+        crate::audio::crossfade::tests::write_wav(&path, 44_100 * 10, 1000);
+        let (decoder, _) = AudioDecoder::open_path(&path).unwrap();
+        let mut engine = engine();
+        engine.decoder = Some(decoder);
+        engine.track_duration = Some(Duration::from_secs(10));
+        let times = FadeTimes {
+            crossfade: Duration::from_secs(5),
+            ..FadeTimes::default()
+        };
+
+        engine.crossfade_declined = true;
+        engine.handle_command(Command::SetFades(times)).unwrap();
+        assert_eq!(engine.crossfade_from, None, "declined: no retry");
+
+        engine.crossfade_declined = false;
+        engine.handle_command(Command::SetFades(times)).unwrap();
+        assert!(engine.crossfade_from.is_some(), "not declined: re-armed");
+    }
+
+    #[test]
+    fn set_device_ends_a_running_crossfade_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a.wav"), dir.path().join("b.wav"));
+        crate::audio::crossfade::tests::write_wav(&a, 44_100, 1000);
+        crate::audio::crossfade::tests::write_wav(&b, 44_100, 2000);
+        let mut engine = engine();
+        engine.crossfade = Some(Crossfade::new(
+            crate::audio::crossfade::tests::track(&a),
+            crate::audio::crossfade::tests::track(&b),
+            None,
+            1000,
+            1,
+        ));
+
+        // The reopen may fail without a sound card; the hand-over happens first either way.
+        let _ = engine.handle_command(Command::SetDevice("no-such-device".into()));
+        assert!(engine.crossfade.is_none(), "the crossfade ended");
+        assert!(engine.decoder.is_some(), "the incoming track is current");
     }
 }
