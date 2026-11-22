@@ -100,7 +100,9 @@ impl App {
     /// Move the Settings cursor `delta` rows, stopping at either end. The tab
     /// bar has focus, so there is no row to move to.
     pub(super) fn settings_move(&mut self, delta: isize) {
-        if self.settings_on_tab_bar {
+        // On the tab bar there is no row to move to; while a value is typed
+        // the row stays put.
+        if self.settings_on_tab_bar || self.settings_prompt.is_some() {
             return;
         }
         let last = self.settings_rows.len().saturating_sub(1);
@@ -1734,6 +1736,19 @@ mod tests {
         assert_eq!(app.fades.crossfade, Duration::ZERO, "nothing changed");
         let screen = screen_rows(&mut app).join("\n");
         assert!(screen.contains("0–12 s"), "{screen}");
+    }
+
+    #[test]
+    fn paging_keys_leave_the_row_alone_while_a_value_is_typed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Enter);
+        assert!(app.settings_prompt.is_some());
+        app.on_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+        assert_eq!(app.settings_cursor, 0);
+        assert!(app.settings_prompt.is_some());
     }
 
     #[test]
