@@ -353,7 +353,7 @@ pub fn slider_range_text(slider: Slider) -> String {
 
 /// A time as a number in `unit`: whole milliseconds, or seconds with at most
 /// three decimals and no trailing zeros.
-fn unit_number(time: Duration, unit: SliderUnit) -> String {
+pub fn unit_number(time: Duration, unit: SliderUnit) -> String {
     let ms = time.as_millis();
     match unit {
         SliderUnit::Ms => ms.to_string(),
@@ -375,6 +375,28 @@ fn unit_suffix(unit: SliderUnit) -> &'static str {
         SliderUnit::Ms => " ms",
         SliderUnit::Seconds => " s",
     }
+}
+
+/// The time a slider row shows, or `None` for other rows.
+pub fn slider_time(row: &Row, fades: &FadeTimes) -> Option<Duration> {
+    match row {
+        Row::FadePlay => Some(fades.play),
+        Row::FadePause => Some(fades.pause),
+        Row::FadeStop => Some(fades.stop),
+        Row::FadeTrack => Some(fades.track),
+        Row::FadeMute => Some(fades.mute),
+        Row::Crossfade => Some(fades.crossfade),
+        _ => None,
+    }
+}
+
+/// How far a slider row's time is along its range, from 0 to 1. `None` for
+/// other rows.
+pub fn slider_fraction(row: &Row, fades: &FadeTimes) -> Option<f64> {
+    let slider = slider(row)?;
+    let time = slider_time(row, fades)?;
+    let span = (slider.max - slider.min).as_millis() as f64;
+    Some(time.saturating_sub(slider.min).as_millis() as f64 / span)
 }
 
 /// The `[audio.fade]` time a fade row edits, or `None` for other rows.

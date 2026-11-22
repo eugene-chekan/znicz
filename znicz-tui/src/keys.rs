@@ -28,6 +28,8 @@ pub enum Context {
     Settings,
     /// Settings with the tab bar focused.
     SettingsTabs,
+    /// Settings with a slider's typed value open: keys type, Enter saves.
+    SettingsPrompt,
     Stage,
     Playlists,
     Radio,
@@ -126,6 +128,7 @@ pub fn context_hints(context: Context) -> &'static [Hint] {
         Context::Devices => &[SELECT, RESCAN, CLOSE],
         Context::Settings => &[ENTER_CHANGE, CHOOSE, NEXT_TAB, CLOSE],
         Context::SettingsTabs => &[TAB_SWITCH, ROWS, CLOSE],
+        Context::SettingsPrompt => &[ENTER_SAVE, CANCEL],
         Context::Stage => &[SPACE_PAUSE, NEXT, BROWSE, QUEUE_OPEN],
         Context::Playlists | Context::Radio => &[ENTER_PLAY, ADD, NEW, EDIT, DELETE, CLOSE],
         Context::Messages => &[CLEAR, CLOSE],
@@ -145,6 +148,7 @@ pub fn more_hint(context: Context) -> Option<Hint> {
             | Context::FolderPrompt
             | Context::Prompt
             | Context::StationPrompt
+            | Context::SettingsPrompt
             | Context::Help
             | Context::HelpFilter
             | Context::Update
@@ -238,6 +242,7 @@ pub const RADIO: &[Binding] = &[
 
 pub const SETTINGS: &[Binding] = &[
     b("Enter / Space", "change"),
+    b("Enter on a slider", "type a value"),
     b("h / l", "choose"),
     b("d", "remove folder"),
     b("Tab / Shift-Tab", "next / previous tab"),
@@ -282,7 +287,7 @@ pub fn context_title(context: Context) -> Option<&'static str> {
         Context::FolderPrompt => None,
         Context::Queue => Some("Queue"),
         Context::Devices => Some("Devices"),
-        Context::Settings | Context::SettingsTabs => Some("Settings"),
+        Context::Settings | Context::SettingsTabs | Context::SettingsPrompt => Some("Settings"),
         Context::Stage => Some("Stage"),
         Context::Playlists => Some("Playlists"),
         Context::Radio => Some("Radio"),
@@ -376,7 +381,7 @@ mod tests {
         }
     }
 
-    const ALL_CONTEXTS: [Context; 17] = [
+    const ALL_CONTEXTS: [Context; 18] = [
         Context::Library,
         Context::LibraryTree,
         Context::Search,
@@ -385,6 +390,7 @@ mod tests {
         Context::Devices,
         Context::Settings,
         Context::SettingsTabs,
+        Context::SettingsPrompt,
         Context::Stage,
         Context::Playlists,
         Context::Radio,
@@ -422,6 +428,7 @@ mod tests {
                 | Context::FolderPrompt
                 | Context::Prompt
                 | Context::StationPrompt
+                | Context::SettingsPrompt
                 | Context::Update
                 | Context::Help
                 | Context::HelpFilter => {

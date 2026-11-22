@@ -261,6 +261,27 @@ fn the_settings_modal_draws_at_every_size() {
 }
 
 #[test]
+fn the_slider_rows_and_their_prompt_draw_at_every_size() {
+    let mut app = App::with_library(player(), None);
+    app.on_key(KeyEvent::new(KeyCode::Char('S'), KeyModifiers::NONE));
+    app.on_key(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE));
+    // The Playback tab: fade bars, then Crossfade's bar and prompt.
+    for &(width, height) in SIZES {
+        let screen = draw(&mut app, width, height);
+        assert_eq!(screen.lines().count(), height as usize);
+    }
+
+    app.on_key(KeyEvent::new(KeyCode::Char('G'), KeyModifiers::NONE));
+    app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    for &(width, height) in SIZES {
+        let screen = draw(&mut app, width, height);
+        assert_eq!(screen.lines().count(), height as usize);
+    }
+    let screen = draw(&mut app, 100, 30);
+    assert!(screen.contains("Crossfade (0–12 s): 0█"), "{screen}");
+}
+
+#[test]
 fn the_help_overlay_draws_at_every_size() {
     let mut app = App::with_library(player(), None);
     app.modal = Modal::Help;

@@ -11,7 +11,8 @@ use crate::app::App;
 use crate::folder_complete;
 use crate::format;
 use crate::hit::ListHit;
-use crate::settings::{Row, Tab, Values, hint_text, value_text};
+use crate::line_edit::LineEdit;
+use crate::settings::{self, Row, Tab, Values, hint_text, value_text};
 use crate::theme;
 use crate::views::{self, window::visible_window};
 
@@ -27,6 +28,12 @@ const TAB_BAR_HELP: &str =
 
 /// Columns the row's label is indented by.
 const INDENT: &str = "    ";
+
+/// Cells in a slider row's bar, and the fewest worth drawing.
+const BAR_CELLS: usize = 16;
+const MIN_BAR_CELLS: usize = 4;
+/// Columns between the label, the bar and the value.
+const BAR_GAP: usize = 2;
 
 pub fn render(frame: &mut Frame, list: Rect, app: &mut App) {
     let popup = crate::layout::list_modal_rect(list);
@@ -122,21 +129,44 @@ pub fn render(frame: &mut Frame, list: Rect, app: &mut App) {
         frame.render_widget(Paragraph::new(Span::styled(line, theme::dim())), rule);
     }
 
-    let explanation = match &app.settings_confirm {
-        Some((path, tracks)) => removal_question(path, *tracks),
-        None if app.settings_on_tab_bar => TAB_BAR_HELP.to_string(),
-        None => app
-            .settings_rows
-            .get(cursor)
-            .map_or("", Row::explanation)
-            .to_string(),
-    };
     let strip_width = usize::from(strip.width);
-    let text: Vec<Line> = wrap(&explanation, strip_width, usize::from(strip_lines))
-        .into_iter()
-        .map(|line| Line::from(Span::styled(line, theme::dim())))
-        .collect();
+    let text: Vec<Line> = match &app.settings_prompt {
+        Some(prompt) => vec![slider_prompt_line(
+            &prompt.row,
+            &prompt.text,
+            prompt.error.as_deref(),
+        )],
+        None => {
+            let explanation = match &app.settings_confirm {
+                Some((path, tracks)) => removal_question(path, *tracks),
+                None if app.settings_on_tab_bar => TAB_BAR_HELP.to_string(),
+                None => app
+                    .settings_rows
+                    .get(cursor)
+                    .map_or("", Row::explanation)
+                    .to_string(),
+            };
+            wrap(&explanation, strip_width, usize::from(strip_lines))
+                .into_iter()
+                .map(|line| Line::from(Span::styled(line, theme::dim())))
+                .collect()
+        }
+    };
     frame.render_widget(Paragraph::new(text), strip);
+}
+
+/// The strip while a slider's typed value is open: the label with its range,
+/// then the text with its caret, then why the last Enter was refused.
+fn slider_prompt_line(row: &Row, text: &LineEdit, error: Option<&str>) -> Line<'static> {
+    let range = settings::slider(row)
+        .map(settings::slider_range_text)
+        .unwrap_or_default();
+    let mut line = views::prompt_line(&format!("{} ({range}): ", row.label()), text);
+    if let Some(range) = error {
+        line.spans
+            .push(Span::styled(format!("  must be {range}"), theme::warn()));
+    }
+    line
 }
 
 /// The tab labels, ` Display │ Audio │ … `. The active tab is strong while the
@@ -199,23 +229,43 @@ fn values(app: &App) -> Values<'_> {
     }
 }
 
-/// One row: the label with its value and hint flush right.
+/// One row: the label with its value and hint flush right. A slider row has its
+/// bar between the label and the value, as wide as fits.
 fn row_line(row: &Row, values: &Values, selected: bool, width: usize) -> Line<'static> {
     let mut tail = vec![Span::styled(value_text(row, values), theme::text())];
     if let Some(hint) = hint_text(row, values) {
         tail.push(Span::styled(format!("  {hint}"), theme::dim()));
     }
     let tail_width: usize = tail.iter().map(|span| span.content.chars().count()).sum();
+    let label = format!("{INDENT}{}", row.label());
+    let label_width = label.chars().count();
 
-    let head = format::truncate(
-        &format!("{INDENT}{}", row.label()),
-        width.saturating_sub(tail_width + 1),
-    );
-    let gap = width.saturating_sub(head.chars().count() + tail_width);
-    let mut spans = vec![Span::styled(
-        format!("{head}{}", " ".repeat(gap)),
-        theme::text(),
-    )];
+    let bar = settings::slider_fraction(row, &values.fades).zip(bar_cells(
+        width,
+        label_width,
+        tail_width,
+    ));
+    let mut spans = match bar {
+        Some((fraction, cells)) => {
+            let (done, todo) = format::progress_bar(fraction, cells);
+            // `bar_cells` leaves at least BAR_GAP columns before the value.
+            let pad = width - label_width - BAR_GAP - cells - tail_width;
+            vec![
+                Span::styled(format!("{label}{}", " ".repeat(BAR_GAP)), theme::text()),
+                Span::styled(done, theme::text()),
+                Span::styled(todo, theme::dim()),
+                Span::styled(" ".repeat(pad), theme::text()),
+            ]
+        }
+        None => {
+            let head = format::truncate(&label, width.saturating_sub(tail_width + 1));
+            let gap = width.saturating_sub(head.chars().count() + tail_width);
+            vec![Span::styled(
+                format!("{head}{}", " ".repeat(gap)),
+                theme::text(),
+            )]
+        }
+    };
     spans.extend(tail);
     let line = Line::from(spans);
     if selected {
@@ -223,6 +273,15 @@ fn row_line(row: &Row, values: &Values, selected: bool, width: usize) -> Line<'s
     } else {
         line
     }
+}
+
+/// The cells a slider's bar gets beside a label and a value of these widths: as
+/// many as fit with a gap on each side, at most `BAR_CELLS`. `None` when fewer
+/// than `MIN_BAR_CELLS` fit.
+fn bar_cells(width: usize, label: usize, tail: usize) -> Option<usize> {
+    let spare = width.checked_sub(label + tail + 2 * BAR_GAP)?;
+    let cells = spare.min(BAR_CELLS);
+    (cells >= MIN_BAR_CELLS).then_some(cells)
 }
 
 /// The config file's path for the bottom border: `~` for home, cut from the left.
