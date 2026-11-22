@@ -335,17 +335,28 @@ impl App {
                     Change::Forward => (true, false),
                     Change::Back => (false, false),
                 };
-                if let Some(slot) = settings::fade_slot(row, &mut self.fades) {
-                    let new = settings::step_fade(*slot, forward, wrap);
-                    let changed = *slot != new;
-                    *slot = new;
-                    changed
-                } else if *row == Row::CoverProtocol {
+                if *row == Row::CoverProtocol {
                     let choices = settings::protocol_choices(self.protocol_support);
                     settings::step_protocol(&mut self.tui, &choices, forward, wrap)
                 } else {
                     settings::step_choice(row, &mut self.tui, forward, wrap)
                 }
+            }
+            // Enter opens the typed-value prompt instead (Task 7); here only the
+            // arrows step, one grid value at a time, and stop at the ends.
+            Kind::Slider(slider) => {
+                let forward = match change {
+                    Change::Forward => true,
+                    Change::Back => false,
+                    Change::Activate => return false,
+                };
+                let Some(slot) = settings::fade_slot(row, &mut self.fades) else {
+                    return false;
+                };
+                let new = settings::step_slider(slider, *slot, forward);
+                let changed = *slot != new;
+                *slot = new;
+                changed
             }
             // Actions and folder rows are run by `on_settings_key`, not changed here.
             Kind::Action | Kind::Folder => false,
@@ -386,9 +397,12 @@ impl App {
             Row::ShowCover | Row::CoverSize => self.cover_draw_key = None,
             Row::CoverProtocol => self.apply_cover_protocol(),
             Row::LibraryLayout => self.library.set_preferred_layout(self.tui.library_layout),
-            Row::FadePlay | Row::FadePause | Row::FadeStop | Row::FadeTrack | Row::FadeMute => {
-                self.apply_fades();
-            }
+            Row::FadePlay
+            | Row::FadePause
+            | Row::FadeStop
+            | Row::FadeTrack
+            | Row::FadeMute
+            | Row::Crossfade => self.apply_fades(),
             _ => {}
         }
     }
@@ -1427,7 +1441,7 @@ mod tests {
     }
 
     #[test]
-    fn fade_rows_stop_at_the_ends_and_enter_wraps() {
+    fn fade_rows_stop_at_the_ends() {
         let dir = tempfile::tempdir().unwrap();
         let fades = FadeTimes {
             play: Duration::from_millis(2000),
@@ -1441,11 +1455,11 @@ mod tests {
         press(&mut app, KeyCode::Char('3'));
         press(&mut app, KeyCode::Char('l'));
         assert_eq!(app.fades.play, Duration::from_millis(2000), "stops at 2 s");
-        press(&mut app, KeyCode::Enter);
-        assert_eq!(app.fades.play, Duration::ZERO, "Enter wraps to off");
+        press(&mut app, KeyCode::Char('h'));
+        assert_eq!(app.fades.play, Duration::from_millis(1950), "one step back");
         assert_eq!(
             saved(&dir)["audio"]["fade"]["play_ms"].as_integer(),
-            Some(0)
+            Some(1950)
         );
     }
 

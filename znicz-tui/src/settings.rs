@@ -79,6 +79,7 @@ pub enum Row {
     FadeStop,
     FadeTrack,
     FadeMute,
+    Crossfade,
     Folder(PathBuf),
     AddFolder,
     RescanAll,
@@ -90,8 +91,49 @@ pub enum Row {
 pub enum Kind {
     Switch,
     Choice,
+    Slider(Slider),
     Action,
     Folder,
+}
+
+/// The unit a slider's value is written and shown in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SliderUnit {
+    Ms,
+    Seconds,
+}
+
+/// A time row's range and grid: values run from `min` to `max` in `step`s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Slider {
+    pub min: Duration,
+    pub max: Duration,
+    pub step: Duration,
+    pub unit: SliderUnit,
+}
+
+/// The fade rows: 0 to 2 s in 50 ms steps.
+const FADE_SLIDER: Slider = Slider {
+    min: Duration::ZERO,
+    max: Duration::from_millis(2000),
+    step: Duration::from_millis(50),
+    unit: SliderUnit::Ms,
+};
+
+/// Crossfade: 0 to 12 s in half-second steps.
+const CROSSFADE_SLIDER: Slider = Slider {
+    min: Duration::ZERO,
+    max: Duration::from_secs(12),
+    step: Duration::from_millis(500),
+    unit: SliderUnit::Seconds,
+};
+
+/// The slider a row edits, or `None` for rows that are not sliders.
+pub fn slider(row: &Row) -> Option<Slider> {
+    match row.kind() {
+        Kind::Slider(slider) => Some(slider),
+        _ => None,
+    }
 }
 
 /// The rows of one tab, in display order. The Library tab lists `folders`.
@@ -113,6 +155,7 @@ pub fn rows(tab: Tab, folders: &[PathBuf]) -> Vec<Row> {
             Row::FadeStop,
             Row::FadeTrack,
             Row::FadeMute,
+            Row::Crossfade,
         ],
         Tab::Library => {
             let mut rows: Vec<Row> = folders.iter().cloned().map(Row::Folder).collect();
@@ -135,9 +178,12 @@ impl Row {
             | Row::Marquee
             | Row::Icons => Tab::Display,
             Row::DefaultDevice | Row::BitPerfect => Tab::Audio,
-            Row::FadePlay | Row::FadePause | Row::FadeStop | Row::FadeTrack | Row::FadeMute => {
-                Tab::Playback
-            }
+            Row::FadePlay
+            | Row::FadePause
+            | Row::FadeStop
+            | Row::FadeTrack
+            | Row::FadeMute
+            | Row::Crossfade => Tab::Playback,
             Row::Folder(_) | Row::AddFolder | Row::RescanAll => Tab::Library,
             Row::UpdateCheck => Tab::General,
         }
@@ -150,15 +196,11 @@ impl Row {
             | Row::Marquee
             | Row::BitPerfect
             | Row::UpdateCheck => Kind::Switch,
-            Row::CoverSize
-            | Row::CoverProtocol
-            | Row::LibraryLayout
-            | Row::Icons
-            | Row::FadePlay
-            | Row::FadePause
-            | Row::FadeStop
-            | Row::FadeTrack
-            | Row::FadeMute => Kind::Choice,
+            Row::CoverSize | Row::CoverProtocol | Row::LibraryLayout | Row::Icons => Kind::Choice,
+            Row::FadePlay | Row::FadePause | Row::FadeStop | Row::FadeTrack | Row::FadeMute => {
+                Kind::Slider(FADE_SLIDER)
+            }
+            Row::Crossfade => Kind::Slider(CROSSFADE_SLIDER),
             Row::DefaultDevice | Row::AddFolder | Row::RescanAll => Kind::Action,
             Row::Folder(_) => Kind::Folder,
         }
@@ -181,6 +223,7 @@ impl Row {
             Row::FadeStop => "Fade on stop".into(),
             Row::FadeTrack => "Fade on track change".into(),
             Row::FadeMute => "Mute fade".into(),
+            Row::Crossfade => "Crossfade".into(),
             Row::Folder(path) => match dirs::home_dir() {
                 Some(home) => folder_complete::tilde(path, &home),
                 None => path.display().to_string(),
@@ -226,6 +269,9 @@ impl Row {
                 "Fade out over this time before Next, Previous, a new track or a device switch. Off cuts at once."
             }
             Row::FadeMute => "How long mute and unmute take.",
+            Row::Crossfade => {
+                "Overlap the end of a track with the start of the next when one follows the other on its own (repeat-one too). Off joins them as they are."
+            }
             Row::Folder(_) => {
                 "A folder Znicz indexes. d removes it and its tracks from the library (files are not touched)."
             }
@@ -253,30 +299,82 @@ impl Row {
             Row::FadeStop => Some(("audio.fade", "stop_ms")),
             Row::FadeTrack => Some(("audio.fade", "track_ms")),
             Row::FadeMute => Some(("audio.fade", "mute_ms")),
+            Row::Crossfade => Some(("audio.fade", "crossfade_ms")),
             Row::Folder(_) | Row::AddFolder | Row::RescanAll => None,
         }
     }
 }
 
-/// The fade ladder, in milliseconds. Fade rows step along it.
-pub const FADE_LADDER_MS: [u64; 11] = [0, 50, 100, 150, 200, 300, 500, 750, 1000, 1500, 2000];
-
-/// One step along the fade ladder. A value between steps moves to the next
-/// step in that direction; at an end it wraps when `wrap` is set.
-pub fn step_fade(current: Duration, forward: bool, wrap: bool) -> Duration {
+/// One step along a slider's grid from `current`. A value off the grid moves
+/// to the next grid value in that direction. The result stays within the range.
+pub fn step_slider(slider: Slider, current: Duration, forward: bool) -> Duration {
+    let step = slider.step.as_millis() as u64;
     let now = current.as_millis() as u64;
-    let next = if forward {
-        FADE_LADDER_MS.iter().copied().find(|&ms| ms > now)
+    let grid = if forward {
+        (now / step + 1) * step
     } else {
-        FADE_LADDER_MS.iter().rev().copied().find(|&ms| ms < now)
+        now.div_ceil(step).saturating_sub(1) * step
     };
-    let ms = match (next, wrap, forward) {
-        (Some(ms), _, _) => ms,
-        (None, true, true) => FADE_LADDER_MS[0],
-        (None, true, false) => FADE_LADDER_MS[FADE_LADDER_MS.len() - 1],
-        (None, false, _) => now,
+    Duration::from_millis(grid).clamp(slider.min, slider.max)
+}
+
+/// Read a value typed into a slider's prompt. A number without a unit is in the
+/// slider's unit; `ms` or `s` (any case, spaces allowed) names one. The error
+/// is the slider's range, for the prompt to show.
+pub fn parse_slider_value(slider: Slider, text: &str) -> Result<Duration, String> {
+    let text = text.trim();
+    let lower = text.to_ascii_lowercase();
+    let (number, unit) = if let Some(rest) = lower.strip_suffix("ms") {
+        (&text[..rest.len()], SliderUnit::Ms)
+    } else if let Some(rest) = lower.strip_suffix('s') {
+        (&text[..rest.len()], SliderUnit::Seconds)
+    } else {
+        (text, slider.unit)
     };
-    Duration::from_millis(ms)
+    let range = slider_range_text(slider);
+    let value: f64 = number.trim().parse().map_err(|_| range.clone())?;
+    let millis = match unit {
+        SliderUnit::Ms => value,
+        SliderUnit::Seconds => value * 1000.0,
+    };
+    let (low, high) = (slider.min.as_millis() as f64, slider.max.as_millis() as f64);
+    if !(low..=high).contains(&millis) {
+        return Err(range);
+    }
+    Ok(Duration::from_millis(millis.round() as u64))
+}
+
+/// A slider's range as the prompt and the error show it: `0–2000 ms`.
+pub fn slider_range_text(slider: Slider) -> String {
+    let min = unit_number(slider.min, slider.unit);
+    let max = unit_number(slider.max, slider.unit);
+    format!("{min}–{max}{}", unit_suffix(slider.unit))
+}
+
+/// A time as a number in `unit`: whole milliseconds, or seconds with at most
+/// three decimals and no trailing zeros.
+fn unit_number(time: Duration, unit: SliderUnit) -> String {
+    let ms = time.as_millis();
+    match unit {
+        SliderUnit::Ms => ms.to_string(),
+        SliderUnit::Seconds => {
+            let (secs, frac) = (ms / 1000, ms % 1000);
+            if frac == 0 {
+                secs.to_string()
+            } else {
+                format!("{secs}.{frac:03}")
+                    .trim_end_matches('0')
+                    .to_string()
+            }
+        }
+    }
+}
+
+fn unit_suffix(unit: SliderUnit) -> &'static str {
+    match unit {
+        SliderUnit::Ms => " ms",
+        SliderUnit::Seconds => " s",
+    }
 }
 
 /// The `[audio.fade]` time a fade row edits, or `None` for other rows.
@@ -287,6 +385,7 @@ pub fn fade_slot<'a>(row: &Row, fades: &'a mut FadeTimes) -> Option<&'a mut Dura
         Row::FadeStop => Some(&mut fades.stop),
         Row::FadeTrack => Some(&mut fades.track),
         Row::FadeMute => Some(&mut fades.mute),
+        Row::Crossfade => Some(&mut fades.crossfade),
         _ => None,
     }
 }
@@ -311,12 +410,16 @@ pub struct Values<'a> {
     pub fades: FadeTimes,
 }
 
-/// A fade time as a row shows it: `off` for zero, else milliseconds.
-fn fade_text(time: Duration) -> String {
+/// A slider's value as its row shows it: `off` for zero, else in its unit.
+fn slider_text(time: Duration, slider: Slider) -> String {
     if time.is_zero() {
         "off".into()
     } else {
-        format!("{} ms", time.as_millis())
+        format!(
+            "{}{}",
+            unit_number(time, slider.unit),
+            unit_suffix(slider.unit)
+        )
     }
 }
 
@@ -365,11 +468,12 @@ pub fn value_text(row: &Row, v: &Values) -> String {
         Row::DefaultDevice => v.default_device.unwrap_or("System default").into(),
         Row::BitPerfect => on_off(v.bit_perfect),
         Row::UpdateCheck => on_off(v.update_check),
-        Row::FadePlay => fade_text(v.fades.play),
-        Row::FadePause => fade_text(v.fades.pause),
-        Row::FadeStop => fade_text(v.fades.stop),
-        Row::FadeTrack => fade_text(v.fades.track),
-        Row::FadeMute => fade_text(v.fades.mute),
+        Row::FadePlay => slider_text(v.fades.play, FADE_SLIDER),
+        Row::FadePause => slider_text(v.fades.pause, FADE_SLIDER),
+        Row::FadeStop => slider_text(v.fades.stop, FADE_SLIDER),
+        Row::FadeTrack => slider_text(v.fades.track, FADE_SLIDER),
+        Row::FadeMute => slider_text(v.fades.mute, FADE_SLIDER),
+        Row::Crossfade => slider_text(v.fades.crossfade, CROSSFADE_SLIDER),
         Row::Folder(_) | Row::AddFolder | Row::RescanAll => String::new(),
     }
 }
@@ -557,7 +661,8 @@ mod tests {
                 Row::FadePause,
                 Row::FadeStop,
                 Row::FadeTrack,
-                Row::FadeMute
+                Row::FadeMute,
+                Row::Crossfade
             ]
         );
         assert_eq!(
@@ -592,16 +697,63 @@ mod tests {
     }
 
     #[test]
-    fn fade_steps_follow_the_ladder_and_snap() {
+    fn playback_rows_are_sliders_with_crossfade_last() {
+        assert_eq!(rows(Tab::Playback, &[]).last(), Some(&Row::Crossfade));
+        assert!(matches!(Row::Crossfade.kind(), Kind::Slider(_)));
+        assert!(matches!(Row::FadePlay.kind(), Kind::Slider(_)));
+    }
+
+    #[test]
+    fn sliders_step_on_their_grid_and_stop_at_the_ends() {
+        let fade = slider(&Row::FadePause).unwrap();
         let ms = Duration::from_millis;
-        assert_eq!(step_fade(ms(150), true, false), ms(200));
-        assert_eq!(step_fade(ms(150), false, false), ms(100));
-        assert_eq!(step_fade(Duration::ZERO, false, false), Duration::ZERO);
-        assert_eq!(step_fade(ms(2000), true, false), ms(2000));
-        assert_eq!(step_fade(ms(2000), true, true), Duration::ZERO);
-        // Off the ladder: to the next value in that direction.
-        assert_eq!(step_fade(ms(240), true, false), ms(300));
-        assert_eq!(step_fade(ms(240), false, false), ms(200));
+        assert_eq!(step_slider(fade, ms(150), true), ms(200));
+        assert_eq!(step_slider(fade, ms(240), true), ms(250));
+        assert_eq!(step_slider(fade, ms(240), false), ms(200));
+        assert_eq!(step_slider(fade, ms(2000), true), ms(2000));
+        assert_eq!(step_slider(fade, Duration::ZERO, false), Duration::ZERO);
+        let cross = slider(&Row::Crossfade).unwrap();
+        assert_eq!(step_slider(cross, ms(3000), true), ms(3500));
+        assert_eq!(step_slider(cross, ms(12_000), true), ms(12_000));
+    }
+
+    #[test]
+    fn typed_values_parse_in_the_rows_unit() {
+        let fade = slider(&Row::FadeStop).unwrap();
+        let cross = slider(&Row::Crossfade).unwrap();
+        let ms = Duration::from_millis;
+        assert_eq!(parse_slider_value(fade, "150"), Ok(ms(150)));
+        assert_eq!(parse_slider_value(fade, "0.2s"), Ok(ms(200)));
+        assert_eq!(parse_slider_value(fade, " 300 ms "), Ok(ms(300)));
+        assert_eq!(parse_slider_value(cross, "3.5"), Ok(ms(3500)));
+        assert_eq!(parse_slider_value(cross, "3500ms"), Ok(ms(3500)));
+        assert_eq!(parse_slider_value(cross, "13"), Err("0–12 s".to_string()));
+        assert_eq!(parse_slider_value(fade, "-5"), Err("0–2000 ms".to_string()));
+        assert_eq!(
+            parse_slider_value(fade, "slow"),
+            Err("0–2000 ms".to_string())
+        );
+    }
+
+    #[test]
+    fn slider_values_show_their_unit() {
+        let tui = TuiConfig::default();
+        let mut v = values(&tui);
+        v.fades.crossfade = Duration::from_millis(3500);
+        assert_eq!(value_text(&Row::Crossfade, &v), "3.5 s");
+        v.fades.crossfade = Duration::from_secs(3);
+        assert_eq!(value_text(&Row::Crossfade, &v), "3 s");
+        v.fades.crossfade = Duration::ZERO;
+        assert_eq!(value_text(&Row::Crossfade, &v), "off");
+        assert_eq!(value_text(&Row::FadeStop, &v), "300 ms");
+    }
+
+    #[test]
+    fn crossfade_saves_under_audio_fade() {
+        assert_eq!(
+            Row::Crossfade.config_key(),
+            Some(("audio.fade", "crossfade_ms"))
+        );
     }
 
     #[test]
