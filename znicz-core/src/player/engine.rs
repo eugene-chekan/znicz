@@ -862,7 +862,7 @@ impl PlayerEngine {
         );
 
         match outcome {
-            PumpOutcome::SinkFull => {
+            PumpOutcome::SinkFull | PumpOutcome::Yielded => {
                 self.publish_stream_bitrate(&decoder);
                 self.publish_stream_title(&decoder);
                 self.decoder = Some(decoder);

@@ -332,6 +332,8 @@ pub struct AudioDecoder {
     is_stream: bool,
     coded_bytes: u64,
     pcm_frames: u64,
+    /// Stream frame index of the next decoded frame.
+    next_frame: u64,
     icy_title: Option<Arc<Mutex<IcyTitle>>>,
     icy_url: Option<Arc<Mutex<IcyUrl>>>,
 }
@@ -393,6 +395,7 @@ impl AudioDecoder {
                 is_stream,
                 coded_bytes: 0,
                 pcm_frames: 0,
+                next_frame: 0,
                 icy_title,
                 icy_url,
             },
@@ -437,6 +440,11 @@ impl AudioDecoder {
             .unwrap_or(IcyUrl::Unset)
     }
 
+    /// Frame index of the next frame `decode_next` returns.
+    pub fn position_frames(&self) -> u64 {
+        self.next_frame
+    }
+
     pub fn seek(&mut self, position: std::time::Duration) -> Result<()> {
         let time = Time::from(position);
         self.format
@@ -448,6 +456,7 @@ impl AudioDecoder {
                 },
             )
             .map_err(|e| ZniczError::Decode(e.to_string()))?;
+        self.next_frame = (position.as_secs_f64() * f64::from(self.sample_rate)) as u64;
         Ok(())
     }
 
@@ -486,11 +495,12 @@ impl AudioDecoder {
                     let mut sample_buf = SampleBuffer::<f32>::new(duration, spec);
                     sample_buf.copy_interleaved_ref(decoded);
                     let mut samples = sample_buf.samples().to_vec();
+                    let channels = self.channels.max(1) as u64;
+                    let first_frame = ts_to_frames(packet_ts, self.time_base, self.sample_rate);
+                    self.next_frame = first_frame + samples.len() as u64 / channels;
                     if let Some(gap) = self.gap {
-                        let first_frame = ts_to_frames(packet_ts, self.time_base, self.sample_rate);
                         samples = trim_packet(samples, self.channels as usize, first_frame, gap);
                     }
-                    let channels = self.channels.max(1) as u64;
                     self.coded_bytes += coded;
                     self.pcm_frames += samples.len() as u64 / channels;
                     return Ok(Some(samples));
@@ -621,6 +631,70 @@ mod tests {
         fn byte_len(&self) -> Option<u64> {
             None
         }
+    }
+
+    /// A seekable in-memory WAV, so `seek` and `position_frames` can be tested.
+    struct WavBytes(Vec<u8>);
+
+    impl AudioSource for WavBytes {
+        fn path(&self) -> Option<&Path> {
+            None
+        }
+        fn url(&self) -> Option<&str> {
+            None
+        }
+        fn title_hint(&self) -> &str {
+            "Wav"
+        }
+        fn read_info(&self) -> Result<TrackInfo> {
+            unimplemented!()
+        }
+        fn open_reader(&self) -> Result<Box<dyn symphonia::core::io::MediaSource>> {
+            Ok(Box::new(std::io::Cursor::new(self.0.clone())))
+        }
+    }
+
+    /// Decode to the end and return how many frames came out.
+    fn drain_frames(decoder: &mut AudioDecoder) -> u64 {
+        let mut frames = 0u64;
+        while let Some(samples) = decoder.decode_next().expect("decode") {
+            frames += samples.len() as u64 / u64::from(decoder.channels());
+        }
+        frames
+    }
+
+    #[test]
+    fn position_counts_decoded_frames_and_follows_a_seek() {
+        // 2 s of mono 44.1 kHz silence: 88_200 frames, no encoder trim.
+        let source = WavBytes(silent_wav_bytes(88_200));
+        let (mut decoder, _) = AudioDecoder::open(&source).expect("probe wav");
+        assert_eq!(decoder.position_frames(), 0);
+
+        assert_eq!(drain_frames(&mut decoder), 88_200);
+        assert_eq!(decoder.position_frames(), 88_200);
+
+        // A seek to 1 s sets the position at once. Accurate seeking returns
+        // the packet that contains the target, so decoding starts at or just
+        // before 1 s; the first packet's timestamp corrects the position.
+        decoder
+            .seek(std::time::Duration::from_secs(1))
+            .expect("seek");
+        assert_eq!(decoder.position_frames(), 44_100);
+
+        let first = decoder
+            .decode_next()
+            .expect("decode")
+            .expect("a packet after the seek");
+        let first_frames = first.len() as u64;
+        let start = decoder.position_frames() - first_frames;
+        assert!(
+            start <= 44_100,
+            "decoding resumed after the target: {start}"
+        );
+
+        let rest = drain_frames(&mut decoder);
+        assert_eq!(first_frames + rest, 88_200 - start);
+        assert_eq!(decoder.position_frames(), 88_200);
     }
 
     struct MockStreamSource;
