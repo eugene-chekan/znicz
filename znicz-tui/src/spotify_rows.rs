@@ -5,6 +5,8 @@
 use znicz_core::{SpotifyAccount, SpotifyDevice, SpotifyLogin, valid_client_id};
 use znicz_spotify::browser::OpenBrowser;
 
+use crate::settings::Row;
+
 /// The lowest port the login callback may use; the top is 65535.
 pub const PORT_MIN: u16 = 1024;
 pub const OPEN_BROWSERS: [OpenBrowser; 3] =
@@ -133,6 +135,12 @@ pub fn login_panel_lines(url: &str, listening: bool) -> Vec<String> {
     ]
 }
 
+/// Rows whose value the player must hear about. The browser setting is only
+/// read by the front end.
+pub fn sent_to_player(row: &Row) -> bool {
+    matches!(row, Row::ClientId | Row::RedirectPort | Row::PlaybackDevice)
+}
+
 /// A finished login, for the toast.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoginOutcome {
@@ -161,6 +169,16 @@ pub fn login_outcome(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_player_side_rows_are_sent_to_the_player() {
+        assert!(sent_to_player(&Row::ClientId));
+        assert!(sent_to_player(&Row::RedirectPort));
+        assert!(sent_to_player(&Row::PlaybackDevice));
+        assert!(!sent_to_player(&Row::OpenBrowser));
+        assert!(!sent_to_player(&Row::Account));
+        assert!(!sent_to_player(&Row::ShowCover));
+    }
 
     fn device(name: &str) -> SpotifyDevice {
         SpotifyDevice {

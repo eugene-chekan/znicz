@@ -13,6 +13,7 @@ use crate::format;
 use crate::hit::ListHit;
 use crate::line_edit::LineEdit;
 use crate::settings::{self, Row, Tab, Values, hint_text, value_text};
+use crate::spotify_rows::SpotifyView;
 use crate::theme;
 use crate::views::{self, window::visible_window};
 
@@ -226,6 +227,8 @@ fn values(app: &App) -> Values<'_> {
         stage_shows: app.stage_frozen.as_ref(),
         bit_perfect_changed: app.bit_perfect_changed(),
         fades: app.fades,
+        // The App fills this in (Task 6 of the Spotify part).
+        spotify: SpotifyView::default(),
     }
 }
 

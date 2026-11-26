@@ -448,6 +448,8 @@ impl App {
             }
             // Actions and folder rows are run by `on_settings_key`, not changed here.
             Kind::Action | Kind::Folder => false,
+            // Typed rows are set by their prompt, not by the arrows.
+            Kind::Text | Kind::Number => false,
         }
     }
 

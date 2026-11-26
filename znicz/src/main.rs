@@ -405,6 +405,8 @@ fn main() -> color_eyre::Result<()> {
             update_check: config.updates.check.unwrap_or(true),
             default_device: config.audio.device.clone(),
             fades,
+            spotify: spotify_config(&config.spotify),
+            open_browser: open_browser_setting(&config.spotify),
         },
     };
     let config_file = cli.config.clone();
