@@ -76,10 +76,7 @@ impl Client {
         endpoints: Endpoints,
         clock: Clock,
     ) -> Self {
-        let token = token::load(&token_path).unwrap_or_else(|e| {
-            tracing::warn!(error = %e, "could not read the Spotify token");
-            None
-        });
+        let token = load_token_for(&token_path, &config.client_id);
         Self {
             config,
             token_path,
@@ -99,11 +96,23 @@ impl Client {
         &self.config
     }
 
-    /// A different client ID cannot refresh the old token, so it logs out.
-    pub(crate) fn set_config(&mut self, config: SpotifyConfig) {
+    /// A different client ID cannot use the old token. With `replace` the
+    /// token is deleted (the user confirmed the switch). Without it nothing is
+    /// deleted: the token stays on disk for a later switch back, and this app
+    /// is simply not logged in.
+    pub(crate) fn set_config(&mut self, config: SpotifyConfig, replace: bool) {
         if config.client_id != self.config.client_id {
-            if let Err(e) = self.logout() {
-                tracing::warn!(error = %e, "could not remove the Spotify token");
+            if replace {
+                if let Err(e) = self.logout() {
+                    tracing::warn!(error = %e, "could not remove the Spotify token");
+                }
+            } else {
+                self.login = None;
+                let kept = self
+                    .token
+                    .take()
+                    .filter(|token| token.belongs_to(&config.client_id));
+                self.token = kept.or_else(|| load_token_for(&self.token_path, &config.client_id));
             }
         }
         if config.redirect_port != self.config.redirect_port {
@@ -113,7 +122,11 @@ impl Client {
     }
 
     pub(crate) fn is_logged_in(&self) -> bool {
-        self.config.is_configured() && self.token.is_some()
+        self.config.is_configured()
+            && self
+                .token
+                .as_ref()
+                .is_some_and(|token| token.belongs_to(&self.config.client_id))
     }
 
     pub(crate) fn login_pending(&self) -> bool {
@@ -164,7 +177,7 @@ impl Client {
             other => other,
         };
         let login = self.login.take().expect("checked above");
-        let token = auth::exchange_code(
+        let mut token = auth::exchange_code(
             &self.http,
             &self.endpoints.accounts,
             &self.config.client_id,
@@ -173,6 +186,7 @@ impl Client {
             &self.config.redirect_uri(),
             self.now_ms() / 1000,
         )?;
+        token.client_id = self.config.client_id.clone();
         if let Err(e) = token::save(&self.token_path, &token) {
             tracing::warn!(error = %e, "could not save the Spotify token");
         }
@@ -223,8 +237,8 @@ impl Client {
     }
 
     fn refresh(&mut self) -> Result<()> {
-        let refresh_token = match &self.token {
-            Some(token) => token.refresh_token.clone(),
+        let (refresh_token, client_id) = match &self.token {
+            Some(token) => (token.refresh_token.clone(), token.client_id.clone()),
             None => return Err(SpotifyError::NotLoggedIn),
         };
         match auth::refresh(
@@ -234,7 +248,8 @@ impl Client {
             &refresh_token,
             self.now_ms() / 1000,
         ) {
-            Ok(token) => {
+            Ok(mut token) => {
+                token.client_id = client_id;
                 // Keep the token in memory first: Spotify may have rotated the
                 // refresh token, so a failed save must not drop it.
                 self.token = Some(token);
@@ -256,6 +271,17 @@ impl Client {
     }
 }
 
+/// The saved token, when it exists, reads, and belongs to `client_id`. A token
+/// for another ID stays on disk, but it is not loaded as this app's login.
+fn load_token_for(path: &std::path::Path, client_id: &str) -> Option<Token> {
+    token::load(path)
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "could not read the Spotify token");
+            None
+        })
+        .filter(|token| token.belongs_to(client_id))
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -274,6 +300,10 @@ mod tests {
     }
 
     fn fixture(origin: &str, logged_in: Option<Token>) -> Fixture {
+        fixture_with_config_id(origin, logged_in, CLIENT_ID)
+    }
+
+    fn fixture_with_config_id(origin: &str, logged_in: Option<Token>, client_id: &str) -> Fixture {
         let dir = tempfile::tempdir().unwrap();
         let token_path = dir.path().join("spotify_token.json");
         if let Some(token) = &logged_in {
@@ -283,7 +313,7 @@ mod tests {
         let clock_now = now.clone();
         let clock: Clock = Arc::new(move || clock_now.load(Ordering::SeqCst));
         let config = SpotifyConfig {
-            client_id: CLIENT_ID.into(),
+            client_id: client_id.into(),
             ..SpotifyConfig::default()
         };
         let endpoints = Endpoints {
@@ -304,6 +334,23 @@ mod tests {
             refresh_token: "r".into(),
             expires_at,
             scope: String::new(),
+            client_id: CLIENT_ID.into(),
+        }
+    }
+
+    const OTHER_ID: &str = "fedcba9876543210fedcba9876543210";
+
+    fn token_for(client_id: &str) -> Token {
+        Token {
+            client_id: client_id.into(),
+            ..token(999_999)
+        }
+    }
+
+    fn config_for(client_id: &str) -> SpotifyConfig {
+        SpotifyConfig {
+            client_id: client_id.into(),
+            ..SpotifyConfig::default()
         }
     }
 
@@ -327,7 +374,7 @@ mod tests {
     #[test]
     fn login_needs_a_client_id() {
         let mut f = fixture("http://127.0.0.1:1", None);
-        f.client.set_config(SpotifyConfig::default());
+        f.client.set_config(SpotifyConfig::default(), false);
         assert_eq!(
             f.client.begin_login().unwrap_err(),
             SpotifyError::NotConfigured
@@ -349,10 +396,9 @@ mod tests {
         f.client.complete_login(&pasted).unwrap();
         assert!(f.client.is_logged_in());
         assert!(!f.client.login_pending());
-        assert_eq!(
-            token::load(&f.token_path).unwrap().unwrap().access_token,
-            "new"
-        );
+        let saved = token::load(&f.token_path).unwrap().unwrap();
+        assert_eq!(saved.access_token, "new");
+        assert_eq!(saved.client_id, CLIENT_ID);
     }
 
     #[test]
@@ -418,6 +464,9 @@ mod tests {
             .cloned()
             .unwrap();
         assert_eq!(me.header("authorization"), Some("Bearer new"));
+        // A refresh keeps the client ID the token was issued for.
+        let saved = token::load(&f.token_path).unwrap().unwrap();
+        assert_eq!(saved.client_id, CLIENT_ID);
     }
 
     #[test]
@@ -474,12 +523,48 @@ mod tests {
     fn a_new_client_id_logs_out() {
         let mut f = fixture("http://127.0.0.1:1", Some(token(999_999)));
         assert!(f.client.is_logged_in());
-        f.client.set_config(SpotifyConfig {
-            client_id: "ffffffffffffffffffffffffffffffff".into(),
-            ..SpotifyConfig::default()
-        });
+        f.client.set_config(config_for(OTHER_ID), true);
         assert!(!f.client.is_logged_in());
         assert!(!f.token_path.exists());
+    }
+
+    #[test]
+    fn a_legacy_token_stays_logged_in_when_the_player_gets_its_first_id() {
+        let legacy = Token {
+            client_id: String::new(),
+            ..token(999_999)
+        };
+        let mut f = fixture_with_config_id("http://127.0.0.1:1", Some(legacy), "");
+        assert!(!f.client.is_logged_in());
+        f.client.set_config(config_for(CLIENT_ID), false);
+        assert!(f.client.is_logged_in());
+        assert!(f.token_path.exists());
+    }
+
+    #[test]
+    fn a_token_for_another_id_is_kept_on_disk_and_not_logged_in() {
+        let mut f = fixture("http://127.0.0.1:1", Some(token_for(CLIENT_ID)));
+        f.client.set_config(config_for(OTHER_ID), false);
+        assert!(!f.client.is_logged_in());
+        assert!(f.token_path.exists());
+        f.client.set_config(config_for(CLIENT_ID), false);
+        assert!(f.client.is_logged_in());
+        assert!(f.token_path.exists());
+    }
+
+    #[test]
+    fn replacing_the_id_deletes_the_token_of_the_old_one() {
+        let mut f = fixture("http://127.0.0.1:1", Some(token_for(CLIENT_ID)));
+        f.client.set_config(config_for(OTHER_ID), true);
+        assert!(!f.client.is_logged_in());
+        assert!(!f.token_path.exists());
+    }
+
+    #[test]
+    fn a_token_for_another_id_loads_but_does_not_count_as_logged_in() {
+        let f = fixture_with_config_id("http://127.0.0.1:1", Some(token_for(OTHER_ID)), CLIENT_ID);
+        assert!(!f.client.is_logged_in());
+        assert!(f.token_path.exists());
     }
 
     #[test]

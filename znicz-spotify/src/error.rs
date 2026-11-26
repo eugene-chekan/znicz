@@ -32,6 +32,8 @@ pub enum SpotifyError {
     NoActiveDevice,
     #[error("Spotify is rate limiting requests; try again in {retry_after_secs} s")]
     RateLimited { retry_after_secs: u64 },
+    #[error("the player uses a different Spotify client ID")]
+    ClientIdDiffers,
     #[error("Spotify error {status}: {message}")]
     Http { status: u16, message: String },
     #[error("could not reach Spotify: {0}")]
@@ -55,6 +57,7 @@ impl SpotifyError {
             Self::LoginExpired => K::LoginExpired,
             Self::PremiumRequired => K::PremiumRequired,
             Self::NoActiveDevice => K::NoActiveDevice,
+            Self::ClientIdDiffers => K::ClientIdDiffers,
             Self::RateLimited { .. } => K::RateLimited,
             Self::Unavailable(_) => K::Unavailable,
             Self::Network(_) => K::Network,
@@ -129,6 +132,7 @@ mod tests {
             (SpotifyError::PremiumRequired, K::PremiumRequired),
             (SpotifyError::Unavailable("x".into()), K::Unavailable),
             (SpotifyError::NoActiveDevice, K::NoActiveDevice),
+            (SpotifyError::ClientIdDiffers, K::ClientIdDiffers),
             (
                 SpotifyError::RateLimited {
                     retry_after_secs: 5,

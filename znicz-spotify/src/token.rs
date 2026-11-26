@@ -19,11 +19,21 @@ pub(crate) struct Token {
     pub expires_at: u64,
     #[serde(default)]
     pub scope: String,
+    /// The client ID the token was issued for. Empty for a token saved before
+    /// this field existed: such a token matches any ID.
+    #[serde(default)]
+    pub client_id: String,
 }
 
 impl Token {
     pub(crate) fn needs_refresh(&self, now_secs: u64) -> bool {
         now_secs + REFRESH_MARGIN_SECS >= self.expires_at
+    }
+
+    /// Whether the token may be used with `client_id`: a legacy token (no
+    /// client ID recorded) matches any ID.
+    pub(crate) fn belongs_to(&self, client_id: &str) -> bool {
+        self.client_id.is_empty() || self.client_id == client_id
     }
 }
 
@@ -34,6 +44,7 @@ impl fmt::Debug for Token {
             .field("refresh_token", &"<redacted>")
             .field("expires_at", &self.expires_at)
             .field("scope", &self.scope)
+            .field("client_id", &self.client_id)
             .finish()
     }
 }
@@ -114,6 +125,7 @@ mod tests {
             refresh_token: "secret-refresh".into(),
             expires_at: 1_000,
             scope: "user-read-private".into(),
+            client_id: "0123456789abcdef0123456789abcdef".into(),
         }
     }
 
@@ -160,6 +172,27 @@ mod tests {
         let text = format!("{:?}", token());
         assert!(!text.contains("secret"), "{text}");
         assert!(text.contains("expires_at"), "{text}");
+    }
+
+    #[test]
+    fn a_legacy_token_without_a_client_id_loads_and_matches_any_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("spotify_token.json");
+        std::fs::write(
+            &path,
+            r#"{"access_token":"a","refresh_token":"r","expires_at":5}"#,
+        )
+        .unwrap();
+        let loaded = load(&path).unwrap().unwrap();
+        assert_eq!(loaded.client_id, "");
+        assert!(loaded.belongs_to("anything"));
+    }
+
+    #[test]
+    fn a_token_belongs_only_to_its_client_id() {
+        let token = token();
+        assert!(token.belongs_to("0123456789abcdef0123456789abcdef"));
+        assert!(!token.belongs_to("fedcba9876543210fedcba9876543210"));
     }
 
     #[test]

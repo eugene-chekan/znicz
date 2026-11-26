@@ -87,6 +87,8 @@ pub enum SpotifyErrorKind {
     NoService,
     /// The player is an older version without Spotify support.
     OutdatedPlayer,
+    /// The player has another client ID; replacing it needs the user's confirmation.
+    ClientIdDiffers,
     /// Anything else, including a kind from a newer player.
     #[serde(other)]
     Other,

@@ -297,11 +297,9 @@ impl Shared {
                     let mut client = self.client.lock().unwrap();
                     let current = client.config().client_id.clone();
                     if !current.is_empty() && config.client_id != current && !replace_client_id {
-                        return Err(SpotifyError::Unavailable(
-                            "the player uses a different Spotify client ID; change it under Client ID (or run znicz spotify login) to switch".into(),
-                        ));
+                        return Err(SpotifyError::ClientIdDiffers);
                     }
-                    client.set_config(config);
+                    client.set_config(config, replace_client_id);
                     (login_of(&client), client.login_pending())
                 };
                 // A login still waiting for its callback keeps its listener.
@@ -779,22 +777,38 @@ mod tests {
     where
         F: Fn(&crate::http::test_server::Request) -> Response + Send + 'static,
     {
+        let token = logged_in.then(|| Token {
+            access_token: "a".into(),
+            refresh_token: "r".into(),
+            expires_at: u64::MAX / 2,
+            scope: String::new(),
+            client_id: CLIENT_ID.into(),
+        });
+        fixture_with_token(token, CLIENT_ID, device, handler, clock)
+    }
+
+    /// A service whose config holds `client_id` and whose token file, when
+    /// there is a token, is `token`.
+    fn fixture_with_token<F>(
+        token: Option<Token>,
+        client_id: &str,
+        device: &str,
+        handler: F,
+        clock: Clock,
+    ) -> Fixture
+    where
+        F: Fn(&crate::http::test_server::Request) -> Response + Send + 'static,
+    {
         let (origin, seen) = serve(handler);
         let dir = tempfile::tempdir().unwrap();
         let token_path = dir.path().join("spotify_token.json");
-        if logged_in {
-            let token = Token {
-                access_token: "a".into(),
-                refresh_token: "r".into(),
-                expires_at: u64::MAX / 2,
-                scope: String::new(),
-            };
-            token::save(&token_path, &token).unwrap();
+        if let Some(token) = &token {
+            token::save(&token_path, token).unwrap();
         }
         let starts = Arc::new(AtomicUsize::new(0));
         let counter = starts.clone();
         let config = SpotifyConfig {
-            client_id: CLIENT_ID.into(),
+            client_id: client_id.into(),
             redirect_port: free_port(),
             device: device.into(),
         };
@@ -1210,6 +1224,31 @@ mod tests {
     const OTHER_CLIENT_ID: &str = "fedcba9876543210fedcba9876543210";
 
     #[test]
+    fn a_legacy_token_stays_logged_in_when_an_empty_player_gets_its_id() {
+        let legacy = Token {
+            access_token: "a".into(),
+            refresh_token: "r".into(),
+            expires_at: u64::MAX / 2,
+            scope: String::new(),
+            client_id: String::new(),
+        };
+        let f = fixture_with_token(Some(legacy), "", "", api_default, system_clock());
+        assert_eq!(f.service.state().login, SpotifyLogin::NotConfigured);
+        f.service
+            .apply(SpotifyOp::Configure {
+                config: SpotifyConfig {
+                    client_id: CLIENT_ID.into(),
+                    redirect_port: f.service.redirect_port(),
+                    device: String::new(),
+                },
+                replace_client_id: false,
+            })
+            .unwrap();
+        assert!(f._dir.path().join("spotify_token.json").exists());
+        assert_eq!(f.service.state().login, SpotifyLogin::LoggedIn);
+    }
+
+    #[test]
     fn a_different_client_id_without_the_flag_is_refused_and_changes_nothing() {
         let f = fixture(true, "", api_default);
         let before = f.service.shared.client.lock().unwrap().config().clone();
@@ -1224,10 +1263,13 @@ mod tests {
                 replace_client_id: false,
             })
             .unwrap_err();
-        assert!(
-            error.to_string().contains("different Spotify client ID"),
-            "{error}"
-        );
+        match error {
+            ZniczError::Spotify { kind, message } => {
+                assert_eq!(kind, SpotifyErrorKind::ClientIdDiffers);
+                assert_eq!(message, "the player uses a different Spotify client ID");
+            }
+            other => panic!("{other:?}"),
+        }
         assert!(f._dir.path().join("spotify_token.json").exists());
         assert_eq!(f.service.state().login, SpotifyLogin::LoggedIn);
         assert_eq!(*f.service.shared.client.lock().unwrap().config(), before);
@@ -1279,7 +1321,12 @@ mod tests {
         // Clear the ID the fixture starts with, so the first real one is "first".
         let mut empty = f.service.shared.client.lock().unwrap().config().clone();
         empty.client_id.clear();
-        f.service.shared.client.lock().unwrap().set_config(empty);
+        f.service
+            .shared
+            .client
+            .lock()
+            .unwrap()
+            .set_config(empty, false);
         f.service
             .apply(SpotifyOp::Configure {
                 config: SpotifyConfig {

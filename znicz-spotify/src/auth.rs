@@ -124,6 +124,8 @@ fn token_from(reply: &Reply, old_refresh: Option<&str>, now_secs: u64) -> Result
         refresh_token: refresh_token.into(),
         expires_at: now_secs + json["expires_in"].as_u64().unwrap_or(3600),
         scope: json["scope"].as_str().unwrap_or("").into(),
+        // The caller records the client ID the token was issued for.
+        client_id: String::new(),
     })
 }
 
