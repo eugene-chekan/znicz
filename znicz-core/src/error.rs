@@ -18,6 +18,10 @@ pub enum ZniczError {
     #[error("{0}")]
     Library(String),
 
+    /// A Spotify request failed; the message is shown as is.
+    #[error("{0}")]
+    Spotify(String),
+
     #[error("not implemented: {0}")]
     NotImplemented(String),
 }
