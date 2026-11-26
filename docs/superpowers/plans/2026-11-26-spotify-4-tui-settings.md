@@ -2863,7 +2863,7 @@ Part 2's lesson: the player deletes the user's Spotify token when a `Configure` 
 - Consumes: the whole of Tasks 1–10.
 - Produces: integration tests for the rules the brief says must hold.
 
-- [ ] **Step 1: Write the tests**
+- [x] **Step 1: Write the tests**
 
 In `settings_ui.rs`'s tests:
 
@@ -2949,17 +2949,17 @@ In `settings_ui.rs`'s tests:
 
 `ID` and `NEW_ID` are the constants from Task 8; move them to the top of the test module if they are not already visible here. `spotify_app` builds an app with a client ID, so the `ClientId` change here starts from a set ID while logged out (`login_shown` is `NotLoggedIn`), and saves without the question.
 
-- [ ] **Step 2: Run the tests**
+- [x] **Step 2: Run the tests**
 
 Run: `cargo test -p znicz-tui -- settings_ui`
 Expected: PASS. These tests check Tasks 7 and 8 together, so they may pass at once. If either fails, fix the behaviour in `save_setting` or `send_spotify_config` (Task 7), not the test.
 
-- [ ] **Step 3: Run the whole crate**
+- [x] **Step 3: Run the whole crate**
 
 Run: `cargo test -p znicz-tui`
 Expected: PASS.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add znicz-tui/src/app/settings_ui.rs
@@ -2980,11 +2980,11 @@ Updates `wiki/Architecture/TUI.md` and `wiki/Architecture/Spotify.md` in the sam
 
 **Interfaces:** none.
 
-- [ ] **Step 1: Read the sections**
+- [x] **Step 1: Read the sections**
 
 Read `wiki/Architecture/TUI.md` lines 106–141 and 273–355, and `wiki/Architecture/Spotify.md` lines 159–203, to match the existing wording.
 
-- [ ] **Step 2: Update TUI.md**
+- [x] **Step 2: Update TUI.md**
 
 In the Settings section:
 - Say Settings has six tabs (Display, Audio, Playback, Library, General, Spotify) and that `1`–`6` select them. The page now says "five tabs" (line 275) and shows `1`–`5` in the key table (line 290) and in the paragraph after it (line 301); change all three.
@@ -2999,16 +2999,16 @@ In the Settings section:
 
 Use simple English. No invented features.
 
-- [ ] **Step 3: Update Spotify.md**
+- [x] **Step 3: Update Spotify.md**
 
 In the Login section, add the TUI route: Settings → Spotify, Enter on Account, the panel, copying, the paste route, and the same browser rule. In the Errors section, add that the TUI shows `Spotify is unavailable: …` in the Account row when the player has no Spotify service or is an older version, and that polling stops then until the tab is opened again.
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 Run: `grep -n '1–5\|`1`–`5`\|five tabs' wiki/Architecture/TUI.md wiki/Architecture/Spotify.md wiki/Home.md`
 Expected: no lines that still describe five tabs. (The wiki writes the range as `` `1`–`5` ``, so a search for plain `1–5` alone would miss it.) The README's Settings row (line 219) names the tabs; it is a final-PR item with the rest of the README, as the spec says.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add wiki/Architecture/TUI.md wiki/Architecture/Spotify.md
@@ -3025,27 +3025,27 @@ No code change expected. Runs the whole gate. If something fails, fix it in the 
 
 **Files:** none (unless a fix is needed).
 
-- [ ] **Step 1: Format**
+- [x] **Step 1: Format**
 
 Run: `cargo fmt --all -- --check`
 Expected: no output. If it reports differences, run `cargo fmt --all` and commit with `style(tui): format the Spotify Settings code`.
 
-- [ ] **Step 2: Clippy with warnings denied**
+- [x] **Step 2: Clippy with warnings denied**
 
 Run: `cargo clippy --workspace --all-targets -- -D warnings`
 Expected: no errors. Common findings to expect: `needless_borrow` on `&*host`, `manual_let_else`, `match_like_matches_macro` in `settings.rs` (`hint_text`), `unnecessary_wraps` on `spotify_rows::parse_port`. Fix each in place.
 
-- [ ] **Step 3: Tests**
+- [x] **Step 3: Tests**
 
 Run: `cargo test --workspace`
 Expected: all pass.
 
-- [ ] **Step 4: Wiki and keys agreement**
+- [x] **Step 4: Wiki and keys agreement**
 
 Run: `grep -n '1–6\|`1`–`6`' znicz-tui/src/keys.rs wiki/Architecture/TUI.md`
 Expected: both name the range.
 
-- [ ] **Step 5: Commit the ticked plan**
+- [x] **Step 5: Commit the ticked plan**
 
 Mark each step in this plan as done (`- [x]`) and commit only the plan:
 
