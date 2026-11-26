@@ -6,5 +6,7 @@
 mod error;
 mod pkce;
 mod redirect;
+mod token;
 
 pub use error::{Result, SpotifyError};
+pub use token::default_token_path;
