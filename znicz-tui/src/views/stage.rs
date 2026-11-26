@@ -349,6 +349,10 @@ pub(crate) fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, cover: 
             app.last_stream_cover = None;
             app.covers.get(CoverKey::File(path.clone()))
         }
+        Some(CoverKey::Url(url)) => {
+            app.last_stream_cover = None;
+            app.covers.get(CoverKey::Url(url.clone()))
+        }
         Some(CoverKey::Stream(query)) => {
             let stream_url = query.stream_url.clone();
             let ready = app.covers.get(CoverKey::Stream(query.clone()));

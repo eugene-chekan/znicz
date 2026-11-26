@@ -41,6 +41,8 @@ pub enum CoverKey {
     File(PathBuf),
     /// A radio stream, resolved through the cover source chain.
     Stream(znicz_core::StreamQuery),
+    /// A Spotify album image, fetched by URL.
+    Url(String),
 }
 
 #[derive(Debug, Clone)]
@@ -249,6 +251,10 @@ fn resolve_cover(
     match key {
         CoverKey::File(path) => ResolveResult::Update {
             ready: znicz_core::read_cover(path).map_or(CoverReady::Logo, |art| ready(&art.bytes)),
+        },
+        // A failed fetch is the logo, and it is never retried.
+        CoverKey::Url(url) => ResolveResult::Update {
+            ready: znicz_core::fetch_cover(url).map_or(CoverReady::Logo, |art| ready(&art.bytes)),
         },
         CoverKey::Stream(query) => match streams.resolve(query) {
             znicz_core::Resolution::Found(art) => ResolveResult::Update {
@@ -867,5 +873,41 @@ mod tests {
             matches!(ready, CoverReady::Embedded(_)),
             "expected embedded cover, got {ready:?}"
         );
+    }
+
+    #[test]
+    fn a_url_key_fetches_and_decodes_its_image() {
+        use std::io::{Read, Write};
+        let mut png = Vec::new();
+        image::DynamicImage::new_rgb8(4, 4)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        // A local listener only: no external network.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/cover.png", listener.local_addr().unwrap());
+        let served = png.clone();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf);
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                served.len()
+            );
+            stream.write_all(head.as_bytes()).unwrap();
+            stream.write_all(&served).unwrap();
+        });
+        let cache = CoverCache::new();
+        let ready = wait_ready(&cache, &CoverKey::Url(url));
+        assert!(matches!(ready, CoverReady::Embedded(_)), "got {ready:?}");
+    }
+
+    #[test]
+    fn a_url_that_does_not_answer_is_the_logo() {
+        // Port 1 on loopback refuses at once: no external network, no retry.
+        let cache = CoverCache::new();
+        let key = CoverKey::Url("http://127.0.0.1:1/cover.png".into());
+        let ready = wait_ready(&cache, &key);
+        assert!(matches!(ready, CoverReady::Logo), "got {ready:?}");
     }
 }
