@@ -64,12 +64,12 @@ Refactor only. The Library and Command paths keep their behaviour and tests; the
 **Files:**
 - Modify: `znicz-core/src/player/ipc.rs` (the `Shared` struct, `impl Shared`, `RecentOutcomes`)
 
-- [ ] **Step 1: Confirm the current baseline passes**
+- [x] **Step 1: Confirm the current baseline passes**
 
 Run: `cargo test -p znicz-core ipc -q`
 Expected: PASS (the `recent_outcomes_keep_the_last_request_per_client_and_cap_the_clients` test and the dedupe tests are green).
 
-- [ ] **Step 2: Replace `RecentOutcomes` with a generic version and add `run_once`**
+- [x] **Step 2: Replace `RecentOutcomes` with a generic version and add `run_once`**
 
 In `znicz-core/src/player/ipc.rs`, replace the whole block from `/// How many clients' last outcomes the player remembers.` through the end of `impl RecentOutcomes { … }` with:
 
@@ -133,7 +133,7 @@ fn run_once<T: Clone>(
 }
 ```
 
-- [ ] **Step 3: Make `Shared` use the generic record and `run_once`**
+- [x] **Step 3: Make `Shared` use the generic record and `run_once`**
 
 In the `Shared` struct, replace the `recent` field line:
 
@@ -171,12 +171,12 @@ impl Shared {
 }
 ```
 
-- [ ] **Step 4: Run the existing tests**
+- [x] **Step 4: Run the existing tests**
 
 Run: `cargo test -p znicz-core ipc -q`
 Expected: PASS. `recent_outcomes_keep_the_last_request_per_client_and_cap_the_clients` still compiles unchanged: `RecentOutcomes::default()` takes `T = ()` from `record(…, Ok(()))`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-core/src/player/ipc.rs
