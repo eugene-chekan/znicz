@@ -272,10 +272,11 @@ quickest way to find a device that will take your files unconverted.
 
 ### Settings
 
-`S` opens a centered modal with five tabs, in the order the tab bar shows
+`S` opens a centered modal with six tabs, in the order the tab bar shows
 them: **Display** (the cover, cover search, library layout, marquee and icons), **Audio**
 (the default output device and bit-perfect), **Playback** (the fade times and the crossfade),
-**Library** (the music folders) and **General** (the update check). The
+**Library** (the music folders), **General** (the update check) and **Spotify**
+(the client ID, login and playback device; see [Spotify](#spotify) below). The
 modal opens on the tab you last used in this run, with the cursor on its first
 row.
 
@@ -287,7 +288,7 @@ while the tab bar has focus, how to use it.
 | Key | Action |
 | --- | --- |
 | `Tab` / `Shift-Tab` | Next / previous tab, from either focus; wraps at the ends |
-| `1`–`5` | Show that tab, from either focus |
+| `1`–`6` | Show that tab, from either focus |
 | `↑` on the first row (`k`) | Move focus to the tab bar |
 | `←` / `→` (`h` / `l`) on the tab bar | Previous / next tab; stops at the first and last tab |
 | `↓` (`j`) or `Enter` on the tab bar | Move focus into the rows of the shown tab |
@@ -296,9 +297,9 @@ while the tab bar has focus, how to use it.
 | `Enter` / `Space` | Change the highlighted row: a switch flips, a choice steps forward and wraps; a slider opens its typed-value prompt |
 | `←` / `→` (`h` / `l`) | Step a choice or a slider back or forward and stop at the ends; turn a switch off or on |
 | `d` | On a folder, ask to remove it (`Enter` confirms, `Esc` cancels) |
-| `Esc` | Close the modal, or cancel an open slider prompt or a pending folder removal first |
+| `Esc` | Close the modal, or back out of what is open first: a slider or client ID prompt, a pending folder removal or Spotify question, or the Spotify login panel (in its paste prompt, back to the panel) |
 
-The shown tab's own number key keeps the cursor where it is, so `1`–`5` only
+The shown tab's own number key keeps the cursor where it is, so `1`–`6` only
 moves the cursor when it goes to another tab. The tab shown when the modal
 closes is the tab it opens on next time.
 
@@ -352,6 +353,70 @@ marks as default. `+ Add a folder…` opens the folder prompt and returns to
 Settings when it closes, `Rescan all folders` runs the same rescan as `U`, and
 `d` on a folder asks in the strip how many tracks it takes out. `Enter` removes
 the folder and its tracks from the library (the files stay); `Esc` cancels.
+
+### Spotify
+
+The **Spotify** tab (tab 6) sets up the Spotify service that the player runs.
+Its rows:
+
+| Row | Shows | `Enter` does |
+| --- | --- | --- |
+| Client ID | The ID, or empty. The strip points at developer.spotify.com/dashboard | Opens a prompt. Accepts 32 hex characters, or empty to clear it |
+| Redirect port | `http://127.0.0.1:<port>/callback`. Default 8898 | Opens a prompt for a port from 1024 to 65535 |
+| Open browser | `auto`, `always` or `never` | Steps to the next value |
+| Account | Not configured, Not logged in, Logging in…, or Logged in as *name*, with Premium or not once known | Logged out: starts a login. Logged in: asks in the strip, then logs out on `Enter` |
+| Playback device | The active device, or a device Spotify lists. A device that is offline is marked `offline` | Steps through the devices |
+
+Account and Playback device are dimmed until a client ID is set. `Enter` on
+either then says `Set a client ID first, in the Client ID row.` Redirect port
+and Open browser stay editable without one.
+
+When Spotify is unavailable, the Account row says `Spotify is unavailable: …`
+and ends with `(switch tab to retry)`.
+
+**Client ID.** Setting the first ID saves at once. Changing or clearing an ID
+that is already set always asks first in the strip: `Changing the client ID
+logs you out of Spotify. Enter confirms · Esc cancels.` The player deletes the
+login when the ID changes, so the question is never skipped.
+
+**Saving.** A row the player needs (Client ID, Redirect port and Playback
+device) is written to `[spotify]` in `config.toml` in place. The player is told
+only after the file was written (`Configure`). Open browser is read only by the
+TUI, so it is saved but not sent. With a config error, or no config file path,
+the row goes back to its old value, nothing is written, and nothing is sent. An
+empty client ID would log the user out.
+
+**Login panel.** `Enter` on Account (logged out) starts a login. The panel
+opens in the list area and shows the URL, with a line that says the TUI is
+waiting for the browser or a pasted address. The keys are:
+
+| Key | Action |
+| --- | --- |
+| `c` | Copy the URL. The TUI writes an OSC 52 sequence to the terminal, so the terminal must allow it (tmux needs `set-clipboard on`). The terminal gives no answer, so the toast says `Sent`, not `Copied` |
+| `Enter` | Open the paste prompt in the strip. `Enter` in the prompt sends the address you were redirected to. A wrong address keeps the prompt open with the reason |
+| `Esc` | In the paste prompt, back to the panel. In the panel, cancel the login |
+
+Other keys are not the panel's. `S` or `?` still closes Settings and drops the
+panel, and the login keeps running in the player. When the login ends, the panel
+closes by itself. A success toasts `Logged in as …`, and a failure toasts the
+reason. A cancelled login closes quietly. A `BeginLogin` reply that arrives after
+Settings has closed cancels that login, so nothing is left pending.
+
+**Opening the browser.** `auto` (the default) does not open a browser over SSH,
+which is when `SSH_CONNECTION`, `SSH_CLIENT` or `SSH_TTY` is set. On Linux it
+opens one only when `DISPLAY` or `WAYLAND_DISPLAY` is set. `always` and `never`
+override that guess. If the open fails, one line says `Could not open a browser:
+… Use the URL below.`, and the panel keeps waiting for the redirect or the
+pasted address.
+
+**Background calls.** Every Spotify call except the status read and `Touch` runs
+on a background thread (`SpotifyWorker`). That thread has its own connection
+to the player, a second `IpcClient`, so no frame waits for Spotify. The status
+is read at most every 500 ms, and only while the Spotify tab or a login panel is
+open. When the player has no Spotify service, or is too old, the status read
+stops and the Account row says why, until the Spotify tab is shown again.
+Devices are read when the tab opens and when a login finishes. The worker thread
+ends when the TUI closes.
 
 ### Stage
 
@@ -571,6 +636,10 @@ top of the player.
 | `views/help.rs` | help overlay: context first, scroll, filter row |
 | `settings.rs` | Settings rows, their values, and how a choice steps (pure) |
 | `views/settings.rs` | Settings modal (`S`): list, explanation strip, config path |
+| `spotify_rows.rs` | Spotify rows: account text, device choices, value checks, login panel lines (pure) |
+| `spotify_worker.rs` | `SpotifyWorker<T>`: a thread with its own player connection that runs Spotify calls off the UI thread |
+| `osc52.rs` | The OSC 52 clipboard sequence that `c` writes in the login panel |
+| `app/spotify_ui.rs` | Spotify tab and login panel: status poll, worker replies, login, logout, copy, browser |
 | `help_state.rs` | help context, scroll, and filter text |
 | `footer_hits.rs` | footer hint placement and click targets |
 | `theme.rs` | every colour, in one place (16 ANSI colours, tuned for dark palettes; themes: [#68](https://github.com/eugene-chekan/znicz/issues/68)) |

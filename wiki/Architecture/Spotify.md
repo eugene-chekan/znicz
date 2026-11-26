@@ -178,6 +178,17 @@ The token file is `spotify_token.json` in the data folder
 The `state` in the address must match the session. A different client ID
 logs out, because the old token cannot be refreshed with it.
 
+### Logging in from the TUI
+
+Settings → Spotify, `Enter` on Account: the TUI asks the player for the login
+(`BeginLogin`) and shows the URL in a panel. `c` copies the URL with OSC 52,
+`Enter` opens a prompt for the address you were redirected to (the paste route
+in [Logging in over SSH](#logging-in-over-ssh)), and `Esc` cancels the login.
+The browser opens by the `open_browser` rule: `auto` does not open one over SSH,
+and on Linux opens one only with `DISPLAY` or `WAYLAND_DISPLAY` set. `always`
+and `never` override it. The panel and its keys are in
+[TUI: Spotify](TUI.md#spotify).
+
 ## Polling
 
 About every second while someone watches (a `Touch`, or any op in the last
@@ -197,6 +208,10 @@ A transfer waits up to about 5 s for the device to take over, and otherwise repo
 | Revoked refresh token, at any point | `Spotify login expired`; you are logged out and the token file is deleted |
 | 403 on playback | `needs Spotify Premium` |
 | No active device | retries on the preferred device if set and online, else `Spotify has no active device: …` |
+
+The TUI's Account row shows `Spotify is unavailable: …` and ends with `(switch
+tab to retry)` when the player has no Spotify service or is an older version.
+The TUI then stops polling the status until the Spotify tab is shown again.
 
 Tokens never appear in logs (`Token`'s `Debug` redacts them).
 
