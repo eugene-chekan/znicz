@@ -361,7 +361,7 @@ Its rows:
 
 | Row | Shows | `Enter` does |
 | --- | --- | --- |
-| Client ID | The ID, or empty. The strip points at developer.spotify.com/dashboard | Opens a prompt. Accepts 32 hex characters, or empty to clear it |
+| Client ID | The first 8 characters and `…`, or `not set`. The strip points at developer.spotify.com/dashboard | Opens a prompt. Accepts 32 hex characters, or empty to clear it |
 | Redirect port | `http://127.0.0.1:<port>/callback`. Default 8898 | Opens a prompt for a port from 1024 to 65535 |
 | Open browser | `auto`, `always` or `never` | Steps to the next value |
 | Account | Not configured, Not logged in, Logging in…, or Logged in as *name*, with Premium or not once known | Logged out: starts a login. Logged in: asks in the strip, then logs out on `Enter` |
@@ -379,8 +379,9 @@ and ends with `(switch tab to retry)`.
 asks first in the strip: `Changing the client ID logs you out of Spotify.
 Enter confirms · Esc cancels.` The player deletes the login when the ID
 changes, so the question is never skipped. Only this confirmed change tells the
-player it may replace the ID; any other save that would change the ID is
-refused by the player.
+player it may replace the ID (`Configure` carries `replace_client_id`), and the
+player refuses any other change to a set ID. The one other way to replace it is
+`znicz spotify login`, which the user runs on purpose.
 
 **Saving.** A row the player needs (Client ID, Redirect port and Playback
 device) is written to `[spotify]` in `config.toml` in place. Then the TUI reads
@@ -392,8 +393,9 @@ file path, the row goes back to its old value, nothing is written, and nothing
 is sent. An empty client ID would log the user out.
 
 **Login panel.** `Enter` on Account (logged out) starts a login. The panel
-opens in the list area and shows the URL, with a line that says the TUI is
-waiting for the browser or a pasted address. The keys are:
+opens in the list area and shows the URL as plain wrapped text (not an OSC 8
+link), with the line `Waiting for the browser; or paste the address you were
+sent to.` The keys are:
 
 | Key | Action |
 | --- | --- |
@@ -402,10 +404,18 @@ waiting for the browser or a pasted address. The keys are:
 | `Esc` | In the paste prompt, back to the panel. In the panel, cancel the login |
 
 Other keys are not the panel's. `S` or `?` still closes Settings and drops the
-panel, and the login keeps running in the player. When the login ends, the panel
-closes by itself. A success toasts `Logged in as …`, and a failure toasts the
+panel, and the pending login is cancelled in the player, as `Esc` does, so the
+Account row does not stay on Logging in. When the login ends, the panel closes
+by itself. A success toasts `Logged in as …`, and a failure toasts the
 reason. A cancelled login closes quietly. A `BeginLogin` reply that arrives after
 Settings has closed cancels that login, so nothing is left pending.
+
+**One request at a time.** While a `BeginLogin` is pending, or the panel is open,
+`Enter` on Account (and a click on its footer hint) does nothing. Each
+`BeginLogin` starts a new PKCE session, so a second one would invalidate the
+first. Likewise a device list is requested once at a time: switching to tab 6
+while it is pending sends nothing new. A device list that arrives after the
+client ID changed is dropped.
 
 **Opening the browser.** `auto` (the default) does not open a browser over SSH,
 which is when `SSH_CONNECTION`, `SSH_CLIENT` or `SSH_TTY` is set. On Linux it

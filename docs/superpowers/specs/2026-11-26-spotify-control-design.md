@@ -119,7 +119,7 @@ The token lives in `spotify_token.json` in the data folder
 
 | Op | Effect |
 | --- | --- |
-| `Configure { client_id, redirect_port, device, open_browser }` | The player rebuilds its client from the new values; no restart |
+| `Configure { config, replace_client_id }` | The player rebuilds its client from `config`; no restart. `replace_client_id` is true only after the user confirmed a new client ID that replaces a set one (which logs out) |
 | `BeginLogin` | Starts the callback listener; replies with the authorize URL |
 | `CompleteLogin { redirect_url }` | Finishes login from a pasted address |
 | `Logout` | Deletes the token file and clears the state |
@@ -180,28 +180,32 @@ login state, user, premium and device. `logout` removes the token.
 | Row | Kind | Behaviour |
 | --- | --- | --- |
 | Client ID | text prompt | 32 hex characters, else the prompt stays open and says why. The strip explains where to get one. |
-| Redirect URI | number prompt (port, 1024–65535) | Shows `http://127.0.0.1:<port>/callback`; the strip says to add exactly this URI to the Spotify app. |
+| Redirect port | number prompt (port, 1024–65535) | Shows the URI `http://127.0.0.1:<port>/callback`; the strip says to add exactly this URI to the Spotify app. |
 | Open browser | choice | `auto` / `always` / `never` |
 | Account | action | `Not logged in` / `Logging in…` / `Logged in as <name>`, then `· Premium` or `· not Premium (control unavailable)` once a playback call has told / `Failed: <reason>`. `Enter` logs in; when logged in, it asks in the strip to log out (`Enter` confirms, `Esc` cancels). |
 | Playback device | choice | `Active device` or a Spotify device by name, used when nothing is active. Refreshed when the tab opens. |
 
-Until a client ID is set, the rows below Client ID are dimmed and the strip
-points at Client ID. `1`–`6` select tabs.
+Until a client ID is set, only Account and Playback device are dimmed, and the
+strip points at Client ID. Redirect port and Open browser stay editable. A set
+client ID always asks in the strip before it changes or clears, whatever the
+login state; only a first ID saves at once. `1`–`6` select tabs.
 
 **Login panel.** `Enter` on Account replaces the strip with:
 
 ```
 Open this URL in any browser and approve:
 https://accounts.spotify.com/authorize?client_id=…   (c copy · Enter paste)
-Waiting for the callback, or paste the address you were sent to.
+Waiting for the browser; or paste the address you were sent to.
 ```
 
 - `c` copies the URL with OSC 52 (kitty, WezTerm, iTerm2, Windows Terminal,
   tmux with `set-clipboard on`).
-- The URL is also an OSC 8 hyperlink.
+- The URL is plain wrapped text in the list area, not an OSC 8 hyperlink.
 - `Enter` opens a paste prompt; a wrong address keeps it open with `that
   address is not from this login`.
 - `Esc` cancels the login.
+- `S` closes Settings and drops the panel; a login still pending is cancelled
+  in the player (`CancelLogin`).
 - The panel closes when the status turns `LoggedIn` or `Failed`.
 
 ### Spotify mode (`O`)

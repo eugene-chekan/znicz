@@ -24,7 +24,7 @@
 - **The panel is drawn over the rows, not in the two-line strip.** The URL is about 200 characters and needs three or four wrapped lines, which the strip cannot hold. While the panel is open, the list area shows the panel body and the strip shows the keys or the paste prompt (Task 10).
 - **OSC 8 is not used.** Ratatui writes cells, and an OSC 8 hyperlink would need its escape bytes placed inside a cell's symbol, which ratatui does not support cleanly. The URL is printed as plain wrapped text. `c` copies it. Ctrl-click on the URL in the panel is not supported.
 - **tmux needs no passthrough wrapper.** The spec says "tmux with `set-clipboard on`". With that option tmux takes the OSC 52 sequence and forwards it to the outer terminal. The TUI sends the plain sequence. No existing code in this repo writes a raw escape sequence or handles tmux: the cover code relies on ratatui-image's own terminal query. The manual check (Task 14) tests `c` inside tmux. If it fails there, the fix is a DCS passthrough wrapper, planned as a follow-up.
-- **Client ID change confirms only when logged in.** Changing the ID logs the user out (the player does this in `set_config`). With no token there is nothing to lose, so the confirmation appears only when logged in.
+- **Client ID change always asks when an ID is set.** Changing the ID logs the user out (the player does this in `set_config`). The question is asked whatever the login state, because the login state is not known until the first status poll; only a first ID, with no ID set anywhere, saves at once.
 - **Config with an error restores the in-memory value.** The existing rule keeps a changed value for the run when the file is broken. For Spotify rows that would make the screen show a client ID the player does not have. So a Spotify row that cannot be saved is restored (Task 7).
 - **Polling also sends `Touch`.** The spec's poll is `SpotifyStatus` plus `Touch`, both on the main connection. Each poll sends `Touch`, which keeps the player's fast poll going while the tab is open.
 - **Esc order.** `on_esc` runs before the Settings keys, so the panel's Esc is handled there (Task 9). In the paste prompt, Esc returns to the panel. In the panel, Esc cancels the login.
@@ -2002,7 +2002,7 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 
 ### Task 8: The client ID prompt, the logout question and the Account action
 
-Clearing or changing the client ID makes the player log the user out (and delete the token), so it never happens without the user's Enter: while logged in, the new ID waits behind a question in the strip. Nothing is saved or sent before that Enter.
+Clearing or changing a set client ID makes the player log the user out (and delete the token), so it never happens without the user's Enter: the new ID waits behind a question in the strip, whatever the login state. Nothing is saved or sent before that Enter.
 
 **Files:**
 - Modify: `znicz-tui/src/app/settings_ui.rs`
@@ -2993,7 +2993,7 @@ In the Settings section:
 - Describe the login panel: the URL, `c` copies it with OSC 52 (terminals that support it; in tmux, `set-clipboard on`), `Enter` opens the paste prompt, a wrong address keeps the prompt open, `Esc` in the prompt returns to the panel, `Esc` in the panel cancels the login, and the panel closes by itself when the login ends.
 - Describe the browser rule in one paragraph: the front end decides from its own environment (SSH variables mean no; Linux needs `DISPLAY` or `WAYLAND_DISPLAY`); `open_browser` overrides it; a failed open shows one line and the panel keeps waiting.
 - State that every Spotify call except the status read and `Touch` runs on a background thread with its own connection to the player (a second `IpcClient`, never a clone of the main one), so no frame waits for Spotify; that the status is read at most every 500 ms, only while the Spotify tab (or a login panel) is open, and stops for good when the player has no Spotify service or is too old; and that the thread ends when the TUI closes.
-- State the save rule: a Spotify row is written to `config.toml` in place, and only then is the player told (`Configure`). With a broken config, or no config path, the row goes back and nothing is sent, because an empty client ID would log the user out. Changing the client ID while logged in asks first.
+- State the save rule: a Spotify row is written to `config.toml` in place, and only then is the player told (`Configure`). With a broken config, or no config path, the row goes back and nothing is sent, because an empty client ID would log the user out. Changing a set client ID always asks first.
 - Say that `c` writes the OSC 52 sequence between frames and that the terminal gives no sign it was accepted, which is why the toast says "Sent".
 - In the Modules list, add `spotify_rows.rs`, `spotify_worker.rs`, `osc52.rs`, and `app/spotify_ui.rs`, each with one line.
 
