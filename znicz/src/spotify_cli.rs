@@ -4,7 +4,7 @@
 //! change them. The decisions and the wording are pure functions here; `run`
 //! and `login` are the thin IO wrappers.
 
-use std::io::BufRead;
+use std::io::{BufRead, Write};
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -63,11 +63,7 @@ pub fn run(
     }
     let host = connect()?;
     if configure_before(&command) {
-        host.apply(SpotifyOp::Configure {
-            config,
-            replace_client_id: matches!(command, SpotifyCmd::Login),
-        })
-        .map_err(host_error)?;
+        configure_login(&host, config)?;
     }
     match command {
         SpotifyCmd::Login => login(&host, open),
@@ -84,6 +80,46 @@ pub fn run(
             Ok(())
         }
     }
+}
+
+/// The question login asks when the player has another client ID.
+pub const REPLACE_QUESTION: &str = "The player uses a different Spotify client ID. Replace it with the one in config.toml and log out? [y/N] ";
+
+/// Whether an answer to `REPLACE_QUESTION` says yes. Only `y` or `yes`, in any
+/// case, counts; anything else, including an empty line, keeps the ID.
+pub fn replace_answer(line: &str) -> bool {
+    matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+}
+
+/// Send the `[spotify]` settings for a login. A different client ID the player
+/// already has is refused first; the user is asked, and only a yes replaces it.
+fn configure_login(host: &IpcClient, config: SpotifyConfig) -> color_eyre::Result<()> {
+    let refused = host.apply(SpotifyOp::Configure {
+        config: config.clone(),
+        replace_client_id: false,
+    });
+    match refused {
+        Ok(_) => return Ok(()),
+        Err(ZniczError::Spotify {
+            kind: SpotifyErrorKind::ClientIdDiffers,
+            ..
+        }) => {}
+        Err(error) => return Err(host_error(error)),
+    }
+    print!("{REPLACE_QUESTION}");
+    std::io::stdout().flush()?;
+    let mut line = String::new();
+    std::io::stdin().lock().read_line(&mut line)?;
+    if !replace_answer(&line) {
+        println!("Not changed.");
+        std::process::exit(1);
+    }
+    host.apply(SpotifyOp::Configure {
+        config,
+        replace_client_id: true,
+    })
+    .map_err(host_error)?;
+    Ok(())
 }
 
 fn login(host: &IpcClient, open: OpenBrowser) -> color_eyre::Result<()> {
@@ -639,6 +675,16 @@ mod tests {
             ..SpotifyState::default()
         };
         assert_eq!(already_logged_in_message(&logged_out), None);
+    }
+
+    #[test]
+    fn only_a_yes_replaces_the_client_id() {
+        for yes in ["y", "Y", "yes", "YES", "Yes", " y\n", "yes\r\n"] {
+            assert!(replace_answer(yes), "{yes:?}");
+        }
+        for no in ["", "\n", "n", "N", "no", "yep", "maybe"] {
+            assert!(!replace_answer(no), "{no:?}");
+        }
     }
 
     #[test]
