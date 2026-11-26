@@ -168,6 +168,84 @@ impl StageModel {
     }
 }
 
+/// The transport row: title, subtitle, seek, volume, toggles, and the signal
+/// line (`source → device`) with its path badge.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransportModel {
+    pub status: PlaybackStatus,
+    /// Track title, or `Nothing playing`.
+    pub title: String,
+    /// `artist · album` for the middle of the row; `None` when there is none.
+    pub subtitle: Option<String>,
+    /// `None` when there is nothing to seek.
+    pub seek: Option<SeekModel>,
+    pub volume: Option<VolumeModel>,
+    pub repeat: RepeatMode,
+    pub shuffle: bool,
+    /// The one-line signal as `(source, device)`. `None` when nothing plays.
+    /// An empty device means no output is open: only the source is drawn.
+    pub signal: Option<(String, String)>,
+    /// `None` when nothing is playing or no output is open.
+    pub path_badge: Option<(String, Tone)>,
+}
+
+impl TransportModel {
+    pub fn from_player(state: &PlayerState) -> Self {
+        let track = state.current_track.as_ref();
+        let position = state.position;
+        let seek = match track {
+            Some(track) if track.url.is_some() => SeekModel::Live { position },
+            _ => SeekModel::Bar {
+                position,
+                total: track.and_then(|t| t.duration),
+            },
+        };
+        let signal = track.map(|track| {
+            let source = track.format_description();
+            match state.output.as_ref() {
+                Some(output) => (
+                    source,
+                    format!(
+                        "{} {}",
+                        format::khz(output.sample_rate),
+                        format::channel_name(output.channels)
+                    ),
+                ),
+                None => (source, String::new()),
+            }
+        });
+        let path_badge = state
+            .output
+            .as_ref()
+            .filter(|_| state.status != PlaybackStatus::Stopped)
+            .map(|output| {
+                if output.bit_perfect {
+                    ("● bit perfect".to_string(), Tone::Good)
+                } else {
+                    ("▲ resampled".to_string(), Tone::Warn)
+                }
+            });
+        Self {
+            status: state.status,
+            title: track
+                .map(|t| t.title.clone())
+                .unwrap_or_else(|| "Nothing playing".into()),
+            subtitle: track
+                .and_then(|t| t.artist_album())
+                .filter(|s| !s.is_empty()),
+            seek: Some(seek),
+            volume: Some(VolumeModel {
+                volume: state.volume,
+                muted: state.muted,
+            }),
+            repeat: state.repeat,
+            shuffle: state.shuffle,
+            signal,
+            path_badge,
+        }
+    }
+}
+
 /// Artist (or album artist) and the album line, for a file.
 fn file_head(track: &TrackInfo) -> Vec<StyledText> {
     let mut out = Vec::new();
@@ -308,7 +386,7 @@ fn sample_format_label(fmt: &str) -> &str {
 mod tests {
     use super::*;
     use crate::views::stage::tests::{playing, stream};
-    use znicz_core::PlayerState;
+    use znicz_core::{PlaybackStatus, PlayerState};
 
     #[test]
     fn a_file_model_has_the_artist_album_seek_and_signal() {
@@ -342,5 +420,20 @@ mod tests {
     fn covers_off_gives_no_cover_key() {
         let model = StageModel::from_player(&playing(false), &[], true, false);
         assert!(model.cover.is_none());
+    }
+
+    #[test]
+    fn the_transport_model_of_a_file_has_title_subtitle_and_seek() {
+        let model = TransportModel::from_player(&playing(false));
+        assert_eq!(model.title, "Sour Times");
+        assert!(model.subtitle.is_some());
+        assert!(matches!(model.seek, Some(SeekModel::Bar { .. })));
+    }
+
+    #[test]
+    fn a_stopped_player_has_no_path_badge() {
+        let mut state = playing(true);
+        state.status = PlaybackStatus::Stopped;
+        assert!(TransportModel::from_player(&state).path_badge.is_none());
     }
 }

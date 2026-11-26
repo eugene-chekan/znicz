@@ -120,7 +120,8 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
         );
 
         library::render(frame, list, app);
-        now_playing::render_transport(frame, chunks[1], app, state, !compact);
+        let transport = crate::stage_model::TransportModel::from_player(state);
+        now_playing::render_transport(frame, chunks[1], app, &transport, !compact);
     }
 
     match crate::layout::drawer(drawer_area, app.queue_open) {

@@ -3,18 +3,20 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use znicz_core::{PlaybackStatus, PlayerState, RepeatMode};
+use znicz_core::{PlaybackStatus, RepeatMode};
 
 use crate::app::{App, repeat_label};
 use crate::format;
+use crate::stage_model::{SeekModel, TransportModel};
 use crate::theme;
 use crate::tui_config::IconSet;
+use crate::views::stage::tone_style;
 
 pub fn render_transport(
     frame: &mut Frame,
     area: Rect,
     app: &mut App,
-    state: &PlayerState,
+    model: &TransportModel,
     show_signal: bool,
 ) {
     if area.height == 0 || area.width == 0 {
@@ -31,7 +33,7 @@ pub fn render_transport(
     for (i, row) in rows.iter().enumerate() {
         let line = if i == 0 {
             chrome_line(
-                state,
+                model,
                 width,
                 app.tui.icons,
                 if marquee_on {
@@ -43,7 +45,7 @@ pub fn render_transport(
         } else if i == last {
             message_line(&app.toasts, app.library_status.scanning.as_ref(), width)
         } else if show_signal {
-            signal_line(state, width)
+            signal_line(model, width)
         } else {
             Line::from("")
         };
@@ -99,7 +101,7 @@ pub(crate) fn message_line(
 
 /// One-line transport chrome: symbol, title, subtitle, seek, times, volume, toggles.
 fn chrome_line(
-    state: &PlayerState,
+    model: &TransportModel,
     width: usize,
     icons: IconSet,
     marquee: Option<(&mut crate::marquee::Marquee, std::time::Instant)>,
@@ -108,20 +110,17 @@ fn chrome_line(
         return Line::from("");
     }
 
-    let status_style = status_style(state.status);
-    let sym = status_marker(state.status);
-    let title = state
-        .current_track
-        .as_ref()
-        .map(|t| t.title.as_str())
-        .unwrap_or("Nothing playing");
+    let status_style = status_style(model.status);
+    let sym = status_marker(model.status);
+    let title = model.title.as_str();
 
-    let total = state.current_track.as_ref().and_then(|t| t.duration);
-    let times = format!(
-        " {} / {}",
-        format::duration(state.position),
-        format::duration_opt(total)
-    );
+    let times = model.seek.as_ref().map_or_else(String::new, |seek| {
+        format!(
+            " {} / {}",
+            format::duration(seek.position()),
+            format::duration_opt(seek.total())
+        )
+    });
 
     let sym_len = sym.chars().count();
     let times_len = times.chars().count();
@@ -140,26 +139,23 @@ fn chrome_line(
         ]);
     }
 
-    let subtitle = state
-        .current_track
-        .as_ref()
-        .and_then(|t| t.artist_album())
-        .filter(|s| !s.is_empty())
-        .map(|s| format!(" {s}"));
+    let subtitle = model.subtitle.as_ref().map(|s| format!(" {s}"));
 
-    let icon = format::volume_icon(icons, state.volume, state.muted);
-    let bar = format::volume_bar(state.volume, 6);
-    let volume = if state.muted {
-        Some(format!(" {icon} {bar} muted"))
-    } else {
-        Some(format!(" {icon} {bar} {:>3.0}%", state.volume * 100.0))
-    };
+    let volume = model.volume.map(|v| {
+        let icon = format::volume_icon(icons, v.volume, v.muted);
+        let bar = format::volume_bar(v.volume, 6);
+        if v.muted {
+            format!(" {icon} {bar} muted")
+        } else {
+            format!(" {icon} {bar} {:>3.0}%", v.volume * 100.0)
+        }
+    });
 
     let mut toggle_text = String::new();
-    if state.repeat != RepeatMode::Off {
-        toggle_text.push_str(repeat_label(state.repeat));
+    if model.repeat != RepeatMode::Off {
+        toggle_text.push_str(repeat_label(model.repeat));
     }
-    if state.shuffle {
+    if model.shuffle {
         if !toggle_text.is_empty() {
             toggle_text.push_str("  ");
         }
@@ -261,7 +257,7 @@ fn chrome_line(
         ];
         push_tail(
             &mut spans,
-            state,
+            model,
             seek_len,
             times,
             include_volume,
@@ -297,7 +293,7 @@ fn chrome_line(
     };
     push_tail(
         &mut spans,
-        state,
+        model,
         seek_drawn,
         times,
         include_volume,
@@ -313,7 +309,7 @@ fn chrome_line(
 #[allow(clippy::too_many_arguments)]
 fn push_tail(
     spans: &mut Vec<Span<'static>>,
-    state: &PlayerState,
+    model: &TransportModel,
     seek_len: usize,
     times: String,
     include_volume: bool,
@@ -323,7 +319,7 @@ fn push_tail(
 ) {
     if seek_len > 0 {
         spans.push(Span::raw(" "));
-        let (done, todo) = seek_bar_parts(state, seek_len);
+        let (done, todo) = seek_bar_parts(model, seek_len);
         spans.push(Span::styled(done, theme::progress()));
         spans.push(Span::styled(todo, theme::progress_track()));
     }
@@ -334,7 +330,7 @@ fn push_tail(
         if let Some(vol) = &volume {
             spans.push(Span::styled(
                 vol.clone(),
-                if state.muted {
+                if model.volume.is_some_and(|v| v.muted) {
                     theme::warn()
                 } else {
                     theme::text()
@@ -345,24 +341,24 @@ fn push_tail(
 
     if include_toggles {
         if let Some(tog) = &toggles {
-            let repeat_style = if state.repeat == RepeatMode::Off {
+            let repeat_style = if model.repeat == RepeatMode::Off {
                 theme::toggle_off()
             } else {
                 theme::toggle_on()
             };
-            let shuffle_style = if state.shuffle {
+            let shuffle_style = if model.shuffle {
                 theme::toggle_on()
             } else {
                 theme::toggle_off()
             };
-            if state.shuffle && state.repeat != RepeatMode::Off {
+            if model.shuffle && model.repeat != RepeatMode::Off {
                 spans.push(Span::styled(
-                    format!(" {}", repeat_label(state.repeat)),
+                    format!(" {}", repeat_label(model.repeat)),
                     repeat_style,
                 ));
                 spans.push(Span::raw("  "));
                 spans.push(Span::styled("shuffle".to_string(), shuffle_style));
-            } else if state.shuffle {
+            } else if model.shuffle {
                 spans.push(Span::styled(tog.clone(), shuffle_style));
             } else {
                 spans.push(Span::styled(tog.clone(), repeat_style));
@@ -371,50 +367,31 @@ fn push_tail(
     }
 }
 
-fn seek_bar_parts(state: &PlayerState, width: usize) -> (String, String) {
-    let total = state.current_track.as_ref().and_then(|t| t.duration);
-    let ratio = match total {
-        Some(total) if !total.is_zero() => state.position.as_secs_f64() / total.as_secs_f64(),
-        _ => 0.0,
-    };
+fn seek_bar_parts(model: &TransportModel, width: usize) -> (String, String) {
+    let ratio = model.seek.as_ref().map_or(0.0, SeekModel::ratio);
     format::progress_bar(ratio, width)
 }
 
-/// File format on the left, the open device stream on the right, and whether
-/// the two match.
-fn signal_line(state: &PlayerState, width: usize) -> Line<'static> {
-    let Some(track) = state.current_track.as_ref() else {
+/// File format on the left, the open device stream on the right, and the
+/// path badge when it fits.
+fn signal_line(model: &TransportModel, width: usize) -> Line<'static> {
+    let Some((source, device)) = model.signal.as_ref() else {
         return Line::from(Span::styled("—", theme::dim()));
     };
-
-    let source = track.format_description();
-    let Some(output) = state.output.as_ref() else {
-        return Line::from(Span::styled(source, theme::text()));
-    };
-
-    let device = format!(
-        "{} {}",
-        format::khz(output.sample_rate),
-        format::channel_name(output.channels),
-    );
-
-    let (badge, badge_style) = if output.bit_perfect {
-        ("● bit perfect", theme::good())
-    } else {
-        ("▲ resampled", theme::warn())
-    };
+    if device.is_empty() {
+        return Line::from(Span::styled(source.clone(), theme::text()));
+    }
 
     let mut spans = vec![
-        Span::styled(source, theme::text()),
+        Span::styled(source.clone(), theme::text()),
         Span::styled(" → ", theme::dim()),
-        Span::styled(device, theme::text()),
+        Span::styled(device.clone(), theme::text()),
     ];
-
-    if state.status != PlaybackStatus::Stopped {
+    if let Some((badge, tone)) = model.path_badge.as_ref() {
         let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
         if used + badge.chars().count() + 2 <= width {
             spans.push(Span::raw("  "));
-            spans.push(Span::styled(badge, badge_style));
+            spans.push(Span::styled(badge.clone(), tone_style(*tone)));
         }
     }
 
@@ -449,6 +426,11 @@ mod tests {
 
     use super::*;
     use crate::views::stage::tests::{at_fixed_time, playing, stream};
+    use znicz_core::PlayerState;
+
+    fn transport_of(state: &PlayerState) -> TransportModel {
+        TransportModel::from_player(state)
+    }
 
     #[test]
     fn transport_symbols_differ_per_state() {
@@ -556,7 +538,12 @@ mod tests {
     #[test]
     fn without_a_marquee_a_long_title_is_cut() {
         // At 100 columns the title gets 35 (the seek bar takes up to 40).
-        let row = text(&chrome_line(&long_state(), 100, IconSet::Unicode, None));
+        let row = text(&chrome_line(
+            &transport_of(&long_state()),
+            100,
+            IconSet::Unicode,
+            None,
+        ));
         assert!(row.contains('…'), "{row:?}");
     }
 
@@ -566,7 +553,7 @@ mod tests {
         let mut m = crate::marquee::Marquee::default();
         let t0 = std::time::Instant::now();
         let start = text(&chrome_line(
-            &state,
+            &transport_of(&state),
             100,
             IconSet::Unicode,
             Some((&mut m, t0)),
@@ -574,7 +561,7 @@ mod tests {
         assert!(start.contains("A Very"), "{start:?}");
         assert!(!start.contains('…'), "{start:?}");
         let later = text(&chrome_line(
-            &state,
+            &transport_of(&state),
             100,
             IconSet::Unicode,
             Some((&mut m, t0 + Duration::from_millis(2_000 + 5 * 200))),
@@ -602,12 +589,17 @@ mod tests {
             }),
             ..state
         };
-        let narrow = chrome_line(&state, 33, IconSet::Emoji, None);
+        let narrow = chrome_line(&transport_of(&state), 33, IconSet::Emoji, None);
         let t = text(&narrow);
         assert!(!t.contains('🔊'), "{t:?}");
         assert!(line_width(&narrow) <= 33, "{t:?}");
 
-        let wide = text(&chrome_line(&state, 100, IconSet::Emoji, None));
+        let wide = text(&chrome_line(
+            &transport_of(&state),
+            100,
+            IconSet::Emoji,
+            None,
+        ));
         assert!(wide.contains('🔊'), "{wide:?}");
     }
 
@@ -621,9 +613,14 @@ mod tests {
         for width in [80, 100, 140] {
             let mut m = crate::marquee::Marquee::default();
             let t0 = std::time::Instant::now();
-            let line = chrome_line(&state, width, IconSet::Unicode, Some((&mut m, t0)));
+            let line = chrome_line(
+                &transport_of(&state),
+                width,
+                IconSet::Unicode,
+                Some((&mut m, t0)),
+            );
             assert_eq!(line_width(&line), width, "scrolling at {width}");
-            let plain = chrome_line(&state, width, IconSet::Unicode, None);
+            let plain = chrome_line(&transport_of(&state), width, IconSet::Unicode, None);
             assert!(line_width(&plain) <= width, "normal at {width}");
         }
     }
@@ -641,10 +638,11 @@ mod tests {
         if let Some(text) = toast {
             app.toasts.info(text);
         }
+        let model = transport_of(state);
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
         terminal
-            .draw(|frame| render_transport(frame, frame.area(), &mut app, state, show_signal))
+            .draw(|frame| render_transport(frame, frame.area(), &mut app, &model, show_signal))
             .unwrap();
         terminal
             .backend()
