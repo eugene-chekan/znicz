@@ -1756,7 +1756,7 @@ Adds the Spotify connection helpers to `server.rs`, the `spotify_status`, `spoti
 **Files:**
 - Modify: `znicz-mcp/src/server.rs`
 
-- [ ] **Step 1: Add the imports**
+- [x] **Step 1: Add the imports**
 
 In `server.rs`, change the `use znicz_core::{…}` block to add the Spotify types (keep the existing names):
 
@@ -1775,7 +1775,7 @@ and add below `use crate::skills::SkillRegistry;`:
 use crate::spotify_json;
 ```
 
-- [ ] **Step 2: Add the connection helpers**
+- [x] **Step 2: Add the connection helpers**
 
 In `server.rs`, in the plain `impl ZniczMcpServer` block (the one with `fn live_state`), add these after `run_library_job_blocking`:
 
@@ -1810,7 +1810,7 @@ In `server.rs`, in the plain `impl ZniczMcpServer` block (the one with `fn live_
     }
 ```
 
-- [ ] **Step 3: Add the tools**
+- [x] **Step 3: Add the tools**
 
 In `server.rs`, inside the `#[tool_router] impl ZniczMcpServer` block, add these methods directly after `enrich_metadata` (the last tool, just before that block's closing brace):
 
@@ -1865,7 +1865,7 @@ In `server.rs`, inside the `#[tool_router] impl ZniczMcpServer` block, add these
     }
 ```
 
-- [ ] **Step 4: Add the fake and the test harness**
+- [x] **Step 4: Add the fake and the test harness**
 
 In `server.rs`'s `tests` module, add the imports on a new line below `use znicz_core::{AudioConfig, ClientRole, IpcServer, PlaybackStatus, spawn_player};`:
 
@@ -1955,7 +1955,7 @@ Add these to the `tests` module (after `second_client`, from Task 5):
 
 `Arc` and `Mutex` come from `use super::*;` (the server module imports `std::sync::{Arc, Mutex}`).
 
-- [ ] **Step 5: Write the tests**
+- [x] **Step 5: Write the tests**
 
 Add to the `tests` module:
 
@@ -2010,12 +2010,12 @@ Add to the `tests` module:
     }
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-mcp spotify_ -q`
 Expected: PASS for the three new tests.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add znicz-mcp/src/server.rs
