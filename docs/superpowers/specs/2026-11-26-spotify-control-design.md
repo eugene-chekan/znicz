@@ -297,7 +297,7 @@ browse item carries its Spotify `uri`.
 | `spotify_albums` | `offset?`, `limit?` | Saved albums |
 | `spotify_tracks` | `uri` | Album or (own) playlist tracks |
 | `spotify_artist_albums` | `uri`, `offset?`, `limit?` | An artist's albums |
-| `spotify_play` | `uri?`, `context_uri?`, `offset?` | No arguments resumes. Pauses Znicz first. |
+| `spotify_play` | `uri?`, `context_uri?`, `offset?` | No arguments resumes. Znicz pauses once Spotify accepts. |
 | `spotify_pause`, `spotify_next`, `spotify_previous` | | |
 | `spotify_seek` | `position_ms` | |
 | `spotify_set_volume` | `volume` 0.0–1.0 | Same scale as `set_volume` |
