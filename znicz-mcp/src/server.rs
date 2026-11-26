@@ -15,12 +15,14 @@ use serde::{Deserialize, Serialize};
 
 use znicz_core::{
     AudioOutput, Command, IpcClient, LibraryHost, LibraryOp, LoadResult, PlaybackStatus,
-    PlayerState, ScanSummary, apply_to_player, copy_saved, list_saved, load_path, remove_saved,
-    rename_saved, sanitize_stem, saved_path, wait_for_library, write_path,
+    PlayerState, ScanSummary, SpotifyHost, SpotifyOp, SpotifyReply, SpotifyState, apply_to_player,
+    copy_saved, list_saved, load_path, remove_saved, rename_saved, sanitize_stem, saved_path,
+    wait_for_library, write_path,
 };
 use znicz_library::{Library, Track};
 
 use crate::skills::SkillRegistry;
+use crate::spotify_json;
 
 /// The library is shared and needs exclusive access for writes, so it sits
 /// behind a mutex. `None` means no library was configured.
@@ -31,8 +33,6 @@ pub struct ZniczMcpServer {
     player: IpcClient,
     /// A second, independent connection for Spotify calls. A call can take
     /// about 40 s, and it must not hold up the player tools on `player`.
-    // Read by the Spotify tools, added in Task 7 of the Spotify part 3 plan.
-    #[allow(dead_code)]
     spotify: IpcClient,
     skills: SkillRegistry,
     library: SharedLibrary,
@@ -143,6 +143,35 @@ impl ZniczMcpServer {
         tokio::task::spawn_blocking(move || Self::run_library_job(&player, op, wait))
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?
+    }
+
+    /// One Spotify op on the Spotify connection, on a blocking thread: a
+    /// Spotify call can take about 40 s, and the server must keep answering.
+    async fn spotify_apply(&self, op: SpotifyOp) -> Result<SpotifyReply, McpError> {
+        let spotify = self.spotify.clone();
+        tokio::task::spawn_blocking(move || SpotifyHost::apply(&spotify, op))
+            .await
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?
+            .map_err(spotify_json::error_of)
+    }
+
+    /// The Spotify snapshot. It sends `Touch` first, so the player polls fast
+    /// for the next minute, as it does after any Spotify call.
+    async fn spotify_status_state(&self) -> Result<SpotifyState, McpError> {
+        let spotify = self.spotify.clone();
+        tokio::task::spawn_blocking(move || {
+            SpotifyHost::apply(&spotify, SpotifyOp::Touch)?;
+            SpotifyHost::try_state(&spotify)
+        })
+        .await
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?
+        .map_err(spotify_json::error_of)
+    }
+
+    fn spotify_status_result(
+        state: &SpotifyState,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        Self::json_result(&spotify_json::status_json(state, spotify_json::now_ms()))
     }
 
     fn json_result(value: &impl Serialize) -> Result<rmcp::model::CallToolResult, McpError> {
@@ -874,6 +903,55 @@ impl ZniczMcpServer {
     fn enrich_metadata(&self) -> Result<rmcp::model::CallToolResult, McpError> {
         Err(Self::not_implemented("enrich_metadata"))
     }
+
+    #[tool(
+        description = "Spotify status: configured, login, account, Premium, device, what is playing and the last error. Call this first"
+    )]
+    async fn spotify_status(&self) -> Result<rmcp::model::CallToolResult, McpError> {
+        let state = self.spotify_status_state().await?;
+        Self::spotify_status_result(&state)
+    }
+
+    #[tool(
+        description = "Start a Spotify login. Returns authorize_url: give it to the user, who approves it in a browser"
+    )]
+    async fn spotify_login_begin(&self) -> Result<rmcp::model::CallToolResult, McpError> {
+        match self.spotify_apply(SpotifyOp::BeginLogin).await? {
+            SpotifyReply::AuthorizeUrl {
+                url,
+                redirect_uri,
+                listening,
+            } => Self::json_result(&serde_json::json!({
+                "authorize_url": url,
+                "redirect_uri": redirect_uri,
+                "listening": listening,
+                "next": "Give authorize_url to the user. If listening is true, the browser can redirect to redirect_uri and the login finishes by itself. Otherwise, or if that fails, the user pastes the address the browser lands on into spotify_login_complete.",
+            })),
+            _ => Err(spotify_json::unexpected_reply()),
+        }
+    }
+
+    #[tool(
+        description = "Finish a Spotify login with the address the browser landed on (the paste route)"
+    )]
+    async fn spotify_login_complete(
+        &self,
+        Parameters(params): Parameters<spotify_json::SpotifyLoginCompleteParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        self.spotify_apply(SpotifyOp::CompleteLogin {
+            redirect_url: params.redirect_url,
+        })
+        .await?;
+        let state = self.spotify_status_state().await?;
+        Self::spotify_status_result(&state)
+    }
+
+    #[tool(description = "Log out of Spotify and delete the stored login")]
+    async fn spotify_logout(&self) -> Result<rmcp::model::CallToolResult, McpError> {
+        self.spotify_apply(SpotifyOp::Logout).await?;
+        let state = self.spotify_status_state().await?;
+        Self::spotify_status_result(&state)
+    }
 }
 
 #[tool_handler]
@@ -1148,6 +1226,7 @@ mod tests {
     use std::ops::{Deref, DerefMut};
     use std::time::Duration;
     use znicz_core::{AudioConfig, ClientRole, IpcServer, PlaybackStatus, spawn_player};
+    use znicz_core::{SpotifyAccount, SpotifyErrorKind, SpotifyLogin, SpotifyPage, ZniczError};
 
     /// Serialises `ZNICZ_STATIONS_PATH` writes against
     /// other tests that read env while constructing a server.
@@ -1194,6 +1273,134 @@ mod tests {
     fn second_client(dir: &Path) -> IpcClient {
         IpcClient::connect(dir.join("ipc.toml"), ClientRole::Agent)
             .expect("connect the spotify agent")
+    }
+
+    /// Records every op it gets. It refuses playback as a free account would,
+    /// and answers the account and login calls with fixed values.
+    #[derive(Default)]
+    struct FakeSpotify {
+        ops: Mutex<Vec<SpotifyOp>>,
+    }
+
+    impl SpotifyHost for FakeSpotify {
+        fn apply(&self, op: SpotifyOp) -> znicz_core::Result<SpotifyReply> {
+            self.ops.lock().unwrap().push(op.clone());
+            match op {
+                SpotifyOp::Play { .. } => Err(ZniczError::Spotify {
+                    kind: SpotifyErrorKind::PremiumRequired,
+                    message: "needs Spotify Premium".into(),
+                }),
+                SpotifyOp::Search { .. } => Ok(SpotifyReply::Page {
+                    page: SpotifyPage::default(),
+                }),
+                SpotifyOp::BeginLogin => Ok(SpotifyReply::AuthorizeUrl {
+                    url: "https://accounts.spotify.com/authorize?fake".into(),
+                    redirect_uri: "http://127.0.0.1:8898/callback".into(),
+                    listening: true,
+                }),
+                _ => Ok(SpotifyReply::Done),
+            }
+        }
+
+        fn state(&self) -> SpotifyState {
+            SpotifyState::default()
+        }
+
+        fn try_state(&self) -> znicz_core::Result<SpotifyState> {
+            Ok(SpotifyState {
+                login: SpotifyLogin::LoggedIn,
+                account: Some(SpotifyAccount {
+                    user: "eve".into(),
+                    premium: Some(true),
+                }),
+                ..SpotifyState::default()
+            })
+        }
+    }
+
+    /// A player that hosts `FakeSpotify`, and an MCP server with two
+    /// connections to it. The fake is returned to read what it was sent.
+    /// The temp dir comes first: a `let` pattern drops its bindings in reverse
+    /// order, so the dir is dropped last, after the server it backs.
+    fn spotify_server() -> (
+        tempfile::TempDir,
+        IpcServer,
+        ZniczMcpServer,
+        Arc<FakeSpotify>,
+    ) {
+        let _lock = env_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ipc.toml");
+        let (player, thread) = spawn_player(AudioConfig::default());
+        std::mem::forget(thread);
+        let fake = Arc::new(FakeSpotify::default());
+        let ipc = IpcServer::start_with_session_and_library(
+            player,
+            &path,
+            Duration::ZERO,
+            dir.path().join("session.toml"),
+            Duration::ZERO,
+            None,
+            Some(fake.clone() as Arc<dyn SpotifyHost>),
+        )
+        .expect("start ipc");
+        let player_client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        let spotify_client = second_client(dir.path());
+        let server = ZniczMcpServer::new(player_client, spotify_client, Vec::new());
+        (dir, ipc, server, fake)
+    }
+
+    fn json_of(result: &rmcp::model::CallToolResult) -> serde_json::Value {
+        serde_json::from_str(&result_text(result)).expect("tool result is JSON")
+    }
+
+    #[tokio::test]
+    async fn spotify_status_reads_the_snapshot_and_marks_spotify_in_use() {
+        let (_dir, _ipc, server, fake) = spotify_server();
+        let result = server.spotify_status().await.expect("status");
+        let json = json_of(&result);
+        assert_eq!(json["configured"], true);
+        assert_eq!(json["login"], "logged_in");
+        assert_eq!(json["user"], "eve");
+        assert_eq!(json["premium"], true);
+        assert!(
+            fake.ops.lock().unwrap().contains(&SpotifyOp::Touch),
+            "a status call marks Spotify use"
+        );
+    }
+
+    #[tokio::test]
+    async fn login_begin_hands_back_the_url_and_what_to_do_with_it() {
+        let (_dir, _ipc, server, _fake) = spotify_server();
+        let result = server.spotify_login_begin().await.expect("begin");
+        let json = json_of(&result);
+        assert_eq!(
+            json["authorize_url"],
+            "https://accounts.spotify.com/authorize?fake"
+        );
+        assert_eq!(json["redirect_uri"], "http://127.0.0.1:8898/callback");
+        assert_eq!(json["listening"], true);
+        assert!(json["next"].as_str().unwrap().contains("authorize_url"));
+    }
+
+    #[tokio::test]
+    async fn login_complete_and_logout_send_their_ops_and_return_the_status() {
+        let (_dir, _ipc, server, fake) = spotify_server();
+        let result = server
+            .spotify_login_complete(Parameters(spotify_json::SpotifyLoginCompleteParams {
+                redirect_url: "http://127.0.0.1:8898/callback?code=x&state=y".into(),
+            }))
+            .await
+            .expect("complete");
+        assert_eq!(json_of(&result)["login"], "logged_in");
+        server.spotify_logout().await.expect("logout");
+        let ops = fake.ops.lock().unwrap();
+        assert!(matches!(
+            ops.iter().find(|op| matches!(op, SpotifyOp::CompleteLogin { .. })),
+            Some(SpotifyOp::CompleteLogin { redirect_url })
+                if redirect_url.contains("code=x")
+        ));
+        assert!(ops.contains(&SpotifyOp::Logout));
     }
 
     #[test]
