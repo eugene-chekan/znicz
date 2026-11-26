@@ -892,6 +892,7 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::app::SpotifyConfirm;
+    use crate::app::spotify_ui::tests::{sent_ops, wait_for_op};
     use crate::config_file::{ConfigFile, ConfigProblem};
     use crate::library_pane::{EffectiveLayout, LibraryPane};
     use crate::spotify_worker::SpotifyWorker;
@@ -2164,21 +2165,6 @@ pub(crate) mod tests {
         app
     }
 
-    fn sent_ops(host: &crate::app::spotify_ui::tests::FakeHost) -> Vec<SpotifyOp> {
-        // The worker is asynchronous: wait until it has been quiet for one
-        // sample (at least 50 ms, at most 2 s), then read what it was given.
-        let mut last = usize::MAX;
-        for _ in 0..80 {
-            std::thread::sleep(Duration::from_millis(25));
-            let now = host.ops.lock().unwrap().len();
-            if now == last {
-                break;
-            }
-            last = now;
-        }
-        host.ops.lock().unwrap().clone()
-    }
-
     fn one_device(name: &str) -> Vec<SpotifyDevice> {
         vec![SpotifyDevice {
             id: "d1".into(),
@@ -2220,11 +2206,14 @@ pub(crate) mod tests {
         select(&mut app, Row::PlaybackDevice);
         press(&mut app, KeyCode::Enter);
         assert_eq!(saved(&dir)["spotify"]["device"].as_str(), Some("Kitchen"));
-        let ops = sent_ops(&host);
-        assert!(ops.iter().any(|op| matches!(
-            op,
-            SpotifyOp::Configure { config, .. } if config.device == "Kitchen"
-        )));
+        assert!(
+            wait_for_op(&host, |op| matches!(
+                op,
+                SpotifyOp::Configure { config, .. } if config.device == "Kitchen"
+            )),
+            "{:?}",
+            sent_ops(&host)
+        );
     }
 
     #[test]
@@ -2273,10 +2262,14 @@ pub(crate) mod tests {
             saved(&dir)["spotify"]["redirect_port"].as_integer(),
             Some(9001)
         );
-        assert!(sent_ops(&host).iter().any(|op| matches!(
-            op,
-            SpotifyOp::Configure { config, .. } if config.redirect_port == 9001
-        )));
+        assert!(
+            wait_for_op(&host, |op| matches!(
+                op,
+                SpotifyOp::Configure { config, .. } if config.redirect_port == 9001
+            )),
+            "{:?}",
+            sent_ops(&host)
+        );
     }
 
     #[test]
@@ -2478,12 +2471,15 @@ pub(crate) mod tests {
             saved(&dir)["spotify"]["redirect_port"].as_integer(),
             Some(9001)
         );
-        let sent = sent_ops(&host);
-        assert!(sent.iter().any(|op| matches!(
-            op,
-            SpotifyOp::Configure { config, .. }
-                if config.redirect_port == 9001 && config.client_id.is_empty() && config.device.is_empty()
-        )));
+        assert!(
+            wait_for_op(&host, |op| matches!(
+                op,
+                SpotifyOp::Configure { config, .. }
+                    if config.redirect_port == 9001 && config.client_id.is_empty() && config.device.is_empty()
+            )),
+            "{:?}",
+            sent_ops(&host)
+        );
     }
 
     #[test]
@@ -2586,6 +2582,14 @@ pub(crate) mod tests {
         let mut app = spotify_app(&dir, host.clone());
         app.spotify_devices = kitchen();
         change_every_spotify_row(&mut app);
+        assert!(
+            wait_for_op(&host, |op| matches!(
+                op,
+                SpotifyOp::Configure { config, .. } if config.client_id == NEW_ID
+            )),
+            "the last change never arrived: {:?}",
+            sent_ops(&host)
+        );
         let configures: Vec<_> = sent_ops(&host)
             .into_iter()
             .filter_map(|op| match op {
@@ -2701,10 +2705,14 @@ pub(crate) mod tests {
         assert!(app.settings_prompt.is_none());
         assert!(app.spotify.client_id.is_empty());
         assert!(saved(&dir)["spotify"].get("client_id").is_none());
-        assert!(sent_ops(&host).iter().any(|op| matches!(
-            op,
-            SpotifyOp::Configure { config, .. } if config.client_id.is_empty()
-        )));
+        assert!(
+            wait_for_op(&host, |op| matches!(
+                op,
+                SpotifyOp::Configure { config, .. } if config.client_id.is_empty()
+            )),
+            "{:?}",
+            sent_ops(&host)
+        );
     }
 
     #[test]
@@ -2751,10 +2759,14 @@ pub(crate) mod tests {
         assert!(app.spotify_confirm.is_none());
         assert_eq!(app.spotify.client_id, ID);
         assert_eq!(saved(&dir)["spotify"]["client_id"].as_str(), Some(ID));
-        assert!(sent_ops(&host).iter().any(|op| matches!(
-            op,
-            SpotifyOp::Configure { config, .. } if config.client_id == ID
-        )));
+        assert!(
+            wait_for_op(&host, |op| matches!(
+                op,
+                SpotifyOp::Configure { config, .. } if config.client_id == ID
+            )),
+            "{:?}",
+            sent_ops(&host)
+        );
     }
 
     #[test]
@@ -2789,10 +2801,14 @@ pub(crate) mod tests {
         press(&mut app, KeyCode::Enter);
         assert_eq!(app.spotify.client_id, NEW_ID);
         assert_eq!(saved(&dir)["spotify"]["client_id"].as_str(), Some(NEW_ID));
-        assert!(sent_ops(&host).iter().any(|op| matches!(
-            op,
-            SpotifyOp::Configure { config, .. } if config.client_id == NEW_ID
-        )));
+        assert!(
+            wait_for_op(&host, |op| matches!(
+                op,
+                SpotifyOp::Configure { config, .. } if config.client_id == NEW_ID
+            )),
+            "{:?}",
+            sent_ops(&host)
+        );
     }
 
     #[test]
@@ -2817,14 +2833,14 @@ pub(crate) mod tests {
         type_text(&mut app, "9001");
         press(&mut app, KeyCode::Enter);
         assert_eq!(app.spotify.client_id, ID, "the screen shows the file");
-        let sent = sent_ops(&host);
         assert!(
-            sent.iter().any(|op| matches!(
+            wait_for_op(&host, |op| matches!(
                 op,
                 SpotifyOp::Configure { config, replace_client_id: false }
                     if config.client_id == ID && config.redirect_port == 9001
             )),
-            "{sent:?}"
+            "{:?}",
+            sent_ops(&host)
         );
     }
 
@@ -2879,14 +2895,14 @@ pub(crate) mod tests {
         press(&mut app, KeyCode::Enter);
         press(&mut app, KeyCode::Enter);
         assert_eq!(app.spotify.client_id, NEW_ID);
-        let sent = sent_ops(&host);
         assert!(
-            sent.iter().any(|op| matches!(
+            wait_for_op(&host, |op| matches!(
                 op,
                 SpotifyOp::Configure { config, replace_client_id: true }
                     if config.client_id == NEW_ID
             )),
-            "{sent:?}"
+            "{:?}",
+            sent_ops(&host)
         );
     }
 
@@ -2967,14 +2983,14 @@ pub(crate) mod tests {
         );
         refuse_configures(&host, false);
         press(&mut app, KeyCode::Enter);
-        let sent = sent_ops(&host);
         assert!(
-            sent.iter().any(|op| matches!(
+            wait_for_op(&host, |op| matches!(
                 op,
                 SpotifyOp::Configure { config, replace_client_id: true }
                     if config.client_id == ID
             )),
-            "{sent:?}"
+            "{:?}",
+            sent_ops(&host)
         );
     }
 
@@ -3053,7 +3069,7 @@ pub(crate) mod tests {
         press(&mut app, KeyCode::Char('6'));
         select(&mut app, Row::Account);
         press(&mut app, KeyCode::Enter);
-        assert!(sent_ops(&host).contains(&SpotifyOp::BeginLogin));
+        assert!(wait_for_op(&host, |op| *op == SpotifyOp::BeginLogin));
     }
 
     #[test]
@@ -3069,7 +3085,7 @@ pub(crate) mod tests {
         assert_eq!(app.spotify_confirm, Some(SpotifyConfirm::Logout));
         assert!(!sent_ops(&host).contains(&SpotifyOp::Logout));
         press(&mut app, KeyCode::Enter);
-        assert!(sent_ops(&host).contains(&SpotifyOp::Logout));
+        assert!(wait_for_op(&host, |op| *op == SpotifyOp::Logout));
     }
 
     // --- Spotify tab: drawing ---
@@ -3223,6 +3239,7 @@ pub(crate) mod tests {
         select(&mut app, Row::Account);
         press(&mut app, KeyCode::Enter);
         press(&mut app, KeyCode::Enter);
+        assert!(wait_for_op(&host, |op| *op == SpotifyOp::BeginLogin));
         let begins = sent_ops(&host)
             .iter()
             .filter(|op| **op == SpotifyOp::BeginLogin)
@@ -3240,6 +3257,7 @@ pub(crate) mod tests {
             press(&mut app, KeyCode::Char('6'));
             press(&mut app, KeyCode::Char('1'));
         }
+        assert!(wait_for_op(&host, |op| *op == SpotifyOp::Devices));
         let devices = sent_ops(&host)
             .iter()
             .filter(|op| **op == SpotifyOp::Devices)

@@ -387,6 +387,7 @@ impl App {
 #[cfg(test)]
 pub(crate) mod tests {
     use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
 
     use znicz_core::{
         SpotifyAccount, SpotifyConfig, SpotifyDevice, SpotifyErrorKind, SpotifyHost, SpotifyLogin,
@@ -479,6 +480,45 @@ pub(crate) mod tests {
         app.set_settings_tab(crate::settings::Tab::Spotify);
     }
 
+    /// The ops the fake host has been given. The worker is asynchronous, so
+    /// this returns once the count has stayed put for 150 ms (3 s at most).
+    /// Use it for negative checks ("nothing was sent") and exact counts; for
+    /// anything that should arrive, use `wait_for_op`.
+    pub(crate) fn sent_ops(host: &FakeHost) -> Vec<SpotifyOp> {
+        const QUIET: Duration = Duration::from_millis(150);
+        const CAP: Duration = Duration::from_secs(3);
+        let started = Instant::now();
+        let mut last = host.ops.lock().unwrap().len();
+        let mut stable_since = started;
+        while started.elapsed() < CAP {
+            std::thread::sleep(Duration::from_millis(10));
+            let now = host.ops.lock().unwrap().len();
+            if now != last {
+                last = now;
+                stable_since = Instant::now();
+            } else if stable_since.elapsed() >= QUIET {
+                break;
+            }
+        }
+        host.ops.lock().unwrap().clone()
+    }
+
+    /// Wait (polling every 10 ms, 3 s at most) until the host has been given
+    /// an op that `pred` accepts. Returns whether one arrived. Use it for every
+    /// positive assertion about what was sent.
+    pub(crate) fn wait_for_op(host: &FakeHost, pred: impl Fn(&SpotifyOp) -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            if host.ops.lock().unwrap().iter().any(&pred) {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     fn wait_until(app: &mut App, done: impl Fn(&App) -> bool) {
         for _ in 0..500 {
             app.poll_spotify();
@@ -501,7 +541,7 @@ pub(crate) mod tests {
         open_spotify_tab(&mut app);
         app.poll_spotify();
         assert_eq!(app.spotify_state.login, SpotifyLogin::LoggedIn);
-        assert!(host.ops.lock().unwrap().contains(&SpotifyOp::Touch));
+        assert!(wait_for_op(&host, |op| *op == SpotifyOp::Touch));
     }
 
     #[test]
