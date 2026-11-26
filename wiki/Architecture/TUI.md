@@ -366,7 +366,7 @@ Its rows:
 | Redirect port | `http://127.0.0.1:<port>/callback`. Default 8898 | Opens a prompt for a port from 1024 to 65535 |
 | Open browser | `auto`, `always` or `never` | Steps to the next value |
 | Account | Not configured, Not logged in, Logging in…, or Logged in as *name*, with Premium or not once known | Logged out: starts a login. Logged in: asks in the strip, then logs out on `Enter` |
-| Playback device | The active device, or a device Spotify lists. A device that is offline is marked `offline` | Steps through the devices |
+| Playback device | The active device, or a device Spotify lists. Logged in, a device that the list does not name is marked `offline`; logged out, the hint is `unknown while logged out` | Steps through the devices |
 
 Account and Playback device are dimmed until a client ID is set. `Enter` on
 either then says `Set a client ID first, in the Client ID row.` Redirect port

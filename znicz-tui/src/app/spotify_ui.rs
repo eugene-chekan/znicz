@@ -69,6 +69,7 @@ impl App {
             login: self.spotify_login_shown(),
             account: self.spotify_state.account.clone(),
             devices: self.spotify_devices.clone(),
+            devices_known: self.spotify_devices_known,
             unavailable: self.spotify_unavailable.clone(),
             player_differs: self.spotify_player_differs,
         }
@@ -249,6 +250,7 @@ impl App {
                 if self.spotify.client_id == self.spotify_devices_client_id =>
             {
                 self.spotify_devices = devices;
+                self.spotify_devices_known = true;
             }
             (SpotifyAsk::Devices, Ok(SpotifyReply::Devices { .. })) => {}
             // Devices is read when the tab opens; without a login it fails, and

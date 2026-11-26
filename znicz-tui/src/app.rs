@@ -431,6 +431,8 @@ pub struct App {
     pub(crate) spotify_state: SpotifyState,
     /// Devices from the last `SpotifyOp::Devices` reply.
     pub(crate) spotify_devices: Vec<SpotifyDevice>,
+    /// A device list has arrived (`spotify_devices` is not just the empty start).
+    pub(crate) spotify_devices_known: bool,
     /// The player does not answer Spotify requests; polling has stopped.
     pub(crate) spotify_unavailable: Option<String>,
     /// When the status was last polled.
@@ -814,6 +816,7 @@ impl App {
             spotify_worker: None,
             spotify_state: SpotifyState::default(),
             spotify_devices: Vec::new(),
+            spotify_devices_known: false,
             spotify_unavailable: None,
             spotify_polled_at: None,
             spotify_login: None,

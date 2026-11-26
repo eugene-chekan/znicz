@@ -41,6 +41,8 @@ pub struct SpotifyView {
     pub account: Option<SpotifyAccount>,
     /// The last device list from `SpotifyOp::Devices`.
     pub devices: Vec<SpotifyDevice>,
+    /// A device list has arrived for the current client ID.
+    pub devices_known: bool,
     /// The player does not answer Spotify requests: the reason.
     pub unavailable: Option<String>,
     /// The player refused the file's client ID as another one, so it keeps its own.

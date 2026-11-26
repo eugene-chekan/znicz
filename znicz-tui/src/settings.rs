@@ -10,6 +10,7 @@ use znicz_spotify::browser::OpenBrowser;
 use crate::folder_complete;
 use crate::spotify_rows::{self, SpotifyView};
 use crate::tui_config::{CoverProtocol, CoverSize, IconSet, LibraryLayout, TuiConfig};
+use znicz_core::SpotifyLogin;
 
 /// The Settings tabs, in the order the tab bar shows them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -577,11 +578,18 @@ pub fn hint_text(row: &Row, v: &Values) -> Option<&'static str> {
         }
         Row::Folder(_) => Some("d remove"),
         Row::AddFolder | Row::RescanAll => Some("↵"),
-        Row::PlaybackDevice
-            if v.spotify.configured
-                && !spotify_rows::device_online(&v.spotify, &v.spotify.device) =>
-        {
-            Some("offline")
+        // Offline is a claim about the player's device list, so it needs a
+        // login and a list that arrived. Logged out, nothing is known.
+        Row::PlaybackDevice if v.spotify.configured => {
+            if v.spotify.login != SpotifyLogin::LoggedIn {
+                Some("unknown while logged out")
+            } else if v.spotify.devices_known
+                && !spotify_rows::device_online(&v.spotify, &v.spotify.device)
+            {
+                Some("offline")
+            } else {
+                None
+            }
         }
         Row::ClientId if v.spotify.player_differs => Some(spotify_rows::PLAYER_DIFFERS_HINT),
         _ => None,
@@ -745,7 +753,7 @@ impl Default for SettingsValues {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use znicz_core::SpotifyLogin;
+    use znicz_core::{SpotifyDevice, SpotifyLogin};
 
     fn folder(name: &str) -> PathBuf {
         PathBuf::from(format!("/music/{name}"))
@@ -843,11 +851,55 @@ mod tests {
         let tui = TuiConfig::default();
         let mut v = values(&tui);
         v.spotify.configured = true;
+        v.spotify.login = SpotifyLogin::LoggedIn;
         assert_eq!(value_text(&Row::PlaybackDevice, &v), "Active device");
         assert_eq!(hint_text(&Row::PlaybackDevice, &v), None);
         v.spotify.device = "Garage".into();
         assert_eq!(value_text(&Row::PlaybackDevice, &v), "Garage");
+        v.spotify.devices_known = true;
         assert_eq!(hint_text(&Row::PlaybackDevice, &v), Some("offline"));
+    }
+
+    #[test]
+    fn a_device_is_offline_only_when_logged_in_and_the_list_has_arrived() {
+        let tui = TuiConfig::default();
+        let mut v = values(&tui);
+        v.spotify.configured = true;
+        v.spotify.device = "Garage".into();
+        v.spotify.login = SpotifyLogin::LoggedIn;
+        // Logged in, but no device list yet: nothing is known to be offline.
+        assert_eq!(hint_text(&Row::PlaybackDevice, &v), None);
+        // The list arrived and does not name the device.
+        v.spotify.devices_known = true;
+        assert_eq!(hint_text(&Row::PlaybackDevice, &v), Some("offline"));
+        // The list names it.
+        v.spotify.devices = vec![SpotifyDevice {
+            id: "g".into(),
+            name: "Garage".into(),
+            kind: "Speaker".into(),
+            is_active: false,
+            volume_percent: None,
+        }];
+        assert_eq!(hint_text(&Row::PlaybackDevice, &v), None);
+    }
+
+    #[test]
+    fn a_device_is_never_offline_while_logged_out() {
+        let tui = TuiConfig::default();
+        let mut v = values(&tui);
+        v.spotify.configured = true;
+        v.spotify.device = "EugeniusThink".into();
+        v.spotify.login = SpotifyLogin::NotLoggedIn;
+        v.spotify.devices_known = true;
+        assert_eq!(
+            hint_text(&Row::PlaybackDevice, &v),
+            Some("unknown while logged out")
+        );
+        v.spotify.login = SpotifyLogin::Failed("expired".into());
+        assert_eq!(
+            hint_text(&Row::PlaybackDevice, &v),
+            Some("unknown while logged out")
+        );
     }
 
     #[test]
