@@ -58,7 +58,7 @@
 - Create: `znicz-core/src/spotify_host.rs`
 - Modify: `znicz-core/src/error.rs`, `znicz-core/src/lib.rs`
 
-- [ ] **Step 1: Add the error variant**
+- [x] **Step 1: Add the error variant**
 
 In `znicz-core/src/error.rs`, after the `Library(String)` variant, add:
 
@@ -68,7 +68,7 @@ In `znicz-core/src/error.rs`, after the `Library(String)` variant, add:
     Spotify(String),
 ```
 
-- [ ] **Step 2: Write `spotify_host.rs` with its tests**
+- [x] **Step 2: Write `spotify_host.rs` with its tests**
 
 Create `znicz-core/src/spotify_host.rs`:
 
@@ -526,7 +526,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3: Export the module**
+- [x] **Step 3: Export the module**
 
 In `znicz-core/src/lib.rs`, add `pub mod spotify_host;` after `pub mod session;`, and after the `pub use session::{…};` block add:
 
@@ -538,12 +538,12 @@ pub use spotify_host::{
 };
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cargo test -p znicz-core spotify_host`
 Expected: 9 tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-core/src/spotify_host.rs znicz-core/src/error.rs znicz-core/src/lib.rs
