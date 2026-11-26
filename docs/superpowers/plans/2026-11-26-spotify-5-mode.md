@@ -98,11 +98,11 @@ Adds buffer tests that draw the current Stage and transport at fixed sizes, agai
 - Consumes: `stage::render(frame, area, app, state)` (`pub fn render` in `views/stage.rs`), `now_playing::render_transport(frame, area, app, state, show_signal)`, the fixtures `playing(bit_perfect)` and `stream()` already in `views/stage.rs` tests.
 - Produces: `pub(crate) fn test_app() -> App` in `app.rs` (test-only): `App::with_library(znicz_core::spawn_player(AudioConfig::default()).0, None)`. Used by Tasks 2, 3, 16, 17.
 
-- [ ] **Step 1: Add the test helper**
+- [x] **Step 1: Add the test helper**
 
 In `znicz-tui/src/app.rs`, beside the existing `mod tests`, add a `#[cfg(test)] pub(crate) fn test_app() -> App` that does what `test_player()` in `mod tests` does (`znicz_core::spawn_player(znicz_core::AudioConfig::default())`), then `App::with_library(player, None)`. Keep `test_player` as it is.
 
-- [ ] **Step 2: Write the golden tests for the Stage**
+- [x] **Step 2: Write the golden tests for the Stage**
 
 In `views/stage.rs` tests, add a helper that draws the Stage and returns the rows as strings:
 
@@ -145,7 +145,7 @@ The golden is produced by the code as it is now. Procedure:
 
 Expected: all six pass on the untouched code.
 
-- [ ] **Step 3: Write the golden tests for the transport**
+- [x] **Step 3: Write the golden tests for the transport**
 
 In `views/now_playing.rs` tests add `transport_rows(state, width, height, show_signal)` using `render_transport`, and these goldens, using the same fixtures (copy `playing` and `stream` from `views/stage.rs` as `pub(crate) fn` in the stage tests if needed, or rebuild them in this module; do not duplicate more than these two):
 
@@ -159,12 +159,12 @@ The message row needs a fixed message state: the `app.toasts` is empty in `test_
 
 Procedure as in Step 2.
 
-- [ ] **Step 4: Run the goldens**
+- [x] **Step 4: Run the goldens**
 
 Run: `cargo test -p znicz-tui -- golden_`
 Expected: 12 passed. Also run `cargo test -p znicz-tui` and expect no other failures.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/app.rs znicz-tui/src/views/stage.rs znicz-tui/src/views/now_playing.rs
