@@ -657,7 +657,7 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 **Files:**
 - Modify: `znicz-core/src/player/ipc.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 At the end of `mod tests` in `znicz-core/src/player/ipc.rs` (after the Task 2 tests), add:
 
@@ -710,12 +710,12 @@ At the end of `mod tests` in `znicz-core/src/player/ipc.rs` (after the Task 2 te
     }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz-core ipc -q`
 Expected: FAIL to compile: `SpotifyHost` is not implemented for `IpcClient`.
 
-- [ ] **Step 3: Add the client impl**
+- [x] **Step 3: Add the client impl**
 
 In `znicz-core/src/player/ipc.rs`, directly after the `impl LibraryHost for IpcClient { … }` block, add:
 
@@ -761,12 +761,12 @@ impl crate::spotify_host::SpotifyHost for IpcClient {
 
 The client's read timeout is 30 s and a Spotify call can take about 40 s. A change op that times out is reconnected and resent with the same id; the server answers the resend from its record once the first attempt ends (tested in Task 2).
 
-- [ ] **Step 4: Run the core tests**
+- [x] **Step 4: Run the core tests**
 
 Run: `cargo test -p znicz-core -q`
 Expected: PASS, including the two new tests and the existing `library_ops_reach_the_host_and_status_comes_back` (the Library calls are unqualified and `SpotifyHost` is not in scope in this module, so they stay unambiguous).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-core/src/player/ipc.rs
