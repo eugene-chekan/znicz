@@ -326,7 +326,8 @@ time applies to the next crossfade, not one that is running. See
 crossfade cover.
 
 Each change applies at once and is saved to `config.toml` in place, so comments
-and other keys stay. The strip above the bottom border explains the highlighted
+and other keys stay. A changed value keeps the comment on its line, and a removed
+key keeps the comment lines above it (they often hold examples of other keys). The strip above the bottom border explains the highlighted
 row in two lines; the border shows the config file's path. Bit-perfect is read
 when the player starts, so after a change the row says `on restart`. A cover
 protocol that needs the terminal's answer also says `on restart` after a change
