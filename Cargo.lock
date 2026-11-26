@@ -4688,6 +4688,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "znicz-spotify"
+version = "0.19.0"
+dependencies = [
+ "base64 0.22.1",
+ "dirs",
+ "getrandom 0.3.4",
+ "percent-encoding",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tracing",
+ "ureq",
+ "znicz-core",
+]
+
+[[package]]
 name = "znicz-tui"
 version = "0.19.0"
 dependencies = [
