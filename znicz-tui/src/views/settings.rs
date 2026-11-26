@@ -215,6 +215,12 @@ fn strip_explanation(app: &App, values: &Values) -> String {
     }
     match app.settings_rows.get(app.settings_cursor) {
         Some(row) if settings::dimmed(row, values) => spotify_rows::CLIENT_FIRST.into(),
+        Some(row)
+            if values.spotify.player_differs
+                && matches!(row, Row::RedirectPort | Row::PlaybackDevice) =>
+        {
+            spotify_rows::NOT_APPLIED.into()
+        }
         Some(row) => row.explanation().into(),
         None => String::new(),
     }

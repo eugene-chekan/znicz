@@ -11,7 +11,7 @@ use znicz_core::{
 
 use super::{App, Modal};
 use crate::line_edit::LineEdit;
-use crate::settings::{Row, Tab};
+use crate::settings::Tab;
 use crate::spotify_rows::{self, LoginOutcome, SpotifyView};
 use crate::spotify_worker::{Done, SpotifyAsk};
 
@@ -70,6 +70,7 @@ impl App {
             account: self.spotify_state.account.clone(),
             devices: self.spotify_devices.clone(),
             unavailable: self.spotify_unavailable.clone(),
+            player_differs: self.spotify_player_differs,
         }
     }
 
@@ -207,6 +208,18 @@ impl App {
             // The panel closes when the status shows the login finished.
             (SpotifyAsk::CompleteLogin, Ok(_)) | (SpotifyAsk::CancelLogin, _) => {}
             (SpotifyAsk::Logout, Ok(_)) => self.toasts.success("Logged out of Spotify"),
+            // The player took the file's settings, so it has the file's client ID.
+            (SpotifyAsk::Configure, Ok(_)) => self.spotify_player_differs = false,
+            (
+                SpotifyAsk::Configure,
+                Err(ZniczError::Spotify {
+                    kind: SpotifyErrorKind::ClientIdDiffers,
+                    ..
+                }),
+            ) => {
+                self.spotify_player_differs = true;
+                self.toasts.error(spotify_rows::PLAYER_DIFFERS_TOAST);
+            }
             // A list for a client ID that was changed while it was pending is stale.
             (SpotifyAsk::Devices, Ok(SpotifyReply::Devices { devices }))
                 if self.spotify.client_id == self.spotify_devices_client_id =>
@@ -245,9 +258,7 @@ impl App {
             Some(SpotifyConfirm::Logout) => {
                 self.ask_spotify(SpotifyAsk::Logout, SpotifyOp::Logout);
             }
-            Some(SpotifyConfirm::ClientId(id)) => {
-                self.change_saved(&Row::ClientId, true, |app| app.set_client_id(id));
-            }
+            Some(SpotifyConfirm::ClientId(id)) => self.replace_client_id(id),
             None => {}
         }
     }
@@ -370,11 +381,22 @@ pub(crate) mod tests {
         pub status_error: Mutex<Option<ZniczError>>,
         pub ops: Mutex<Vec<SpotifyOp>>,
         pub reply: Mutex<Option<SpotifyReply>>,
+        /// When set, every `Configure` is refused with this kind.
+        pub configure_refusal: Mutex<Option<SpotifyErrorKind>>,
     }
 
     impl SpotifyHost for FakeHost {
         fn apply(&self, op: SpotifyOp) -> znicz_core::Result<SpotifyReply> {
+            let is_configure = matches!(op, SpotifyOp::Configure { .. });
             self.ops.lock().unwrap().push(op);
+            if is_configure {
+                if let Some(kind) = *self.configure_refusal.lock().unwrap() {
+                    return Err(ZniczError::Spotify {
+                        kind,
+                        message: "the player uses a different Spotify client ID".into(),
+                    });
+                }
+            }
             Ok(self
                 .reply
                 .lock()

@@ -437,6 +437,9 @@ pub struct App {
     pub(crate) spotify_login: Option<LoginPanel>,
     /// A question in the Settings strip that waits for Enter.
     pub(crate) spotify_confirm: Option<SpotifyConfirm>,
+    /// The player refused the file's client ID as another one and keeps its
+    /// own. Set by that refusal; cleared by any successful `Configure`.
+    pub(crate) spotify_player_differs: bool,
     /// A `BeginLogin` is with the worker; its reply (or error) clears this.
     pub(crate) spotify_login_requested: bool,
     /// A `Devices` request is with the worker; its reply (or error) clears this.
@@ -812,6 +815,7 @@ impl App {
             spotify_polled_at: None,
             spotify_login: None,
             spotify_confirm: None,
+            spotify_player_differs: false,
             spotify_login_requested: false,
             spotify_devices_requested: false,
             spotify_devices_client_id: String::new(),

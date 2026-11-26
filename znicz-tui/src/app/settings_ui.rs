@@ -540,6 +540,10 @@ impl App {
         }
         self.settings_prompt = None;
         if text == self.spotify.client_id {
+            // The same ID again asks to switch when the player keeps another one.
+            if self.spotify_player_differs {
+                self.spotify_confirm = Some(SpotifyConfirm::ClientId(text));
+            }
             return;
         }
         // A set ID asks first, whatever the login state: the player logs out
@@ -554,6 +558,16 @@ impl App {
             return;
         }
         self.change_with(&Row::ClientId, |app| app.set_client_id(text));
+    }
+
+    /// The confirmed client ID. It is saved and sent with the replace flag even
+    /// when it is the ID the screen already shows: the player may still keep
+    /// another one, and only the flag lets it switch.
+    pub(super) fn replace_client_id(&mut self, id: String) {
+        let before = self.settings_snapshot();
+        self.set_client_id(id);
+        self.after_setting_changed(&Row::ClientId);
+        self.save_setting(&Row::ClientId, before, true);
     }
 
     /// Set the client ID. Returns whether it changed.
@@ -2783,6 +2797,122 @@ pub(crate) mod tests {
                     if config.client_id == NEW_ID
             )),
             "{sent:?}"
+        );
+    }
+
+    /// Refuse the player's `Configure`s as a different client ID, or accept them.
+    fn refuse_configures(host: &crate::app::spotify_ui::tests::FakeHost, refuse: bool) {
+        *host.configure_refusal.lock().unwrap() =
+            refuse.then_some(znicz_core::SpotifyErrorKind::ClientIdDiffers);
+    }
+
+    /// Type `port` into the redirect port prompt and submit it.
+    fn change_port(app: &mut App, port: &str) {
+        select(app, Row::RedirectPort);
+        press(app, KeyCode::Enter);
+        for _ in 0..app.spotify.redirect_port.to_string().len() {
+            press(app, KeyCode::Backspace);
+        }
+        type_text(app, port);
+        press(app, KeyCode::Enter);
+    }
+
+    /// Poll the Spotify worker until `done` holds, as the UI tick does.
+    fn wait_for_player(app: &mut App, done: impl Fn(&App) -> bool) {
+        for _ in 0..500 {
+            app.poll_spotify();
+            if done(app) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("the player never answered the way the test needs");
+    }
+
+    /// A Settings tab with the file holding `ID`, and a port change the player
+    /// refuses as another client ID.
+    fn app_whose_player_refused_the_port(
+        dir: &tempfile::TempDir,
+        host: Arc<crate::app::spotify_ui::tests::FakeHost>,
+    ) -> App {
+        std::fs::write(
+            dir.path().join("config.toml"),
+            format!("[spotify]\nclient_id = \"{ID}\"\n"),
+        )
+        .unwrap();
+        refuse_configures(&host, true);
+        let mut app = spotify_app(dir, host);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        change_port(&mut app, "8899");
+        wait_for_player(&mut app, |app| app.spotify_player_differs);
+        app
+    }
+
+    #[test]
+    fn a_refused_configure_says_the_player_uses_another_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = app_whose_player_refused_the_port(&dir, host);
+        assert!(toast_texts(&app).contains(&spotify_rows::PLAYER_DIFFERS_TOAST.to_string()));
+        assert!(
+            screen_rows(&mut app)
+                .iter()
+                .any(|row| row.contains(spotify_rows::PLAYER_DIFFERS_HINT)),
+            "the Client ID row shows the hint"
+        );
+    }
+
+    #[test]
+    fn the_same_id_again_asks_and_confirming_sends_the_replace_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = app_whose_player_refused_the_port(&dir, host.clone());
+        select(&mut app, Row::ClientId);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            app.spotify_confirm,
+            Some(SpotifyConfirm::ClientId(ID.into()))
+        );
+        refuse_configures(&host, false);
+        press(&mut app, KeyCode::Enter);
+        let sent = sent_ops(&host);
+        assert!(
+            sent.iter().any(|op| matches!(
+                op,
+                SpotifyOp::Configure { config, replace_client_id: true }
+                    if config.client_id == ID
+            )),
+            "{sent:?}"
+        );
+    }
+
+    #[test]
+    fn a_successful_configure_clears_the_hint() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = app_whose_player_refused_the_port(&dir, host.clone());
+        refuse_configures(&host, false);
+        change_port(&mut app, "8900");
+        wait_for_player(&mut app, |app| !app.spotify_player_differs);
+        assert!(
+            !screen_rows(&mut app)
+                .iter()
+                .any(|row| row.contains(spotify_rows::PLAYER_DIFFERS_HINT))
+        );
+    }
+
+    #[test]
+    fn the_strip_says_the_redirect_port_and_device_are_not_applied() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = app_whose_player_refused_the_port(&dir, host);
+        select(&mut app, Row::RedirectPort);
+        assert!(
+            screen_rows(&mut app)
+                .iter()
+                .any(|row| row.contains(spotify_rows::NOT_APPLIED))
         );
     }
 

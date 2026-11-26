@@ -377,11 +377,25 @@ and ends with `(switch tab to retry)`.
 **Client ID.** Setting the first ID saves at once, when neither the screen nor
 `config.toml` has one. Changing or clearing an ID that is already set always
 asks first in the strip: `Changing the client ID logs you out of Spotify.
-Enter confirms · Esc cancels.` The player deletes the login when the ID
-changes, so the question is never skipped. Only this confirmed change tells the
-player it may replace the ID (`Configure` carries `replace_client_id`), and the
-player refuses any other change to a set ID. The one other way to replace it is
-`znicz spotify login`, which the user runs on purpose.
+Enter confirms · Esc cancels.` Only this confirmed change tells the player it
+may replace the ID (`Configure` carries `replace_client_id`), and the player
+deletes the token only then. The player refuses any other change to a set ID
+with `ClientIdDiffers`. The one other way to replace it is `znicz spotify
+login`, which asks first (see [Spotify](Spotify.md)).
+
+**Another ID in the player.** When the player refuses the file's ID that way,
+the TUI keeps the file's value on screen and shows the mismatch:
+
+- the Client ID row's hint says `player uses another ID` (dim, like `offline`);
+- a toast says `The player uses another Spotify client ID. Enter it again under
+  Client ID to switch (this logs out).`;
+- the Redirect port and Playback device rows add the strip line `Not applied:
+  the player uses another client ID.` in place of their explanation, because
+  the player keeps its old port and device.
+
+Entering the same ID again in the Client ID prompt asks in the strip, as a
+change does, and confirming sends `replace_client_id`. Any successful
+`Configure` clears the mismatch.
 
 **Saving.** A row the player needs (Client ID, Redirect port and Playback
 device) is written to `[spotify]` in `config.toml` in place. Then the TUI reads

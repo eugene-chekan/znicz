@@ -583,6 +583,7 @@ pub fn hint_text(row: &Row, v: &Values) -> Option<&'static str> {
         {
             Some("offline")
         }
+        Row::ClientId if v.spotify.player_differs => Some(spotify_rows::PLAYER_DIFFERS_HINT),
         _ => None,
     }
 }

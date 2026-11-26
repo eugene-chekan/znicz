@@ -74,11 +74,12 @@ znicz spotify status   # login, user, Premium, device, what is playing, last err
 
 `login` sends the current `[spotify]` settings to the player first, so a client
 ID added after the player started takes effect without a restart; `status` and
-`logout` never change the settings. Changing `client_id` logs you out, because
-the old token cannot be refreshed with another app. The player refuses such a
-change unless it is confirmed: `login` and the TUI's confirmed Client ID change
-send `replace_client_id`, every other `Configure` is refused while the player has
-a different ID, and a refused `Configure` changes nothing (not the port, not the
+`logout` never change the settings. Changing `client_id` logs you out once the
+change is confirmed, because the old token cannot be refreshed with another
+app. The player refuses such a change unless it is confirmed: `login` (after
+its question) and the TUI's confirmed Client ID change send
+`replace_client_id`; every other `Configure` is refused while the player has a
+different ID, and a refused `Configure` changes nothing (not the port, not the
 device). `login` refuses to run while
 `config.toml` has an error, and it says so if you are already logged in. Each
 command starts the player if it is not running.
@@ -179,8 +180,28 @@ The token file is `spotify_token.json` in the data folder
 (`~/.local/share/znicz` on Linux, `%APPDATA%\znicz` on Windows), unless
 `ZNICZ_SPOTIFY_TOKEN_PATH` is set.
 
-The `state` in the address must match the session. A different client ID
-logs out, because the old token cannot be refreshed with it.
+The `state` in the address must match the session.
+
+**Which token is kept.** A token belongs to the client ID it was issued for,
+and the token file records that ID. A token saved before the ID was recorded
+has none and matches any ID. The token file is deleted only by:
+
+- `znicz spotify logout`, or the TUI's Logout;
+- a confirmed client-ID replacement (`Configure` with `replace_client_id`);
+- a refresh that Spotify reports as revoked.
+
+A configuration change on its own never deletes it. A token for another ID
+stays on disk, the app is not logged in with it, and switching back to that ID
+logs in again. The player does not log in with another ID's token either.
+
+**The CLI asks.** `znicz spotify login` first sends `Configure` without
+replacing. When the player refuses a different ID (`client_id_differs`), it asks
+`The player uses a different Spotify client ID. Replace it with the one in
+config.toml and log out? [y/N]`. Only `y` or `yes` (any case) sends
+`replace_client_id`; anything else prints `Not changed.` and exits 1.
+
+**The TUI shows it.** A refused ID is shown on the Settings Spotify tab as a
+mismatch, not as a generic error; see [TUI: Spotify](TUI.md#spotify).
 
 ### Logging in from the TUI
 
@@ -210,6 +231,7 @@ A transfer waits up to about 5 s for the device to take over, and otherwise repo
 | No client ID | `Spotify is not configured: set a client ID in Settings → Spotify` |
 | Refused client ID / redirect URI | names the exact URI to register |
 | Revoked refresh token, at any point | `Spotify login expired`; you are logged out and the token file is deleted |
+| Different client ID, not confirmed | `the player uses a different Spotify client ID` (kind `client_id_differs`); nothing changes |
 | 403 on playback | `needs Spotify Premium` |
 | No active device | retries on the preferred device if set and online, else `Spotify has no active device: …` |
 

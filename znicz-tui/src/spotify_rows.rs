@@ -18,6 +18,12 @@ pub const CLIENT_ID_QUESTION: &str =
     "Changing the client ID logs you out of Spotify. Enter confirms · Esc cancels";
 /// Shown under the paste prompt when Spotify rejects the pasted address.
 pub const WRONG_ADDRESS: &str = "that address is not from this login";
+/// The Client ID row's hint while the player keeps another client ID.
+pub const PLAYER_DIFFERS_HINT: &str = "player uses another ID";
+/// The toast when the player refuses the saved client ID as another one.
+pub const PLAYER_DIFFERS_TOAST: &str = "The player uses another Spotify client ID. Enter it again under Client ID to switch (this logs out).";
+/// The strip's text on the rows the player does not apply while it keeps another ID.
+pub const NOT_APPLIED: &str = "Not applied: the player uses another client ID.";
 
 /// What the Spotify rows show, copied from the App each frame.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -37,6 +43,8 @@ pub struct SpotifyView {
     pub devices: Vec<SpotifyDevice>,
     /// The player does not answer Spotify requests: the reason.
     pub unavailable: Option<String>,
+    /// The player refused the file's client ID as another one, so it keeps its own.
+    pub player_differs: bool,
 }
 
 /// The account row's text.
