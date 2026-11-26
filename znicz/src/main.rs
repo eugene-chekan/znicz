@@ -9,12 +9,13 @@ use serde::Deserialize;
 use znicz_core::wait_for_library;
 use znicz_core::{
     AudioConfig, AudioOutput, ClientRole, Command, FadeTimes, IpcClient, IpcServer, LibraryHost,
-    LibraryOp, SESSION_SAVE_DEBOUNCE, ScanSummary, apply_to_player, copy_saved, list_saved,
-    load_path, remove_saved, rename_saved, restore_session, save_session_from_player, saved_path,
-    skipped_notice, spawn_player,
+    LibraryOp, SESSION_SAVE_DEBOUNCE, ScanSummary, SpotifyConfig, apply_to_player, copy_saved,
+    list_saved, load_path, remove_saved, rename_saved, restore_session, save_session_from_player,
+    saved_path, skipped_notice, spawn_player,
 };
 use znicz_library::Library;
 use znicz_mcp::run_stdio;
+use znicz_spotify::browser::OpenBrowser;
 use znicz_tui::app::Engine;
 use znicz_tui::{
     App, ConfigFile, ConfigProblem, CoverSize, Resume, RunOutcome, SettingsValues, TuiConfig,
@@ -22,8 +23,6 @@ use znicz_tui::{
 };
 
 mod daemon;
-// Nothing calls this module until the player wires it in (a later task).
-#[allow(dead_code)]
 mod spotify_pause;
 mod update;
 
@@ -205,6 +204,53 @@ struct Config {
     tui: TuiSection,
     covers: CoversSection,
     updates: UpdatesSection,
+    spotify: SpotifySection,
+}
+
+/// `[spotify]`: the player's Spotify service, and how front ends open a browser.
+#[derive(Debug, Deserialize, Default)]
+struct SpotifySection {
+    /// The Spotify app's client ID: 32 hex characters. Unset: not configured.
+    client_id: Option<String>,
+    /// The login listener's port on 127.0.0.1. Default 8898.
+    redirect_port: Option<u16>,
+    /// The device used when nothing is active. Unset: none.
+    device: Option<String>,
+    /// `auto`, `always` or `never`. Read by front ends only.
+    // Read by the `spotify` CLI, which lands in the next task.
+    #[allow(dead_code)]
+    open_browser: Option<String>,
+}
+
+/// The core config the player is given. `open_browser` is not part of it.
+fn spotify_config(section: &SpotifySection) -> SpotifyConfig {
+    SpotifyConfig {
+        client_id: section
+            .client_id
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
+        redirect_port: section.redirect_port.unwrap_or(SpotifyConfig::DEFAULT_PORT),
+        device: section.device.clone().unwrap_or_default(),
+    }
+}
+
+/// The browser setting. An unknown value logs a warning and means `auto`; it
+/// does not discard the rest of the config.
+// Used by the `spotify` CLI, which lands in the next task.
+#[allow(dead_code)]
+fn open_browser_setting(section: &SpotifySection) -> OpenBrowser {
+    match section.open_browser.as_deref() {
+        None => OpenBrowser::default(),
+        Some(text) => OpenBrowser::parse(text).unwrap_or_else(|| {
+            tracing::warn!(
+                value = text,
+                "[spotify] open_browser: use auto, always or never"
+            );
+            OpenBrowser::default()
+        }),
+    }
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -381,6 +427,7 @@ fn main() -> color_eyre::Result<()> {
                 audio_config,
                 config.player.idle_secs.unwrap_or(900),
                 library_path.clone(),
+                spotify_config(&config.spotify),
             )?,
         },
         Some(Commands::Scan { dirs, prune }) => {
@@ -738,6 +785,7 @@ fn run_player_daemon(
     audio_config: AudioConfig,
     idle_secs: u64,
     library_path: Option<PathBuf>,
+    spotify: SpotifyConfig,
 ) -> color_eyre::Result<()> {
     let ipc = ipc_path()?;
     let lock_path = player_lock_path()?;
@@ -767,6 +815,11 @@ fn run_player_daemon(
                 None
             }
         });
+    // Always built: with no client ID it answers as `NotConfigured`.
+    let spotify_service = spotify_pause::start_service(spotify, &player);
+    let spotify_host: Option<Arc<dyn znicz_core::SpotifyHost>> = spotify_service
+        .clone()
+        .map(|service| -> Arc<dyn znicz_core::SpotifyHost> { service });
     let mut server = IpcServer::start_with_session_and_library(
         player.clone(),
         ipc,
@@ -774,9 +827,16 @@ fn run_player_daemon(
         session_path()?,
         SESSION_SAVE_DEBOUNCE,
         library,
-        None,
+        spotify_host,
     )
     .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
+    if let Some(service) = spotify_service {
+        if let Err(e) =
+            spotify_pause::spawn_pause_watcher(player.clone(), service, server.stop_flag())
+        {
+            tracing::warn!("Spotify pause watcher: {e}");
+        }
+    }
     install_player_signals(server.stop_flag());
     server.wait();
     if let Err(e) = save_session_from_player(&player, &session_path()?) {
@@ -1603,5 +1663,37 @@ mod tests {
             "mine\n"
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), DEFAULT_CONFIG);
+    }
+
+    #[test]
+    fn spotify_section_maps_to_the_core_config() {
+        let config = parse_config_text(
+            "[spotify]\nclient_id = \"0123456789abcdef0123456789abcdef\"\nredirect_port = 9001\ndevice = \"Kitchen\"\nopen_browser = \"never\"\n",
+        )
+        .expect("parses");
+        assert_eq!(
+            spotify_config(&config.spotify),
+            SpotifyConfig {
+                client_id: "0123456789abcdef0123456789abcdef".into(),
+                redirect_port: 9001,
+                device: "Kitchen".into(),
+            }
+        );
+        assert_eq!(open_browser_setting(&config.spotify), OpenBrowser::Never);
+    }
+
+    #[test]
+    fn a_bad_open_browser_falls_back_to_auto_without_losing_the_config() {
+        let config =
+            parse_config_text("[spotify]\nopen_browser = \"sometimes\"\n").expect("parses");
+        assert_eq!(open_browser_setting(&config.spotify), OpenBrowser::Auto);
+        assert_eq!(spotify_config(&config.spotify), SpotifyConfig::default());
+    }
+
+    #[test]
+    fn the_default_config_maps_to_an_unconfigured_service() {
+        let config = parse_config_text(DEFAULT_CONFIG).expect("default config parses");
+        assert_eq!(spotify_config(&config.spotify), SpotifyConfig::default());
+        assert!(!spotify_config(&config.spotify).is_configured());
     }
 }
