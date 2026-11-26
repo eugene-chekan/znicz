@@ -7,11 +7,14 @@ use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui_image::picker::ProtocolType;
-use znicz_core::{Command, FadeTimes, LibraryOp};
+use znicz_core::{Command, FadeTimes, LibraryOp, SpotifyConfig, SpotifyOp};
+use znicz_spotify::browser::OpenBrowser;
 
 use super::{App, DevicesMode, Modal};
 use crate::line_edit::LineEdit;
 use crate::settings::{self, Kind, Row, Tab};
+use crate::spotify_rows;
+use crate::spotify_worker::SpotifyAsk;
 use crate::tui_config::{CoverProtocol, TuiConfig};
 
 /// How a key changes a Settings row.
@@ -44,6 +47,8 @@ struct SettingsSnapshot {
     default_device: Option<String>,
     protocol: Option<ProtocolType>,
     fades: FadeTimes,
+    spotify: SpotifyConfig,
+    open_browser: OpenBrowser,
 }
 
 /// A slider row's typed value, being entered in the Settings strip.
@@ -164,6 +169,7 @@ impl App {
                 Row::DefaultDevice => self.open_default_device_picker(),
                 Row::AddFolder => self.open_folder_prompt_from_settings(),
                 Row::RescanAll => self.rescan_folders(),
+                Row::RedirectPort => self.open_text_prompt(&row),
                 _ if settings::slider(&row).is_some() => self.open_slider_prompt(&row),
                 _ => self.change_setting(&row, Change::Activate),
             },
@@ -337,7 +343,7 @@ impl App {
     /// Run `apply` on the in-memory value of `row`. When it reports a change, do
     /// what the row needs and save it, so a step and a typed value share one path.
     /// A save that fails puts the previous values back.
-    fn change_with(&mut self, row: &Row, apply: impl FnOnce(&mut Self) -> bool) {
+    pub(super) fn change_with(&mut self, row: &Row, apply: impl FnOnce(&mut Self) -> bool) {
         let before = self.settings_snapshot();
         if !apply(self) {
             return;
@@ -380,6 +386,13 @@ impl App {
     /// Enter in the slider prompt. A value in range closes the prompt and is
     /// saved like a step; anything else keeps the prompt open with the range.
     fn submit_slider_prompt(&mut self) {
+        if self
+            .settings_prompt
+            .as_ref()
+            .is_some_and(|p| p.row == Row::RedirectPort)
+        {
+            return self.submit_port_prompt();
+        }
         let Some(prompt) = self.settings_prompt.as_mut() else {
             return;
         };
@@ -407,6 +420,72 @@ impl App {
         changed
     }
 
+    /// Step the Playback device choice through the active device, the listed
+    /// devices and the configured one. Without a client ID the row does nothing.
+    fn step_playback_device(&mut self, forward: bool, wrap: bool) -> bool {
+        if !self.spotify.is_configured() {
+            return false;
+        }
+        let view = self.spotify_view();
+        let choices = spotify_rows::device_choices(&view);
+        let new = settings::step(&choices, &self.spotify.device, forward, wrap);
+        let changed = new != self.spotify.device;
+        self.spotify.device = new;
+        changed
+    }
+
+    /// Set the redirect port. Returns whether it changed.
+    fn set_redirect_port(&mut self, port: u16) -> bool {
+        let changed = self.spotify.redirect_port != port;
+        self.spotify.redirect_port = port;
+        changed
+    }
+
+    /// Enter on the client ID or redirect port: a prompt with the current value.
+    fn open_text_prompt(&mut self, row: &Row) {
+        let text = match row {
+            Row::ClientId => self.spotify.client_id.clone(),
+            Row::RedirectPort => self.spotify.redirect_port.to_string(),
+            _ => return,
+        };
+        self.settings_prompt = Some(SliderPrompt {
+            row: row.clone(),
+            text: LineEdit::from_text(text),
+            error: None,
+        });
+    }
+
+    /// Enter in the port prompt: a number in range saves; anything else keeps the prompt open.
+    fn submit_port_prompt(&mut self) {
+        let Some(prompt) = self.settings_prompt.as_mut() else {
+            return;
+        };
+        match spotify_rows::parse_port(prompt.text.as_str()) {
+            Err(range) => prompt.error = Some(range),
+            Ok(port) => {
+                self.settings_prompt = None;
+                self.change_with(&Row::RedirectPort, |app| app.set_redirect_port(port));
+            }
+        }
+    }
+
+    /// Send the player its copy of `[spotify]` after a player-side row saved.
+    /// Called only from `save_setting`, after the file was written. An empty
+    /// client ID in that copy logs the user out and deletes the token, so the
+    /// copy is never sent while the config has a problem, even if a caller
+    /// forgets the order.
+    fn send_spotify_config(&self, row: &Row) {
+        if self.config_problem.is_some() || !spotify_rows::sent_to_player(row) {
+            return;
+        }
+        self.ask_spotify(
+            SpotifyAsk::Configure,
+            SpotifyOp::Configure {
+                config: self.spotify.clone(),
+            },
+        );
+    }
+
     /// Change the value in memory. Returns whether it changed.
     fn apply_setting(&mut self, row: &Row, change: Change) -> bool {
         match row.kind() {
@@ -429,6 +508,20 @@ impl App {
                     Change::Forward => (true, false),
                     Change::Back => (false, false),
                 };
+                if *row == Row::OpenBrowser {
+                    let new = settings::step(
+                        &spotify_rows::OPEN_BROWSERS,
+                        &self.open_browser,
+                        forward,
+                        wrap,
+                    );
+                    let changed = new != self.open_browser;
+                    self.open_browser = new;
+                    return changed;
+                }
+                if *row == Row::PlaybackDevice {
+                    return self.step_playback_device(forward, wrap);
+                }
                 if *row == Row::CoverProtocol {
                     let choices = settings::protocol_choices(self.protocol_support);
                     settings::step_protocol(&mut self.tui, &choices, forward, wrap)
@@ -543,6 +636,12 @@ impl App {
                 Some(id) => Stored::Text(id.clone()),
                 None => Stored::Remove,
             },
+            Row::ClientId if self.spotify.client_id.is_empty() => Stored::Remove,
+            Row::ClientId => Stored::Text(self.spotify.client_id.clone()),
+            Row::RedirectPort => Stored::Int(i64::from(self.spotify.redirect_port)),
+            Row::OpenBrowser => Stored::Str(spotify_rows::open_browser_name(self.open_browser)),
+            Row::PlaybackDevice if self.spotify.device.is_empty() => Stored::Remove,
+            Row::PlaybackDevice => Stored::Text(self.spotify.device.clone()),
             _ => return None,
         })
     }
@@ -553,7 +652,15 @@ impl App {
         let (Some((section, key)), Some(value)) = (row.config_key(), self.stored_value(row)) else {
             return;
         };
+        // A Spotify row that is not written goes back to its old value: the
+        // screen must not show a client ID or device the player does not have.
+        let spotify = row.tab() == Tab::Spotify;
         let Some(file) = self.config_file.clone() else {
+            if spotify {
+                self.restore_settings(before);
+                self.toasts.warn("Not saved: no config file path");
+                return;
+            }
             if !self.run_only_warned {
                 self.run_only_warned = true;
                 self.toasts
@@ -561,11 +668,17 @@ impl App {
             }
             return;
         };
-        if let Some(problem) = &self.config_problem {
-            let text = match problem.location() {
+        let problem_text = self
+            .config_problem
+            .as_ref()
+            .map(|problem| match problem.location() {
                 Some(place) => format!("Not saved: config.toml has an error ({place})"),
                 None => "Not saved: config.toml could not be read".to_string(),
-            };
+            });
+        if let Some(text) = problem_text {
+            if spotify {
+                self.restore_settings(before);
+            }
             self.toasts.warn(text);
             return;
         }
@@ -576,9 +689,13 @@ impl App {
             Stored::Text(v) => file.set_str(section, key, &v),
             Stored::Remove => file.remove(section, key),
         };
-        if let Err(e) = written {
-            self.restore_settings(before);
-            self.toasts.error(format!("Could not save settings: {e}"));
+        match written {
+            Err(e) => {
+                self.restore_settings(before);
+                self.toasts.error(format!("Could not save settings: {e}"));
+            }
+            // The only place Configure is sent: the file holds the change now.
+            Ok(()) => self.send_spotify_config(row),
         }
     }
 
@@ -590,6 +707,8 @@ impl App {
             default_device: self.default_device.clone(),
             protocol: self.picker.as_ref().map(|p| p.protocol_type()),
             fades: self.fades,
+            spotify: self.spotify.clone(),
+            open_browser: self.open_browser,
         }
     }
 
@@ -598,6 +717,8 @@ impl App {
         self.bit_perfect = before.bit_perfect;
         self.check_for_updates = before.update_check;
         self.default_device = before.default_device;
+        self.spotify = before.spotify;
+        self.open_browser = before.open_browser;
         if let (Some(picker), Some(protocol)) = (self.picker.as_mut(), before.protocol) {
             picker.set_protocol_type(protocol);
         }
@@ -636,6 +757,9 @@ pub(crate) mod tests {
     use super::*;
     use crate::config_file::{ConfigFile, ConfigProblem};
     use crate::library_pane::{EffectiveLayout, LibraryPane};
+    use crate::spotify_worker::SpotifyWorker;
+    use znicz_core::{SpotifyConfig, SpotifyDevice, SpotifyOp};
+    use znicz_spotify::browser::OpenBrowser;
 
     fn test_player() -> PlayerHandle {
         let (player, _thread) = znicz_core::spawn_player(znicz_core::AudioConfig::default());
@@ -1882,5 +2006,275 @@ pub(crate) mod tests {
         });
         assert_eq!(app.settings_cursor, before);
         assert!(app.settings_prompt.is_some());
+    }
+
+    // --- Spotify rows: saves, Configure ---
+
+    fn spotify_app(
+        dir: &tempfile::TempDir,
+        host: Arc<crate::app::spotify_ui::tests::FakeHost>,
+    ) -> App {
+        let mut app = settings_app(dir).with_settings_values(SettingsValues {
+            spotify: SpotifyConfig {
+                client_id: "0123456789abcdef0123456789abcdef".into(),
+                ..SpotifyConfig::default()
+            },
+            ..SettingsValues::default()
+        });
+        app.spotify_worker = Some(SpotifyWorker::spawn(host.clone()).unwrap());
+        app.spotify_main = Some(host);
+        app
+    }
+
+    fn sent_ops(host: &crate::app::spotify_ui::tests::FakeHost) -> Vec<SpotifyOp> {
+        // The worker is asynchronous: wait until it has been quiet for one
+        // sample (at least 50 ms, at most 2 s), then read what it was given.
+        let mut last = usize::MAX;
+        for _ in 0..80 {
+            std::thread::sleep(Duration::from_millis(25));
+            let now = host.ops.lock().unwrap().len();
+            if now == last {
+                break;
+            }
+            last = now;
+        }
+        host.ops.lock().unwrap().clone()
+    }
+
+    fn one_device(name: &str) -> Vec<SpotifyDevice> {
+        vec![SpotifyDevice {
+            id: "d1".into(),
+            name: name.into(),
+            kind: "Speaker".into(),
+            is_active: false,
+            volume_percent: None,
+        }]
+    }
+
+    #[test]
+    fn enter_steps_the_open_browser_setting_and_saves_it_without_sending_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = spotify_app(&dir, host.clone());
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::OpenBrowser);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            saved(&dir)["spotify"]["open_browser"].as_str(),
+            Some("always")
+        );
+        assert!(
+            sent_ops(&host)
+                .iter()
+                .all(|op| !matches!(op, SpotifyOp::Configure { .. }))
+        );
+    }
+
+    #[test]
+    fn stepping_the_device_saves_it_and_sends_configure() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = spotify_app(&dir, host.clone());
+        app.spotify_devices = one_device("Kitchen");
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::PlaybackDevice);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(saved(&dir)["spotify"]["device"].as_str(), Some("Kitchen"));
+        let ops = sent_ops(&host);
+        assert!(ops.iter().any(|op| matches!(
+            op,
+            SpotifyOp::Configure { config } if config.device == "Kitchen"
+        )));
+    }
+
+    #[test]
+    fn choosing_the_active_device_removes_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("config.toml"),
+            "[spotify]\ndevice = \"Kitchen\"\n",
+        )
+        .unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = settings_app(&dir).with_settings_values(SettingsValues {
+            spotify: SpotifyConfig {
+                client_id: "0123456789abcdef0123456789abcdef".into(),
+                device: "Kitchen".into(),
+                ..SpotifyConfig::default()
+            },
+            ..SettingsValues::default()
+        });
+        app.spotify_worker = Some(SpotifyWorker::spawn(host.clone()).unwrap());
+        app.spotify_devices = one_device("Kitchen");
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::PlaybackDevice);
+        press(&mut app, KeyCode::Left);
+        assert!(saved(&dir)["spotify"].get("device").is_none());
+        assert!(app.spotify.device.is_empty());
+    }
+
+    #[test]
+    fn a_port_typed_in_the_prompt_is_saved_and_sent() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = spotify_app(&dir, host.clone());
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::RedirectPort);
+        press(&mut app, KeyCode::Enter);
+        // Replace the default 8898 with 9001.
+        for _ in 0..4 {
+            press(&mut app, KeyCode::Backspace);
+        }
+        type_text(&mut app, "9001");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            saved(&dir)["spotify"]["redirect_port"].as_integer(),
+            Some(9001)
+        );
+        assert!(sent_ops(&host).iter().any(|op| matches!(
+            op,
+            SpotifyOp::Configure { config } if config.redirect_port == 9001
+        )));
+    }
+
+    #[test]
+    fn a_port_out_of_range_keeps_the_prompt_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = spotify_app(&dir, host);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::RedirectPort);
+        press(&mut app, KeyCode::Enter);
+        for _ in 0..4 {
+            press(&mut app, KeyCode::Backspace);
+        }
+        type_text(&mut app, "80");
+        press(&mut app, KeyCode::Enter);
+        let prompt = app.settings_prompt.as_ref().expect("still open");
+        assert_eq!(prompt.error.as_deref(), Some("1024–65535"));
+        assert!(!dir.path().join("config.toml").exists());
+    }
+
+    #[test]
+    fn a_broken_config_is_not_written_and_not_sent_and_the_row_goes_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[spotify\nclient_id = 1\n").unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = settings_app(&dir)
+            .with_config_file(ConfigFile::new(&path))
+            .with_config_problem(ConfigProblem::Parse {
+                message: "bad".into(),
+                line: 1,
+                column: 1,
+            })
+            .with_settings_values(SettingsValues {
+                spotify: SpotifyConfig {
+                    client_id: "0123456789abcdef0123456789abcdef".into(),
+                    ..SpotifyConfig::default()
+                },
+                ..SettingsValues::default()
+            });
+        app.spotify_worker = Some(SpotifyWorker::spawn(host.clone()).unwrap());
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::OpenBrowser);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.open_browser, OpenBrowser::Auto);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "[spotify\nclient_id = 1\n"
+        );
+        assert!(
+            !sent_ops(&host)
+                .iter()
+                .any(|op| matches!(op, SpotifyOp::Configure { .. }))
+        );
+        assert!(toast_texts(&app).iter().any(|t| t.starts_with("Not saved")));
+    }
+
+    #[test]
+    fn a_broken_config_restores_a_port_and_sends_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[spotify\nclient_id = 1\n").unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = settings_app(&dir)
+            .with_config_file(ConfigFile::new(&path))
+            .with_config_problem(ConfigProblem::Parse {
+                message: "bad".into(),
+                line: 1,
+                column: 1,
+            });
+        app.spotify_worker = Some(SpotifyWorker::spawn(host.clone()).unwrap());
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::RedirectPort);
+        press(&mut app, KeyCode::Enter);
+        for _ in 0..4 {
+            press(&mut app, KeyCode::Backspace);
+        }
+        type_text(&mut app, "9001");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.spotify.redirect_port, 8898);
+        assert!(
+            !sent_ops(&host)
+                .iter()
+                .any(|op| matches!(op, SpotifyOp::Configure { .. }))
+        );
+    }
+
+    #[test]
+    fn the_first_save_creates_the_file_and_sends_what_the_player_already_has_plus_the_change() {
+        // No config file yet: the app and the player both run on the defaults.
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = settings_app(&dir);
+        app.spotify_worker = Some(SpotifyWorker::spawn(host.clone()).unwrap());
+        assert!(!dir.path().join("config.toml").exists());
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::RedirectPort);
+        press(&mut app, KeyCode::Enter);
+        for _ in 0..4 {
+            press(&mut app, KeyCode::Backspace);
+        }
+        type_text(&mut app, "9001");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            saved(&dir)["spotify"]["redirect_port"].as_integer(),
+            Some(9001)
+        );
+        let sent = sent_ops(&host);
+        assert!(sent.iter().any(|op| matches!(
+            op,
+            SpotifyOp::Configure { config }
+                if config.redirect_port == 9001 && config.client_id.is_empty() && config.device.is_empty()
+        )));
+    }
+
+    #[test]
+    fn without_a_config_file_path_a_spotify_row_goes_back_and_nothing_is_sent() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = spotify_app(&dir, host.clone());
+        app.config_file = None;
+        app.spotify_devices = one_device("Kitchen");
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::PlaybackDevice);
+        press(&mut app, KeyCode::Enter);
+        assert!(app.spotify.device.is_empty());
+        assert!(
+            !sent_ops(&host)
+                .iter()
+                .any(|op| matches!(op, SpotifyOp::Configure { .. }))
+        );
+        assert!(toast_texts(&app).iter().any(|t| t.starts_with("Not saved")));
     }
 }
