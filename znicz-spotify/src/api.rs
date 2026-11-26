@@ -263,7 +263,7 @@ impl Api<'_> {
     /// `volume` is 0.0–1.0.
     pub(crate) fn volume(&self, device_id: Option<&str>, volume: f32) -> Result<()> {
         if !volume.is_finite() {
-            return Err(SpotifyError::Parse(
+            return Err(SpotifyError::Unavailable(
                 "volume must be a number from 0 to 1".into(),
             ));
         }
@@ -542,7 +542,7 @@ mod tests {
             .volume(None, f32::NAN)
             .unwrap_err();
         assert!(
-            matches!(&error, SpotifyError::Parse(text) if text == "volume must be a number from 0 to 1"),
+            matches!(&error, SpotifyError::Unavailable(text) if text == "volume must be a number from 0 to 1"),
             "{error:?}"
         );
     }

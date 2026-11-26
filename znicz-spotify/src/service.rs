@@ -117,7 +117,7 @@ impl SpotifyService {
     }
 
     /// Pause Spotify if it is playing: Znicz is about to play.
-    /// Blocks for a whole Web API request (up to about 20 s on a slow network or a 429), so never call it while holding the player's lock.
+    /// Blocks for a whole Web API request (up to about 40 s: a refresh, a retry and a rate-limit wait), so never call it while holding the player's lock.
     pub fn pause_if_playing(&self) {
         if !self.shared.state.lock().unwrap().is_playing() {
             return;
@@ -213,11 +213,12 @@ impl Shared {
         }
         // Client before state, as everywhere; the listener is taken after both are released.
         let expired = {
-            let client = self.client.lock().unwrap();
+            let mut client = self.client.lock().unwrap();
             let mut state = self.state.lock().unwrap();
-            if client.login_pending() || state.login != SpotifyLogin::LoggingIn {
+            if !client.login_expired() || state.login != SpotifyLogin::LoggingIn {
                 false
             } else {
+                client.cancel_login();
                 self.login_epoch.fetch_add(1, Ordering::SeqCst);
                 state.account = None;
                 state.playback = None;
@@ -1109,6 +1110,12 @@ mod tests {
             "{:?}",
             state.login
         );
+        // The listener is dropped after the state changes; give it time to let go of the port.
+        thread::sleep(Duration::from_millis(300));
+        assert!(
+            std::net::TcpStream::connect(("127.0.0.1", f.service.redirect_port())).is_err(),
+            "the login listener still holds the port"
+        );
     }
 
     #[test]
@@ -1133,12 +1140,24 @@ mod tests {
 
     #[test]
     fn play_marks_playback_playing_at_once() {
-        let f = fixture(true, "", |request| match request.path() {
+        let played = Arc::new(AtomicBool::new(false));
+        let handler_played = played.clone();
+        let f = fixture(true, "", move |request| match request.path() {
+            "/v1/me/player/play" if request.method == "PUT" => {
+                handler_played.store(true, Ordering::SeqCst);
+                Response::empty(204)
+            }
             "/v1/me/player" if request.method == "GET" => Response::json(
                 200,
-                r#"{"is_playing":false,"progress_ms":5,"currently_playing_type":"track",
+                if handler_played.load(Ordering::SeqCst) {
+                    r#"{"is_playing":true,"progress_ms":5,"currently_playing_type":"track",
                     "item":{"type":"track","uri":"spotify:track:t","name":"So What","duration_ms":9,
-                            "artists":[],"album":{"name":"Kind of Blue","images":[]}}}"#,
+                            "artists":[],"album":{"name":"Kind of Blue","images":[]}}}"#
+                } else {
+                    r#"{"is_playing":false,"progress_ms":5,"currently_playing_type":"track",
+                    "item":{"type":"track","uri":"spotify:track:t","name":"So What","duration_ms":9,
+                            "artists":[],"album":{"name":"Kind of Blue","images":[]}}}"#
+                },
             ),
             _ => api_default(request),
         });

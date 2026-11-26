@@ -122,6 +122,14 @@ impl Client {
             .is_some_and(|login| self.now_ms().saturating_sub(login.started_ms) <= LOGIN_TTL_MS)
     }
 
+    /// True only when a login is still held and has outlived its TTL. Unlike
+    /// `!login_pending()`, a login that `complete_login` already took is not expired.
+    pub(crate) fn login_expired(&self) -> bool {
+        self.login
+            .as_ref()
+            .is_some_and(|login| self.now_ms().saturating_sub(login.started_ms) > LOGIN_TTL_MS)
+    }
+
     pub(crate) fn begin_login(&mut self) -> Result<BegunLogin> {
         if !self.config.is_configured() {
             return Err(SpotifyError::NotConfigured);
@@ -373,6 +381,17 @@ mod tests {
             f.client.complete_login(&pasted).unwrap_err(),
             SpotifyError::NoLogin
         );
+    }
+
+    #[test]
+    fn a_login_is_expired_only_past_its_ttl_and_while_held() {
+        let mut f = fixture("http://127.0.0.1:1", None);
+        f.client.begin_login().unwrap();
+        assert!(!f.client.login_expired());
+        f.now.fetch_add(LOGIN_TTL_MS + 1, Ordering::SeqCst);
+        assert!(f.client.login_expired());
+        f.client.cancel_login();
+        assert!(!f.client.login_expired());
     }
 
     #[test]

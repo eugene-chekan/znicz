@@ -186,6 +186,7 @@ pub struct SpotifyPage {
 }
 
 impl SpotifyPage {
+    /// Not meaningful for a search over several kinds; page one kind at a time (see `SpotifyOp::Search`).
     pub fn has_more(&self) -> bool {
         (self.offset as usize + self.items.len()) < self.total as usize
     }
