@@ -2031,7 +2031,7 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 **Files:**
 - Modify: `znicz-mcp/src/server.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to the `tests` module of `server.rs`:
 
@@ -2078,12 +2078,12 @@ Add to the `tests` module of `server.rs`:
     }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz-mcp search_sends -q`
 Expected: FAIL to compile (`spotify_search` and `spotify_tracks` do not exist).
 
-- [ ] **Step 3: Add the helper and the tools**
+- [x] **Step 3: Add the helper and the tools**
 
 In `server.rs`, in the plain `impl ZniczMcpServer` block, add after `spotify_status_result`:
 
@@ -2169,12 +2169,12 @@ In the `#[tool_router]` block, after `spotify_logout`, add:
     }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-mcp -q`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-mcp/src/server.rs
@@ -2190,7 +2190,7 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 **Files:**
 - Modify: `znicz-mcp/src/server.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to the `tests` module:
 
@@ -2243,12 +2243,12 @@ Add to the `tests` module:
     }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz-mcp a_premium_refusal -q`
 Expected: FAIL to compile (`spotify_play` and the others do not exist).
 
-- [ ] **Step 3: Add the tools**
+- [x] **Step 3: Add the tools**
 
 In the `#[tool_router]` block, after `spotify_artist_albums`, add:
 
@@ -2348,12 +2348,12 @@ In the `#[tool_router]` block, after `spotify_artist_albums`, add:
     }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-mcp -q`
 Expected: PASS for the whole crate, including the three new tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-mcp/src/server.rs
