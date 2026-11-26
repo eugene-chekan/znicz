@@ -289,9 +289,18 @@ impl Shared {
                 self.wake();
                 Ok(SpotifyReply::Done)
             }
-            SpotifyOp::Configure { config } => {
+            SpotifyOp::Configure {
+                config,
+                replace_client_id,
+            } => {
                 let (login, pending) = {
                     let mut client = self.client.lock().unwrap();
+                    let current = client.config().client_id.clone();
+                    if !current.is_empty() && config.client_id != current && !replace_client_id {
+                        return Err(SpotifyError::Unavailable(
+                            "the player uses a different Spotify client ID; change it under Client ID (or run znicz spotify login) to switch".into(),
+                        ));
+                    }
                     client.set_config(config);
                     (login_of(&client), client.login_pending())
                 };
@@ -1093,6 +1102,7 @@ mod tests {
         f.service
             .apply(SpotifyOp::Configure {
                 config: SpotifyConfig::default(),
+                replace_client_id: true,
             })
             .unwrap();
         assert_eq!(f.service.state().login, SpotifyLogin::NotConfigured);
@@ -1183,6 +1193,7 @@ mod tests {
                     redirect_port: port,
                     device: "Kitchen".into(),
                 },
+                replace_client_id: false,
             })
             .unwrap();
         let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
@@ -1194,6 +1205,96 @@ mod tests {
         .unwrap();
         let state = wait_for(&f.service, |s| s.login == SpotifyLogin::LoggedIn);
         assert_eq!(state.login, SpotifyLogin::LoggedIn);
+    }
+
+    const OTHER_CLIENT_ID: &str = "fedcba9876543210fedcba9876543210";
+
+    #[test]
+    fn a_different_client_id_without_the_flag_is_refused_and_changes_nothing() {
+        let f = fixture(true, "", api_default);
+        let before = f.service.shared.client.lock().unwrap().config().clone();
+        let error = f
+            .service
+            .apply(SpotifyOp::Configure {
+                config: SpotifyConfig {
+                    client_id: OTHER_CLIENT_ID.into(),
+                    redirect_port: before.redirect_port + 1,
+                    device: "Kitchen".into(),
+                },
+                replace_client_id: false,
+            })
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("different Spotify client ID"),
+            "{error}"
+        );
+        assert!(f._dir.path().join("spotify_token.json").exists());
+        assert_eq!(f.service.state().login, SpotifyLogin::LoggedIn);
+        assert_eq!(*f.service.shared.client.lock().unwrap().config(), before);
+    }
+
+    #[test]
+    fn a_different_client_id_with_the_flag_logs_out() {
+        let f = fixture(true, "", api_default);
+        f.service
+            .apply(SpotifyOp::Configure {
+                config: SpotifyConfig {
+                    client_id: OTHER_CLIENT_ID.into(),
+                    redirect_port: f.service.redirect_port(),
+                    device: String::new(),
+                },
+                replace_client_id: true,
+            })
+            .unwrap();
+        assert!(!f._dir.path().join("spotify_token.json").exists());
+        assert_eq!(f.service.state().login, SpotifyLogin::NotLoggedIn);
+        assert_eq!(
+            f.service.shared.client.lock().unwrap().config().client_id,
+            OTHER_CLIENT_ID
+        );
+    }
+
+    #[test]
+    fn the_same_client_id_with_a_new_port_stays_logged_in() {
+        let f = fixture(true, "", api_default);
+        let port = f.service.redirect_port() + 1;
+        f.service
+            .apply(SpotifyOp::Configure {
+                config: SpotifyConfig {
+                    client_id: CLIENT_ID.into(),
+                    redirect_port: port,
+                    device: "Kitchen".into(),
+                },
+                replace_client_id: false,
+            })
+            .unwrap();
+        assert_eq!(f.service.redirect_port(), port);
+        assert_eq!(f.service.state().login, SpotifyLogin::LoggedIn);
+        assert!(f._dir.path().join("spotify_token.json").exists());
+    }
+
+    #[test]
+    fn the_first_client_id_needs_no_flag() {
+        let f = fixture(false, "", api_default);
+        // Clear the ID the fixture starts with, so the first real one is "first".
+        let mut empty = f.service.shared.client.lock().unwrap().config().clone();
+        empty.client_id.clear();
+        f.service.shared.client.lock().unwrap().set_config(empty);
+        f.service
+            .apply(SpotifyOp::Configure {
+                config: SpotifyConfig {
+                    client_id: CLIENT_ID.into(),
+                    redirect_port: f.service.redirect_port(),
+                    device: String::new(),
+                },
+                replace_client_id: false,
+            })
+            .unwrap();
+        assert_eq!(
+            f.service.shared.client.lock().unwrap().config().client_id,
+            CLIENT_ID
+        );
+        assert_eq!(f.service.state().login, SpotifyLogin::NotLoggedIn);
     }
 
     #[test]

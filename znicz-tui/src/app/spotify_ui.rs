@@ -208,7 +208,7 @@ impl App {
                 self.ask_spotify(SpotifyAsk::Logout, SpotifyOp::Logout);
             }
             Some(SpotifyConfirm::ClientId(id)) => {
-                self.change_with(&Row::ClientId, |app| app.set_client_id(id));
+                self.change_saved(&Row::ClientId, true, |app| app.set_client_id(id));
             }
             None => {}
         }

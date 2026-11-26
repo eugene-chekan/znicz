@@ -377,7 +377,9 @@ and ends with `(switch tab to retry)`.
 **Client ID.** Setting the first ID saves at once. Changing or clearing an ID
 that is already set always asks first in the strip: `Changing the client ID
 logs you out of Spotify. Enter confirms · Esc cancels.` The player deletes the
-login when the ID changes, so the question is never skipped.
+login when the ID changes, so the question is never skipped. Only this
+confirmed change tells the player it may replace the ID; any other save that
+would change the ID is refused by the player.
 
 **Saving.** A row the player needs (Client ID, Redirect port and Playback
 device) is written to `[spotify]` in `config.toml` in place. The player is told

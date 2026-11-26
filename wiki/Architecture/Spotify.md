@@ -75,7 +75,11 @@ znicz spotify status   # login, user, Premium, device, what is playing, last err
 `login` sends the current `[spotify]` settings to the player first, so a client
 ID added after the player started takes effect without a restart; `status` and
 `logout` never change the settings. Changing `client_id` logs you out, because
-the old token cannot be refreshed with another app. `login` refuses to run while
+the old token cannot be refreshed with another app. The player refuses such a
+change unless it is confirmed: `login` and the TUI's confirmed Client ID change
+send `replace_client_id`, every other `Configure` is refused while the player has
+a different ID, and a refused `Configure` changes nothing (not the port, not the
+device). `login` refuses to run while
 `config.toml` has an error, and it says so if you are already logged in. Each
 command starts the player if it is not running.
 

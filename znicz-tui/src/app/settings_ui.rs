@@ -267,7 +267,7 @@ impl App {
         let before = self.settings_snapshot();
         self.default_device = device.map(|(id, _)| id);
         self.return_to_settings_from_devices();
-        self.save_setting(&Row::DefaultDevice, before);
+        self.save_setting(&Row::DefaultDevice, before, false);
     }
 
     /// Leave the default-device list for Settings, on the device row.
@@ -356,12 +356,23 @@ impl App {
     /// what the row needs and save it, so a step and a typed value share one path.
     /// A save that fails puts the previous values back.
     pub(super) fn change_with(&mut self, row: &Row, apply: impl FnOnce(&mut Self) -> bool) {
+        self.change_saved(row, false, apply);
+    }
+
+    /// `change_with`, with the player told whether a confirmed new client ID
+    /// may replace the current one. Only the confirmed Client ID change sends `true`.
+    pub(super) fn change_saved(
+        &mut self,
+        row: &Row,
+        replace_client_id: bool,
+        apply: impl FnOnce(&mut Self) -> bool,
+    ) {
         let before = self.settings_snapshot();
         if !apply(self) {
             return;
         }
         self.after_setting_changed(row);
-        self.save_setting(row, before);
+        self.save_setting(row, before, replace_client_id);
     }
 
     /// Enter or Space on a slider row: a prompt holding the current value, in
@@ -516,7 +527,7 @@ impl App {
     /// client ID in that copy logs the user out and deletes the token, so the
     /// copy is never sent while the config has a problem, even if a caller
     /// forgets the order.
-    fn send_spotify_config(&self, row: &Row) {
+    fn send_spotify_config(&self, row: &Row, replace_client_id: bool) {
         if self.config_problem.is_some() || !spotify_rows::sent_to_player(row) {
             return;
         }
@@ -524,6 +535,7 @@ impl App {
             SpotifyAsk::Configure,
             SpotifyOp::Configure {
                 config: self.spotify.clone(),
+                replace_client_id,
             },
         );
     }
@@ -690,7 +702,7 @@ impl App {
 
     /// Write a changed row to the config file. Without a usable file the change
     /// stays for this run and the user is told why.
-    fn save_setting(&mut self, row: &Row, before: SettingsSnapshot) {
+    fn save_setting(&mut self, row: &Row, before: SettingsSnapshot, replace_client_id: bool) {
         let (Some((section, key)), Some(value)) = (row.config_key(), self.stored_value(row)) else {
             return;
         };
@@ -737,7 +749,7 @@ impl App {
                 self.toasts.error(format!("Could not save settings: {e}"));
             }
             // The only place Configure is sent: the file holds the change now.
-            Ok(()) => self.send_spotify_config(row),
+            Ok(()) => self.send_spotify_config(row, replace_client_id),
         }
     }
 
@@ -2130,7 +2142,7 @@ pub(crate) mod tests {
         let ops = sent_ops(&host);
         assert!(ops.iter().any(|op| matches!(
             op,
-            SpotifyOp::Configure { config } if config.device == "Kitchen"
+            SpotifyOp::Configure { config, .. } if config.device == "Kitchen"
         )));
     }
 
@@ -2182,7 +2194,7 @@ pub(crate) mod tests {
         );
         assert!(sent_ops(&host).iter().any(|op| matches!(
             op,
-            SpotifyOp::Configure { config } if config.redirect_port == 9001
+            SpotifyOp::Configure { config, .. } if config.redirect_port == 9001
         )));
     }
 
@@ -2298,7 +2310,7 @@ pub(crate) mod tests {
         let sent = sent_ops(&host);
         assert!(sent.iter().any(|op| matches!(
             op,
-            SpotifyOp::Configure { config }
+            SpotifyOp::Configure { config, .. }
                 if config.redirect_port == 9001 && config.client_id.is_empty() && config.device.is_empty()
         )));
     }
@@ -2400,7 +2412,7 @@ pub(crate) mod tests {
         let configures: Vec<_> = sent_ops(&host)
             .into_iter()
             .filter_map(|op| match op {
-                SpotifyOp::Configure { config } => Some(config),
+                SpotifyOp::Configure { config, .. } => Some(config),
                 _ => None,
             })
             .collect();
@@ -2514,7 +2526,7 @@ pub(crate) mod tests {
         assert!(saved(&dir)["spotify"].get("client_id").is_none());
         assert!(sent_ops(&host).iter().any(|op| matches!(
             op,
-            SpotifyOp::Configure { config } if config.client_id.is_empty()
+            SpotifyOp::Configure { config, .. } if config.client_id.is_empty()
         )));
     }
 
@@ -2564,7 +2576,7 @@ pub(crate) mod tests {
         assert_eq!(saved(&dir)["spotify"]["client_id"].as_str(), Some(ID));
         assert!(sent_ops(&host).iter().any(|op| matches!(
             op,
-            SpotifyOp::Configure { config } if config.client_id == ID
+            SpotifyOp::Configure { config, .. } if config.client_id == ID
         )));
     }
 
@@ -2602,8 +2614,40 @@ pub(crate) mod tests {
         assert_eq!(saved(&dir)["spotify"]["client_id"].as_str(), Some(NEW_ID));
         assert!(sent_ops(&host).iter().any(|op| matches!(
             op,
-            SpotifyOp::Configure { config } if config.client_id == NEW_ID
+            SpotifyOp::Configure { config, .. } if config.client_id == NEW_ID
         )));
+    }
+
+    #[test]
+    fn a_confirmed_client_id_change_sends_the_replace_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("config.toml"),
+            format!("[spotify]\nclient_id = \"{ID}\"\n"),
+        )
+        .unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = spotify_app(&dir, host.clone());
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::ClientId);
+        press(&mut app, KeyCode::Enter);
+        for _ in 0..ID.len() {
+            press(&mut app, KeyCode::Backspace);
+        }
+        type_text(&mut app, NEW_ID);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.spotify.client_id, NEW_ID);
+        let sent = sent_ops(&host);
+        assert!(
+            sent.iter().any(|op| matches!(
+                op,
+                SpotifyOp::Configure { config, replace_client_id: true }
+                    if config.client_id == NEW_ID
+            )),
+            "{sent:?}"
+        );
     }
 
     #[test]

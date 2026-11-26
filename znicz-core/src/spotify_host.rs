@@ -266,6 +266,9 @@ pub fn valid_client_id(text: &str) -> bool {
 pub enum SpotifyOp {
     Configure {
         config: SpotifyConfig,
+        /// True only after the user confirmed that a new client ID replaces the current one (which logs out).
+        #[serde(default)]
+        replace_client_id: bool,
     },
     BeginLogin,
     /// Finish a login from a pasted redirect address (or its query).
@@ -518,6 +521,18 @@ mod tests {
         assert!(SpotifyOp::Touch.is_read());
         assert!(!SpotifyOp::Next.is_read());
         assert!(!SpotifyOp::Logout.is_read());
+    }
+
+    #[test]
+    fn configure_without_the_replace_flag_parses_as_false() {
+        let text =
+            r#"{"op":"configure","config":{"client_id":"","redirect_port":8898,"device":""}}"#;
+        match serde_json::from_str::<SpotifyOp>(text).unwrap() {
+            SpotifyOp::Configure {
+                replace_client_id, ..
+            } => assert!(!replace_client_id),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

@@ -63,8 +63,11 @@ pub fn run(
     }
     let host = connect()?;
     if configure_before(&command) {
-        host.apply(SpotifyOp::Configure { config })
-            .map_err(host_error)?;
+        host.apply(SpotifyOp::Configure {
+            config,
+            replace_client_id: matches!(command, SpotifyCmd::Login),
+        })
+        .map_err(host_error)?;
     }
     match command {
         SpotifyCmd::Login => login(&host, open),
