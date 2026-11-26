@@ -2781,7 +2781,7 @@ git commit -m "feat(spotify): Web API endpoints for browse and playback"
 - Create: `znicz-spotify/src/client.rs`
 - Modify: `znicz-spotify/src/lib.rs` (add `mod client;`)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `znicz-spotify/src/client.rs`:
 
@@ -2993,12 +2993,12 @@ mod tests {
 
 Add `mod client;` to `lib.rs`.
 
-- [ ] **Step 2: Run to see it fail**
+- [x] **Step 2: Run to see it fail**
 
 Run: `cargo test -p znicz-spotify client`
 Expected: compile errors (`Client`, `Clock`, `Endpoints` missing).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Between the `use` lines and the tests:
 
@@ -3226,12 +3226,12 @@ impl Client {
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cargo test -p znicz-spotify client`
 Expected: 10 pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-spotify/src/client.rs znicz-spotify/src/lib.rs
