@@ -4711,6 +4711,7 @@ dependencies = [
 name = "znicz-tui"
 version = "0.19.0"
 dependencies = [
+ "base64 0.22.1",
  "color-eyre",
  "crossbeam-channel",
  "crossterm 0.28.1",
@@ -4726,6 +4727,7 @@ dependencies = [
  "unicode-width",
  "znicz-core",
  "znicz-library",
+ "znicz-spotify",
 ]
 
 [[package]]
