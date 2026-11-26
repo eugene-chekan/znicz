@@ -1155,6 +1155,11 @@ impl ServerHandler for ZniczMcpServer {
             make_resource("znicz://config", "config", "Sanitized config"),
             make_resource("znicz://stations", "stations", "Saved radio stations"),
             make_resource(
+                "znicz://spotify/now-playing",
+                "spotify-now-playing",
+                "Spotify login, account, playback and devices",
+            ),
+            make_resource(
                 "skill://index.json",
                 "skills-index",
                 "Agent Skills discovery index",
@@ -1180,6 +1185,7 @@ impl ServerHandler for ZniczMcpServer {
     ) -> impl std::future::Future<Output = Result<ReadResourceResult, McpError>> + Send + '_ {
         let uri = request.uri.clone();
         let state = self.live_state();
+        let spotify = self.spotify.clone();
         let skills = self.skills.clone();
         let stations_path = self.stations_path.clone();
 
@@ -1190,6 +1196,23 @@ impl ServerHandler for ZniczMcpServer {
                         uri: uri.clone(),
                         mime_type: Some("application/json".into()),
                         text: skills.index_json(),
+                    }],
+                });
+            }
+
+            if uri == "znicz://spotify/now-playing" {
+                let snapshot =
+                    tokio::task::spawn_blocking(move || SpotifyHost::try_state(&spotify))
+                        .await
+                        .map_err(|e| McpError::internal_error(e.to_string(), None))?
+                        .map_err(spotify_json::error_of)?;
+                let text = serde_json::to_string_pretty(&snapshot)
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                return Ok(ReadResourceResult {
+                    contents: vec![ResourceContents::TextResourceContents {
+                        uri,
+                        mime_type: Some("application/json".into()),
+                        text,
                     }],
                 });
             }
