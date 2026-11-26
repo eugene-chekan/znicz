@@ -20,6 +20,7 @@ pub mod library_pane;
 pub mod line_edit;
 pub mod marquee;
 pub mod meta;
+pub mod osc52;
 pub mod playing;
 pub mod scan_status;
 pub mod settings;
