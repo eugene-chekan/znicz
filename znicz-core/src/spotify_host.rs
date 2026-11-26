@@ -60,6 +60,35 @@ impl SpotifyTrack {
     }
 }
 
+/// What went wrong with a Spotify request, so that agents and front ends can
+/// act on it. The names are the `kind` in the MCP tool errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpotifyErrorKind {
+    /// No client ID is set.
+    NotConfigured,
+    /// No login, or the login was removed.
+    NotLoggedIn,
+    /// The login was started too long ago, or it was refused.
+    LoginExpired,
+    /// The pasted address is not from the login in progress.
+    WrongAddress,
+    /// Playback needs Spotify Premium.
+    PremiumRequired,
+    /// Spotify has no active device to play on.
+    NoActiveDevice,
+    /// Spotify asked us to wait.
+    RateLimited,
+    /// Spotify does not offer this for the item (for example a playlist the user does not own).
+    Unavailable,
+    /// Spotify could not be reached, or the player did not answer.
+    Network,
+    /// The running player has no Spotify service.
+    NoService,
+    /// Anything else.
+    Other,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SpotifyRepeat {
@@ -532,5 +561,15 @@ mod tests {
         assert!(page.has_more());
         let last = SpotifyPage { offset: 1, ..page };
         assert!(!last.has_more());
+    }
+
+    #[test]
+    fn error_kinds_are_snake_case_on_the_wire() {
+        let text = serde_json::to_string(&SpotifyErrorKind::PremiumRequired).unwrap();
+        assert_eq!(text, r#""premium_required""#);
+        assert_eq!(
+            serde_json::from_str::<SpotifyErrorKind>(r#""no_active_device""#).unwrap(),
+            SpotifyErrorKind::NoActiveDevice
+        );
     }
 }

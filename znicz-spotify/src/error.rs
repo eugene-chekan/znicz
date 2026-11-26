@@ -1,6 +1,6 @@
 //! Every way a Spotify request can fail, worded for the user.
 
-use znicz_core::ZniczError;
+use znicz_core::{SpotifyErrorKind, ZniczError};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SpotifyError {
@@ -44,9 +44,31 @@ pub enum SpotifyError {
 
 pub type Result<T> = std::result::Result<T, SpotifyError>;
 
+impl SpotifyError {
+    /// The kind that crosses IPC and reaches the MCP tools.
+    pub fn kind(&self) -> SpotifyErrorKind {
+        use SpotifyErrorKind as K;
+        match self {
+            Self::NotConfigured | Self::InvalidClient { .. } => K::NotConfigured,
+            Self::NotLoggedIn | Self::Revoked | Self::Unauthorized => K::NotLoggedIn,
+            Self::NoLogin | Self::WrongAddress => K::WrongAddress,
+            Self::LoginExpired => K::LoginExpired,
+            Self::PremiumRequired => K::PremiumRequired,
+            Self::NoActiveDevice => K::NoActiveDevice,
+            Self::RateLimited { .. } => K::RateLimited,
+            Self::Unavailable(_) => K::Unavailable,
+            Self::Network(_) => K::Network,
+            Self::Declined(_) | Self::Http { .. } | Self::Parse(_) | Self::Io(_) => K::Other,
+        }
+    }
+}
+
 impl From<SpotifyError> for ZniczError {
     fn from(error: SpotifyError) -> Self {
-        ZniczError::Spotify(error.to_string())
+        ZniczError::Spotify {
+            kind: error.kind(),
+            message: error.to_string(),
+        }
     }
 }
 
@@ -84,5 +106,60 @@ mod tests {
     fn converts_to_a_core_error_with_the_same_text() {
         let core: ZniczError = SpotifyError::NoActiveDevice.into();
         assert_eq!(core.to_string(), SpotifyError::NoActiveDevice.to_string());
+    }
+
+    #[test]
+    fn every_error_has_a_kind() {
+        use znicz_core::SpotifyErrorKind as K;
+        let cases = [
+            (SpotifyError::NotConfigured, K::NotConfigured),
+            (SpotifyError::NotLoggedIn, K::NotLoggedIn),
+            (SpotifyError::NoLogin, K::WrongAddress),
+            (SpotifyError::LoginExpired, K::LoginExpired),
+            (SpotifyError::WrongAddress, K::WrongAddress),
+            (SpotifyError::Declined("no".into()), K::Other),
+            (
+                SpotifyError::InvalidClient {
+                    redirect_uri: "http://127.0.0.1:8898/callback".into(),
+                },
+                K::NotConfigured,
+            ),
+            (SpotifyError::Revoked, K::NotLoggedIn),
+            (SpotifyError::Unauthorized, K::NotLoggedIn),
+            (SpotifyError::PremiumRequired, K::PremiumRequired),
+            (SpotifyError::Unavailable("x".into()), K::Unavailable),
+            (SpotifyError::NoActiveDevice, K::NoActiveDevice),
+            (
+                SpotifyError::RateLimited {
+                    retry_after_secs: 5,
+                },
+                K::RateLimited,
+            ),
+            (
+                SpotifyError::Http {
+                    status: 500,
+                    message: "x".into(),
+                },
+                K::Other,
+            ),
+            (SpotifyError::Network("x".into()), K::Network),
+            (SpotifyError::Parse("x".into()), K::Other),
+            (SpotifyError::Io("x".into()), K::Other),
+        ];
+        for (error, kind) in cases {
+            assert_eq!(error.kind(), kind, "{error}");
+        }
+    }
+
+    #[test]
+    fn conversion_keeps_the_kind_and_the_message() {
+        let core: ZniczError = SpotifyError::NoActiveDevice.into();
+        match core {
+            ZniczError::Spotify { kind, message } => {
+                assert_eq!(kind, znicz_core::SpotifyErrorKind::NoActiveDevice);
+                assert_eq!(message, SpotifyError::NoActiveDevice.to_string());
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }

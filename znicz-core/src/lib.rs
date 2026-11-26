@@ -43,9 +43,9 @@ pub use session::{
     restore as restore_session, save as save_session, save_from_player as save_session_from_player,
 };
 pub use spotify_host::{
-    SpotifyAccount, SpotifyConfig, SpotifyDevice, SpotifyHost, SpotifyItem, SpotifyKind,
-    SpotifyLogin, SpotifyOp, SpotifyPage, SpotifyPlayback, SpotifyRepeat, SpotifyReply,
-    SpotifyState, SpotifyTrack, valid_client_id,
+    SpotifyAccount, SpotifyConfig, SpotifyDevice, SpotifyErrorKind, SpotifyHost, SpotifyItem,
+    SpotifyKind, SpotifyLogin, SpotifyOp, SpotifyPage, SpotifyPlayback, SpotifyRepeat,
+    SpotifyReply, SpotifyState, SpotifyTrack, valid_client_id,
 };
 pub use station::{
     Station, add as add_station, copy as copy_station, find as find_station, load as load_stations,

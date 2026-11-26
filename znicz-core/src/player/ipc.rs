@@ -17,7 +17,7 @@ use crate::player::commands::Command;
 use crate::player::engine::{PlayerHandle, PlayerOps};
 use crate::player::state::{PlaybackStatus, PlayerState, Queue};
 use crate::session::SessionPersister;
-use crate::spotify_host::{SpotifyLogin, SpotifyOp, SpotifyReply, SpotifyState};
+use crate::spotify_host::{SpotifyErrorKind, SpotifyLogin, SpotifyOp, SpotifyReply, SpotifyState};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(400);
 
@@ -159,6 +159,21 @@ pub const NO_SPOTIFY: &str = "no Spotify service in this player";
 
 /// A reply of a kind the request did not ask for.
 const UNEXPECTED_REPLY: &str = "unexpected reply from the player";
+
+/// A Spotify failure from the player. Without a kind (an older player sends
+/// none), the kind is worked out from the text.
+fn spotify_failure(message: String, kind: Option<SpotifyErrorKind>) -> ZniczError {
+    let kind = kind.unwrap_or(if message == NO_SPOTIFY {
+        SpotifyErrorKind::NoService
+    } else {
+        SpotifyErrorKind::Other
+    });
+    ZniczError::Spotify { kind, message }
+}
+
+fn unexpected_spotify() -> ZniczError {
+    spotify_failure(UNEXPECTED_REPLY.into(), None)
+}
 
 /// How many clients' last outcomes the player remembers.
 const RECENT_CLIENTS: usize = 64;
@@ -1041,8 +1056,8 @@ impl crate::spotify_host::SpotifyHost for IpcClient {
             .map_err(RpcFailure::into_error)?
         {
             IpcResponse::Spotify { reply } => Ok(reply),
-            IpcResponse::Err { message } => Err(ZniczError::Spotify(message)),
-            _ => Err(ZniczError::Spotify(UNEXPECTED_REPLY.into())),
+            IpcResponse::Err { message, .. } => Err(spotify_failure(message, None)),
+            _ => Err(unexpected_spotify()),
         }
     }
 
@@ -1060,8 +1075,8 @@ impl crate::spotify_host::SpotifyHost for IpcClient {
             .map_err(RpcFailure::into_error)?
         {
             IpcResponse::SpotifyStatus { state } => Ok(*state),
-            IpcResponse::Err { message } => Err(ZniczError::Spotify(message)),
-            _ => Err(ZniczError::Spotify(UNEXPECTED_REPLY.into())),
+            IpcResponse::Err { message, .. } => Err(spotify_failure(message, None)),
+            _ => Err(unexpected_spotify()),
         }
     }
 }
@@ -1817,7 +1832,10 @@ mod tests {
     impl crate::spotify_host::SpotifyHost for FakeSpotify {
         fn apply(&self, op: SpotifyOp) -> Result<SpotifyReply> {
             if op == SpotifyOp::Logout {
-                return Err(ZniczError::Spotify("refused".into()));
+                return Err(ZniczError::Spotify {
+                    kind: SpotifyErrorKind::Other,
+                    message: "refused".into(),
+                });
             }
             self.ops.lock().unwrap().push(op);
             Ok(SpotifyReply::Done)
@@ -1981,7 +1999,7 @@ mod tests {
 
         let err = crate::spotify_host::SpotifyHost::apply(&client, SpotifyOp::Logout)
             .expect_err("host refused");
-        assert!(matches!(err, ZniczError::Spotify(_)), "{err:?}");
+        assert!(matches!(err, ZniczError::Spotify { .. }), "{err:?}");
         assert_eq!(err.to_string(), "refused");
     }
 

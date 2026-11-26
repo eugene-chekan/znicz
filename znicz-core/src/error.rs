@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::spotify_host::SpotifyErrorKind;
+
 #[derive(Debug, Error)]
 pub enum ZniczError {
     #[error("audio error: {0}")]
@@ -18,9 +20,12 @@ pub enum ZniczError {
     #[error("{0}")]
     Library(String),
 
-    /// A Spotify request failed; the message is shown as is.
-    #[error("{0}")]
-    Spotify(String),
+    /// A Spotify request failed. `message` is shown as is; `kind` says what to do about it.
+    #[error("{message}")]
+    Spotify {
+        kind: SpotifyErrorKind,
+        message: String,
+    },
 
     #[error("not implemented: {0}")]
     NotImplemented(String),
