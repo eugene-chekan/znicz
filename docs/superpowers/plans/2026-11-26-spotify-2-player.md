@@ -1261,7 +1261,7 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 **Files:**
 - Modify: `znicz/src/main.rs`
 
-- [ ] **Step 1: Write the failing config tests**
+- [x] **Step 1: Write the failing config tests**
 
 In `znicz/src/main.rs`, inside the existing `mod tests` at the end of the file, add:
 
@@ -1301,12 +1301,12 @@ In `znicz/src/main.rs`, inside the existing `mod tests` at the end of the file, 
 
 (`OpenBrowser`, `SpotifyConfig`, `spotify_config`, `open_browser_setting` come in Step 2. `DEFAULT_CONFIG` already exists in `main.rs`.)
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz spotify -q`
 Expected: FAIL to compile: `spotify_config`, `open_browser_setting` not found.
 
-- [ ] **Step 3: Add the config section and the mapping**
+- [x] **Step 3: Add the config section and the mapping**
 
 In `znicz/src/main.rs`, add these imports next to the other `use` lines:
 
@@ -1364,12 +1364,12 @@ fn open_browser_setting(section: &SpotifySection) -> OpenBrowser {
 }
 ```
 
-- [ ] **Step 4: Run the config tests to verify they pass**
+- [x] **Step 4: Run the config tests to verify they pass**
 
 Run: `cargo test -p znicz spotify -q`
 Expected: PASS for the three config tests. (The default-config test already passes because the block is not yet in the default file; Task 9 adds it and re-runs this test.)
 
-- [ ] **Step 5: Host the service in the player**
+- [x] **Step 5: Host the service in the player**
 
 The daemon uses the trait by path (`znicz_core::SpotifyHost`), not by import: `main.rs` also calls `LibraryHost::apply` on `IpcClient`, and an imported `SpotifyHost` would make those calls ambiguous.
 
@@ -1464,12 +1464,12 @@ fn run_player_daemon(
 }
 ```
 
-- [ ] **Step 6: Run the binary's tests and a build**
+- [x] **Step 6: Run the binary's tests and a build**
 
 Run: `cargo test -p znicz -q && cargo build -p znicz -q`
 Expected: PASS and build. The `spotify_pause` functions are now used, so the dead-code warnings from Task 5 are gone. (`spotify_config` and `open_browser_setting` stay unused in non-test code until Task 8 uses `open_browser_setting`; `spotify_config` is used here.)
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add znicz/src/main.rs
