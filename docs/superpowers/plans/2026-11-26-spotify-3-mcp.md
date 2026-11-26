@@ -2371,7 +2371,7 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 
 `read_resource` needs an rmcp `RequestContext`, which tests cannot build, so this task has no unit test. The manual check in Task 15 reads the resource.
 
-- [ ] **Step 1: Add the resource to the list**
+- [x] **Step 1: Add the resource to the list**
 
 In `server.rs`, in `fn list_resources`, add after the `znicz://stations` line:
 
@@ -2383,7 +2383,7 @@ In `server.rs`, in `fn list_resources`, add after the `znicz://stations` line:
             ),
 ```
 
-- [ ] **Step 2: Serve it**
+- [x] **Step 2: Serve it**
 
 In `fn read_resource`, add this line directly after `let state = self.live_state();`:
 
@@ -2413,12 +2413,12 @@ and inside the `async move` block, directly after `if uri == "skill://index.json
 
 The snapshot is read with `try_state`, not with `apply`, so reading the resource does not mark Spotify as in use. Only the tools do.
 
-- [ ] **Step 3: Build and test**
+- [x] **Step 3: Build and test**
 
 Run: `cargo test -p znicz-mcp -q && cargo clippy -p znicz-mcp -- -D warnings`
 Expected: PASS. If clippy reports `redundant_clone` or a similar lint on `spotify`, keep the clone: `read_resource` returns a `'_` future that borrows `self`, so the clone is needed.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add znicz-mcp/src/server.rs
@@ -2435,7 +2435,7 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 - Create: `znicz-mcp/skills/spotify/SKILL.md`
 - Modify: `znicz-mcp/src/skills.rs` (the bundled-skills test)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 In `znicz-mcp/src/skills.rs`, replace `bundled_skills_loaded` with:
 
@@ -2452,12 +2452,12 @@ In `znicz-mcp/src/skills.rs`, replace `bundled_skills_loaded` with:
     }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cargo test -p znicz-mcp bundled_skills_loaded -q`
 Expected: FAIL: "the spotify skill is bundled".
 
-- [ ] **Step 3: Write the skill**
+- [x] **Step 3: Write the skill**
 
 Create `znicz-mcp/skills/spotify/SKILL.md` with exactly this content:
 
@@ -2541,12 +2541,12 @@ A failed Spotify tool returns its message and a `kind` in the error data. Act on
 Some messages end with a hint for the terminal UI, such as "Enter still plays it" or "pick one with ,". Those keys do not exist here: use the tools above instead, and do not repeat the hint to the user.
 ````
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-mcp -q`
 Expected: PASS, including `bundled_skills_loaded` and the existing frontmatter test.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-mcp/skills/spotify/SKILL.md znicz-mcp/src/skills.rs
@@ -2565,7 +2565,7 @@ Behaviour, MCP tools, the resource, the skill and the error kinds changed, so th
 - Modify: `wiki/Architecture/MCP.md`
 - Modify: `wiki/Architecture/Spotify.md`
 
-- [ ] **Step 1: Add the skill to the list in `MCP.md`**
+- [x] **Step 1: Add the skill to the list in `MCP.md`**
 
 In `wiki/Architecture/MCP.md`, replace:
 
@@ -2582,7 +2582,7 @@ with:
 - `spotify`
 ```
 
-- [ ] **Step 2: Add a Spotify section to `MCP.md`**
+- [x] **Step 2: Add a Spotify section to `MCP.md`**
 
 In `wiki/Architecture/MCP.md`, insert this section directly before the line `## Cursor`:
 
@@ -2618,7 +2618,7 @@ as in use; only the tools do.
 
 ```
 
-- [ ] **Step 3: Add typed errors to `Spotify.md`**
+- [x] **Step 3: Add typed errors to `Spotify.md`**
 
 In `wiki/Architecture/Spotify.md`, append this to the end of the file (after the line `Tokens never appear in logs (`Token`'s `Debug` redacts them).`):
 
@@ -2642,12 +2642,12 @@ act on the kind and show the message. The kinds are `not_configured`,
 - A resent change keeps its kind, because the player stores the failure with it.
 ```
 
-- [ ] **Step 4: Check the wiki for stale wording**
+- [x] **Step 4: Check the wiki for stale wording**
 
 Run: `grep -n "Spotify { op }\|Spotify tools\|spotify_" wiki/Architecture/MCP.md wiki/Architecture/Spotify.md | head -20`
 Expected: the new section and the typed-errors section appear; no line still says the MCP server has no Spotify tools.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add wiki/Architecture/MCP.md wiki/Architecture/Spotify.md
@@ -2663,7 +2663,7 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 **Files:**
 - Modify: `docs/superpowers/plans/2026-11-26-spotify-2-player.md`
 
-- [ ] **Step 1: Update the Step 5 note**
+- [x] **Step 1: Update the Step 5 note**
 
 In `docs/superpowers/plans/2026-11-26-spotify-2-player.md`, in Task 13 Step 5, replace:
 
@@ -2677,7 +2677,7 @@ with:
 This direction is checked in Part 3's manual check (its Step 5 in `docs/superpowers/plans/2026-11-26-spotify-3-mcp.md`): start a local track in Znicz, call `spotify_play` through MCP, and the local track must pause while Spotify plays.
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add docs/superpowers/plans/2026-11-26-spotify-2-player.md
@@ -2692,17 +2692,17 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 
 **Files:** none (verification; fix any finding in the file where it is).
 
-- [ ] **Step 1: Run the whole workspace**
+- [x] **Step 1: Run the whole workspace**
 
 Run: `cargo test --workspace -q`
 Expected: PASS.
 
-- [ ] **Step 2: Clippy and formatting**
+- [x] **Step 2: Clippy and formatting**
 
 Run: `cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check`
 Expected: both pass. If `fmt` reports differences, run `cargo fmt --all`, re-run the check, and commit the formatting as `style: cargo fmt`.
 
-- [ ] **Step 3: Check nothing else builds the old variant**
+- [x] **Step 3: Check nothing else builds the old variant**
 
 Run: `grep -rn "ZniczError::Spotify(" --include=*.rs . | grep -v target`
 Expected: no output.
@@ -2710,12 +2710,12 @@ Expected: no output.
 Run: `grep -rn "IpcResponse::Err { message }" --include=*.rs znicz-core | grep -v target`
 Expected: no output (every pattern now has `..` or `spotify_kind`).
 
-- [ ] **Step 4: Confirm the working tree is clean**
+- [x] **Step 4: Confirm the working tree is clean**
 
 Run: `git status --short`
 Expected: no output. If a generated file (such as `Cargo.lock`) still shows, commit it with the task that changed it.
 
-- [ ] **Step 5: Commit any fixes**
+- [x] **Step 5: Commit any fixes**
 
 If steps 1–4 needed changes:
 
