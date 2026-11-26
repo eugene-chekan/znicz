@@ -1895,7 +1895,7 @@ The IO wrappers and the clap subcommand. Their decisions were tested in Task 7.
 - Modify: `znicz/src/spotify_cli.rs`
 - Modify: `znicz/src/main.rs`
 
-- [ ] **Step 1: Add the IO wrappers and the subcommand type**
+- [x] **Step 1: Add the IO wrappers and the subcommand type**
 
 In `znicz/src/spotify_cli.rs`, add these imports at the top, after the existing `use std::time::Duration;` line. Keep the Task 7 `use znicz_core::{SpotifyConfig, SpotifyLogin, SpotifyState, valid_client_id};` line as it is.
 
@@ -2029,7 +2029,7 @@ fn now_ms() -> u64 {
 
 `login` ends with exit 0 on `Logged in…`, and with exit 1 (an `Err` out of `main`) on a missing or bad client ID, a failed or cancelled login, or a player that stops answering. A wrong pasted address only prints the service's message and the wait goes on.
 
-- [ ] **Step 2: Wire the subcommand into the binary**
+- [x] **Step 2: Wire the subcommand into the binary**
 
 In `znicz/src/main.rs`:
 
@@ -2057,12 +2057,12 @@ In `znicz/src/main.rs`:
         }
 ```
 
-- [ ] **Step 3: Build and run the tests**
+- [x] **Step 3: Build and run the tests**
 
 Run: `cargo build -p znicz -q && cargo test -p znicz -q`
 Expected: PASS. `znicz spotify --help` lists login, logout and status.
 
-- [ ] **Step 4: Check the command against the real binary (no client ID)**
+- [x] **Step 4: Check the command against the real binary (no client ID)**
 
 Run: `ZNICZ_SPOTIFY_TOKEN_PATH=/tmp/znicz-check-token.json cargo run -q -p znicz -- --config /dev/null spotify status; echo "exit $?"`
 
@@ -2072,7 +2072,7 @@ Run: `cargo run -q -p znicz -- --config /dev/null spotify login; echo "exit $?"`
 
 Expected: an error that says Spotify is not configured and names `http://127.0.0.1:8898/callback`, then `exit 1`. The check runs before the player is contacted.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz/src/spotify_cli.rs znicz/src/main.rs
