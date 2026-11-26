@@ -156,8 +156,11 @@ pub fn login_outcome(
 ) -> Option<LoginOutcome> {
     match login {
         SpotifyLogin::LoggedIn => {
-            let user = account.map_or("Spotify", |a| a.user.as_str());
-            Some(LoginOutcome::Success(format!("Logged in as {user}")))
+            let text = match account {
+                Some(account) => format!("Logged in as {}", account.user),
+                None => "Logged in to Spotify".to_string(),
+            };
+            Some(LoginOutcome::Success(text))
         }
         SpotifyLogin::Failed(reason) => Some(LoginOutcome::Failure(format!(
             "Spotify login failed: {reason}"
@@ -334,6 +337,11 @@ mod tests {
         assert_eq!(
             login_outcome(&SpotifyLogin::LoggedIn, Some(&account(None))),
             Some(LoginOutcome::Success("Logged in as Eugene".into()))
+        );
+        // Before the account name is known, the toast names the service.
+        assert_eq!(
+            login_outcome(&SpotifyLogin::LoggedIn, None),
+            Some(LoginOutcome::Success("Logged in to Spotify".into()))
         );
         assert_eq!(
             login_outcome(&SpotifyLogin::Failed("no".into()), None),

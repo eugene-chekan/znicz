@@ -92,7 +92,31 @@ impl App {
         self.spotify_unavailable = None;
         self.spotify_polled_at = None;
         if self.spotify.is_configured() {
-            self.ask_spotify(SpotifyAsk::Devices, SpotifyOp::Devices);
+            self.request_devices();
+        }
+    }
+
+    /// Ask the player for its device list. One request at a time: while one is
+    /// pending, a new one is dropped. The client ID is recorded, so a reply that
+    /// arrives after the ID changed is not shown.
+    pub(crate) fn request_devices(&mut self) {
+        if self.spotify_devices_requested {
+            return;
+        }
+        self.spotify_devices_client_id = self.spotify.client_id.clone();
+        if self.ask_spotify(SpotifyAsk::Devices, SpotifyOp::Devices) {
+            self.spotify_devices_requested = true;
+        }
+    }
+
+    /// Ask the player to begin a login. One at a time: while a `BeginLogin` is
+    /// pending, a new one would make a second PKCE session and void the first.
+    pub(crate) fn request_login(&mut self) {
+        if self.spotify_login_requested {
+            return;
+        }
+        if self.ask_spotify(SpotifyAsk::BeginLogin, SpotifyOp::BeginLogin) {
+            self.spotify_login_requested = true;
         }
     }
 
@@ -139,7 +163,7 @@ impl App {
         let login = self.spotify_state.login.clone();
         // A login that just finished: the player's device list is now worth reading.
         if login == SpotifyLogin::LoggedIn && !was_logged_in {
-            self.ask_spotify(SpotifyAsk::Devices, SpotifyOp::Devices);
+            self.request_devices();
         }
         if self.spotify_login.is_some() && login != SpotifyLogin::LoggingIn {
             self.spotify_login = None;
@@ -153,6 +177,12 @@ impl App {
 
     /// A worker reply, by what asked for it.
     pub(crate) fn on_spotify_done(&mut self, done: Done<SpotifyAsk>) {
+        // Whatever the reply holds, the request is no longer pending.
+        match done.tag {
+            SpotifyAsk::BeginLogin => self.spotify_login_requested = false,
+            SpotifyAsk::Devices => self.spotify_devices_requested = false,
+            _ => {}
+        }
         match (done.tag, done.result) {
             (SpotifyAsk::BeginLogin, Ok(SpotifyReply::AuthorizeUrl { url, listening, .. })) => {
                 if self.modal == Modal::Settings {
@@ -177,9 +207,13 @@ impl App {
             // The panel closes when the status shows the login finished.
             (SpotifyAsk::CompleteLogin, Ok(_)) | (SpotifyAsk::CancelLogin, _) => {}
             (SpotifyAsk::Logout, Ok(_)) => self.toasts.success("Logged out of Spotify"),
-            (SpotifyAsk::Devices, Ok(SpotifyReply::Devices { devices })) => {
+            // A list for a client ID that was changed while it was pending is stale.
+            (SpotifyAsk::Devices, Ok(SpotifyReply::Devices { devices }))
+                if self.spotify.client_id == self.spotify_devices_client_id =>
+            {
                 self.spotify_devices = devices;
             }
+            (SpotifyAsk::Devices, Ok(SpotifyReply::Devices { .. })) => {}
             // Devices is read when the tab opens; without a login it fails, and
             // the account row already says so.
             (SpotifyAsk::Devices, Err(e)) => tracing::debug!("spotify devices: {e}"),
@@ -189,15 +223,19 @@ impl App {
     }
 
     /// Enter on Account. Without a client ID nothing happens (the strip says
-    /// so). Logged in: ask before logging out. Otherwise start the login.
+    /// so). While a login is pending or its panel is open, nothing happens.
+    /// Logged in: ask before logging out. Otherwise start the login.
     pub(crate) fn spotify_account_enter(&mut self) {
-        if !self.spotify.is_configured() {
+        if !self.spotify.is_configured()
+            || self.spotify_login.is_some()
+            || self.spotify_login_requested
+        {
             return;
         }
         if self.spotify_login_shown() == SpotifyLogin::LoggedIn {
             self.spotify_confirm = Some(SpotifyConfirm::Logout);
         } else {
-            self.ask_spotify(SpotifyAsk::BeginLogin, SpotifyOp::BeginLogin);
+            self.request_login();
         }
     }
 
@@ -913,5 +951,83 @@ pub(crate) mod tests {
         app.on_spotify_state(logged_in_state());
         std::thread::sleep(std::time::Duration::from_millis(50));
         assert_eq!(devices_asked(&host), before);
+    }
+
+    #[test]
+    fn a_begin_login_error_clears_the_pending_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with(&dir, Arc::new(FakeHost::default()));
+        app.spotify_login_requested = true;
+        app.on_spotify_done(Done {
+            tag: SpotifyAsk::BeginLogin,
+            result: Err(spotify_error(SpotifyErrorKind::Network)),
+        });
+        assert!(!app.spotify_login_requested);
+    }
+
+    #[test]
+    fn a_devices_reply_clears_the_pending_flag_even_when_it_is_not_a_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with(&dir, Arc::new(FakeHost::default()));
+        app.spotify_devices_requested = true;
+        app.spotify_devices_client_id = app.spotify.client_id.clone();
+        app.on_spotify_done(Done {
+            tag: SpotifyAsk::Devices,
+            result: Ok(SpotifyReply::Done),
+        });
+        assert!(!app.spotify_devices_requested);
+    }
+
+    #[test]
+    fn a_device_list_for_a_client_id_that_changed_meanwhile_is_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with(&dir, Arc::new(FakeHost::default()));
+        app.spotify_devices_requested = true;
+        app.spotify_devices_client_id = "0123456789abcdef0123456789abcdef".into();
+        app.spotify.client_id = "fedcba9876543210fedcba9876543210".into();
+        app.on_spotify_done(Done {
+            tag: SpotifyAsk::Devices,
+            result: Ok(SpotifyReply::Devices {
+                devices: vec![SpotifyDevice {
+                    id: "d1".into(),
+                    name: "Kitchen".into(),
+                    kind: "Speaker".into(),
+                    is_active: false,
+                    volume_percent: None,
+                }],
+            }),
+        });
+        assert!(app.spotify_devices.is_empty());
+        assert!(!app.spotify_devices_requested);
+    }
+
+    #[test]
+    fn closing_settings_with_a_login_pending_cancels_it_in_the_player() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let (mut app, _recorded) = panel_app(&dir, host.clone());
+        app.spotify_login = Some(LoginPanel {
+            url: "u".into(),
+            listening: true,
+            paste: None,
+            notice: None,
+        });
+        press(&mut app, KeyCode::Char('S'));
+        assert_eq!(app.modal, Modal::None);
+        assert!(app.spotify_login.is_none());
+        wait_until(&mut app, |_| {
+            host.ops.lock().unwrap().contains(&SpotifyOp::CancelLogin)
+        });
+        // The player now says it is not logged in; reopening the tab shows that.
+        *host.state.lock().unwrap() = Some(SpotifyState {
+            login: SpotifyLogin::NotLoggedIn,
+            ..SpotifyState::default()
+        });
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        wait_until(&mut app, |app| {
+            app.spotify_state.login == SpotifyLogin::NotLoggedIn
+        });
+        assert_eq!(app.spotify_login_shown(), SpotifyLogin::NotLoggedIn);
     }
 }

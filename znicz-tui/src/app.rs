@@ -437,6 +437,12 @@ pub struct App {
     pub(crate) spotify_login: Option<LoginPanel>,
     /// A question in the Settings strip that waits for Enter.
     pub(crate) spotify_confirm: Option<SpotifyConfirm>,
+    /// A `BeginLogin` is with the worker; its reply (or error) clears this.
+    pub(crate) spotify_login_requested: bool,
+    /// A `Devices` request is with the worker; its reply (or error) clears this.
+    pub(crate) spotify_devices_requested: bool,
+    /// The client ID when the pending `Devices` request was sent.
+    pub(crate) spotify_devices_client_id: String,
     /// Writes the clipboard sequence to the terminal. Tests replace it.
     pub(crate) clipboard: TextAction,
     /// Opens the login page in a browser. Tests replace it.
@@ -806,6 +812,9 @@ impl App {
             spotify_polled_at: None,
             spotify_login: None,
             spotify_confirm: None,
+            spotify_login_requested: false,
+            spotify_devices_requested: false,
+            spotify_devices_client_id: String::new(),
             clipboard: Box::new(crate::osc52::copy),
             browser: Box::new(znicz_spotify::browser::open),
             covers: CoverCache::new(),

@@ -95,11 +95,14 @@ pub fn render(frame: &mut Frame, list: Rect, app: &mut App) {
         usize::from(list_height),
     );
     app.settings_scroll = window.start;
-    app.hits.overlay_list = Some(ListHit {
-        inner: list_area,
-        offset: window.start,
-        len,
-    });
+    // A login panel covers the rows, so they take no clicks or wheel.
+    if app.spotify_login.is_none() {
+        app.hits.overlay_list = Some(ListHit {
+            inner: list_area,
+            offset: window.start,
+            len,
+        });
+    }
     app.hits.settings_tabs = tab_label_rects(tab_bar);
     let app: &App = app;
 

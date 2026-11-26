@@ -201,6 +201,11 @@ impl App {
             self.confirm_spotify();
             return true;
         }
+        // Space is not a confirm: while the question waits, it does nothing, so
+        // it neither opens the row's prompt nor starts a login.
+        if self.spotify_confirm.is_some() && key.code == KeyCode::Char(' ') {
+            return true;
+        }
         match key.code {
             KeyCode::Up | KeyCode::Char('k') if self.settings_cursor == 0 => {
                 self.settings_on_tab_bar = true;
@@ -845,14 +850,18 @@ impl App {
 
     /// A removal question, a slider prompt and a Spotify question belong to the
     /// Settings modal: once that modal is no longer on screen (closed, or
-    /// replaced by another modal), they go. The login panel goes too. The login
-    /// itself keeps running in the player.
+    /// replaced by another modal), they go. The login panel goes too, and a
+    /// login it was showing is cancelled in the player.
     pub(super) fn drop_removal_outside_settings(&mut self) {
         if self.modal != Modal::Settings {
             self.settings_confirm = None;
             self.settings_prompt = None;
             self.spotify_confirm = None;
-            self.spotify_login = None;
+            // The panel is the only view of a login: cancel it in the player too,
+            // as Esc does, so the Account row does not stay on Logging in.
+            if self.spotify_login.take().is_some() {
+                self.ask_spotify(SpotifyAsk::CancelLogin, SpotifyOp::CancelLogin);
+            }
         }
     }
 }
@@ -2981,5 +2990,84 @@ pub(crate) mod tests {
                 .join("\n")
                 .contains("Changing the client ID logs you out")
         );
+    }
+
+    #[test]
+    fn two_enters_on_account_before_the_reply_send_one_begin_login() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = spotify_app(&dir, host.clone());
+        app.spotify_state.login = SpotifyLogin::NotLoggedIn;
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::Account);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Enter);
+        let begins = sent_ops(&host)
+            .iter()
+            .filter(|op| **op == SpotifyOp::BeginLogin)
+            .count();
+        assert_eq!(begins, 1);
+    }
+
+    #[test]
+    fn three_switches_to_the_spotify_tab_while_devices_is_pending_send_one_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = spotify_app(&dir, host.clone());
+        press(&mut app, KeyCode::Char('S'));
+        for _ in 0..3 {
+            press(&mut app, KeyCode::Char('6'));
+            press(&mut app, KeyCode::Char('1'));
+        }
+        let devices = sent_ops(&host)
+            .iter()
+            .filter(|op| **op == SpotifyOp::Devices)
+            .count();
+        assert_eq!(devices, 1);
+    }
+
+    #[test]
+    fn space_under_a_pending_client_id_question_opens_no_prompt_and_keeps_the_question() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::ClientId);
+        app.spotify_confirm = Some(SpotifyConfirm::ClientId("x".into()));
+        press(&mut app, KeyCode::Char(' '));
+        assert!(app.settings_prompt.is_none());
+        assert_eq!(
+            app.spotify_confirm,
+            Some(SpotifyConfirm::ClientId("x".into()))
+        );
+    }
+
+    #[test]
+    fn a_login_panel_takes_the_list_clicks_but_the_tab_bar_stays_clickable() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        app.spotify_login = Some(crate::app::LoginPanel {
+            url: "u".into(),
+            listening: true,
+            paste: None,
+            notice: None,
+        });
+        let _ = screen_rows(&mut app);
+        assert!(
+            app.hits.overlay_list.is_none(),
+            "the rows under the panel are not clickable"
+        );
+        let (rect, _) = app
+            .hits
+            .settings_tabs
+            .iter()
+            .copied()
+            .find(|(_, tab)| *tab == Tab::Audio)
+            .expect("Audio has a label");
+        click(&mut app, rect.x, rect.y);
+        assert_eq!(app.settings_tab, Tab::Audio);
     }
 }
