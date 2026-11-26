@@ -106,15 +106,15 @@ enum IpcResponse {
         queue_unchanged: bool,
     },
     /// The answer to a `Spotify` request.
-    Spotify {
-        reply: SpotifyReply,
-    },
+    Spotify { reply: SpotifyReply },
     /// The answer to a `SpotifyStatus` request.
-    SpotifyStatus {
-        state: Box<SpotifyState>,
-    },
+    SpotifyStatus { state: Box<SpotifyState> },
     Err {
         message: String,
+        /// The Spotify error kind, set only for a failed Spotify request. Older
+        /// players do not send it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        spotify_kind: Option<SpotifyErrorKind>,
     },
 }
 
@@ -132,7 +132,7 @@ struct Shared {
     recent: Mutex<RecentOutcomes<()>>,
     /// Spotify change requests. Kept apart from `recent`: a Spotify call can
     /// take about 40 s, and it must not hold up Command or Library requests.
-    recent_spotify: Mutex<RecentOutcomes<SpotifyReply>>,
+    recent_spotify: Mutex<RecentOutcomes<SpotifyReply, SpotifyFailure>>,
 }
 
 impl Shared {
@@ -147,9 +147,12 @@ impl Shared {
 
     /// Run a Command or Library change request once per id (see [`run_once`]).
     fn apply_once(&self, id: Option<RequestId>, apply: impl FnOnce() -> Result<()>) -> IpcResponse {
-        match run_once(&self.recent, id, apply) {
+        match run_once(&self.recent, id, apply, |e| e.to_string()) {
             Ok(()) => self.ok(),
-            Err(message) => IpcResponse::Err { message },
+            Err(message) => IpcResponse::Err {
+                message,
+                spotify_kind: None,
+            },
         }
     }
 }
@@ -178,12 +181,14 @@ fn unexpected_spotify() -> ZniczError {
 /// How many clients' last outcomes the player remembers.
 const RECENT_CLIENTS: usize = 64;
 
-/// The last change request's outcome per client, oldest client first.
-struct RecentOutcomes<T> {
-    entries: std::collections::VecDeque<(RequestId, std::result::Result<T, String>)>,
+/// The last change request's outcome per client, oldest client first. `E` is
+/// what a failed request stores: the text for Command and Library, a
+/// [`SpotifyFailure`] for Spotify, which keeps the kind.
+struct RecentOutcomes<T, E = String> {
+    entries: std::collections::VecDeque<(RequestId, std::result::Result<T, E>)>,
 }
 
-impl<T> Default for RecentOutcomes<T> {
+impl<T, E> Default for RecentOutcomes<T, E> {
     fn default() -> Self {
         Self {
             entries: std::collections::VecDeque::new(),
@@ -191,15 +196,15 @@ impl<T> Default for RecentOutcomes<T> {
     }
 }
 
-impl<T: Clone> RecentOutcomes<T> {
-    fn get(&self, id: RequestId) -> Option<std::result::Result<T, String>> {
+impl<T: Clone, E: Clone> RecentOutcomes<T, E> {
+    fn get(&self, id: RequestId) -> Option<std::result::Result<T, E>> {
         self.entries
             .iter()
             .find(|(seen, _)| *seen == id)
             .map(|(_, outcome)| outcome.clone())
     }
 
-    fn record(&mut self, id: RequestId, outcome: std::result::Result<T, String>) {
+    fn record(&mut self, id: RequestId, outcome: std::result::Result<T, E>) {
         self.entries.retain(|(seen, _)| seen.client != id.client);
         self.entries.push_back((id, outcome));
         if self.entries.len() > RECENT_CLIENTS {
@@ -210,17 +215,18 @@ impl<T: Clone> RecentOutcomes<T> {
 
 /// Run one change request once per id. A resend of the last id from the same
 /// client gets the stored outcome instead of running `apply` again. A request
-/// without an id always runs.
+/// without an id always runs. `stored` turns a failure into what is kept.
 ///
 /// The lock is held while `apply` runs, so a resend that arrives while the
 /// first attempt is still running waits for it rather than racing it.
-fn run_once<T: Clone>(
-    recent: &Mutex<RecentOutcomes<T>>,
+fn run_once<T: Clone, E: Clone>(
+    recent: &Mutex<RecentOutcomes<T, E>>,
     id: Option<RequestId>,
     apply: impl FnOnce() -> Result<T>,
-) -> std::result::Result<T, String> {
+    stored: impl Fn(&ZniczError) -> E,
+) -> std::result::Result<T, E> {
     let Some(id) = id else {
-        return apply().map_err(|e| e.to_string());
+        return apply().map_err(|e| stored(&e));
     };
     let mut recent = recent
         .lock()
@@ -228,9 +234,46 @@ fn run_once<T: Clone>(
     if let Some(outcome) = recent.get(id) {
         return outcome;
     }
-    let outcome = apply().map_err(|e| e.to_string());
+    let outcome = apply().map_err(|e| stored(&e));
     recent.record(id, outcome.clone());
     outcome
+}
+
+/// A failed Spotify request as the player keeps it: its kind and its text.
+#[derive(Debug, Clone)]
+struct SpotifyFailure {
+    kind: Option<SpotifyErrorKind>,
+    message: String,
+}
+
+impl SpotifyFailure {
+    fn of(error: &ZniczError) -> Self {
+        match error {
+            ZniczError::Spotify { kind, message } => Self {
+                kind: Some(*kind),
+                message: message.clone(),
+            },
+            other => Self {
+                kind: None,
+                message: other.to_string(),
+            },
+        }
+    }
+
+    fn response(self) -> IpcResponse {
+        IpcResponse::Err {
+            message: self.message,
+            spotify_kind: self.kind,
+        }
+    }
+}
+
+/// The reply for a player that has no Spotify service.
+fn no_spotify() -> IpcResponse {
+    IpcResponse::Err {
+        message: NO_SPOTIFY.into(),
+        spotify_kind: Some(SpotifyErrorKind::NoService),
+    }
 }
 
 fn random_u64() -> u64 {
@@ -546,6 +589,7 @@ fn handle_session(stream: TcpStream, shared: Arc<Shared>) {
             &mut writer,
             &IpcResponse::Err {
                 message: "ipc hello required".into(),
+                spotify_kind: None,
             },
         );
         return;
@@ -555,6 +599,7 @@ fn handle_session(stream: TcpStream, shared: Arc<Shared>) {
             &mut writer,
             &IpcResponse::Err {
                 message: "ipc token mismatch".into(),
+                spotify_kind: None,
             },
         );
         return;
@@ -586,6 +631,7 @@ fn handle_session(stream: TcpStream, shared: Arc<Shared>) {
                 &mut writer,
                 &IpcResponse::Err {
                     message: "ipc token mismatch".into(),
+                    spotify_kind: None,
                 },
             );
             continue;
@@ -596,6 +642,7 @@ fn handle_session(stream: TcpStream, shared: Arc<Shared>) {
                     &mut writer,
                     &IpcResponse::Err {
                         message: "ipc already hello".into(),
+                        spotify_kind: None,
                     },
                 );
             }
@@ -622,6 +669,7 @@ fn handle_session(stream: TcpStream, shared: Arc<Shared>) {
                 let response = match &shared.library {
                     None => IpcResponse::Err {
                         message: "no music library configured".into(),
+                        spotify_kind: None,
                     },
                     Some(host) => shared.apply_once(id, || host.apply(op)),
                 };
@@ -629,28 +677,27 @@ fn handle_session(stream: TcpStream, shared: Arc<Shared>) {
             }
             IpcRequest::Spotify { op, id, .. } => {
                 let response = match &shared.spotify {
-                    None => IpcResponse::Err {
-                        message: NO_SPOTIFY.into(),
-                    },
-                    Some(host) => match run_once(&shared.recent_spotify, id, || host.apply(op)) {
+                    None => no_spotify(),
+                    Some(host) => match run_once(
+                        &shared.recent_spotify,
+                        id,
+                        || host.apply(op),
+                        SpotifyFailure::of,
+                    ) {
                         Ok(reply) => IpcResponse::Spotify { reply },
-                        Err(message) => IpcResponse::Err { message },
+                        Err(failure) => failure.response(),
                     },
                 };
                 let _ = write_json_line(&mut writer, &response);
             }
             IpcRequest::SpotifyStatus { .. } => {
                 let response = match &shared.spotify {
-                    None => IpcResponse::Err {
-                        message: NO_SPOTIFY.into(),
-                    },
+                    None => no_spotify(),
                     Some(host) => match host.try_state() {
                         Ok(state) => IpcResponse::SpotifyStatus {
                             state: Box::new(state),
                         },
-                        Err(e) => IpcResponse::Err {
-                            message: e.to_string(),
-                        },
+                        Err(e) => SpotifyFailure::of(&e).response(),
                     },
                 };
                 let _ = write_json_line(&mut writer, &response);
@@ -708,7 +755,7 @@ impl RpcFailure {
 fn command_result(response: std::result::Result<IpcResponse, RpcFailure>) -> Result<()> {
     match response.map_err(RpcFailure::into_error)? {
         IpcResponse::Ok { .. } => Ok(()),
-        IpcResponse::Err { message } => Err(ZniczError::Player(message)),
+        IpcResponse::Err { message, .. } => Err(ZniczError::Player(message)),
         IpcResponse::Spotify { .. } | IpcResponse::SpotifyStatus { .. } => {
             Err(ZniczError::Player(UNEXPECTED_REPLY.into()))
         }
@@ -727,7 +774,7 @@ impl LibraryHost for IpcClient {
             .map_err(RpcFailure::into_error)?
         {
             IpcResponse::Ok { .. } => Ok(()),
-            IpcResponse::Err { message } => Err(ZniczError::Library(message)),
+            IpcResponse::Err { message, .. } => Err(ZniczError::Library(message)),
             IpcResponse::Spotify { .. } | IpcResponse::SpotifyStatus { .. } => {
                 Err(ZniczError::Library(UNEXPECTED_REPLY.into()))
             }
@@ -757,7 +804,7 @@ impl LibraryHost for IpcClient {
                     sync_queue(live, &mut state.queue, queue_revision, queue_unchanged);
                     Ok(library.map(|status| *status).unwrap_or_default())
                 }
-                IpcResponse::Err { message } => Err(ZniczError::Library(message)),
+                IpcResponse::Err { message, .. } => Err(ZniczError::Library(message)),
                 IpcResponse::Spotify { .. } | IpcResponse::SpotifyStatus { .. } => {
                     Err(ZniczError::Library(UNEXPECTED_REPLY.into()))
                 }
@@ -831,7 +878,7 @@ fn open_stream(advertise_path: &Path, role: ClientRole) -> Result<Live> {
     )?;
     match read_json_line::<IpcResponse>(&mut reader)? {
         IpcResponse::Ok { .. } => {}
-        IpcResponse::Err { message } => return Err(ZniczError::Player(message)),
+        IpcResponse::Err { message, .. } => return Err(ZniczError::Player(message)),
         IpcResponse::Spotify { .. } | IpcResponse::SpotifyStatus { .. } => {
             return Err(ZniczError::Player(UNEXPECTED_REPLY.into()));
         }
@@ -971,7 +1018,7 @@ impl IpcClient {
         let token = live.token.clone();
         match rpc_on(&mut live, &IpcRequest::Shutdown { token })? {
             IpcResponse::Ok { .. } => Ok(()),
-            IpcResponse::Err { message } => Err(ZniczError::Player(message)),
+            IpcResponse::Err { message, .. } => Err(ZniczError::Player(message)),
             IpcResponse::Spotify { .. } | IpcResponse::SpotifyStatus { .. } => {
                 Err(ZniczError::Player(UNEXPECTED_REPLY.into()))
             }
@@ -1036,7 +1083,7 @@ fn finish_state(live: &mut Live, response: IpcResponse) -> Result<PlayerState> {
             sync_queue(live, &mut state.queue, queue_revision, queue_unchanged);
             Ok(*state)
         }
-        IpcResponse::Err { message } => Err(ZniczError::Player(message)),
+        IpcResponse::Err { message, .. } => Err(ZniczError::Player(message)),
         IpcResponse::Spotify { .. } | IpcResponse::SpotifyStatus { .. } => {
             Err(ZniczError::Player(UNEXPECTED_REPLY.into()))
         }
@@ -1056,7 +1103,10 @@ impl crate::spotify_host::SpotifyHost for IpcClient {
             .map_err(RpcFailure::into_error)?
         {
             IpcResponse::Spotify { reply } => Ok(reply),
-            IpcResponse::Err { message, .. } => Err(spotify_failure(message, None)),
+            IpcResponse::Err {
+                message,
+                spotify_kind,
+            } => Err(spotify_failure(message, spotify_kind)),
             _ => Err(unexpected_spotify()),
         }
     }
@@ -1075,7 +1125,10 @@ impl crate::spotify_host::SpotifyHost for IpcClient {
             .map_err(RpcFailure::into_error)?
         {
             IpcResponse::SpotifyStatus { state } => Ok(*state),
-            IpcResponse::Err { message, .. } => Err(spotify_failure(message, None)),
+            IpcResponse::Err {
+                message,
+                spotify_kind,
+            } => Err(spotify_failure(message, spotify_kind)),
             _ => Err(unexpected_spotify()),
         }
     }
@@ -1126,6 +1179,7 @@ mod tests {
 
         let player = command_result(Ok(IpcResponse::Err {
             message: "queue index out of range".into(),
+            spotify_kind: None,
         }))
         .unwrap_err()
         .to_string();
@@ -1376,7 +1430,7 @@ mod tests {
 
     #[test]
     fn recent_outcomes_keep_the_last_request_per_client_and_cap_the_clients() {
-        let mut recent = RecentOutcomes::default();
+        let mut recent: RecentOutcomes<()> = RecentOutcomes::default();
         let id = |client, seq| RequestId { client, seq };
 
         recent.record(id(1, 1), Ok(()));
@@ -1529,7 +1583,7 @@ mod tests {
                 })
                 .expect("rpc");
             match err {
-                IpcResponse::Err { message } => assert!(message.contains("token"), "{message}"),
+                IpcResponse::Err { message, .. } => assert!(message.contains("token"), "{message}"),
                 other => panic!("expected token error, got {other:?}"),
             }
         }
@@ -1977,7 +2031,7 @@ mod tests {
             },
         ] {
             match bare.rpc_raw(request) {
-                Ok(IpcResponse::Err { message }) => assert_eq!(message, NO_SPOTIFY),
+                Ok(IpcResponse::Err { message, .. }) => assert_eq!(message, NO_SPOTIFY),
                 other => panic!("{other:?}"),
             }
         }
@@ -2001,6 +2055,104 @@ mod tests {
             .expect_err("host refused");
         assert!(matches!(err, ZniczError::Spotify { .. }), "{err:?}");
         assert_eq!(err.to_string(), "refused");
+    }
+
+    /// Refuses every op as a free account would, and counts the calls.
+    #[derive(Default)]
+    struct KindSpotify {
+        calls: Mutex<usize>,
+    }
+
+    impl crate::spotify_host::SpotifyHost for KindSpotify {
+        fn apply(&self, _op: SpotifyOp) -> Result<SpotifyReply> {
+            *self.calls.lock().unwrap() += 1;
+            Err(ZniczError::Spotify {
+                kind: SpotifyErrorKind::PremiumRequired,
+                message: "needs Spotify Premium".into(),
+            })
+        }
+
+        fn state(&self) -> SpotifyState {
+            SpotifyState::default()
+        }
+    }
+
+    #[test]
+    fn the_kind_survives_ipc_and_a_resend() {
+        let (_dir, path) = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let host = Arc::new(KindSpotify::default());
+        let _server = IpcServer::start_with_spotify(player, &path, Duration::ZERO, host.clone())
+            .expect("start ipc");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        let token = load_advertise(&path).expect("advertise").token;
+        let id = RequestId { client: 9, seq: 1 };
+        let request = || IpcRequest::Spotify {
+            token: token.clone(),
+            op: SpotifyOp::Pause,
+            id: Some(id),
+        };
+
+        for _ in 0..2 {
+            match client.rpc_raw(request()).expect("reply") {
+                IpcResponse::Err {
+                    message,
+                    spotify_kind,
+                } => {
+                    assert_eq!(message, "needs Spotify Premium");
+                    assert_eq!(spotify_kind, Some(SpotifyErrorKind::PremiumRequired));
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        assert_eq!(
+            *host.calls.lock().unwrap(),
+            1,
+            "the resend is answered from memory"
+        );
+    }
+
+    /// What an older client's `IpcResponse::Err` looked like: no `spotify_kind`.
+    #[derive(Deserialize)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    enum OldResponse {
+        Err { message: String },
+    }
+
+    #[test]
+    fn err_replies_stay_compatible_with_older_players_and_clients() {
+        // A newer client reads an older player's reply: no kind.
+        let old: IpcResponse = serde_json::from_str(r#"{"kind":"err","message":"boom"}"#).unwrap();
+        assert!(matches!(
+            old,
+            IpcResponse::Err {
+                spotify_kind: None,
+                ..
+            }
+        ));
+
+        // Without a kind nothing extra is written, so Command and Library
+        // errors are byte-for-byte what they were.
+        let plain = serde_json::to_string(&IpcResponse::Err {
+            message: "boom".into(),
+            spotify_kind: None,
+        })
+        .unwrap();
+        assert_eq!(plain, r#"{"kind":"err","message":"boom"}"#);
+
+        // An older client reads a newer player's Spotify error: the extra
+        // field is ignored.
+        let with_kind = serde_json::to_string(&IpcResponse::Err {
+            message: "needs Spotify Premium".into(),
+            spotify_kind: Some(SpotifyErrorKind::PremiumRequired),
+        })
+        .unwrap();
+        assert!(
+            with_kind.contains(r#""spotify_kind":"premium_required""#),
+            "{with_kind}"
+        );
+        let OldResponse::Err { message } = serde_json::from_str(&with_kind).unwrap();
+        assert_eq!(message, "needs Spotify Premium");
     }
 
     #[test]
