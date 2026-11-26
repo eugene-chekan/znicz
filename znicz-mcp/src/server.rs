@@ -29,6 +29,11 @@ type SharedLibrary = Option<Arc<Mutex<Library>>>;
 #[derive(Clone)]
 pub struct ZniczMcpServer {
     player: IpcClient,
+    /// A second, independent connection for Spotify calls. A call can take
+    /// about 40 s, and it must not hold up the player tools on `player`.
+    // Read by the Spotify tools, added in Task 7 of the Spotify part 3 plan.
+    #[allow(dead_code)]
+    spotify: IpcClient,
     skills: SkillRegistry,
     library: SharedLibrary,
     playlists_dir: PathBuf,
@@ -38,15 +43,30 @@ pub struct ZniczMcpServer {
 
 impl ZniczMcpServer {
     /// Server without a music library. Library tools report that it is off.
-    pub fn new(player: IpcClient, skills_dirs: Vec<PathBuf>) -> Self {
-        Self::build(player, skills_dirs, None)
+    pub fn new(player: IpcClient, spotify: IpcClient, skills_dirs: Vec<PathBuf>) -> Self {
+        Self::build(player, spotify, skills_dirs, None)
     }
 
-    pub fn with_library(player: IpcClient, skills_dirs: Vec<PathBuf>, library: Library) -> Self {
-        Self::build(player, skills_dirs, Some(Arc::new(Mutex::new(library))))
+    pub fn with_library(
+        player: IpcClient,
+        spotify: IpcClient,
+        skills_dirs: Vec<PathBuf>,
+        library: Library,
+    ) -> Self {
+        Self::build(
+            player,
+            spotify,
+            skills_dirs,
+            Some(Arc::new(Mutex::new(library))),
+        )
     }
 
-    fn build(player: IpcClient, skills_dirs: Vec<PathBuf>, library: SharedLibrary) -> Self {
+    fn build(
+        player: IpcClient,
+        spotify: IpcClient,
+        skills_dirs: Vec<PathBuf>,
+        library: SharedLibrary,
+    ) -> Self {
         let bundled = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skills");
         let mut dirs = vec![bundled];
         dirs.extend(skills_dirs);
@@ -54,6 +74,7 @@ impl ZniczMcpServer {
 
         Self {
             player,
+            spotify,
             skills,
             library,
             playlists_dir: znicz_library::default_playlists_dir()
@@ -1168,6 +1189,22 @@ mod tests {
         (host, ipc, client)
     }
 
+    /// A second, independent connection to the player at `dir`, as `znicz mcp`
+    /// opens for Spotify calls.
+    fn second_client(dir: &Path) -> IpcClient {
+        IpcClient::connect(dir.join("ipc.toml"), ClientRole::Agent)
+            .expect("connect the spotify agent")
+    }
+
+    #[test]
+    fn the_server_takes_a_spotify_connection_of_its_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_host, _ipc, client) = hosted_player(dir.path());
+        let spotify = second_client(dir.path());
+        let server = ZniczMcpServer::new(client, spotify, Vec::new());
+        assert!(server.live_state().is_ok());
+    }
+
     /// A player that hosts a library service over a temp database, plus an MCP
     /// server reading the same database.
     /// `(dir, host, server)`: bound in this order, the dir is dropped last,
@@ -1181,7 +1218,12 @@ mod tests {
         let host = IpcServer::start_with_library(player, &advertise, Duration::ZERO, service)
             .expect("start ipc");
         let client = IpcClient::connect(&advertise, ClientRole::Agent).expect("connect");
-        let server = ZniczMcpServer::with_library(client, Vec::new(), Library::open(&db).unwrap());
+        let server = ZniczMcpServer::with_library(
+            client,
+            second_client(root.path()),
+            Vec::new(),
+            Library::open(&db).unwrap(),
+        );
         (root, host, server)
     }
 
@@ -1244,8 +1286,9 @@ mod tests {
         let _lock = env_lock();
         let dir = tempfile::tempdir().unwrap();
         let (host, ipc, client) = hosted_player(dir.path());
+        let spotify = second_client(dir.path());
         Harness {
-            server: ZniczMcpServer::new(client, Vec::new()),
+            server: ZniczMcpServer::new(client, spotify, Vec::new()),
             host,
             _ipc: ipc,
             _dir: dir,
@@ -1257,8 +1300,9 @@ mod tests {
         let _lock = env_lock();
         let dir = tempfile::tempdir().unwrap();
         let (host, ipc, client) = hosted_player(dir.path());
+        let spotify = second_client(dir.path());
         Harness {
-            server: ZniczMcpServer::with_library(client, Vec::new(), library),
+            server: ZniczMcpServer::with_library(client, spotify, Vec::new(), library),
             host,
             _ipc: ipc,
             _dir: dir,
@@ -1818,7 +1862,7 @@ mod tests {
             std::env::set_var("ZNICZ_STATIONS_PATH", &path);
         }
         let (host, ipc, client) = hosted_player(dir.path());
-        let server = ZniczMcpServer::new(client, Vec::new());
+        let server = ZniczMcpServer::new(client, second_client(dir.path()), Vec::new());
         unsafe {
             std::env::remove_var("ZNICZ_STATIONS_PATH");
         }

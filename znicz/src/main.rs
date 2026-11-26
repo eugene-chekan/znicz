@@ -1242,6 +1242,9 @@ fn run_mcp(
     config: Option<&Path>,
 ) -> color_eyre::Result<()> {
     let player = connect_agent(device, config)?;
+    // A second connection: a Spotify call can take about 40 s, and it must not
+    // hold up the player tools that use the first one.
+    let spotify = connect_agent(device, config)?;
 
     // A broken library must not stop the player tools from working.
     let library = library_path.and_then(|path| match Library::open(&path) {
@@ -1255,7 +1258,7 @@ fn run_mcp(
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
-        .block_on(run_stdio(player, skills_dirs, library))
+        .block_on(run_stdio(player, spotify, skills_dirs, library))
         .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
     Ok(())
 }
