@@ -711,7 +711,7 @@ A Spotify call that runs past the 30 s read timeout is retried once after a reco
 **Files:**
 - Modify: `znicz-core/src/player/ipc.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to the `tests` module of `ipc.rs`:
 
@@ -790,14 +790,14 @@ Add to the `tests` module of `ipc.rs`:
     }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz-core timeout -q`
 Expected: FAIL to compile ("cannot find type `RpcError`", "no function `sent`").
 
 The timeout wording of Command, Library and shutdown requests changes from `ipc read: <os error>` to `the player did not answer in time` (the outdated-player hint is still added to Command and Library). Nothing else about them changes.
 
-- [ ] **Step 3: Report timeouts from `rpc_on`**
+- [x] **Step 3: Report timeouts from `rpc_on`**
 
 In `ipc.rs`, replace the whole `fn rpc_on` (the one-line body that calls `write_json_line` and then `read_json_line`) with the following, and add the types directly above it:
 
@@ -854,7 +854,7 @@ fn rpc_on(live: &mut Live, request: &IpcRequest) -> std::result::Result<IpcRespo
 
 `read_json_line` stays as it is for `open_stream`, which does not need the distinction.
 
-- [ ] **Step 4: Update the callers of `rpc_on`**
+- [x] **Step 4: Update the callers of `rpc_on`**
 
 In `rpc_raw` (the `#[cfg(test)]` helper), change the final line to:
 
@@ -868,7 +868,7 @@ In `shutdown`, change the match scrutinee to:
         match rpc_on(&mut live, &IpcRequest::Shutdown { token }).map_err(RpcError::into_player_error)? {
 ```
 
-- [ ] **Step 5: Carry the timeout through `RpcFailure`**
+- [x] **Step 5: Carry the timeout through `RpcFailure`**
 
 Replace `struct RpcFailure` and its `impl` (the block that has `fn connect`, `fn into_error`) with:
 
@@ -954,18 +954,18 @@ with:
                 rpc_on(&mut live, &request).map_err(RpcFailure::sent)?
 ```
 
-- [ ] **Step 6: Use the Spotify mapping in the Spotify impl**
+- [x] **Step 6: Use the Spotify mapping in the Spotify impl**
 
 In `impl crate::spotify_host::SpotifyHost for IpcClient`, in both `fn apply` and `fn try_state`, change `.map_err(RpcFailure::into_error)?` to `.map_err(RpcFailure::into_spotify_error)?`.
 
-- [ ] **Step 7: Run the tests to verify they pass**
+- [x] **Step 7: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-core -q`
 Expected: PASS. The existing `outdated_player_hint` tests still pass because `into_error` is unchanged.
 
 Note: no test sends a whole request to a player that never answers through `IpcClient`, because that takes the 30 s read timeout twice. `a_silent_player_makes_rpc_on_time_out` covers the real socket timeout with a 50 ms read timeout, and the `RpcFailure` tests cover the mapping.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add znicz-core/src/player/ipc.rs
@@ -984,7 +984,7 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 **Files:**
 - Modify: `znicz/src/spotify_cli.rs`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 In `znicz/src/spotify_cli.rs`, replace the test `a_player_without_a_spotify_service_gets_a_clear_line` with:
 
@@ -1013,12 +1013,12 @@ In `znicz/src/spotify_cli.rs`, replace the test `a_player_without_a_spotify_serv
     }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cargo test -p znicz spotify_cli -q`
 Expected: FAIL to compile ("expected `&str`, found `&ZniczError`", and `SpotifyErrorKind` not found).
 
-- [ ] **Step 3: Switch the CLI to the kind**
+- [x] **Step 3: Switch the CLI to the kind**
 
 In `znicz/src/spotify_cli.rs`, change the `use znicz_core::{…}` block (lines 13–16) to:
 
@@ -1060,12 +1060,12 @@ fn host_error(error: ZniczError) -> color_eyre::Report {
 
 In the `#[cfg(test)] mod tests` of this file, add `use znicz_core::NO_SPOTIFY;` at the top of the test module (below `use super::*;`).
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz spotify_cli -q`
 Expected: PASS. Then `cargo build -p znicz` must print no unused-import warning for `NO_SPOTIFY` in non-test code.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz/src/spotify_cli.rs
