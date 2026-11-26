@@ -90,10 +90,34 @@ impl App {
 
     /// The Spotify tab was shown: try the player again and refresh the device list.
     pub(crate) fn on_spotify_tab_shown(&mut self) {
+        self.reread_spotify_config();
         self.spotify_unavailable = None;
         self.spotify_polled_at = None;
         if self.spotify.is_configured() {
             self.request_devices();
+        }
+    }
+
+    /// The App started on a broken `config.toml` and holds the defaults. When
+    /// the file parses now, its `[spotify]` replaces them, once, with a notice.
+    /// `config_problem` stays set: saves and `Configure` stay refused until a
+    /// restart, since the rest of the in-memory config is still the defaults.
+    fn reread_spotify_config(&mut self) {
+        if self.config_problem.is_none() {
+            return;
+        }
+        let Some(file) = self.config_file.clone() else {
+            return;
+        };
+        let Ok((config, open_browser)) = super::settings_ui::read_spotify(&file) else {
+            return;
+        };
+        self.spotify = config;
+        self.open_browser = open_browser;
+        if !self.config_fixed_told {
+            self.config_fixed_told = true;
+            self.toasts
+                .info("config.toml is fixed; restart Znicz to load all settings");
         }
     }
 

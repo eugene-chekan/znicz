@@ -75,7 +75,7 @@ fn picker_protocol(wanted: CoverProtocol, queried: ProtocolType) -> ProtocolType
 
 /// The `[spotify]` section as `config.toml` has it now, and its browser setting.
 /// A missing key is the default; a value of the wrong kind is an error.
-fn read_spotify(file: &ConfigFile) -> Result<(SpotifyConfig, OpenBrowser), String> {
+pub(super) fn read_spotify(file: &ConfigFile) -> Result<(SpotifyConfig, OpenBrowser), String> {
     let text = |key: &str| -> Result<Option<String>, String> {
         match file.get("spotify", key)? {
             None => Ok(None),
@@ -2360,6 +2360,96 @@ pub(crate) mod tests {
         type_text(&mut app, "9001");
         press(&mut app, KeyCode::Enter);
         assert_eq!(app.spotify.redirect_port, 8898);
+        assert!(
+            !sent_ops(&host)
+                .iter()
+                .any(|op| matches!(op, SpotifyOp::Configure { .. }))
+        );
+    }
+
+    /// The App as a start on a broken `config.toml` leaves it: the defaults in
+    /// memory and the problem recorded. The file on disk has been fixed since.
+    fn started_on_a_broken_file_now_fixed(
+        dir: &tempfile::TempDir,
+        host: Arc<crate::app::spotify_ui::tests::FakeHost>,
+    ) -> App {
+        std::fs::write(
+            dir.path().join("config.toml"),
+            format!("[spotify]\nclient_id = \"{ID}\"\n"),
+        )
+        .unwrap();
+        let mut app = settings_app(dir).with_config_problem(ConfigProblem::Parse {
+            message: "bad".into(),
+            line: 1,
+            column: 1,
+        });
+        app.spotify_worker = Some(SpotifyWorker::spawn(host.clone()).unwrap());
+        app.spotify_main = Some(host);
+        app
+    }
+
+    const FIXED_NOTICE: &str = "config.toml is fixed; restart Znicz to load all settings";
+
+    #[test]
+    fn showing_the_spotify_tab_reads_the_fixed_file_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = started_on_a_broken_file_now_fixed(&dir, host);
+        assert!(app.spotify.client_id.is_empty());
+        assert_eq!(
+            crate::spotify_rows::account_text(&app.spotify_view()),
+            "Not configured"
+        );
+
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+
+        let view = app.spotify_view();
+        assert_eq!(view.client_id_head, &ID[..8]);
+        assert_ne!(crate::spotify_rows::account_text(&view), "Not configured");
+        assert!(
+            app.config_problem.is_some(),
+            "the problem stays until a restart"
+        );
+    }
+
+    #[test]
+    fn the_fixed_file_is_announced_once_per_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = started_on_a_broken_file_now_fixed(&dir, host);
+        let count = |app: &App| {
+            toast_texts(app)
+                .iter()
+                .filter(|t| t.as_str() == FIXED_NOTICE)
+                .count()
+        };
+
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        assert_eq!(count(&app), 1);
+
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('S'));
+        assert_eq!(count(&app), 1);
+    }
+
+    #[test]
+    fn after_the_file_is_fixed_a_port_change_is_still_refused_and_nothing_is_sent() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = started_on_a_broken_file_now_fixed(&dir, host.clone());
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::RedirectPort);
+        press(&mut app, KeyCode::Enter);
+        for _ in 0..4 {
+            press(&mut app, KeyCode::Backspace);
+        }
+        type_text(&mut app, "9001");
+        press(&mut app, KeyCode::Enter);
+
+        assert_eq!(app.spotify.redirect_port, SpotifyConfig::DEFAULT_PORT);
         assert!(
             !sent_ops(&host)
                 .iter()

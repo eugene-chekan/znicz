@@ -407,6 +407,14 @@ only by the TUI, so it is saved but not sent. With a config error, or no config
 file path, the row goes back to its old value, nothing is written, and nothing
 is sent. An empty client ID would log the user out.
 
+**Broken file at start.** If `config.toml` did not parse at start, the TUI runs
+on the defaults. Showing the Spotify tab reads `[spotify]` from the file again,
+and once the file parses, the Client ID, Redirect port, Open browser and
+Playback device rows and Account show it. The first time that happens in a run,
+a toast says `config.toml is fixed; restart Znicz to load all settings`. The
+problem stays set, so saves and `Configure` stay refused until a restart: the
+rest of the config is still the defaults.
+
 **Login panel.** `Enter` on Account (logged out) starts a login. The panel
 opens in the list area and shows the URL as plain wrapped text (not an OSC 8
 link), with the line `Waiting for the browser; or paste the address you were

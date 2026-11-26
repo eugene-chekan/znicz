@@ -384,6 +384,8 @@ pub struct App {
     pub config_file: Option<ConfigFile>,
     /// Why the config file was not used (it is broken or unreadable), reported at start.
     pub config_problem: Option<ConfigProblem>,
+    /// The notice that a broken config file now parses was shown this run.
+    pub(crate) config_fixed_told: bool,
     /// The Settings tab shown. Its rows are rebuilt when the modal opens (folders come from the library status).
     pub(crate) settings_tab: Tab,
     pub(crate) settings_rows: Vec<Row>,
@@ -788,6 +790,7 @@ impl App {
             tui: TuiConfig::default(),
             config_file: None,
             config_problem: None,
+            config_fixed_told: false,
             settings_tab: Tab::Display,
             settings_rows: Vec::new(),
             settings_cursor: 0,
