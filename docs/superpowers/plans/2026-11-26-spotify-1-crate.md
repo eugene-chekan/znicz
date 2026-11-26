@@ -558,7 +558,7 @@ git commit -m "feat(core): Spotify ops, state and the SpotifyHost trait"
 - Modify: `Cargo.toml` (root)
 - Create: `znicz-spotify/Cargo.toml`, `znicz-spotify/src/lib.rs`, `znicz-spotify/src/error.rs`
 
-- [ ] **Step 1: Workspace entries**
+- [x] **Step 1: Workspace entries**
 
 In the root `Cargo.toml`, change `members` to:
 
@@ -575,7 +575,7 @@ getrandom = "0.3"
 percent-encoding = "2"
 ```
 
-- [ ] **Step 2: Crate manifest**
+- [x] **Step 2: Crate manifest**
 
 Create `znicz-spotify/Cargo.toml`:
 
@@ -607,7 +607,7 @@ dirs.workspace = true
 tempfile.workspace = true
 ```
 
-- [ ] **Step 3: Write `error.rs` with tests**
+- [x] **Step 3: Write `error.rs` with tests**
 
 Create `znicz-spotify/src/error.rs`:
 
@@ -697,7 +697,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 4: `lib.rs`**
+- [x] **Step 4: `lib.rs`**
 
 Create `znicz-spotify/src/lib.rs`:
 
@@ -714,12 +714,12 @@ pub use error::{Result, SpotifyError};
 
 Later tasks each add one `mod` line here; the final list is in Task 12.
 
-- [ ] **Step 5: Build and test**
+- [x] **Step 5: Build and test**
 
 Run: `cargo test -p znicz-spotify`
 Expected: 2 tests pass. `Cargo.lock` gains the crate (sha2, base64, getrandom and percent-encoding are already in the lock file through other crates).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add Cargo.toml Cargo.lock znicz-spotify
