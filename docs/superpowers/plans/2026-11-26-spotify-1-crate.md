@@ -734,7 +734,7 @@ git commit -m "feat(spotify): crate scaffold and SpotifyError"
 - Create: `znicz-spotify/src/pkce.rs`
 - Modify: `znicz-spotify/src/lib.rs` (add `mod pkce;`)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `znicz-spotify/src/pkce.rs` with only the tests:
 
@@ -749,7 +749,7 @@ mod tests {
     #[test]
     fn challenge_matches_rfc_7636_appendix_b() {
         assert_eq!(
-            challenge("dBjftJeZ4CVP-mJ92K9pYknwuUsUtYnbxwlH6vG-yyM"),
+            challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
             "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
         );
     }
@@ -775,12 +775,12 @@ mod tests {
 
 Add `mod pkce;` to `lib.rs`.
 
-- [ ] **Step 2: Run to see it fail**
+- [x] **Step 2: Run to see it fail**
 
 Run: `cargo test -p znicz-spotify pkce`
 Expected: compile error, `challenge`, `random_verifier`, `random_state` not found.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Above the tests in `pkce.rs`:
 
@@ -810,12 +810,12 @@ fn random_bytes<const N: usize>() -> [u8; N] {
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cargo test -p znicz-spotify pkce`
 Expected: 3 pass. (`cargo build` warns that these are unused outside tests until Task 10; that is fine.)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-spotify/src/pkce.rs znicz-spotify/src/lib.rs
@@ -830,7 +830,7 @@ git commit -m "feat(spotify): PKCE verifier, challenge and state"
 - Create: `znicz-spotify/src/redirect.rs`
 - Modify: `znicz-spotify/src/lib.rs` (add `mod redirect;`)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `znicz-spotify/src/redirect.rs`:
 
@@ -894,12 +894,12 @@ mod tests {
 
 Add `mod redirect;` to `lib.rs`.
 
-- [ ] **Step 2: Run to see it fail**
+- [x] **Step 2: Run to see it fail**
 
 Run: `cargo test -p znicz-spotify redirect`
 Expected: compile error, `code_from` not found.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Between the `use` line and the tests:
 
@@ -946,12 +946,12 @@ fn decode(value: &str) -> String {
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cargo test -p znicz-spotify redirect`
 Expected: 5 pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-spotify/src/redirect.rs znicz-spotify/src/lib.rs
