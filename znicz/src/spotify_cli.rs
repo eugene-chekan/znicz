@@ -1,15 +1,151 @@
 //! `znicz spotify login | logout | status`. Each command autostarts the
 //! player like the other CLI commands, sends the current `[spotify]` settings
 //! first, then talks to the player over IPC. The decisions and the wording
-//! are pure functions here; the IO wrappers are in the next task.
+//! are pure functions here; `run` and `login` are the thin IO wrappers.
 
-use std::time::Duration;
+use std::io::BufRead;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use znicz_core::{SpotifyConfig, SpotifyLogin, SpotifyState, valid_client_id};
+use clap::Subcommand;
+use color_eyre::eyre::{bail, eyre};
+use znicz_core::{
+    IpcClient, SpotifyConfig, SpotifyHost, SpotifyLogin, SpotifyOp, SpotifyReply, SpotifyState,
+    ZniczError, valid_client_id,
+};
+use znicz_spotify::browser::{self, OpenBrowser};
 
 /// How long the login waits for the account name after `LoggedIn`. The
 /// account read runs after the login is recorded, so it can lag.
 pub const ACCOUNT_WAIT: Duration = Duration::from_secs(5);
+
+/// How often the login polls the player.
+const LOGIN_POLL: Duration = Duration::from_millis(500);
+
+#[derive(Debug, Subcommand)]
+pub enum SpotifyCmd {
+    /// Log in to Spotify: opens a browser, or paste the address you were sent to
+    Login,
+    /// Log out of Spotify and delete the saved token
+    Logout,
+    /// Show the login, account, device and what is playing
+    Status,
+}
+
+/// Run one `znicz spotify` command against the player. `connect` autostarts
+/// and connects to the player; `login` with no usable client ID fails before
+/// it, so nothing is started or sent for a setting that cannot work.
+pub fn run(
+    command: SpotifyCmd,
+    config: SpotifyConfig,
+    open: OpenBrowser,
+    connect: impl FnOnce() -> color_eyre::Result<IpcClient>,
+) -> color_eyre::Result<()> {
+    if matches!(command, SpotifyCmd::Login) {
+        if let Err(message) = check_client_id(&config) {
+            bail!("{message}");
+        }
+    }
+    let host = connect()?;
+    host.apply(SpotifyOp::Configure { config })
+        .map_err(host_error)?;
+    match command {
+        SpotifyCmd::Login => login(&host, open),
+        SpotifyCmd::Logout => {
+            host.apply(SpotifyOp::Logout).map_err(host_error)?;
+            println!("Logged out of Spotify");
+            Ok(())
+        }
+        SpotifyCmd::Status => {
+            let state = host.try_state().map_err(host_error)?;
+            for line in status_lines(&state, now_ms()) {
+                println!("{line}");
+            }
+            Ok(())
+        }
+    }
+}
+
+fn login(host: &IpcClient, open: OpenBrowser) -> color_eyre::Result<()> {
+    let SpotifyReply::AuthorizeUrl { url, listening, .. } =
+        host.apply(SpotifyOp::BeginLogin).map_err(host_error)?
+    else {
+        bail!("the player sent an unexpected reply to the login");
+    };
+    println!("Open this URL in any browser and approve:\n{url}");
+    println!("{}", login_intro(listening));
+    let env = |key: &str| std::env::var(key).ok();
+    if browser::should_open(open, &env) {
+        if let Err(e) = browser::open(&url) {
+            println!("Could not open a browser: {e}");
+        }
+    }
+
+    let paste = host.clone();
+    std::thread::Builder::new()
+        .name("znicz-spotify-paste".into())
+        .spawn(move || paste_lines(&paste))?;
+
+    let mut logged_in_since: Option<Instant> = None;
+    loop {
+        let state = host.try_state().map_err(host_error)?;
+        if state.login == SpotifyLogin::LoggedIn {
+            logged_in_since.get_or_insert_with(Instant::now);
+        }
+        let waited = logged_in_since.map_or(Duration::ZERO, |since| since.elapsed());
+        match login_wait(&state, waited) {
+            LoginWait::Pending => std::thread::sleep(LOGIN_POLL),
+            LoginWait::LoggedIn { user } => {
+                println!("{}", logged_in_message(user.as_deref()));
+                return Ok(());
+            }
+            LoginWait::Failed(reason) => bail!("{reason}"),
+        }
+    }
+}
+
+/// Each non-empty line on stdin is a pasted address. Errors are printed and
+/// the wait goes on; a wrong address is the usual one.
+fn paste_lines(host: &IpcClient) {
+    for line in std::io::stdin().lock().lines() {
+        let Ok(line) = line else { break };
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Err(e) = host.apply(SpotifyOp::CompleteLogin {
+            redirect_url: line.to_string(),
+        }) {
+            println!("{e}");
+        }
+    }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// The text the player's IPC server sends when it runs without a Spotify
+/// service (no data folder for the token).
+const NO_SERVICE: &str = "no Spotify service in this player";
+
+/// The line for a player that has no Spotify service, or `None` for any
+/// other error.
+pub fn unavailable_message(error: &str) -> Option<&'static str> {
+    (error == NO_SERVICE).then_some(
+        "Spotify is unavailable: this player has no Spotify service (no data folder for the login token?)",
+    )
+}
+
+/// An IPC error as the command's error: the no-service case gets its own line.
+fn host_error(error: ZniczError) -> color_eyre::Report {
+    match unavailable_message(&error.to_string()) {
+        Some(line) => eyre!(line),
+        None => eyre!("{error}"),
+    }
+}
 
 /// The line under the login URL.
 pub fn login_intro(listening: bool) -> &'static str {
@@ -377,5 +513,16 @@ mod tests {
             status_lines(&state, 0)[4],
             "Playing: an item Znicz does not show (podcast or ad)"
         );
+    }
+
+    #[test]
+    fn a_player_without_a_spotify_service_gets_a_clear_line() {
+        assert_eq!(
+            unavailable_message("no Spotify service in this player"),
+            Some(
+                "Spotify is unavailable: this player has no Spotify service (no data folder for the login token?)"
+            )
+        );
+        assert_eq!(unavailable_message("the player went away"), None);
     }
 }

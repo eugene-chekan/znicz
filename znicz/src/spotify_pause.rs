@@ -98,7 +98,7 @@ pub fn spawn_pause_watcher(
                 .state_arc()
                 .read()
                 .map(|s| s.status)
-                .unwrap_or(PlaybackStatus::Stopped);
+                .unwrap_or_else(|e| e.into_inner().status);
             let mut prev = before;
             while !stop.load(Ordering::SeqCst) {
                 thread::sleep(SAMPLE);
@@ -106,7 +106,7 @@ pub fn spawn_pause_watcher(
                     .state_arc()
                     .read()
                     .map(|s| s.status)
-                    .unwrap_or(PlaybackStatus::Stopped);
+                    .unwrap_or_else(|e| e.into_inner().status);
                 if started_playing(before, prev, now) {
                     request_pause(&tx);
                 }

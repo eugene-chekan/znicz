@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
+use spotify_cli::SpotifyCmd;
 use znicz_core::wait_for_library;
 use znicz_core::{
     AudioConfig, AudioOutput, ClientRole, Command, FadeTimes, IpcClient, IpcServer, LibraryHost,
@@ -23,7 +24,6 @@ use znicz_tui::{
 };
 
 mod daemon;
-#[allow(dead_code)] // used by the `znicz spotify` command (next task)
 mod spotify_cli;
 mod spotify_pause;
 mod update;
@@ -104,6 +104,12 @@ enum Commands {
     Station {
         #[command(subcommand)]
         command: StationCmd,
+    },
+
+    /// Log in to Spotify, log out, or show its status
+    Spotify {
+        #[command(subcommand)]
+        command: SpotifyCmd,
     },
 
     /// Check for a newer release, or install it
@@ -219,8 +225,6 @@ struct SpotifySection {
     /// The device used when nothing is active. Unset: none.
     device: Option<String>,
     /// `auto`, `always` or `never`. Read by front ends only.
-    // Read by the `spotify` CLI, which lands in the next task.
-    #[allow(dead_code)]
     open_browser: Option<String>,
 }
 
@@ -240,8 +244,6 @@ fn spotify_config(section: &SpotifySection) -> SpotifyConfig {
 
 /// The browser setting. An unknown value logs a warning and means `auto`; it
 /// does not discard the rest of the config.
-// Used by the `spotify` CLI, which lands in the next task.
-#[allow(dead_code)]
 fn open_browser_setting(section: &SpotifySection) -> OpenBrowser {
     match section.open_browser.as_deref() {
         None => OpenBrowser::default(),
@@ -540,6 +542,14 @@ fn main() -> color_eyre::Result<()> {
                 }
             }
         },
+        Some(Commands::Spotify { command }) => {
+            spotify_cli::run(
+                command,
+                spotify_config(&config.spotify),
+                open_browser_setting(&config.spotify),
+                || connect_agent(audio_config.device_id.as_deref(), config_file.as_deref()),
+            )?;
+        }
         None => {
             run_tui(
                 &cli.files,
