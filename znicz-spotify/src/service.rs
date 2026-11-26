@@ -23,6 +23,8 @@ const SLOW_POLL: Duration = Duration::from_secs(15);
 const ACTIVE_WINDOW_MS: u64 = 60_000;
 /// Devices are re-read at most this often.
 const DEVICES_EVERY_MS: u64 = 15_000;
+/// While a login waits for its callback, it is checked this often.
+const LOGIN_CHECK: Duration = Duration::from_secs(1);
 /// A user action waits for a 429 at most this long before retrying once.
 const MAX_RETRY_WAIT_SECS: u64 = 10;
 
@@ -55,6 +57,8 @@ struct Shared {
     listener: Mutex<Option<CallbackListener>>,
     last_touch_ms: AtomicU64,
     last_devices_ms: AtomicU64,
+    /// When the account was last read: a failed read is not retried every poll.
+    last_account_ms: AtomicU64,
     /// No polls before this time (after a 429).
     backoff_until_ms: AtomicU64,
     /// The last poll error shown, so the same one is not repeated every second.
@@ -93,6 +97,7 @@ impl SpotifyService {
             listener: Mutex::new(None),
             last_touch_ms: AtomicU64::new(0),
             last_devices_ms: AtomicU64::new(0),
+            last_account_ms: AtomicU64::new(0),
             backoff_until_ms: AtomicU64::new(0),
             last_poll_error: Mutex::new(None),
             wake: (Mutex::new(false), Condvar::new()),
@@ -199,6 +204,31 @@ impl Shared {
         self.state.lock().unwrap().last_error = Some(SpotifyError::Revoked.to_string());
     }
 
+    /// A login whose callback never came ends once its TTL has passed.
+    fn expire_login(&self) {
+        if self.state.lock().unwrap().login != SpotifyLogin::LoggingIn {
+            return;
+        }
+        // Client before state, as everywhere; the listener is taken after both are released.
+        let expired = {
+            let client = self.client.lock().unwrap();
+            let mut state = self.state.lock().unwrap();
+            if client.login_pending() || state.login != SpotifyLogin::LoggingIn {
+                false
+            } else {
+                self.login_epoch.fetch_add(1, Ordering::SeqCst);
+                state.account = None;
+                state.playback = None;
+                state.devices.clear();
+                state.login = SpotifyLogin::Failed(SpotifyError::LoginExpired.to_string());
+                true
+            }
+        };
+        if expired {
+            self.listener.lock().unwrap().take();
+        }
+    }
+
     fn apply(self: &Arc<Self>, op: SpotifyOp) -> Result<SpotifyReply> {
         self.touch();
         match op {
@@ -259,8 +289,12 @@ impl Shared {
                 self.page(|api| api.artist_albums(&uri, offset, limit))
             }
             SpotifyOp::Devices => {
+                let epoch = self.login_epoch.load(Ordering::SeqCst);
                 let devices = self.client.lock().unwrap().call(|api| api.devices())?;
-                self.state.lock().unwrap().devices = devices.clone();
+                let mut state = self.state.lock().unwrap();
+                if self.login_epoch.load(Ordering::SeqCst) == epoch {
+                    state.devices = devices.clone();
+                }
                 Ok(SpotifyReply::Devices { devices })
             }
             SpotifyOp::Queue => {
@@ -298,6 +332,9 @@ impl Shared {
             match shared.finish_login(query) {
                 Ok(()) => Some("Logged in to Spotify. You can close this tab.".into()),
                 Err(SpotifyError::WrongAddress) => None,
+                Err(SpotifyError::NoLogin) => {
+                    Some("Already logged in to Spotify. You can close this tab.".into())
+                }
                 Err(e) => Some(format!("Spotify login failed: {e}")),
             }
         });
@@ -336,11 +373,18 @@ impl Shared {
     }
 
     fn refresh_account(&self) {
+        let epoch = self.login_epoch.load(Ordering::SeqCst);
         let result = self.client.lock().unwrap().call(|api| api.me());
         match result {
-            Ok(account) => self.state.lock().unwrap().account = Some(account),
+            Ok(account) => {
+                let mut state = self.state.lock().unwrap();
+                // A logout during the read must not be undone by it.
+                if self.login_epoch.load(Ordering::SeqCst) == epoch {
+                    state.account = Some(account);
+                }
+            }
             Err(SpotifyError::Revoked) => self.on_revoked(),
-            Err(e) => tracing::warn!(error = %e, "could not read the Spotify account"),
+            Err(e) => tracing::debug!(error = %e, "could not read the Spotify account"),
         }
     }
 
@@ -374,6 +418,7 @@ impl Shared {
                 self.wake();
             }
             Err(SpotifyError::PremiumRequired) => self.set_premium(false),
+            Err(SpotifyError::Revoked) => self.on_revoked(),
             Err(_) => {}
         }
         result
@@ -410,6 +455,7 @@ impl Shared {
 
     /// The id of the device named in the settings, if it is online.
     fn preferred_device(&self) -> Result<Option<String>> {
+        let epoch = self.login_epoch.load(Ordering::SeqCst);
         let mut client = self.client.lock().unwrap();
         let name = client.config().device.clone();
         if name.is_empty() {
@@ -421,7 +467,10 @@ impl Shared {
             .iter()
             .find(|d| d.name == name)
             .map(|d| d.id.clone());
-        self.state.lock().unwrap().devices = devices;
+        let mut state = self.state.lock().unwrap();
+        if self.login_epoch.load(Ordering::SeqCst) == epoch {
+            state.devices = devices;
+        }
         Ok(id)
     }
 
@@ -433,6 +482,19 @@ impl Shared {
             return;
         };
         match op {
+            SpotifyOp::Play {
+                context_uri, uris, ..
+            } => {
+                playback.is_playing = true;
+                playback.read_at_ms = now;
+                if context_uri.is_some() || !uris.is_empty() {
+                    playback.progress_ms = 0;
+                }
+            }
+            SpotifyOp::Transfer { play: true, .. } => {
+                playback.is_playing = true;
+                playback.read_at_ms = now;
+            }
             SpotifyOp::Pause => {
                 playback.progress_ms = playback.progress_at(now);
                 playback.read_at_ms = now;
@@ -458,20 +520,24 @@ impl Shared {
                     self.last_touch_ms.load(Ordering::SeqCst),
                 )
             };
+            let waiting_for_login = self.state.lock().unwrap().login == SpotifyLogin::LoggingIn;
             {
                 let (flag, condvar) = &self.wake;
                 let mut woken = flag.lock().unwrap();
                 if !*woken {
-                    woken = match interval {
-                        Some(interval) => condvar.wait_timeout(woken, interval).unwrap().0,
-                        None => condvar.wait_timeout(woken, SLOW_POLL).unwrap().0,
+                    let wait = match interval {
+                        _ if waiting_for_login => LOGIN_CHECK,
+                        Some(interval) => interval,
+                        None => SLOW_POLL,
                     };
+                    woken = condvar.wait_timeout(woken, wait).unwrap().0;
                 }
                 *woken = false;
             }
             if self.stop.load(Ordering::SeqCst) {
                 return;
             }
+            self.expire_login();
             if self.client.lock().unwrap().is_logged_in() {
                 self.poll();
             }
@@ -485,14 +551,20 @@ impl Shared {
         }
         let epoch = self.login_epoch.load(Ordering::SeqCst);
         let need_account = self.state.lock().unwrap().account.is_none();
-        if need_account {
+        let account_due =
+            now.saturating_sub(self.last_account_ms.load(Ordering::SeqCst)) >= DEVICES_EVERY_MS;
+        if need_account && account_due {
+            self.last_account_ms.store(now, Ordering::SeqCst);
             self.refresh_account();
+        }
+        if self.stop.load(Ordering::SeqCst) {
+            return;
         }
         let result = self.client.lock().unwrap().call(|api| api.playback(now));
         let result = result.and_then(|playback| {
             let due =
                 now.saturating_sub(self.last_devices_ms.load(Ordering::SeqCst)) >= DEVICES_EVERY_MS;
-            let devices = if due {
+            let devices = if due && !self.stop.load(Ordering::SeqCst) {
                 self.last_devices_ms.store(now, Ordering::SeqCst);
                 Some(self.client.lock().unwrap().call(|api| api.devices())?)
             } else {
@@ -576,6 +648,13 @@ mod tests {
     where
         F: Fn(&crate::http::test_server::Request) -> Response + Send + 'static,
     {
+        fixture_with_clock(logged_in, device, handler, system_clock())
+    }
+
+    fn fixture_with_clock<F>(logged_in: bool, device: &str, handler: F, clock: Clock) -> Fixture
+    where
+        F: Fn(&crate::http::test_server::Request) -> Response + Send + 'static,
+    {
         let (origin, seen) = serve(handler);
         let dir = tempfile::tempdir().unwrap();
         let token_path = dir.path().join("spotify_token.json");
@@ -605,7 +684,7 @@ mod tests {
             api: format!("{origin}/v1"),
             accounts: origin,
         };
-        let service = SpotifyService::start_with(config, options, endpoints, system_clock());
+        let service = SpotifyService::start_with(config, options, endpoints, clock);
         Fixture {
             service,
             seen,
@@ -961,5 +1040,73 @@ mod tests {
         let f = fixture(false, "", api_default);
         f.service.apply(play()).unwrap_err();
         assert_eq!(f.starts.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn pause_if_playing_after_a_revoke_logs_out() {
+        let f = fixture(true, "", |request| match request.path() {
+            "/v1/me/player/pause" => Response::empty(401),
+            "/api/token" => Response::json(400, r#"{"error":"invalid_grant"}"#),
+            _ => api_default(request),
+        });
+        f.service.apply(SpotifyOp::Touch).unwrap();
+        wait_for(&f.service, |s| s.is_playing());
+        f.service.pause_if_playing();
+        assert_eq!(f.service.state().login, SpotifyLogin::NotLoggedIn);
+    }
+
+    #[test]
+    fn an_abandoned_login_expires() {
+        let now = Arc::new(AtomicU64::new(1_000_000));
+        let clock_now = now.clone();
+        let clock: Clock = Arc::new(move || clock_now.load(Ordering::SeqCst));
+        let f = fixture_with_clock(false, "", api_default, clock);
+        f.service.apply(SpotifyOp::BeginLogin).unwrap();
+        assert_eq!(f.service.state().login, SpotifyLogin::LoggingIn);
+        now.fetch_add(crate::client::LOGIN_TTL_MS + 1, Ordering::SeqCst);
+        let state = wait_for(&f.service, |s| matches!(s.login, SpotifyLogin::Failed(_)));
+        assert!(
+            matches!(state.login, SpotifyLogin::Failed(_)),
+            "{:?}",
+            state.login
+        );
+    }
+
+    #[test]
+    fn a_failing_account_read_is_not_retried_every_poll() {
+        let f = fixture(true, "", |request| match request.path() {
+            "/v1/me" => Response::json(
+                403,
+                r#"{"error":{"status":403,"message":"not in user list"}}"#,
+            ),
+            _ => api_default(request),
+        });
+        for _ in 0..3 {
+            f.service.apply(SpotifyOp::Touch).unwrap();
+            thread::sleep(Duration::from_millis(1200));
+        }
+        let reads = requests(&f.seen)
+            .iter()
+            .filter(|r| r.as_str() == "GET /v1/me")
+            .count();
+        assert!(reads <= 2, "{reads} account reads");
+    }
+
+    #[test]
+    fn play_marks_playback_playing_at_once() {
+        let f = fixture(true, "", |request| match request.path() {
+            "/v1/me/player" if request.method == "GET" => Response::json(
+                200,
+                r#"{"is_playing":false,"progress_ms":5,"currently_playing_type":"track",
+                    "item":{"type":"track","uri":"spotify:track:t","name":"So What","duration_ms":9,
+                            "artists":[],"album":{"name":"Kind of Blue","images":[]}}}"#,
+            ),
+            _ => api_default(request),
+        });
+        f.service.apply(SpotifyOp::Touch).unwrap();
+        wait_for(&f.service, |s| s.playback.is_some());
+        assert!(!f.service.state().is_playing());
+        f.service.apply(play()).unwrap();
+        assert!(f.service.state().is_playing());
     }
 }
