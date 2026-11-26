@@ -4345,7 +4345,7 @@ git commit -m "feat(spotify): SpotifyService with polling, login and playback op
 - Create: `wiki/Architecture/Spotify.md`
 - Modify: `wiki/Architecture/Overview.md`, `wiki/_Sidebar.md`, `THIRD-PARTY-LICENSES.html` (generated)
 
-- [ ] **Step 1: Write `wiki/Architecture/Spotify.md`**
+- [x] **Step 1: Write `wiki/Architecture/Spotify.md`**
 
 ```markdown
 # Spotify (`znicz-spotify`)
@@ -4432,7 +4432,7 @@ once. The same poll error is shown once, not every second.
 Tokens never appear in logs (`Token`'s `Debug` redacts them).
 ```
 
-- [ ] **Step 2: Overview and sidebar**
+- [x] **Step 2: Overview and sidebar**
 
 In `wiki/Architecture/Overview.md`, change "Znicz is one workspace with five crates." to "Znicz is one workspace with six crates." and add under the diagram's explanation, after the paragraph about the library service:
 
@@ -4444,17 +4444,17 @@ see [Spotify](Spotify.md).
 
 In `wiki/_Sidebar.md`, add a `[Spotify](Architecture/Spotify)` line after the Library entry, following that file's existing link format.
 
-- [ ] **Step 3: Regenerate the licence list**
+- [x] **Step 3: Regenerate the licence list**
 
 Run: `scripts/third-party-licenses.sh`
 Expected: `THIRD-PARTY-LICENSES.html` changes only if the release build's dependency set changed. The crate is not linked into the `znicz` binary until part 2, so no change is expected yet; commit it if it did change.
 
-- [ ] **Step 4: Full check**
+- [x] **Step 4: Full check**
 
 Run: `cargo test --workspace -q && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check`
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add wiki THIRD-PARTY-LICENSES.html
