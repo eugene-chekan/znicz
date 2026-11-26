@@ -43,10 +43,110 @@ shape what Znicz can browse:
 | `client` | Settings, token, login session; refresh before expiry and once on 401 |
 | `listener` | One-shot `127.0.0.1` callback listener |
 | `service` | `SpotifyService`: polling thread and `SpotifyHost` |
+| `browser` | `OpenBrowser` (`auto` / `always` / `never`), the rule for when a front end opens a browser, and the platform opener |
 
 The shared types (`SpotifyOp`, `SpotifyReply`, `SpotifyState`, …) and the
 `SpotifyHost` trait live in `znicz-core` (`spotify_host.rs`), like
 `LibraryHost`, so core does not depend on this crate.
+
+## Where it runs
+
+The **player process** (`znicz player`) hosts the `SpotifyService`, the same way
+it hosts the library service. It is always built from `[spotify]` and the token
+file. With no client ID it still runs and reports `not configured`.
+
+The TUI, MCP and `znicz spotify` reach it over IPC. Playback and browse ops are
+`Spotify { op }`; the snapshot is `SpotifyStatus`. A change op (anything that is
+not a read) carries a change id, so a resend after a lost reply is not applied
+twice. A player without a Spotify service answers `no Spotify service in this
+player`.
+
+## Commands
+
+```
+znicz spotify login    # log in; prints the URL, opens a browser when it can
+znicz spotify logout   # forget the token
+znicz spotify status   # login, user, Premium, device, what is playing, last error
+```
+
+Each command first sends the current `[spotify]` settings to the player, so a
+client ID added after the player started takes effect without a restart. The
+command starts the player if it is not running.
+
+`login` checks the client ID before it starts the player. With no client ID it
+prints how to get one, names the redirect URI to register, and exits 1. Once
+logged in it exits 0; otherwise it exits 1. `status` prints `Premium: unknown
+(learned at the first play)` until a playback call has been accepted or
+refused.
+
+### Logging in over SSH
+
+The login finishes by whichever comes first:
+
+1. **The redirect reaches the listener.** On the same machine, the browser
+   redirects to `127.0.0.1:<port>` and the listener finishes the login. Over
+   SSH, forward the port first, from your own machine:
+
+   ```
+   ssh -L 8898:127.0.0.1:8898 user@server
+   ```
+
+   Then run `znicz spotify login` on the server. Approve in the browser on your
+   machine; the redirect goes through the tunnel.
+
+2. **You paste the address.** Without a tunnel, approve the URL in any browser.
+   The browser lands on `http://127.0.0.1:8898/callback?code=…` and shows "can't
+   connect". That is expected. Copy the whole address from the address bar and
+   paste it into the waiting `znicz spotify login` (on its stdin). Each
+   non-empty line on stdin is one address.
+
+The login prints "Waiting for the browser; or paste the address you were sent
+to." when the listener is up. If the port is busy, it prints "Paste the address
+you were sent to." instead.
+
+Over SSH (`SSH_CONNECTION`, `SSH_CLIENT` or `SSH_TTY` set), `login` does not
+open a browser. It always prints the URL and the paste prompt, so a wrong guess
+never blocks login. `open_browser` overrides the guess.
+
+## Configuration
+
+```toml
+[spotify]
+client_id = "0123456789abcdef0123456789abcdef"  # 32 hex characters
+redirect_port = 8898       # http://127.0.0.1:8898/callback
+device = "Kitchen speaker" # used when nothing is active; unset = none
+open_browser = "auto"      # auto | always | never
+```
+
+Defaults: `redirect_port` 8898, `device` empty (none), `open_browser` `auto`.
+The default config ships this block commented out. `open_browser` is read only
+by front ends (the CLI, and the TUI later); the player never opens a browser. An
+unknown `open_browser` value logs a warning and means `auto`.
+
+Browser rule for `auto`: no browser when `SSH_CONNECTION`, `SSH_CLIENT` or
+`SSH_TTY` is set; on Linux, a browser only if `DISPLAY` or `WAYLAND_DISPLAY` is
+set; elsewhere, a browser.
+
+## The pause rule
+
+Znicz and Spotify never play together. The player enforces this, so the TUI,
+CLI and MCP behave the same.
+
+- **Spotify starts** (a `Play` or a `Transfer` with play, sent through Znicz):
+  the player pauses its own engine first, but only if the engine is playing.
+  A Stopped engine is left alone, because `Pause` would show it as paused.
+- **Znicz starts:** the player samples the engine every 250 ms. A start is a
+  move into `Playing` from a status that was not `Playing` on either of the two
+  previous samples. A track change (a one-sample gap) does not count. Each start
+  queues one pause request for a single worker thread, which asks Spotify to
+  pause if it is playing. Requests coalesce while one is queued, so none is lost
+  and a flapping engine cannot pile up calls. A call can take about 40 s, so it
+  never runs on the watcher's thread.
+- If Znicz is already playing when the player starts, Spotify is not paused.
+
+The two directions cannot loop. Spotify starting only moves the engine out of
+`Playing`, and the watcher acts only on a move *into* `Playing`. Spotify's own
+pause does not go through the "Spotify starts" path.
 
 ## Login
 
