@@ -123,14 +123,41 @@ impl SpotifyService {
 
     /// Pause Spotify if it is playing: Znicz is about to play.
     ///
+    /// Reads Spotify's playback first (one Web API request), so the decision
+    /// does not depend on the last poll, which may be up to 15 s old. If that
+    /// read fails for another reason, the last polled snapshot decides.
+    ///
     /// Blocks for a whole Web API request (up to about 40 s: a refresh, a retry
     /// and a rate-limit wait). Never call it while holding the player's lock;
     /// call it on its own thread.
     pub fn pause_if_playing(&self) {
-        if !self.shared.state.lock().unwrap().is_playing() {
+        let shared = &self.shared;
+        let logged_in = shared.client.lock().unwrap().is_logged_in();
+        if !logged_in {
             return;
         }
-        if let Err(e) = self.shared.control(&SpotifyOp::Pause) {
+        let epoch = shared.login_epoch.load(Ordering::SeqCst);
+        let now = shared.now_ms();
+        let fresh = shared.client.lock().unwrap().call(|api| api.playback(now));
+        let playing = match fresh {
+            Ok(playback) => {
+                let playing = playback.as_ref().is_some_and(|p| p.is_playing);
+                let mut state = shared.state.lock().unwrap();
+                if shared.login_epoch.load(Ordering::SeqCst) == epoch {
+                    state.playback = playback;
+                }
+                playing
+            }
+            Err(SpotifyError::Revoked) => {
+                shared.on_revoked();
+                return;
+            }
+            Err(_) => shared.state.lock().unwrap().is_playing(),
+        };
+        if !playing {
+            return;
+        }
+        if let Err(e) = shared.control(&SpotifyOp::Pause) {
             tracing::warn!(error = %e, "could not pause Spotify");
         }
     }
@@ -930,11 +957,25 @@ mod tests {
 
     #[test]
     fn pause_if_playing_only_pauses_a_playing_spotify() {
-        let f = fixture(true, "", api_default);
+        let playing = Arc::new(AtomicBool::new(false));
+        let flag = playing.clone();
+        let f = fixture(true, "", move |request| {
+            if request.method == "GET" && request.path() == "/v1/me/player" {
+                let body = if flag.load(Ordering::SeqCst) {
+                    r#"{"is_playing":true,"progress_ms":5,"currently_playing_type":"track",
+                        "item":{"type":"track","uri":"spotify:track:t","name":"So What","duration_ms":9,
+                                "artists":[],"album":{"name":"Kind of Blue","images":[]}}}"#
+                } else {
+                    r#"{"is_playing":false,"progress_ms":5,"currently_playing_type":"track","item":null}"#
+                };
+                return Response::json(200, body);
+            }
+            api_default(request)
+        });
         f.service.pause_if_playing();
         assert!(!requests(&f.seen).contains(&"PUT /v1/me/player/pause".to_string()));
-        f.service.apply(SpotifyOp::Touch).unwrap();
-        wait_for(&f.service, |s| s.is_playing());
+        // Started on another device after the last poll: no Touch, no wait for a poll.
+        playing.store(true, Ordering::SeqCst);
         f.service.pause_if_playing();
         assert!(requests(&f.seen).contains(&"PUT /v1/me/player/pause".to_string()));
     }
@@ -1097,8 +1138,7 @@ mod tests {
             "/api/token" => Response::json(400, r#"{"error":"invalid_grant"}"#),
             _ => api_default(request),
         });
-        f.service.apply(SpotifyOp::Touch).unwrap();
-        wait_for(&f.service, |s| s.is_playing());
+        // No Touch and no wait: the fresh read says playing, then the pause gets a 401.
         f.service.pause_if_playing();
         assert_eq!(f.service.state().login, SpotifyLogin::NotLoggedIn);
     }
