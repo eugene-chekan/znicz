@@ -896,6 +896,7 @@ fn run_tui(
     extras: TuiExtras,
 ) -> color_eyre::Result<()> {
     let player = connect_ui(device, config)?;
+    let spotify = connect_ui(device, config)?;
 
     if !files.is_empty() {
         let items: Vec<znicz_core::QueueItem> = files
@@ -922,7 +923,7 @@ fn run_tui(
         }
     }
 
-    run_tui_with_client(player, library_path, None, tui, extras)
+    run_tui_with_client(player, spotify, library_path, None, tui, extras)
 }
 
 fn playlists_dir() -> color_eyre::Result<PathBuf> {
@@ -958,9 +959,10 @@ fn play_station_and_run(
         .ok_or_else(|| color_eyre::eyre::eyre!("no station named {name}"))?
         .clone();
     let player = connect_ui(device, config)?;
+    let spotify = connect_ui(device, config)?;
     znicz_core::play_station(&player, &station, append)
         .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-    run_tui_with_client(player, library_path, None, tui, extras)
+    run_tui_with_client(player, spotify, library_path, None, tui, extras)
 }
 
 fn list_stations() -> color_eyre::Result<()> {
@@ -1000,8 +1002,16 @@ fn load_playlist_and_run(
 ) -> color_eyre::Result<()> {
     let result = load_path(&path)?;
     let player = connect_ui(device, config)?;
+    let spotify = connect_ui(device, config)?;
     apply_to_player(&player, &result, append).map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-    run_tui_with_client(player, library_path, skipped_notice(&result), tui, extras)
+    run_tui_with_client(
+        player,
+        spotify,
+        library_path,
+        skipped_notice(&result),
+        tui,
+        extras,
+    )
 }
 
 /// What a TUI run gets besides the playback target: the update checker and,
@@ -1023,6 +1033,7 @@ struct TuiExtras {
 
 fn run_tui_with_client(
     player: IpcClient,
+    spotify: IpcClient,
     library_path: Option<PathBuf>,
     skip_notice: Option<String>,
     tui: TuiConfig,
@@ -1041,7 +1052,10 @@ fn run_tui_with_client(
     // full-screen interface means drawing over it. Send stderr to a file for as
     // long as the TUI owns the terminal; nothing is lost, it just moves.
     let log = stderr::redirect_to_log();
-    let mut app = App::with_remote(player, library);
+    // The Spotify worker has its own connection: a call can take about 40 s.
+    let mut app = App::with_remote(player, library)
+        .with_spotify_worker(Arc::new(spotify))
+        .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
     app.tui = tui;
     app.library.set_preferred_layout(app.tui.library_layout);
     if let Some(updates) = extras.updates {

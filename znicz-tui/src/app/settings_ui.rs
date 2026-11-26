@@ -79,6 +79,9 @@ impl App {
         self.set_settings_cursor(0);
         self.settings_scroll = 0;
         self.modal = Modal::Settings;
+        if self.settings_tab == Tab::Spotify {
+            self.on_spotify_tab_shown();
+        }
     }
 
     /// Show `tab` with the cursor on its first row. Focus stays where it was.
@@ -95,6 +98,9 @@ impl App {
         self.settings_rows = settings::rows(tab, &self.library_status.folders);
         self.settings_scroll = 0;
         self.set_settings_cursor(0);
+        if tab == Tab::Spotify {
+            self.on_spotify_tab_shown();
+        }
     }
 
     /// Move the Settings cursor `delta` rows, stopping at either end. The tab
@@ -611,12 +617,14 @@ impl App {
         if self.modal != Modal::Settings {
             self.settings_confirm = None;
             self.settings_prompt = None;
+            self.spotify_confirm = None;
+            self.spotify_login = None;
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::path::Path;
     use std::sync::Arc;
     use std::time::Duration;
@@ -634,7 +642,7 @@ mod tests {
         player
     }
 
-    fn toast_texts(app: &App) -> Vec<String> {
+    pub(crate) fn toast_texts(app: &App) -> Vec<String> {
         app.toasts.recent().iter().map(|t| t.text.clone()).collect()
     }
 
@@ -673,7 +681,7 @@ mod tests {
     use crate::tui_config::{CoverSize, LibraryLayout};
     use znicz_core::FadeTimes;
 
-    fn settings_app(dir: &tempfile::TempDir) -> App {
+    pub(crate) fn settings_app(dir: &tempfile::TempDir) -> App {
         App::with_library(test_player(), None)
             .with_config_file(ConfigFile::new(dir.path().join("config.toml")))
     }

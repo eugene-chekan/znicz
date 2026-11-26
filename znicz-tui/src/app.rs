@@ -15,10 +15,11 @@ use ratatui_image::picker::ProtocolType;
 use znicz_core::{
     AudioDeviceInfo, AudioOutput, Command, FadeTimes, IpcClient, LibraryHost, LibraryOp,
     LibraryStatus, PlaybackStatus, PlayerEvent, PlayerHandle, PlayerOps, PlayerState, QueueItem,
-    RepeatMode, apply_to_player, list_saved, load_path, sanitize_stem, saved_path, skipped_notice,
-    write_path,
+    RepeatMode, SpotifyConfig, SpotifyDevice, SpotifyHost, SpotifyState, apply_to_player,
+    list_saved, load_path, sanitize_stem, saved_path, skipped_notice, write_path,
 };
 use znicz_library::{Library, Track};
+use znicz_spotify::browser::OpenBrowser;
 
 use crate::config_file::{ConfigFile, ConfigProblem};
 use crate::cover::CoverCache;
@@ -35,8 +36,11 @@ use crate::toast::Toasts;
 use crate::tui_config::{CoverProtocol, TuiConfig};
 
 mod settings_ui;
+mod spotify_ui;
+use crate::spotify_worker::{SpotifyAsk, SpotifyWorker};
 use crate::update::{Release, Updates};
 use crate::views;
+pub(crate) use spotify_ui::{LoginPanel, SpotifyConfirm};
 
 /// GitHub Windows runners expose WASAPI, but enumerating devices from tests
 /// crashes the process. Production (no `CI`) still lists devices at start.
@@ -410,6 +414,26 @@ pub struct App {
     pub(crate) settings_prompt: Option<settings_ui::SliderPrompt>,
     /// The folder prompt was opened from Settings, so closing it returns there.
     folder_prompt_from_settings: bool,
+    /// `[spotify]` as the TUI has it. The player's copy is sent with `Configure`.
+    pub(crate) spotify: SpotifyConfig,
+    /// `[spotify] open_browser`; the TUI reads it, the player does not.
+    pub(crate) open_browser: OpenBrowser,
+    /// The status host: the main connection, which answers at once.
+    pub(crate) spotify_main: Option<Arc<dyn SpotifyHost>>,
+    /// The second connection, for every Spotify call that can be slow.
+    pub(crate) spotify_worker: Option<SpotifyWorker<SpotifyAsk>>,
+    /// The last status poll.
+    pub(crate) spotify_state: SpotifyState,
+    /// Devices from the last `SpotifyOp::Devices` reply.
+    pub(crate) spotify_devices: Vec<SpotifyDevice>,
+    /// The player does not answer Spotify requests; polling has stopped.
+    pub(crate) spotify_unavailable: Option<String>,
+    /// When the status was last polled.
+    pub(crate) spotify_polled_at: Option<Instant>,
+    /// The login panel, while a login runs.
+    pub(crate) spotify_login: Option<LoginPanel>,
+    /// A question in the Settings strip that waits for Enter.
+    pub(crate) spotify_confirm: Option<SpotifyConfirm>,
     pub covers: CoverCache,
     pub picker: Option<ratatui_image::picker::Picker>,
     pub(crate) cover_image: Option<ratatui_image::protocol::StatefulProtocol>,
@@ -658,9 +682,18 @@ impl App {
 
     pub fn with_remote(player: IpcClient, library: Option<Library>) -> Self {
         let host: Arc<dyn LibraryHost> = Arc::new(player.clone());
+        let status: Arc<dyn SpotifyHost> = Arc::new(player.clone());
         let mut app = Self::with_engine(Engine::Remote(player), library);
         app.library_host = Some(host);
+        app.spotify_main = Some(status);
         app
+    }
+
+    /// Start the second connection's worker. Spotify requests that can be slow
+    /// run there, never on the UI thread.
+    pub fn with_spotify_worker(mut self, host: Arc<dyn SpotifyHost>) -> std::io::Result<Self> {
+        self.spotify_worker = Some(SpotifyWorker::spawn(host)?);
+        Ok(self)
     }
 
     /// Check for a newer release when the TUI runs, and let the user update.
@@ -688,6 +721,8 @@ impl App {
         self.check_for_updates = values.update_check;
         self.default_device = values.default_device;
         self.fades = values.fades;
+        self.spotify = values.spotify;
+        self.open_browser = values.open_browser;
         self
     }
 
@@ -754,6 +789,16 @@ impl App {
             settings_confirm: None,
             settings_prompt: None,
             folder_prompt_from_settings: false,
+            spotify: SpotifyConfig::default(),
+            open_browser: OpenBrowser::default(),
+            spotify_main: None,
+            spotify_worker: None,
+            spotify_state: SpotifyState::default(),
+            spotify_devices: Vec::new(),
+            spotify_unavailable: None,
+            spotify_polled_at: None,
+            spotify_login: None,
+            spotify_confirm: None,
             covers: CoverCache::new(),
             picker: Some(ratatui_image::picker::Picker::halfblocks()),
             cover_image: None,
@@ -1017,6 +1062,7 @@ impl App {
             self.poll_updates();
             self.poll_manual_check();
             self.poll_install();
+            self.poll_spotify();
             self.toasts.tick();
 
             let state = self.player.state();
@@ -1404,6 +1450,10 @@ impl App {
         }
         if self.modal == Modal::Settings && self.settings_confirm.is_some() {
             self.settings_confirm = None;
+            return;
+        }
+        if self.modal == Modal::Settings && self.spotify_confirm.is_some() {
+            self.spotify_confirm = None;
             return;
         }
         if matches!(
@@ -1825,6 +1875,7 @@ impl App {
     /// Close whatever modal is open, tidying what it leaves behind.
     fn close_modal(&mut self) {
         self.settings_confirm = None;
+        self.spotify_confirm = None;
         if self.modal == Modal::Help {
             self.modal = self.help.return_to;
             return;
