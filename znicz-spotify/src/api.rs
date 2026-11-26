@@ -107,16 +107,23 @@ impl Api<'_> {
         &self,
         query: &str,
         kinds: &[SpotifyKind],
+        offset: u32,
         limit: u32,
     ) -> Result<SpotifyPage> {
         let types: Vec<&str> = kinds.iter().map(|k| k.as_api()).collect();
         let types = types.join(",");
+        let offset_text = offset.to_string();
         let limit = limit.clamp(1, SEARCH_LIMIT_MAX).to_string();
         let json = self.get(
             "/search",
-            &[("q", query), ("type", &types), ("limit", &limit)],
+            &[
+                ("q", query),
+                ("type", &types),
+                ("offset", &offset_text),
+                ("limit", &limit),
+            ],
         )?;
-        Ok(model::search(&json, kinds))
+        Ok(model::search(&json, kinds, offset))
     }
 
     fn paged(&self, path: &str, offset: u32, limit: u32) -> Result<SpotifyPage> {
@@ -255,6 +262,11 @@ impl Api<'_> {
 
     /// `volume` is 0.0–1.0.
     pub(crate) fn volume(&self, device_id: Option<&str>, volume: f32) -> Result<()> {
+        if !volume.is_finite() {
+            return Err(SpotifyError::Parse(
+                "volume must be a number from 0 to 1".into(),
+            ));
+        }
         let percent = ((volume.clamp(0.0, 1.0) * 100.0).round() as u8).to_string();
         let mut query = vec![("volume_percent", percent.as_str())];
         query.extend(device_query(device_id));
@@ -505,9 +517,33 @@ mod tests {
         let http = Http::new();
         let base = format!("{origin}/v1");
         api_for(&http, &base)
-            .search("x", &[SpotifyKind::Track], 50)
+            .search("x", &[SpotifyKind::Track], 0, 50)
             .unwrap();
         let seen = seen.lock().unwrap();
         assert_eq!(seen[0].query("limit").as_deref(), Some("10"));
+    }
+
+    #[test]
+    fn search_sends_the_offset() {
+        let (origin, seen) = serve(|_| Response::json(200, "{}"));
+        let http = Http::new();
+        let base = format!("{origin}/v1");
+        api_for(&http, &base)
+            .search("x", &[SpotifyKind::Track], 20, 10)
+            .unwrap();
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen[0].query("offset").as_deref(), Some("20"));
+    }
+
+    #[test]
+    fn volume_rejects_a_non_finite_value_before_any_request() {
+        let http = Http::new();
+        let error = api_for(&http, "http://127.0.0.1:1")
+            .volume(None, f32::NAN)
+            .unwrap_err();
+        assert!(
+            matches!(&error, SpotifyError::Parse(text) if text == "volume must be a number from 0 to 1"),
+            "{error:?}"
+        );
     }
 }

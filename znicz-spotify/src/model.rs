@@ -144,15 +144,17 @@ pub(crate) fn page(value: &Value) -> SpotifyPage {
 }
 
 /// `/search` groups results by kind; keep the order the caller asked for.
-pub(crate) fn search(value: &Value, kinds: &[SpotifyKind]) -> SpotifyPage {
-    let items: Vec<SpotifyItem> = kinds
+pub(crate) fn search(value: &Value, kinds: &[SpotifyKind], offset: u32) -> SpotifyPage {
+    let pages: Vec<SpotifyPage> = kinds
         .iter()
-        .flat_map(|kind| page(&value[format!("{}s", kind.as_api())]).items)
+        .map(|kind| page(&value[format!("{}s", kind.as_api())]))
         .collect();
+    // Each kind pages on its own, so the largest per-kind total is what a caller can page through.
+    let total = pages.iter().map(|p| p.total).max().unwrap_or(0);
     SpotifyPage {
-        total: items.len() as u32,
-        items,
-        offset: 0,
+        items: pages.into_iter().flat_map(|p| p.items).collect(),
+        offset,
+        total,
     }
 }
 
@@ -413,10 +415,24 @@ mod tests {
                 "albums": {{"items": [{{"type": "album", "uri": "spotify:album:a1", "name": "Kind of Blue", "artists": [], "images": []}}], "total": 1}}
             }}"#
         );
-        let page = search(&json(&text), &[SpotifyKind::Album, SpotifyKind::Track]);
+        let page = search(&json(&text), &[SpotifyKind::Album, SpotifyKind::Track], 0);
         let kinds: Vec<_> = page.items.iter().map(|i| i.kind).collect();
         assert_eq!(kinds, vec![SpotifyKind::Album, SpotifyKind::Track]);
-        assert_eq!(page.total, 2);
+        assert_eq!(
+            page.total, 1,
+            "the largest per-kind total, not the row count"
+        );
+    }
+
+    #[test]
+    fn search_total_is_the_largest_kind_total_and_keeps_the_offset() {
+        let text = r#"{
+            "tracks": {"items": [], "total": 37},
+            "albums": {"items": [], "total": 5}
+        }"#;
+        let page = search(&json(text), &[SpotifyKind::Album, SpotifyKind::Track], 20);
+        assert_eq!(page.total, 37);
+        assert_eq!(page.offset, 20);
     }
 
     #[test]

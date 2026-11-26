@@ -62,6 +62,14 @@ finished login. It finishes by whichever comes first:
 Logging in again replaces a pending login. The old listener lets go of the
 port first, so the new one can bind it.
 
+`BeginLogin` says whether the listener is listening. If the port is busy, the
+reply says so and the error names the port, so the user knows to paste the
+address instead.
+
+The token file is `spotify_token.json` in the data folder
+(`~/.local/share/znicz` on Linux, `%APPDATA%\znicz` on Windows), unless
+`ZNICZ_SPOTIFY_TOKEN_PATH` is set.
+
 The `state` in the address must match the session. A different client ID
 logs out, because the old token cannot be refreshed with it.
 

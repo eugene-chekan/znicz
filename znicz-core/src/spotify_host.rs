@@ -243,9 +243,12 @@ pub enum SpotifyOp {
     Logout,
     /// Keeps the fast poll going for another minute.
     Touch,
+    /// `offset` and `limit` apply to each kind. With several kinds, `total` is the largest per-kind total, so page one kind at a time.
     Search {
         query: String,
         kinds: Vec<SpotifyKind>,
+        #[serde(default)]
+        offset: u32,
         limit: u32,
     },
     Playlists {
@@ -336,6 +339,10 @@ pub enum SpotifyReply {
     Done,
     AuthorizeUrl {
         url: String,
+        /// The redirect URI the Spotify app must have registered.
+        redirect_uri: String,
+        /// False when the callback listener could not bind its port: the user must paste the address.
+        listening: bool,
     },
     Page {
         page: SpotifyPage,
@@ -353,11 +360,37 @@ pub enum SpotifyReply {
 pub trait SpotifyHost: Send + Sync {
     fn apply(&self, op: SpotifyOp) -> Result<SpotifyReply>;
     fn state(&self) -> SpotifyState;
+
+    /// Like `state`, but reports a host that cannot be reached.
+    fn try_state(&self) -> Result<SpotifyState> {
+        Ok(self.state())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Fixed(SpotifyState);
+
+    impl SpotifyHost for Fixed {
+        fn apply(&self, _op: SpotifyOp) -> Result<SpotifyReply> {
+            Ok(SpotifyReply::Done)
+        }
+        fn state(&self) -> SpotifyState {
+            self.0.clone()
+        }
+    }
+
+    #[test]
+    fn try_state_returns_the_state() {
+        let state = SpotifyState {
+            last_error: Some("busy".into()),
+            ..SpotifyState::default()
+        };
+        let host = Fixed(state.clone());
+        assert_eq!(host.try_state().unwrap(), state);
+    }
 
     fn track(duration_ms: u64) -> SpotifyTrack {
         SpotifyTrack {
@@ -456,13 +489,18 @@ mod tests {
         let op = SpotifyOp::Search {
             query: "kind of blue".into(),
             kinds: vec![SpotifyKind::Album, SpotifyKind::Track],
+            offset: 20,
             limit: 10,
         };
         let text = serde_json::to_string(&op).unwrap();
         assert!(text.contains(r#""op":"search""#), "{text}");
         assert_eq!(serde_json::from_str::<SpotifyOp>(&text).unwrap(), op);
 
-        let reply = SpotifyReply::AuthorizeUrl { url: "u".into() };
+        let reply = SpotifyReply::AuthorizeUrl {
+            url: "u".into(),
+            redirect_uri: "http://127.0.0.1:8898/callback".into(),
+            listening: true,
+        };
         let text = serde_json::to_string(&reply).unwrap();
         assert_eq!(serde_json::from_str::<SpotifyReply>(&text).unwrap(), reply);
 

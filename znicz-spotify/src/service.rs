@@ -44,6 +44,7 @@ pub struct ServiceOptions {
     pub token_path: PathBuf,
     /// Called before an op that starts Spotify playback, so the player can
     /// pause its own engine.
+    /// Runs on the caller's thread, inside `apply`. It must not take a lock the caller of `apply` holds (for example the player's), and should hold a `Weak` to the player rather than an `Arc`.
     pub on_start_playback: Box<dyn Fn() + Send + Sync>,
 }
 
@@ -116,6 +117,7 @@ impl SpotifyService {
     }
 
     /// Pause Spotify if it is playing: Znicz is about to play.
+    /// Blocks for a whole Web API request (up to about 20 s on a slow network or a 429), so never call it while holding the player's lock.
     pub fn pause_if_playing(&self) {
         if !self.shared.state.lock().unwrap().is_playing() {
             return;
@@ -275,8 +277,9 @@ impl Shared {
             SpotifyOp::Search {
                 query,
                 kinds,
+                offset,
                 limit,
-            } => self.page(|api| api.search(&query, &kinds, limit)),
+            } => self.page(|api| api.search(&query, &kinds, offset, limit)),
             SpotifyOp::Playlists { offset, limit } => self.page(|api| api.playlists(offset, limit)),
             SpotifyOp::LikedSongs { offset, limit } => {
                 self.page(|api| api.liked_songs(offset, limit))
@@ -317,10 +320,11 @@ impl Shared {
     }
 
     fn begin_login(self: &Arc<Self>) -> Result<SpotifyReply> {
-        let (url, port) = {
+        let (url, port, redirect_uri) = {
             let mut client = self.client.lock().unwrap();
             let login = client.begin_login()?;
-            (login.url, client.config().redirect_port)
+            let config = client.config();
+            (login.url, config.redirect_port, config.redirect_uri())
         };
         // Before the listener starts: a fast callback must not be overwritten.
         self.set_login(SpotifyLogin::LoggingIn);
@@ -338,16 +342,25 @@ impl Shared {
                 Err(e) => Some(format!("Spotify login failed: {e}")),
             }
         });
-        match started {
-            Ok(listener) => *self.listener.lock().unwrap() = Some(listener),
+        let listening = match started {
+            Ok(listener) => {
+                *self.listener.lock().unwrap() = Some(listener);
+                self.state.lock().unwrap().last_error = None;
+                true
+            }
             Err(e) => {
                 tracing::warn!(port, error = %e, "login listener could not start; paste the address instead");
                 self.state.lock().unwrap().last_error = Some(format!(
-                    "port {port} is busy: paste the address from the browser instead"
+                    "could not listen on port {port} ({e}): paste the address from the browser instead"
                 ));
+                false
             }
-        }
-        Ok(SpotifyReply::AuthorizeUrl { url })
+        };
+        Ok(SpotifyReply::AuthorizeUrl {
+            url,
+            redirect_uri,
+            listening,
+        })
     }
 
     /// Finish a login from a callback query or a pasted address.
@@ -831,7 +844,7 @@ mod tests {
     fn login_by_paste() {
         let f = fixture(false, "", api_default);
         let url = match f.service.apply(SpotifyOp::BeginLogin).unwrap() {
-            SpotifyReply::AuthorizeUrl { url } => url,
+            SpotifyReply::AuthorizeUrl { url, .. } => url,
             other => panic!("{other:?}"),
         };
         assert_eq!(f.service.state().login, SpotifyLogin::LoggingIn);
@@ -869,7 +882,7 @@ mod tests {
     fn login_by_callback() {
         let f = fixture(false, "", api_default);
         let url = match f.service.apply(SpotifyOp::BeginLogin).unwrap() {
-            SpotifyReply::AuthorizeUrl { url } => url,
+            SpotifyReply::AuthorizeUrl { url, .. } => url,
             other => panic!("{other:?}"),
         };
         let state = url
@@ -1000,10 +1013,36 @@ mod tests {
     }
 
     #[test]
+    fn begin_login_says_whether_it_listens() {
+        let f = fixture(false, "", api_default);
+        match f.service.apply(SpotifyOp::BeginLogin).unwrap() {
+            SpotifyReply::AuthorizeUrl {
+                redirect_uri,
+                listening,
+                ..
+            } => {
+                assert!(listening);
+                assert!(redirect_uri.ends_with("/callback"), "{redirect_uri}");
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let f = fixture(false, "", api_default);
+        let port = f.service.redirect_port();
+        let _busy = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
+        match f.service.apply(SpotifyOp::BeginLogin).unwrap() {
+            SpotifyReply::AuthorizeUrl { listening, .. } => assert!(!listening),
+            other => panic!("{other:?}"),
+        }
+        let error = f.service.state().last_error.unwrap_or_default();
+        assert!(error.contains("could not listen"), "{error}");
+    }
+
+    #[test]
     fn configure_with_the_same_port_keeps_the_login_listener() {
         let f = fixture(false, "", api_default);
         let url = match f.service.apply(SpotifyOp::BeginLogin).unwrap() {
-            SpotifyReply::AuthorizeUrl { url } => url,
+            SpotifyReply::AuthorizeUrl { url, .. } => url,
             other => panic!("{other:?}"),
         };
         let state = url
