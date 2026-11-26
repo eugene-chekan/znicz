@@ -143,19 +143,6 @@ pub(crate) fn page(value: &Value) -> SpotifyPage {
     }
 }
 
-/// A plain list of track objects (top tracks) as one page.
-pub(crate) fn track_list(list: &Value) -> SpotifyPage {
-    let items: Vec<SpotifyItem> = list
-        .as_array()
-        .map(|rows| rows.iter().filter_map(item).collect())
-        .unwrap_or_default();
-    SpotifyPage {
-        total: items.len() as u32,
-        items,
-        offset: 0,
-    }
-}
-
 /// `/search` groups results by kind; keep the order the caller asked for.
 pub(crate) fn search(value: &Value, kinds: &[SpotifyKind]) -> SpotifyPage {
     let items: Vec<SpotifyItem> = kinds
@@ -215,7 +202,7 @@ pub(crate) fn account(value: &Value) -> SpotifyAccount {
         .to_string();
     SpotifyAccount {
         user,
-        premium: value["product"].as_str() == Some("premium"),
+        premium: value["product"].as_str().map(|p| p == "premium"),
     }
 }
 
@@ -333,7 +320,7 @@ mod tests {
             account,
             SpotifyAccount {
                 user: "Eugene".into(),
-                premium: true
+                premium: Some(true)
             }
         );
         let free = super::account(&json(
@@ -343,9 +330,11 @@ mod tests {
             free,
             SpotifyAccount {
                 user: "u2".into(),
-                premium: false
+                premium: Some(false)
             }
         );
+        let unknown = super::account(&json(r#"{"id": "u3", "display_name": "X"}"#));
+        assert_eq!(unknown.premium, None, "Spotify no longer reports the plan");
     }
 
     #[test]

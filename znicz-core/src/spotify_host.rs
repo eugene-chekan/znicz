@@ -25,7 +25,9 @@ pub enum SpotifyLogin {
 pub struct SpotifyAccount {
     /// Display name, else the user id.
     pub user: String,
-    pub premium: bool,
+    /// `None` until known: Spotify stopped reporting the plan in 2026, so it is
+    /// learned from a playback refusal.
+    pub premium: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -26,6 +26,8 @@ pub enum SpotifyError {
     Unauthorized,
     #[error("needs Spotify Premium")]
     PremiumRequired,
+    #[error("{0}")]
+    Unavailable(String),
     #[error("Spotify has no active device: open Spotify somewhere, or pick one with ,")]
     NoActiveDevice,
     #[error("Spotify is rate limiting requests; try again in {retry_after_secs} s")]

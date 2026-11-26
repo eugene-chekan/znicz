@@ -8,7 +8,7 @@ use crate::error::{Result, SpotifyError};
 use crate::http::{Body, Http, Method, Reply};
 use crate::token::Token;
 
-pub(crate) const SCOPES: &str = "user-read-private user-read-playback-state \
+pub(crate) const SCOPES: &str = "user-read-playback-state \
 user-modify-playback-state user-read-currently-playing user-library-read \
 playlist-read-private playlist-read-collaborative";
 
@@ -172,7 +172,7 @@ mod tests {
         assert!(url.contains("code_challenge_method=S256"));
         assert!(url.contains("code_challenge=chal"));
         assert!(url.contains("state=st"));
-        assert!(url.contains("scope=user-read-private%20user-read-playback-state"));
+        assert!(url.contains("scope=user-read-playback-state%20user-modify-playback-state"));
     }
 
     #[test]

@@ -11,6 +11,9 @@ use crate::error::{Result, SpotifyError};
 use crate::http::{Body, Http, Method, check};
 use crate::model;
 
+/// Spotify caps search at 10 results per type for Development Mode apps.
+const SEARCH_LIMIT_MAX: u32 = 10;
+
 pub(crate) struct Api<'a> {
     pub http: &'a Http,
     /// `https://api.spotify.com/v1`, or a test server.
@@ -108,7 +111,7 @@ impl Api<'_> {
     ) -> Result<SpotifyPage> {
         let types: Vec<&str> = kinds.iter().map(|k| k.as_api()).collect();
         let types = types.join(",");
-        let limit = limit.clamp(1, 50).to_string();
+        let limit = limit.clamp(1, SEARCH_LIMIT_MAX).to_string();
         let json = self.get(
             "/search",
             &[("q", query), ("type", &types), ("limit", &limit)],
@@ -136,7 +139,7 @@ impl Api<'_> {
         self.paged("/me/albums", offset, limit)
     }
 
-    /// Album or playlist tracks, or an artist's top tracks (one page).
+    /// An album's or a playlist's tracks. Artists have no track list any more (see `artist_albums`).
     pub(crate) fn tracks(&self, uri: &str, offset: u32, limit: u32) -> Result<SpotifyPage> {
         let unknown = || SpotifyError::Parse(format!("{uri} is not an album, playlist or artist"));
         let (kind, id) = split_uri(uri).ok_or_else(unknown)?;
@@ -150,14 +153,20 @@ impl Api<'_> {
                 }
                 page
             }
-            SpotifyKind::Playlist => self.paged(&format!("/playlists/{id}/tracks"), offset, limit),
-            SpotifyKind::Artist => {
-                let json = self.get(
-                    &format!("/artists/{id}/top-tracks"),
-                    &[("market", "from_token")],
-                )?;
-                Ok(model::track_list(&json["tracks"]))
+            SpotifyKind::Playlist => {
+                match self.paged(&format!("/playlists/{id}/items"), offset, limit) {
+                    Err(SpotifyError::Http {
+                        status: 403 | 404, ..
+                    }) => Err(SpotifyError::Unavailable(
+                        "Spotify only lists the tracks of playlists you own or collaborate on; Enter still plays it"
+                            .into(),
+                    )),
+                    other => other,
+                }
             }
+            SpotifyKind::Artist => Err(SpotifyError::Unavailable(
+                "Spotify no longer lists an artist's top tracks; open their albums".into(),
+            )),
             SpotifyKind::Track => Err(unknown()),
         }
     }
@@ -448,5 +457,57 @@ mod tests {
             .tracks("spotify:show:s", 0, 50)
             .unwrap_err();
         assert!(matches!(error, SpotifyError::Parse(_)), "{error:?}");
+    }
+
+    #[test]
+    fn playlist_tracks_use_the_items_endpoint() {
+        let (origin, seen) = serve(|_| {
+            Response::json(
+                200,
+                r#"{"offset":0,"total":1,"items":[{"added_at":"x","track":true,"item":{"type":"track","uri":"spotify:track:t1","name":"So What","duration_ms":1,"artists":[],"album":{"name":"Kind of Blue","images":[]}}}]}"#,
+            )
+        });
+        let http = Http::new();
+        let base = format!("{origin}/v1");
+        let page = api_for(&http, &base)
+            .tracks("spotify:playlist:p1", 0, 50)
+            .unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].name, "So What");
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen[0].path(), "/v1/playlists/p1/items");
+    }
+
+    #[test]
+    fn a_playlist_you_do_not_own_is_unavailable() {
+        let (origin, _) =
+            serve(|_| Response::json(403, r#"{"error":{"status":403,"message":"Forbidden"}}"#));
+        let http = Http::new();
+        let base = format!("{origin}/v1");
+        let error = api_for(&http, &base)
+            .tracks("spotify:playlist:p1", 0, 50)
+            .unwrap_err();
+        assert!(matches!(error, SpotifyError::Unavailable(_)), "{error:?}");
+    }
+
+    #[test]
+    fn artists_have_no_track_list() {
+        let http = Http::new();
+        let error = api_for(&http, "http://127.0.0.1:1")
+            .tracks("spotify:artist:r1", 0, 50)
+            .unwrap_err();
+        assert!(matches!(error, SpotifyError::Unavailable(_)), "{error:?}");
+    }
+
+    #[test]
+    fn search_asks_for_at_most_ten() {
+        let (origin, seen) = serve(|_| Response::json(200, "{}"));
+        let http = Http::new();
+        let base = format!("{origin}/v1");
+        api_for(&http, &base)
+            .search("x", &[SpotifyKind::Track], 50)
+            .unwrap();
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen[0].query("limit").as_deref(), Some("10"));
     }
 }
