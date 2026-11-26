@@ -2376,7 +2376,7 @@ Start Spotify playing on a device (phone or desktop app). Run `znicz` (the TUI, 
 
 Expected: Spotify pauses within a second or two. Check with `znicz spotify status`: `Playing: … paused`.
 
-- [ ] **Step 5: Znicz pauses when Spotify starts (not testable from the CLI yet)**
+- [x] **Step 5: Znicz pauses when Spotify starts (not testable from the CLI yet)**
 
 Part 2 has no CLI or TUI command that starts Spotify, so this direction cannot be checked by hand here. The engine side (`pause_engine_if_playing` on a Playing engine only) is covered by the Task 5 tests, and the service side by the Part 1 `play_pauses_znicz_first_and_calls_the_api` test. This direction is checked in Part 3's manual check (its Step 5 in `docs/superpowers/plans/2026-11-26-spotify-3-mcp.md`): start a local track in Znicz, call `spotify_play` through MCP, and the local track must pause while Spotify plays.
 

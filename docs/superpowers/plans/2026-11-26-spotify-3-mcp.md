@@ -2734,55 +2734,55 @@ If nothing needed changing, there is no commit for this task. Mark its checkboxe
 
 Run these with a real Spotify Premium account and a Development Mode app (client ID set under `[spotify]`, redirect URI `http://127.0.0.1:8898/callback` registered, the account added under User Management). Connect an MCP host, or the MCP inspector, to `znicz mcp`. No code is written in this task. Note any surprise and fix it in its own commit.
 
-- [ ] **Step 1: Status**
+- [x] **Step 1: Status**
 
 Call `spotify_status`.
 
 Expected: `configured: true`, `login: "logged_in"`, your name in `user`. `premium` is `true` or `null`. Once a playback call has been refused it is `false`.
 
-- [ ] **Step 2: Search**
+- [x] **Step 2: Search**
 
 Call `spotify_search` with `query: "Kind of Blue"` and `types: ["album"]`.
 
 Expected: a `page` reply with at most 10 items, each with a `uri` such as `spotify:album:…`.
 
-- [ ] **Step 3: Play a track and an album**
+- [x] **Step 3: Play a track and an album**
 
 Call `spotify_play` with a track `uri` from search. Then `spotify_status`: `playing.is_playing` is `true` and `playing.title` matches.
 
 Call `spotify_play` with the album's `uri` as `context_uri`. Then `spotify_status` shows the album's first track.
 
-- [ ] **Step 4: Pause, next, seek, volume**
+- [x] **Step 4: Pause, next, seek, volume**
 
 Call `spotify_pause`; status shows `is_playing: false`. Call `spotify_play {}` to resume. Call `spotify_next`; the title changes. Call `spotify_seek { position_ms: 30000 }`; `progress_ms` is near 30 s. Call `spotify_set_volume { volume: 0.3 }` and check the device's `volume_percent` through `spotify_devices`.
 
 Call `spotify_set_volume { volume: 1.5 }`. Expected: an error with the message about 0.0 and 1.0, and no call is sent.
 
-- [ ] **Step 5: Znicz pauses when `spotify_play` starts**
+- [x] **Step 5: Znicz pauses when `spotify_play` starts**
 
 Start a local track in Znicz first: call `play` with a file path from the library, and confirm it plays (`get_player_state` shows `status: "Playing"`). Then call `spotify_play { uri }` with a track.
 
 Expected: the local track is paused (`get_player_state` shows `status: "Paused"`), and Spotify plays (`spotify_status`). This is the step deferred from Part 2, Task 13, Step 5.
 
-- [ ] **Step 6: Devices and transfer**
+- [x] **Step 6: Devices and transfer**
 
 Call `spotify_devices`. Note a device id that is not the active one. Call `spotify_transfer { device_id, play: true }`.
 
 Expected: `spotify_status` shows that device in `device`, and it plays.
 
-- [ ] **Step 7: A playlist you do not own**
+- [x] **Step 7: A playlist you do not own**
 
 Find a playlist that you do not own (search for a public playlist) and call `spotify_tracks { uri }` on it.
 
 Expected: an error with `kind: "unavailable"` and the message "Spotify only lists the tracks of playlists you own or collaborate on; Enter still plays it" (the service's text, which has a terminal-UI hint that the skill tells agents to ignore). Then `spotify_play { context_uri: <that playlist> }` still plays it.
 
-- [ ] **Step 8: Resource**
+- [x] **Step 8: Resource**
 
 Read `znicz://spotify/now-playing` through the MCP host.
 
 Expected: the same JSON as `spotify_status`'s data, with `login`, `account`, `playback`, `devices` and `last_error` keys.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 Mark the checks that passed in this plan, then commit:
 
