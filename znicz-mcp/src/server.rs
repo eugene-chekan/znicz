@@ -174,6 +174,12 @@ impl ZniczMcpServer {
         Self::json_result(&spotify_json::status_json(state, spotify_json::now_ms()))
     }
 
+    /// Run one Spotify op and return its reply as the tool result.
+    async fn spotify_reply(&self, op: SpotifyOp) -> Result<rmcp::model::CallToolResult, McpError> {
+        let reply = self.spotify_apply(op).await?;
+        Self::json_result(&reply)
+    }
+
     fn json_result(value: &impl Serialize) -> Result<rmcp::model::CallToolResult, McpError> {
         let json = serde_json::to_string_pretty(value)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
@@ -952,6 +958,76 @@ impl ZniczMcpServer {
         let state = self.spotify_status_state().await?;
         Self::spotify_status_result(&state)
     }
+
+    #[tool(
+        description = "Search Spotify for tracks, albums, artists and playlists. Spotify returns at most 10 per kind; to page, search one kind at a time and use offset"
+    )]
+    async fn spotify_search(
+        &self,
+        Parameters(params): Parameters<spotify_json::SpotifySearchParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        self.spotify_reply(spotify_json::search_op(params)).await
+    }
+
+    #[tool(description = "The user's Spotify playlists, a page at a time")]
+    async fn spotify_playlists(
+        &self,
+        Parameters(params): Parameters<spotify_json::SpotifyPagedParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let (offset, limit) = spotify_json::page(params.offset, params.limit);
+        self.spotify_reply(SpotifyOp::Playlists { offset, limit })
+            .await
+    }
+
+    #[tool(description = "The user's liked songs, a page at a time")]
+    async fn spotify_liked_songs(
+        &self,
+        Parameters(params): Parameters<spotify_json::SpotifyPagedParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let (offset, limit) = spotify_json::page(params.offset, params.limit);
+        self.spotify_reply(SpotifyOp::LikedSongs { offset, limit })
+            .await
+    }
+
+    #[tool(description = "The albums the user has saved, a page at a time")]
+    async fn spotify_albums(
+        &self,
+        Parameters(params): Parameters<spotify_json::SpotifyPagedParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let (offset, limit) = spotify_json::page(params.offset, params.limit);
+        self.spotify_reply(SpotifyOp::Albums { offset, limit })
+            .await
+    }
+
+    #[tool(
+        description = "Tracks of an album, or of a playlist the user owns or collaborates on. Pass its uri. Other playlists can still be played, but their tracks cannot be listed"
+    )]
+    async fn spotify_tracks(
+        &self,
+        Parameters(params): Parameters<spotify_json::SpotifyUriPagedParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let (offset, limit) = spotify_json::page(params.offset, params.limit);
+        self.spotify_reply(SpotifyOp::Tracks {
+            uri: params.uri,
+            offset,
+            limit,
+        })
+        .await
+    }
+
+    #[tool(description = "An artist's albums. Pass the artist's uri")]
+    async fn spotify_artist_albums(
+        &self,
+        Parameters(params): Parameters<spotify_json::SpotifyUriPagedParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let (offset, limit) = spotify_json::page(params.offset, params.limit);
+        self.spotify_reply(SpotifyOp::ArtistAlbums {
+            uri: params.uri,
+            offset,
+            limit,
+        })
+        .await
+    }
 }
 
 #[tool_handler]
@@ -1401,6 +1477,47 @@ mod tests {
                 if redirect_url.contains("code=x")
         ));
         assert!(ops.contains(&SpotifyOp::Logout));
+    }
+
+    #[tokio::test]
+    async fn search_sends_one_op_with_every_kind_and_at_most_ten_results() {
+        let (_dir, _ipc, server, fake) = spotify_server();
+        let result = server
+            .spotify_search(Parameters(spotify_json::SpotifySearchParams {
+                query: "blue".into(),
+                types: None,
+                limit: Some(99),
+                offset: None,
+            }))
+            .await
+            .expect("search");
+        assert_eq!(json_of(&result)["reply"], "page");
+        let ops = fake.ops.lock().unwrap();
+        assert!(
+            matches!(ops.last(), Some(SpotifyOp::Search { limit: 10, .. })),
+            "{ops:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn tracks_pass_the_uri_and_clamp_the_page() {
+        let (_dir, _ipc, server, fake) = spotify_server();
+        server
+            .spotify_tracks(Parameters(spotify_json::SpotifyUriPagedParams {
+                uri: "spotify:album:1".into(),
+                offset: None,
+                limit: Some(500),
+            }))
+            .await
+            .expect("tracks");
+        let ops = fake.ops.lock().unwrap();
+        assert!(
+            matches!(
+                ops.last(),
+                Some(SpotifyOp::Tracks { uri, limit: 50, .. }) if uri.as_str() == "spotify:album:1"
+            ),
+            "{ops:?}"
+        );
     }
 
     #[test]
