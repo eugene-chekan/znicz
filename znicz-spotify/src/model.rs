@@ -41,7 +41,13 @@ pub(crate) fn track(value: &Value) -> Option<SpotifyTrack> {
     if !value.is_object() || kind != "track" {
         return None;
     }
+    if value["is_local"].as_bool() == Some(true) {
+        return None;
+    }
     let uri = value["uri"].as_str()?;
+    if uri.starts_with("spotify:local:") {
+        return None;
+    }
     let album = &value["album"];
     Some(SpotifyTrack {
         uri: uri.into(),
@@ -125,8 +131,7 @@ pub(crate) fn page(value: &Value) -> SpotifyPage {
                     }
                     ["track", "album", "item"]
                         .iter()
-                        .find(|key| row.get(**key).is_some())
-                        .and_then(|key| item(&row[*key]))
+                        .find_map(|key| item(&row[*key]))
                 })
                 .collect()
         })
@@ -360,6 +365,30 @@ mod tests {
         assert_eq!(item.name, "So What");
         assert_eq!(item.subtitle, "Miles Davis, John Coltrane");
         assert!(item.track.is_some());
+    }
+
+    #[test]
+    fn skips_local_files_in_a_playlist() {
+        let text = format!(
+            r#"{{"offset": 0, "total": 2, "items": [
+                {{"added_at": "x", "is_local": false, "track": {TRACK}}},
+                {{"added_at": "y", "is_local": true, "track": {{"type": "track", "uri": "spotify:local:a:b:c:1", "name": "Mine", "is_local": true, "duration_ms": 1, "artists": [], "album": {{"name": "", "images": []}}}}}}
+            ]}}"#
+        );
+        let page = page(&json(&text));
+        assert_eq!(page.items.len(), 1);
+    }
+
+    #[test]
+    fn wrapper_row_uses_the_first_key_with_a_usable_item() {
+        let text = format!(
+            r#"{{"offset": 0, "total": 2, "items": [
+                {{"added_at": "x", "track": null, "item": {TRACK}}},
+                {{"added_at": "y", "track": null}}
+            ]}}"#
+        );
+        let page = page(&json(&text));
+        assert_eq!(page.items.len(), 1);
     }
 
     #[test]
