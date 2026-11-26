@@ -763,7 +763,7 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 - Consumes: `base64::Engine`, `base64::engine::general_purpose::STANDARD`.
 - Produces: `pub fn sequence(text: &str) -> String`, `pub fn copy(text: &str) -> std::io::Result<()>`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `znicz-tui/src/osc52.rs`:
 
@@ -806,12 +806,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz-tui osc52`
 Expected: FAIL to compile (`sequence` missing).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Above the tests:
 
@@ -837,12 +837,12 @@ pub fn copy(text: &str) -> std::io::Result<()> {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-tui osc52`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/osc52.rs znicz-tui/src/lib.rs
@@ -869,7 +869,7 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
     - `pub fn send(&self, tag: T, op: SpotifyOp) -> bool`
     - `pub fn try_recv(&self) -> Option<Done<T>>`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `znicz-tui/src/spotify_worker.rs` with this test module (and the implementation in Step 3):
 
@@ -975,12 +975,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz-tui spotify_worker`
 Expected: FAIL to compile.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Above the tests:
 
@@ -1054,12 +1054,12 @@ impl<T: Send + 'static> SpotifyWorker<T> {
 
 `Done<T>` is `Send` for the reply channel when `T` is: `SpotifyReply` owns plain data, and every `ZniczError` variant holds a `String`, an `io::Error` or a `SpotifyErrorKind`, all `Send` (checked in `znicz-core/src/error.rs`).
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-tui spotify_worker`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/spotify_worker.rs znicz-tui/src/lib.rs
