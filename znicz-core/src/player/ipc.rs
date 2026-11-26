@@ -17,6 +17,7 @@ use crate::player::commands::Command;
 use crate::player::engine::{PlayerHandle, PlayerOps};
 use crate::player::state::{PlaybackStatus, PlayerState, Queue};
 use crate::session::SessionPersister;
+use crate::spotify_host::{SpotifyOp, SpotifyReply, SpotifyState};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(400);
 
@@ -75,6 +76,17 @@ enum IpcRequest {
         #[serde(default)]
         id: Option<RequestId>,
     },
+    /// A Spotify op. Change ops (`!op.is_read()`) carry an id, as `Library` does.
+    Spotify {
+        token: String,
+        op: SpotifyOp,
+        #[serde(default)]
+        id: Option<RequestId>,
+    },
+    /// The Spotify snapshot, for `SpotifyHost::try_state`.
+    SpotifyStatus {
+        token: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -93,6 +105,14 @@ enum IpcResponse {
         #[serde(default)]
         queue_unchanged: bool,
     },
+    /// The answer to a `Spotify` request.
+    Spotify {
+        reply: SpotifyReply,
+    },
+    /// The answer to a `SpotifyStatus` request.
+    SpotifyStatus {
+        state: Box<SpotifyState>,
+    },
     Err {
         message: String,
     },
@@ -107,8 +127,12 @@ struct Shared {
     advertise: PathBuf,
     persist: Mutex<Option<SessionPersister>>,
     library: Option<Arc<dyn LibraryHost>>,
+    spotify: Option<Arc<dyn crate::spotify_host::SpotifyHost>>,
     /// Command and Library change requests.
     recent: Mutex<RecentOutcomes<()>>,
+    /// Spotify change requests. Kept apart from `recent`: a Spotify call can
+    /// take about 40 s, and it must not hold up Command or Library requests.
+    recent_spotify: Mutex<RecentOutcomes<SpotifyReply>>,
 }
 
 impl Shared {
@@ -129,6 +153,12 @@ impl Shared {
         }
     }
 }
+
+/// What a player without a Spotify service answers Spotify requests with.
+const NO_SPOTIFY: &str = "no Spotify service in this player";
+
+/// A reply of a kind the request did not ask for.
+const UNEXPECTED_REPLY: &str = "unexpected reply from the player";
 
 /// How many clients' last outcomes the player remembers.
 const RECENT_CLIENTS: usize = 64;
@@ -275,7 +305,7 @@ impl IpcServer {
         advertise: impl Into<PathBuf>,
         idle: Duration,
     ) -> Result<Self> {
-        Self::start_inner(player, advertise, idle, None, None)
+        Self::start_inner(player, advertise, idle, None, None, None)
     }
 
     pub fn start_with_session(
@@ -285,7 +315,15 @@ impl IpcServer {
         session_path: impl Into<PathBuf>,
         debounce: Duration,
     ) -> Result<Self> {
-        Self::start_with_session_and_library(player, advertise, idle, session_path, debounce, None)
+        Self::start_with_session_and_library(
+            player,
+            advertise,
+            idle,
+            session_path,
+            debounce,
+            None,
+            None,
+        )
     }
 
     /// A server whose clients can also write the library through `host`.
@@ -295,10 +333,22 @@ impl IpcServer {
         idle: Duration,
         host: Arc<dyn LibraryHost>,
     ) -> Result<Self> {
-        Self::start_inner(player, advertise, idle, None, Some(host))
+        Self::start_inner(player, advertise, idle, None, Some(host), None)
     }
 
-    /// The `znicz player` setup: session persistence plus an optional library writer.
+    /// A server whose clients can control Spotify through `host` (tests).
+    #[cfg(test)]
+    pub fn start_with_spotify(
+        player: PlayerHandle,
+        advertise: impl Into<PathBuf>,
+        idle: Duration,
+        host: Arc<dyn crate::spotify_host::SpotifyHost>,
+    ) -> Result<Self> {
+        Self::start_inner(player, advertise, idle, None, None, Some(host))
+    }
+
+    /// The `znicz player` setup: session persistence, an optional library
+    /// writer and an optional Spotify host.
     pub fn start_with_session_and_library(
         player: PlayerHandle,
         advertise: impl Into<PathBuf>,
@@ -306,10 +356,11 @@ impl IpcServer {
         session_path: impl Into<PathBuf>,
         debounce: Duration,
         host: Option<Arc<dyn LibraryHost>>,
+        spotify: Option<Arc<dyn crate::spotify_host::SpotifyHost>>,
     ) -> Result<Self> {
         let mut persister = SessionPersister::new(session_path, debounce);
         persister.sync_from_player(&player);
-        Self::start_inner(player, advertise, idle, Some(persister), host)
+        Self::start_inner(player, advertise, idle, Some(persister), host, spotify)
     }
 
     fn start_inner(
@@ -318,6 +369,7 @@ impl IpcServer {
         idle: Duration,
         persist: Option<SessionPersister>,
         library: Option<Arc<dyn LibraryHost>>,
+        spotify: Option<Arc<dyn crate::spotify_host::SpotifyHost>>,
     ) -> Result<Self> {
         let advertise = advertise.into();
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -345,7 +397,9 @@ impl IpcServer {
             advertise: advertise.clone(),
             persist: Mutex::new(persist),
             library,
+            spotify,
             recent: Mutex::default(),
+            recent_spotify: Mutex::default(),
         });
         let join = match thread::Builder::new()
             .name("znicz-ipc".into())
@@ -502,7 +556,9 @@ fn handle_session(stream: TcpStream, shared: Arc<Shared>) {
             | IpcRequest::State { token, .. }
             | IpcRequest::Command { token, .. }
             | IpcRequest::Shutdown { token }
-            | IpcRequest::Library { token, .. } => token.clone(),
+            | IpcRequest::Library { token, .. }
+            | IpcRequest::Spotify { token, .. }
+            | IpcRequest::SpotifyStatus { token } => token.clone(),
         };
         if req_token != shared.token {
             let _ = write_json_line(
@@ -547,6 +603,34 @@ fn handle_session(stream: TcpStream, shared: Arc<Shared>) {
                         message: "no music library configured".into(),
                     },
                     Some(host) => shared.apply_once(id, || host.apply(op)),
+                };
+                let _ = write_json_line(&mut writer, &response);
+            }
+            IpcRequest::Spotify { op, id, .. } => {
+                let response = match &shared.spotify {
+                    None => IpcResponse::Err {
+                        message: NO_SPOTIFY.into(),
+                    },
+                    Some(host) => match run_once(&shared.recent_spotify, id, || host.apply(op)) {
+                        Ok(reply) => IpcResponse::Spotify { reply },
+                        Err(message) => IpcResponse::Err { message },
+                    },
+                };
+                let _ = write_json_line(&mut writer, &response);
+            }
+            IpcRequest::SpotifyStatus { .. } => {
+                let response = match &shared.spotify {
+                    None => IpcResponse::Err {
+                        message: NO_SPOTIFY.into(),
+                    },
+                    Some(host) => match host.try_state() {
+                        Ok(state) => IpcResponse::SpotifyStatus {
+                            state: Box::new(state),
+                        },
+                        Err(e) => IpcResponse::Err {
+                            message: e.to_string(),
+                        },
+                    },
                 };
                 let _ = write_json_line(&mut writer, &response);
             }
@@ -604,6 +688,9 @@ fn command_result(response: std::result::Result<IpcResponse, RpcFailure>) -> Res
     match response.map_err(RpcFailure::into_error)? {
         IpcResponse::Ok { .. } => Ok(()),
         IpcResponse::Err { message } => Err(ZniczError::Player(message)),
+        IpcResponse::Spotify { .. } | IpcResponse::SpotifyStatus { .. } => {
+            Err(ZniczError::Player(UNEXPECTED_REPLY.into()))
+        }
     }
 }
 
@@ -620,6 +707,9 @@ impl LibraryHost for IpcClient {
         {
             IpcResponse::Ok { .. } => Ok(()),
             IpcResponse::Err { message } => Err(ZniczError::Library(message)),
+            IpcResponse::Spotify { .. } | IpcResponse::SpotifyStatus { .. } => {
+                Err(ZniczError::Library(UNEXPECTED_REPLY.into()))
+            }
         }
     }
 
@@ -647,6 +737,9 @@ impl LibraryHost for IpcClient {
                     Ok(library.map(|status| *status).unwrap_or_default())
                 }
                 IpcResponse::Err { message } => Err(ZniczError::Library(message)),
+                IpcResponse::Spotify { .. } | IpcResponse::SpotifyStatus { .. } => {
+                    Err(ZniczError::Library(UNEXPECTED_REPLY.into()))
+                }
             },
         )
         .map_err(|f| f.error)?
@@ -718,6 +811,9 @@ fn open_stream(advertise_path: &Path, role: ClientRole) -> Result<Live> {
     match read_json_line::<IpcResponse>(&mut reader)? {
         IpcResponse::Ok { .. } => {}
         IpcResponse::Err { message } => return Err(ZniczError::Player(message)),
+        IpcResponse::Spotify { .. } | IpcResponse::SpotifyStatus { .. } => {
+            return Err(ZniczError::Player(UNEXPECTED_REPLY.into()));
+        }
     }
     Ok(Live {
         writer,
@@ -855,6 +951,9 @@ impl IpcClient {
         match rpc_on(&mut live, &IpcRequest::Shutdown { token })? {
             IpcResponse::Ok { .. } => Ok(()),
             IpcResponse::Err { message } => Err(ZniczError::Player(message)),
+            IpcResponse::Spotify { .. } | IpcResponse::SpotifyStatus { .. } => {
+                Err(ZniczError::Player(UNEXPECTED_REPLY.into()))
+            }
         }
     }
 
@@ -917,6 +1016,9 @@ fn finish_state(live: &mut Live, response: IpcResponse) -> Result<PlayerState> {
             Ok(*state)
         }
         IpcResponse::Err { message } => Err(ZniczError::Player(message)),
+        IpcResponse::Spotify { .. } | IpcResponse::SpotifyStatus { .. } => {
+            Err(ZniczError::Player(UNEXPECTED_REPLY.into()))
+        }
     }
 }
 
@@ -1615,5 +1717,164 @@ mod tests {
             thread::sleep(Duration::from_millis(50));
         }
         assert!(!path.exists(), "idles out once the scan is done");
+    }
+
+    use crate::spotify_host::SpotifyLogin;
+
+    /// Records the ops it is given; refuses `Logout`.
+    #[derive(Default)]
+    struct FakeSpotify {
+        ops: Mutex<Vec<SpotifyOp>>,
+    }
+
+    impl crate::spotify_host::SpotifyHost for FakeSpotify {
+        fn apply(&self, op: SpotifyOp) -> Result<SpotifyReply> {
+            if op == SpotifyOp::Logout {
+                return Err(ZniczError::Spotify("refused".into()));
+            }
+            self.ops.lock().unwrap().push(op);
+            Ok(SpotifyReply::Done)
+        }
+
+        fn state(&self) -> SpotifyState {
+            SpotifyState {
+                login: SpotifyLogin::LoggedIn,
+                ..SpotifyState::default()
+            }
+        }
+    }
+
+    /// Takes 300 ms per call and counts the calls.
+    #[derive(Default)]
+    struct SlowSpotify {
+        calls: AtomicUsize,
+    }
+
+    impl crate::spotify_host::SpotifyHost for SlowSpotify {
+        fn apply(&self, _op: SpotifyOp) -> Result<SpotifyReply> {
+            thread::sleep(Duration::from_millis(300));
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(SpotifyReply::Done)
+        }
+
+        fn state(&self) -> SpotifyState {
+            SpotifyState::default()
+        }
+    }
+
+    fn spotify_pause(token: &str, id: Option<RequestId>) -> IpcRequest {
+        IpcRequest::Spotify {
+            token: token.to_string(),
+            op: SpotifyOp::Pause,
+            id,
+        }
+    }
+
+    fn is_done(response: &IpcResponse) -> bool {
+        matches!(
+            response,
+            IpcResponse::Spotify {
+                reply: SpotifyReply::Done
+            }
+        )
+    }
+
+    #[test]
+    fn a_resent_spotify_change_is_applied_once() {
+        let (_dir, path) = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let host = Arc::new(FakeSpotify::default());
+        let _server = IpcServer::start_with_spotify(player, &path, Duration::ZERO, host.clone())
+            .expect("start ipc");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        let token = load_advertise(&path).expect("advertise").token;
+        let id = RequestId { client: 9, seq: 1 };
+
+        for _ in 0..2 {
+            let reply = client
+                .rpc_raw(spotify_pause(&token, Some(id)))
+                .expect("rpc");
+            assert!(is_done(&reply), "{reply:?}");
+        }
+
+        assert_eq!(host.ops.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_spotify_request_without_an_id_always_runs() {
+        let (_dir, path) = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let host = Arc::new(FakeSpotify::default());
+        let _server = IpcServer::start_with_spotify(player, &path, Duration::ZERO, host.clone())
+            .expect("start ipc");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        let token = load_advertise(&path).expect("advertise").token;
+
+        for _ in 0..2 {
+            let reply = client.rpc_raw(spotify_pause(&token, None)).expect("rpc");
+            assert!(is_done(&reply), "{reply:?}");
+        }
+
+        assert_eq!(host.ops.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_resend_that_arrives_while_the_first_attempt_runs_waits_and_does_not_run_twice() {
+        let (_dir, path) = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let host = Arc::new(SlowSpotify::default());
+        let _server = IpcServer::start_with_spotify(player, &path, Duration::ZERO, host.clone())
+            .expect("start ipc");
+        let first = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        let second = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        let token = load_advertise(&path).expect("advertise").token;
+        let id = RequestId { client: 7, seq: 1 };
+
+        let first_token = token.clone();
+        let running = thread::spawn(move || first.rpc_raw(spotify_pause(&first_token, Some(id))));
+        // The first attempt is inside the 300 ms call by now.
+        thread::sleep(Duration::from_millis(100));
+        let reply = second
+            .rpc_raw(spotify_pause(&token, Some(id)))
+            .expect("rpc");
+
+        assert!(is_done(&reply), "{reply:?}");
+        let first_reply = running.join().expect("thread").expect("rpc");
+        assert!(is_done(&first_reply), "{first_reply:?}");
+        assert_eq!(host.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn the_spotify_snapshot_comes_back_and_a_missing_host_is_an_error() {
+        let (_dir, path) = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let host = Arc::new(FakeSpotify::default());
+        let _server =
+            IpcServer::start_with_spotify(player, &path, Duration::ZERO, host).expect("start ipc");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        let token = load_advertise(&path).expect("advertise").token;
+        match client.rpc_raw(IpcRequest::SpotifyStatus { token }) {
+            Ok(IpcResponse::SpotifyStatus { state }) => {
+                assert_eq!(state.login, SpotifyLogin::LoggedIn);
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let (_dir2, path2) = advertise_path();
+        let (player2, _thread2) = spawn_player(AudioConfig::default());
+        let _bare = IpcServer::start(player2, &path2).expect("start ipc");
+        let bare = IpcClient::connect(&path2, ClientRole::Agent).expect("connect");
+        let token2 = load_advertise(&path2).expect("advertise").token;
+        for request in [
+            spotify_pause(&token2, None),
+            IpcRequest::SpotifyStatus {
+                token: token2.clone(),
+            },
+        ] {
+            match bare.rpc_raw(request) {
+                Ok(IpcResponse::Err { message }) => assert_eq!(message, NO_SPOTIFY),
+                other => panic!("{other:?}"),
+            }
+        }
     }
 }

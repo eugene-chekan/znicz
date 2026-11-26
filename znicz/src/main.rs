@@ -771,6 +771,7 @@ fn run_player_daemon(
         session_path()?,
         SESSION_SAVE_DEBOUNCE,
         library,
+        None,
     )
     .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
     install_player_signals(server.stop_flag());
