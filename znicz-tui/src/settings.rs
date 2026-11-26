@@ -17,15 +17,17 @@ pub enum Tab {
     Playback,
     Library,
     General,
+    Spotify,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 5] = [
+    pub const ALL: [Tab; 6] = [
         Tab::Display,
         Tab::Audio,
         Tab::Playback,
         Tab::Library,
         Tab::General,
+        Tab::Spotify,
     ];
 
     pub fn label(self) -> &'static str {
@@ -35,10 +37,11 @@ impl Tab {
             Tab::Playback => "Playback",
             Tab::Library => "Library",
             Tab::General => "General",
+            Tab::Spotify => "Spotify",
         }
     }
 
-    /// The tab for a number key `'1'` to `'5'`.
+    /// The tab for a number key `'1'` to `'6'`.
     pub fn from_key(c: char) -> Option<Tab> {
         let index = c.to_digit(10)?.checked_sub(1)?;
         Tab::ALL.get(index as usize).copied()
@@ -163,6 +166,8 @@ pub fn rows(tab: Tab, folders: &[PathBuf]) -> Vec<Row> {
             rows
         }
         Tab::General => vec![Row::UpdateCheck],
+        // The rows come in a later change.
+        Tab::Spotify => Vec::new(),
     }
 }
 
@@ -699,12 +704,17 @@ mod tests {
     fn tabs_have_labels_and_number_keys() {
         assert_eq!(
             Tab::ALL.map(Tab::label),
-            ["Display", "Audio", "Playback", "Library", "General"]
+            [
+                "Display", "Audio", "Playback", "Library", "General", "Spotify"
+            ]
         );
+        assert_eq!(Tab::from_key('1'), Some(Tab::Display));
         assert_eq!(Tab::from_key('3'), Some(Tab::Playback));
-        assert_eq!(Tab::from_key('6'), None);
-        assert_eq!(Tab::General.next(), Tab::Display);
-        assert_eq!(Tab::Display.previous(), Tab::General);
+        assert_eq!(Tab::from_key('6'), Some(Tab::Spotify));
+        assert_eq!(Tab::from_key('7'), None);
+        assert_eq!(Tab::from_key('0'), None);
+        assert_eq!(Tab::Spotify.next(), Tab::Display);
+        assert_eq!(Tab::Display.previous(), Tab::Spotify);
     }
 
     #[test]

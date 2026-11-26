@@ -246,7 +246,7 @@ pub const SETTINGS: &[Binding] = &[
     b("h / l", "choose"),
     b("d", "remove folder"),
     b("Tab / Shift-Tab", "next / previous tab"),
-    b("1–5", "go to a tab"),
+    b("1–6", "go to a tab"),
     b("↑ on the first row", "tab bar"),
     b("Esc", "close"),
 ];

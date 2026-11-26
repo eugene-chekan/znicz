@@ -24,7 +24,7 @@ const TAB_SEPARATOR_WIDTH: u16 = 3;
 
 /// The strip's text while the tab bar has focus.
 const TAB_BAR_HELP: &str =
-    "←/→ choose a tab, ↓ or Enter go to its settings. Tab and 1–5 switch tabs from anywhere.";
+    "←/→ choose a tab, ↓ or Enter go to its settings. Tab and 1–6 switch tabs from anywhere.";
 
 /// Columns the row's label is indented by.
 const INDENT: &str = "    ";

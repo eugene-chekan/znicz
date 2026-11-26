@@ -180,7 +180,7 @@ impl App {
             KeyCode::Left | KeyCode::Char('h') if self.settings_tab != Tab::Display => {
                 self.set_settings_tab(self.settings_tab.previous());
             }
-            KeyCode::Right | KeyCode::Char('l') if self.settings_tab != Tab::General => {
+            KeyCode::Right | KeyCode::Char('l') if self.settings_tab != Tab::Spotify => {
                 self.set_settings_tab(self.settings_tab.next());
             }
             KeyCode::Down | KeyCode::Char('j') | KeyCode::Enter => {
@@ -1403,7 +1403,20 @@ mod tests {
         assert_eq!(app.settings_rows[app.settings_cursor], Row::DefaultDevice);
         press(&mut app, KeyCode::BackTab);
         press(&mut app, KeyCode::BackTab);
-        assert_eq!(app.settings_tab, Tab::General);
+        assert_eq!(app.settings_tab, Tab::Spotify);
+    }
+
+    #[test]
+    fn the_right_arrow_stops_at_the_last_tab_spotify() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        assert_eq!(app.settings_tab, Tab::Spotify);
+        // The tab has no rows yet, so there is no row to press Up on.
+        app.settings_on_tab_bar = true;
+        press(&mut app, KeyCode::Right);
+        assert_eq!(app.settings_tab, Tab::Spotify);
     }
 
     #[test]
@@ -1471,10 +1484,10 @@ mod tests {
         press(&mut app, KeyCode::Up);
         press(&mut app, KeyCode::Left);
         assert_eq!(app.settings_tab, Tab::Display);
-        press(&mut app, KeyCode::Char('5'));
+        press(&mut app, KeyCode::Char('6'));
         press(&mut app, KeyCode::Up);
         press(&mut app, KeyCode::Right);
-        assert_eq!(app.settings_tab, Tab::General);
+        assert_eq!(app.settings_tab, Tab::Spotify);
     }
 
     #[test]
@@ -1588,7 +1601,9 @@ mod tests {
         let mut app = settings_app(&dir);
         press(&mut app, KeyCode::Char('S'));
         let screen = screen_rows(&mut app).join("\n");
-        for label in ["Display", "Audio", "Playback", "Library", "General"] {
+        for label in [
+            "Display", "Audio", "Playback", "Library", "General", "Spotify",
+        ] {
             assert!(screen.contains(label), "{label} missing:\n{screen}");
         }
     }
