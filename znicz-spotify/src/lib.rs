@@ -3,6 +3,7 @@
 //!
 //! Spotify plays the audio; Znicz only sends commands and reads state.
 
+mod api;
 mod auth;
 mod error;
 mod http;
