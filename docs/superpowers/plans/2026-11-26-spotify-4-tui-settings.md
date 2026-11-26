@@ -29,6 +29,10 @@
 - **Polling also sends `Touch`.** The spec's poll is `SpotifyStatus` plus `Touch`, both on the main connection. Each poll sends `Touch`, which keeps the player's fast poll going while the tab is open.
 - **Esc order.** `on_esc` runs before the Settings keys, so the panel's Esc is handled there (Task 9). In the paste prompt, Esc returns to the panel. In the panel, Esc cancels the login.
 - **Closing Settings during a login.** The panel is dropped (`S`, `?`, or another modal). The login continues in the player. The next `Enter` on Account sends `BeginLogin` again, which the player answers with the URL for the login it still holds (the service test `logging_in_twice_does_not_report_a_busy_port`).
+- **Narrow terminals.** The six labels need 58 columns inside the modal, which is 70 % of the width (at least 40). Below about 86 columns the frame cuts the end of the bar, so "Spotify" is partly hidden; `Tab` and `6` still reach it, and a click on the visible part works (`tab_label_rects` already clips to the bar). Accepted for this part; a two-row bar is not worth the layout change.
+- **No `Configure` unless the file was written.** The TUI sends `Configure` only from `save_setting`, after `ConfigFile` wrote the change. With a config problem, with no config file path, or when the write fails, nothing is sent and the Spotify row goes back to its old value (Task 7). The first save, when `config.toml` does not exist yet, is a normal write: the file is created and the whole `[spotify]` copy the player already has is sent. Clearing the client ID is the one change that logs the user out on purpose; while logged in it asks first (Task 8).
+- **Panel keys.** While the login panel is open only `c`, `Enter` and `Esc` are the panel's. Every other key falls through to the global keys, so `S` and `?` still leave Settings and drop the panel (the login keeps running in the player). In the paste prompt every key types, as in the other prompts.
+- **Tests never touch the real terminal, clipboard or browser.** `App` holds two small closures, `clipboard` and `browser`, whose defaults are `osc52::copy` and `znicz_spotify::browser::open`. Tests replace both with recorders (Task 9). A test that called the defaults would set the developer's clipboard or open a browser.
 - **The worker is generic.** `SpotifyWorker<T>` takes any tag. Part 5 reuses it for browsing and playback, so only the tag type changes.
 - **Not in this part:** Spotify mode (`O`), the shared Stage, the CLI, the version bump, CHANGELOG, README. The README and the commented `[spotify]` block in `default-config.toml` are final-PR items, as in Part 3.
 
@@ -36,8 +40,10 @@
 - Run commands from the repo root `/home/eugene/projects/znicz`.
 - Commit messages end with a blank line and the line `Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>`.
 - Never chain `git commit … && git push`. This plan does not push.
+- `cargo test` takes one filter before `--`. To run several filters, put them all after it: `cargo test -p znicz-tui -- spotify_rows settings::tests`.
+- Each task compiles and passes its tests at its own commit. A task never refers to a type, row or function that a later task adds.
 - The commit in each task is made after its tests pass. Intermediate commits may warn about unused code until the task that wires it in lands. Task 13 runs clippy with `-D warnings`, and it must pass there.
-- Spotify calls are never made on the UI thread except `SpotifyHost::try_state` and `apply(SpotifyOp::Touch)` on the main connection, which answer at once (the player's `SpotifyStatus` reads a mutex and no client lock).
+- Spotify calls are never made on the UI thread except `SpotifyHost::try_state` and then `apply(SpotifyOp::Touch)` on the main connection, which answer at once (the player's `SpotifyStatus` reads a mutex and no client lock). Two small local round trips every 500 ms, and only while the Spotify tab is open, do not stall a frame. The status is read first, so an old player that does not know `Touch` costs one reconnect, not two.
 - In every file, `ZniczError` and the Spotify types come from `znicz_core` (`use znicz_core::{ZniczError, SpotifyErrorKind, SpotifyHost, SpotifyOp, SpotifyReply, SpotifyState, SpotifyLogin, SpotifyAccount, SpotifyDevice, SpotifyConfig, valid_client_id, Result}`). Check the re-exports in `znicz-core/src/lib.rs` (lines 45–49) before the first build, and add any that are missing to that `pub use`.
 - Test helpers that already exist are used as they are: `settings_app(&dir)`, `press(&mut app, code)`, `screen_rows(&mut app)`, `screen_buffer(&mut app)`, `saved(&dir)` and `toast_texts(&app)` in `znicz-tui/src/app/settings_ui.rs`.
 
@@ -47,15 +53,15 @@
 
 | File | Responsibility |
 | --- | --- |
-| `znicz-tui/src/spotify_rows.rs` (new) | Pure Spotify row logic: `SpotifyView`, account text, device choices, value checks, port range, login panel lines, login outcome, the strings for the confirm questions |
-| `znicz-tui/src/osc52.rs` (new) | `sequence(text)` builds the OSC 52 bytes; `copy(text)` writes them to stdout |
+| `znicz-tui/src/spotify_rows.rs` (new) | Pure Spotify row logic: `SpotifyView`, account text, device choices, value checks, port range, login panel lines, login outcome, the strings for the confirm questions, `sent_to_player` |
+| `znicz-tui/src/osc52.rs` (new) | `sequence(text)` builds the OSC 52 bytes; `copy(text)` writes them to stdout between frames (the App calls it through its `clipboard` field, which tests replace) |
 | `znicz-tui/src/spotify_worker.rs` (new) | `SpotifyAsk` tags, `Done<T>`, the generic `SpotifyWorker<T>` with `spawn`, `send`, `try_recv` |
 | `znicz-tui/src/settings.rs` | `Tab::Spotify` (sixth tab), `Row` variants, `Kind::Text` and `Kind::Number`, `rows`, `tab`, `kind`, `label`, `explanation`, `config_key`, `value_text`, `hint_text`, `dimmed`, `prompt_range`, `Values.spotify`, `SettingsValues.spotify` and `.open_browser`; `step` made generic over `Clone` |
 | `znicz-tui/src/app/settings_ui.rs` | Keys for the Spotify rows, the client ID and port prompts, the confirm question, applying and saving the Spotify rows, the Configure send, restore on a broken config |
 | `znicz-tui/src/app/spotify_ui.rs` (new) | `impl App`: `poll_spotify`, `on_spotify_done`, `on_spotify_state`, account and device actions, the login panel and its keys, copy, browser notice |
 | `znicz-tui/src/app.rs` | `mod spotify_ui;`; the new App fields and their defaults; `with_remote` sets the main status host; `with_spotify_worker`; `with_settings_values` copies the Spotify values; the tick calls `poll_spotify`; `on_esc` handles the panel and the confirm; `Context` for the panel |
 | `znicz-tui/src/views/settings.rs` | Tab label strip text "1–6", the panel body in the list area, the paste prompt and confirm strip, dimmed rows, `values()` builds `SpotifyView`, the prompt's range text |
-| `znicz-tui/src/keys.rs` | `SETTINGS` says `1–6`; a `SETTINGS_LOGIN` binding list for the panel |
+| `znicz-tui/src/keys.rs` | `SETTINGS` says `1–6` and lists the login panel's keys; `Context::SettingsLogin` with its footer hints |
 | `znicz-tui/src/lib.rs` | `pub mod osc52;`, `pub mod spotify_rows;`, `pub mod spotify_worker;` (beside `pub mod settings;`) |
 | `znicz-tui/Cargo.toml` | `base64.workspace = true`, `znicz-spotify = { path = "../znicz-spotify" }` |
 | `znicz/src/main.rs` | `SettingsValues` gets `spotify_config(&config.spotify)` and `open_browser_setting(&config.spotify)`; the three `run_tui_with_client` call sites open a second connection with `connect_ui(device, config)` and pass it in |
@@ -111,8 +117,8 @@ Add a test to the same file's test module:
         press(&mut app, KeyCode::Char('S'));
         press(&mut app, KeyCode::Char('6'));
         assert_eq!(app.settings_tab, Tab::Spotify);
-        press(&mut app, KeyCode::Up);
-        assert!(app.settings_on_tab_bar);
+        // The tab has no rows yet, so there is no row to press Up on.
+        app.settings_on_tab_bar = true;
         press(&mut app, KeyCode::Right);
         assert_eq!(app.settings_tab, Tab::Spotify);
     }
@@ -120,7 +126,7 @@ Add a test to the same file's test module:
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cargo test -p znicz-tui tabs_have_labels_and_number_keys the_right_arrow_stops_at_the_last_tab_spotify -- --nocapture`
+Run: `cargo test -p znicz-tui -- tabs_have_labels_and_number_keys the_right_arrow_stops_at_the_last_tab_spotify`
 Expected: FAIL (no variant `Spotify`).
 
 - [ ] **Step 3: Implement**
@@ -135,7 +141,7 @@ In `keys.rs`, `SETTINGS` has `b("1–6", "go to a tab")`.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cargo test -p znicz-tui settings::tests settings_ui::tests -- --nocapture`
+Run: `cargo test -p znicz-tui -- settings::tests settings_ui::tests`
 Expected: PASS. The tests `each_tab_has_its_rows` and the ones that index `Tab::General` as the last tab still pass, because General is unchanged.
 
 - [ ] **Step 5: Commit**
@@ -151,18 +157,17 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 
 ### Task 2: The pure Spotify helpers
 
-Everything the rows say and check, as functions with no IO. This file is the place for the strings the spec and the brief fix.
+Everything the rows say and check, as functions with no IO. This file is the place for the strings the spec and the brief fix. It does not use `settings.rs`, so it compiles and passes on its own; Task 3 builds on it.
 
 **Files:**
 - Create: `znicz-tui/src/spotify_rows.rs`
 - Modify: `znicz-tui/src/lib.rs` (add `pub mod spotify_rows;` after `pub mod settings;`)
 - Modify: `znicz-tui/Cargo.toml` (add `znicz-spotify = { path = "../znicz-spotify" }` and `base64.workspace = true` under `[dependencies]`)
-- Modify: `znicz-tui/src/settings.rs`: make `step` generic (see Step 3)
 
 **Interfaces:**
-- Consumes: `znicz_core::{SpotifyAccount, SpotifyDevice, SpotifyLogin, valid_client_id}`, `znicz_spotify::browser::OpenBrowser`, `crate::settings::{self, Row, Tab}`.
+- Consumes: `znicz_core::{SpotifyAccount, SpotifyDevice, SpotifyLogin, valid_client_id}`, `znicz_spotify::browser::OpenBrowser`. Nothing from `settings.rs`: Task 3 builds on this module, not the other way round.
 - Produces:
-  - `pub struct SpotifyView { pub configured: bool, pub device: String, pub redirect_port: u16, pub open_browser: OpenBrowser, pub login: SpotifyLogin, pub account: Option<SpotifyAccount>, pub devices: Vec<SpotifyDevice>, pub unavailable: Option<String> }` (derives `Debug, Clone, Default, PartialEq`)
+  - `pub struct SpotifyView { pub configured: bool, pub client_id_head: String, pub device: String, pub redirect_port: u16, pub open_browser: OpenBrowser, pub login: SpotifyLogin, pub account: Option<SpotifyAccount>, pub devices: Vec<SpotifyDevice>, pub unavailable: Option<String> }` (derives `Debug, Clone, Default, PartialEq`)
   - `pub const OPEN_BROWSERS: [OpenBrowser; 3]`
   - `pub const PORT_MIN: u16 = 1024`, `pub const DEFAULT_PORT` is `SpotifyConfig::DEFAULT_PORT` (use that)
   - `pub const CLIENT_FIRST: &str`, `pub const LOGOUT_QUESTION: &str`, `pub const CLIENT_ID_QUESTION: &str`, `pub const WRONG_ADDRESS: &str`
@@ -177,8 +182,6 @@ Everything the rows say and check, as functions with no IO. This file is the pla
   - `pub fn login_panel_lines(url: &str, listening: bool) -> Vec<String>`
   - `pub enum LoginOutcome { Success(String), Failure(String) }`
   - `pub fn login_outcome(login: &SpotifyLogin, account: Option<&SpotifyAccount>) -> Option<LoginOutcome>`
-  - `pub fn sent_to_player(row: &Row) -> bool`
-  - `pub fn login_outcome` and `LoginOutcome` as above
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -327,55 +330,21 @@ mod tests {
         assert_eq!(login_outcome(&SpotifyLogin::LoggingIn, None), None);
         assert_eq!(login_outcome(&SpotifyLogin::NotLoggedIn, None), None);
     }
-
-    #[test]
-    fn only_the_player_side_rows_are_sent_to_the_player() {
-        assert!(sent_to_player(&Row::ClientId));
-        assert!(sent_to_player(&Row::RedirectPort));
-        assert!(sent_to_player(&Row::PlaybackDevice));
-        assert!(!sent_to_player(&Row::OpenBrowser));
-        assert!(!sent_to_player(&Row::Account));
-        assert!(!sent_to_player(&Row::ShowCover));
-    }
 }
 ```
-
-Remove the stray `use znicz_core::SpotifyErrorKind as _Unused;` line before committing; it is only a placeholder in this draft and must not stay in the file.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz-tui spotify_rows`
-Expected: FAIL to compile (functions and `Row::ClientId` etc. are not defined yet). `Row::ClientId`, `Row::RedirectPort`, `Row::OpenBrowser`, `Row::Account` and `Row::PlaybackDevice` come in Task 3; until then this test module will not compile. Run Task 2 and Task 3 in one go: write Task 3 Step 3 first, then run this step's test. Alternatively, comment out the `sent_to_player` test until Task 3, and uncomment it in Task 3 Step 1.
+Expected: FAIL to compile (the functions are not defined yet).
 
 - [ ] **Step 3: Implement**
 
-First, in `settings.rs`, make `step` generic over `Clone` so it serves strings and the browser setting too. Change its signature to:
+Write the functions in `spotify_rows.rs`, above the test module:
 
 ```rust
-fn step<T: Clone + PartialEq>(all: &[T], current: &T, forward: bool, wrap: bool) -> T {
-    let i = all.iter().position(|v| v == current).unwrap_or(0);
-    let last = all.len() - 1;
-    let j = match (forward, wrap) {
-        (true, _) if i < last => i + 1,
-        (true, true) => 0,
-        (true, false) => i,
-        (false, _) if i > 0 => i - 1,
-        (false, true) => last,
-        (false, false) => i,
-    };
-    all[j].clone()
-}
-```
-
-Make it `pub(crate)`. Update the five existing call sites in `settings.rs` (`step_protocol`, `step_choice`) to pass `&` on the current value, for example `step(choices, &tui.cover_protocol, forward, wrap)` and `step(&CoverSize::ALL, &tui.cover_size, forward, wrap)`. The results are the same, and the current tests `choice_rows_step_and_wrap_when_asked` and `choice_rows_stop_at_the_ends_without_wrap` stay green.
-
-Then write the functions in `spotify_rows.rs`, above the test module:
-
-```rust
-use znicz_core::{SpotifyAccount, SpotifyConfig, SpotifyDevice, SpotifyLogin, valid_client_id};
+use znicz_core::{SpotifyAccount, SpotifyDevice, SpotifyLogin, valid_client_id};
 use znicz_spotify::browser::OpenBrowser;
-
-use crate::settings::{self, Row};
 
 /// The lowest port the login callback may use; the top is 65535.
 pub const PORT_MIN: u16 = 1024;
@@ -393,6 +362,8 @@ pub const WRONG_ADDRESS: &str = "that address is not from this login";
 pub struct SpotifyView {
     /// A client ID is set.
     pub configured: bool,
+    /// The first eight characters of the client ID, for the row. The full ID never reaches the row text.
+    pub client_id_head: String,
     /// `[spotify] device`; empty is the active device.
     pub device: String,
     pub redirect_port: u16,
@@ -518,25 +489,17 @@ pub fn login_outcome(login: &SpotifyLogin, account: Option<&SpotifyAccount>) -> 
     }
 }
 
-/// Rows whose value the player must hear about. The browser setting is only
-/// read by the front end.
-pub fn sent_to_player(row: &Row) -> bool {
-    matches!(row, Row::ClientId | Row::RedirectPort | Row::PlaybackDevice)
-}
-
 ```
-
-The `use crate::settings::{self, Row}` import keeps only what is referenced. `Row` is enough if no `settings::` path appears in the file.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-tui spotify_rows`
-Expected: PASS (after Task 3 adds the `Row` variants).
+Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add znicz-tui/src/spotify_rows.rs znicz-tui/src/lib.rs znicz-tui/src/settings.rs znicz-tui/Cargo.toml Cargo.lock
+git add znicz-tui/src/spotify_rows.rs znicz-tui/src/lib.rs znicz-tui/Cargo.toml Cargo.lock
 git commit -m "feat(tui): pure helpers for the Spotify Settings rows
 
 Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
@@ -546,10 +509,13 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 
 ### Task 3: The Spotify rows, their values and kinds
 
-Adds the five rows to `settings.rs` and fills `rows(Tab::Spotify, _)`. Adds `Kind::Text` and `Kind::Number`. Adds `Values.spotify` and the value, hint and dim rules.
+Adds the five rows to `settings.rs` and fills `rows(Tab::Spotify, _)`. Adds `Kind::Text` and `Kind::Number`. Adds `Values.spotify` and the value, hint and dim rules. Makes `step` generic so later tasks can step strings and the browser setting. Adding fields to `Values` and `SettingsValues` breaks their two non-test constructors, so this task also fills them in: the view's `values()` with an empty `SpotifyView` for now (Task 6 reads the real one), and `main.rs` with the config's Spotify values.
 
 **Files:**
 - Modify: `znicz-tui/src/settings.rs`
+- Modify: `znicz-tui/src/spotify_rows.rs` (`sent_to_player`, which needs `Row`)
+- Modify: `znicz-tui/src/views/settings.rs` (`values()`: `spotify: SpotifyView::default()`)
+- Modify: `znicz/src/main.rs` (the `SettingsValues` literal)
 
 **Interfaces:**
 - Consumes: `crate::spotify_rows::{SpotifyView, account_text, device_choices, device_value, device_online, redirect_uri, open_browser_name}`.
@@ -558,12 +524,14 @@ Adds the five rows to `settings.rs` and fills `rows(Tab::Spotify, _)`. Adds `Kin
   - `Kind::Text`, `Kind::Number`
   - `pub fn dimmed(row: &Row, v: &Values) -> bool`
   - `pub fn prompt_range(row: &Row) -> Option<String>`
+  - `pub fn spotify_rows::sent_to_player(row: &Row) -> bool`
+  - `pub(crate) fn step<T: Clone + PartialEq>(all: &[T], current: &T, forward: bool, wrap: bool) -> T`
   - `Values` gains `pub spotify: SpotifyView`
   - `SettingsValues` gains `pub spotify: SpotifyConfig` and `pub open_browser: OpenBrowser`
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to the `settings.rs` test module (the `values()` helper gets `spotify: SpotifyView::default()`, and the other `Values { … }` literals in the tests get the same field):
+Add to the `settings.rs` test module (it needs `use znicz_core::SpotifyLogin;`; the `values()` helper gets `spotify: SpotifyView::default()`, and the other `Values { … }` literals in the tests, three of them, get the same field):
 
 ```rust
     #[test]
@@ -657,22 +625,45 @@ Add to the `settings.rs` test module (the `values()` helper gets `spotify: Spoti
         assert_eq!(prompt_range(&Row::ClientId), Some("32 hex characters, or empty".into()));
         assert_eq!(prompt_range(&Row::Account), None);
     }
+
+    #[test]
+    fn step_works_on_owned_values() {
+        let all = ["".to_string(), "A".to_string(), "B".to_string()];
+        assert_eq!(step(&all, &"A".to_string(), true, false), "B");
+        assert_eq!(step(&all, &"B".to_string(), true, false), "B");
+        assert_eq!(step(&all, &"B".to_string(), true, true), "");
+        assert_eq!(step(&all, &"".to_string(), false, true), "B");
+        // A value that is not listed steps from the first one.
+        assert_eq!(step(&all, &"Z".to_string(), true, false), "A");
+    }
 ```
 
-Note: the test `the_client_id_row_says_only_whether_an_id_is_set` uses a field `client_id_head`, which is not in `SpotifyView` as specified in Task 2. Add `pub client_id_head: String` to `SpotifyView` (the first eight characters of the ID, for the row, so the full ID never reaches the row text). Its default is the empty string. Update Task 2's struct when you add it, and set it in the App's `spotify_view()` (Task 6).
+And in `spotify_rows.rs`'s test module add (it needs `use crate::settings::Row;` in that module):
+
+```rust
+    #[test]
+    fn only_the_player_side_rows_are_sent_to_the_player() {
+        assert!(sent_to_player(&Row::ClientId));
+        assert!(sent_to_player(&Row::RedirectPort));
+        assert!(sent_to_player(&Row::PlaybackDevice));
+        assert!(!sent_to_player(&Row::OpenBrowser));
+        assert!(!sent_to_player(&Row::Account));
+        assert!(!sent_to_player(&Row::ShowCover));
+    }
+```
 
 Update the `every_row_has_an_explanation` test (it iterates `Tab::ALL`, so it already covers the new rows) and the `kinds_match_the_spec_table` test if it lists the kinds exhaustively; leave the existing expectations for the old rows alone.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cargo test -p znicz-tui settings::tests`
-Expected: FAIL to compile (no variants, no `dimmed`, no `prompt_range`, no `Values.spotify`).
+Run: `cargo test -p znicz-tui -- settings::tests spotify_rows`
+Expected: FAIL to compile (no variants, no `dimmed`, no `prompt_range`, no `Values.spotify`, no generic `step`, no `sent_to_player`).
 
 - [ ] **Step 3: Implement**
 
 In `settings.rs`:
 
-1. Add the imports: `use znicz_core::{FadeTimes, SpotifyConfig, SpotifyLogin};`, `use znicz_spotify::browser::OpenBrowser;`, `use crate::spotify_rows::{self, SpotifyView};`.
+1. Add the imports: `use znicz_core::{FadeTimes, SpotifyConfig};`, `use znicz_spotify::browser::OpenBrowser;`, `use crate::spotify_rows::{self, SpotifyView};`.
 2. Add the variants to `Row`, in this order at the end: `ClientId`, `RedirectPort`, `OpenBrowser`, `Account`, `PlaybackDevice`.
 3. Add `Kind::Text` and `Kind::Number` to `Kind`.
 4. `rows`: `Tab::Spotify => vec![Row::ClientId, Row::RedirectPort, Row::OpenBrowser, Row::Account, Row::PlaybackDevice]`.
@@ -715,17 +706,46 @@ pub fn prompt_range(row: &Row) -> Option<String> {
 
 13. `Values` gets the field `pub spotify: SpotifyView` (after `fades`).
 14. `SettingsValues` gets `pub spotify: SpotifyConfig` (default `SpotifyConfig::default()`) and `pub open_browser: OpenBrowser` (default `OpenBrowser::default()`). The manual `Default` impl adds both.
-15. `SpotifyView` gets the field `pub client_id_head: String` (Task 2 note above).
+15. Make `step` generic, with the body below, and `pub(crate)`. Update its five call sites (`step_protocol` and the four arms of `step_choice`) to pass `&tui.cover_protocol` and so on. The existing tests `choice_rows_step_and_wrap_when_asked` and `choice_rows_stop_at_the_ends_without_wrap` stay green.
+
+```rust
+pub(crate) fn step<T: Clone + PartialEq>(all: &[T], current: &T, forward: bool, wrap: bool) -> T {
+    let i = all.iter().position(|v| v == current).unwrap_or(0);
+    let last = all.len() - 1;
+    let j = match (forward, wrap) {
+        (true, _) if i < last => i + 1,
+        (true, true) => 0,
+        (true, false) => i,
+        (false, _) if i > 0 => i - 1,
+        (false, true) => last,
+        (false, false) => i,
+    };
+    all[j].clone()
+}
+```
+
+16. In `spotify_rows.rs` add (with `use crate::settings::Row;`):
+
+```rust
+/// Rows whose value the player must hear about. The browser setting is only
+/// read by the front end.
+pub fn sent_to_player(row: &Row) -> bool {
+    matches!(row, Row::ClientId | Row::RedirectPort | Row::PlaybackDevice)
+}
+```
+
+17. `views/settings.rs` `values()`: add `spotify: SpotifyView::default(),` (import `crate::spotify_rows::SpotifyView`). Task 6 replaces it with `app.spotify_view()`.
+18. `znicz/src/main.rs`, the `SettingsValues` literal (about line 403): add `spotify: spotify_config(&config.spotify), open_browser: open_browser_setting(&config.spotify),`. Both functions already exist in that file.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cargo test -p znicz-tui settings::tests spotify_rows`
-Expected: PASS.
+Run: `cargo test -p znicz-tui -- settings::tests spotify_rows && cargo build --workspace`
+Expected: PASS; the whole workspace builds.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add znicz-tui/src/settings.rs znicz-tui/src/spotify_rows.rs
+git add znicz-tui/src/settings.rs znicz-tui/src/spotify_rows.rs znicz-tui/src/views/settings.rs znicz/src/main.rs
 git commit -m "feat(tui): the five Spotify Settings rows and their values
 
 Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
@@ -759,6 +779,16 @@ mod tests {
     fn the_sequence_is_osc_52_with_base64_and_bel() {
         assert_eq!(sequence("hi"), "\x1b]52;c;aGk=\x07");
         assert_eq!(sequence(""), "\x1b]52;c;\x07");
+    }
+
+    #[test]
+    fn the_encoding_is_standard_base64_with_padding() {
+        assert_eq!(sequence("a"), "\x1b]52;c;YQ==\x07");
+        assert_eq!(sequence("ab"), "\x1b]52;c;YWI=\x07");
+        assert_eq!(sequence("abc"), "\x1b]52;c;YWJj\x07");
+        // The standard alphabet has `+` and `/`, not `-` and `_`.
+        assert_eq!(sequence(">>>"), "\x1b]52;c;Pj4+\x07");
+        assert_eq!(sequence("???"), "\x1b]52;c;Pz8/\x07");
     }
 
     #[test]
@@ -796,8 +826,10 @@ pub fn sequence(text: &str) -> String {
     format!("\x1b]52;c;{}\x07", STANDARD.encode(text))
 }
 
-/// Write the sequence to the terminal. The TUI owns stdout, but an escape
-/// sequence changes no cell, so ratatui's next frame is unaffected.
+/// Write the sequence to the terminal. It is called from a key handler, between
+/// two frames: ratatui flushes at the end of every draw, so the bytes never land
+/// inside a frame, and an escape sequence changes no cell, so the next frame's
+/// diff is unaffected. Tests do not call this; `App::clipboard` is replaced.
 pub fn copy(text: &str) -> std::io::Result<()> {
     let mut out = std::io::stdout();
     out.write_all(sequence(text).as_bytes())?;
@@ -926,6 +958,20 @@ mod tests {
         release.send(()).unwrap();
         assert_eq!(wait_for(&worker).tag, SpotifyAsk::Devices);
     }
+
+    #[test]
+    fn dropping_the_worker_ends_its_thread() {
+        let (host, release, _started) = host();
+        release.send(()).unwrap();
+        let worker = SpotifyWorker::<SpotifyAsk>::spawn(host.clone()).unwrap();
+        assert!(Arc::strong_count(&host) >= 2, "the thread holds the host");
+        drop(worker);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Arc::strong_count(&host) > 1 {
+            assert!(Instant::now() < deadline, "the thread did not end");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
 }
 ```
 
@@ -982,7 +1028,7 @@ impl<T: Send + 'static> SpotifyWorker<T> {
             .name("spotify-worker".into())
             .spawn(move || {
                 while let Ok((tag, op)) = inbox.recv() {
-                    let result = SpotifyHost::apply(&*host, op);
+                    let result = host.apply(op);
                     if outbox.send(Done { tag, result }).is_err() {
                         break;
                     }
@@ -1006,7 +1052,7 @@ impl<T: Send + 'static> SpotifyWorker<T> {
 }
 ```
 
-Note that `Done<T>` must be `Send` for the channel: `Result<SpotifyReply>` is `Send` if `ZniczError` is `Send`. If the compiler reports otherwise, the cause is a non-`Send` variant in `ZniczError`, which is a bug to fix in `znicz-core`, not in this file.
+`Done<T>` is `Send` for the reply channel when `T` is: `SpotifyReply` owns plain data, and every `ZniczError` variant holds a `String`, an `io::Error` or a `SpotifyErrorKind`, all `Send` (checked in `znicz-core/src/error.rs`).
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -1029,9 +1075,10 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 Connects everything to the App without a panel yet. Adds the fields, the constructors, the second connection in `main.rs`, the Settings values, the tick hook, the status poll with the outdated-player stop, the reply handler, and the login-finished toast.
 
 **Files:**
-- Modify: `znicz-tui/src/app.rs` (`mod spotify_ui;`; fields; defaults in the `with_engine` literal; `with_remote`; `with_settings_values`; `with_spotify_worker`; `run_loop` calls `self.poll_spotify()` after `self.poll_install()`)
+- Modify: `znicz-tui/src/app.rs` (`mod spotify_ui;` and a `pub(crate) use` of its types; fields; defaults in the `with_engine` literal; `with_remote`; `with_settings_values`; `with_spotify_worker`; `run_loop` calls `self.poll_spotify()` after `self.poll_install()`)
 - Create: `znicz-tui/src/app/spotify_ui.rs`
-- Modify: `znicz-tui/src/settings.rs` (`SettingsValues` fields are added in Task 3; nothing more here)
+- Modify: `znicz-tui/src/views/settings.rs` (`values()` reads `app.spotify_view()`)
+- Modify: `znicz-tui/src/app/settings_ui.rs` (test helpers become `pub(crate)`; see Step 1)
 - Modify: `znicz/src/main.rs` (see Step 3)
 
 **Interfaces:**
@@ -1045,7 +1092,7 @@ Connects everything to the App without a panel yet. Adds the fields, the constru
   - `spotify_devices: Vec<SpotifyDevice>`
   - `spotify_unavailable: Option<String>`
   - `spotify_polled_at: Option<Instant>`
-  - `spotify_login: Option<LoginPanel>` (type from Task 9; in this task declare `pub(crate) struct LoginPanel { pub url: String, pub listening: bool, pub paste: Option<SpotifyPaste>, pub notice: Option<String> }` and `pub(crate) struct SpotifyPaste { pub text: LineEdit, pub error: Option<String> }` in `spotify_ui.rs`, so the field compiles here)
+  - `spotify_login: Option<LoginPanel>` (the panel's keys and drawing come in Tasks 9 and 10; in this task declare `pub(crate) struct LoginPanel { pub url: String, pub listening: bool, pub paste: Option<SpotifyPaste>, pub notice: Option<String> }` and `pub(crate) struct SpotifyPaste { pub text: LineEdit, pub error: Option<String> }` in `spotify_ui.rs`, so the field compiles here)
   - `spotify_confirm: Option<SpotifyConfirm>` (`pub(crate) enum SpotifyConfirm { Logout, ClientId(String) }`, declared in `spotify_ui.rs`)
   - `pub fn with_spotify_worker(self, host: Arc<dyn SpotifyHost>) -> std::io::Result<Self>` on App
   - `pub(crate) fn spotify_login_shown(&self) -> SpotifyLogin`
@@ -1058,7 +1105,7 @@ In `znicz-tui/src/app/spotify_ui.rs`, the test module (the implementation comes 
 
 ```rust
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::sync::{Arc, Mutex};
 
     use crossterm::event::KeyCode;
@@ -1066,10 +1113,11 @@ mod tests {
         SpotifyAccount, SpotifyConfig, SpotifyDevice, SpotifyErrorKind, SpotifyHost,
         SpotifyLogin, SpotifyOp, SpotifyReply, SpotifyState, ZniczError,
     };
-    use znicz_spotify::browser::OpenBrowser;
 
+    use super::*;
     use crate::app::App;
     use crate::app::settings_ui::tests as settings_tests;
+    use crate::spotify_worker::{Done, SpotifyAsk, SpotifyWorker};
 
     /// A host with a scripted status and a log of the ops it was given.
     #[derive(Default)]
@@ -1175,10 +1223,13 @@ mod tests {
             app.spotify_unavailable.as_deref(),
             Some("the player has no Spotify service")
         );
-        let polled = app.spotify_polled_at;
-        std::thread::sleep(std::time::Duration::from_millis(550));
+        // Make the next poll overdue, so only the stop can hold it back.
+        let overdue = std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_secs(5))
+            .expect("the clock is past five seconds");
+        app.spotify_polled_at = Some(overdue);
         app.poll_spotify();
-        assert_eq!(app.spotify_polled_at, polled, "no reconnect on each frame");
+        assert_eq!(app.spotify_polled_at, Some(overdue), "no reconnect on each frame");
     }
 
     #[test]
@@ -1244,7 +1295,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let host = Arc::new(FakeHost::default());
         let mut app = app_with(&dir, host);
-        app.on_spotify_done(SpotifyDone {
+        app.on_spotify_done(Done {
             tag: SpotifyAsk::Configure,
             result: Err(ZniczError::Spotify { kind: SpotifyErrorKind::Network, message: "timed out".into() }),
         });
@@ -1258,12 +1309,35 @@ mod tests {
         assert_eq!(app.spotify_login_shown(), SpotifyLogin::NotLoggedIn);
         let unconfigured = settings_tests::settings_app(&dir);
         assert_eq!(unconfigured.spotify_login_shown(), SpotifyLogin::NotConfigured);
-        let _ = OpenBrowser::Auto;
+    }
+
+    #[test]
+    fn the_shown_login_follows_the_state_once_it_is_known_and_survives_a_tab_switch() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with(&dir, Arc::new(FakeHost::default()));
+        app.spotify_state.login = SpotifyLogin::LoggedIn;
+        assert_eq!(app.spotify_login_shown(), SpotifyLogin::LoggedIn);
+        // Showing the tab polls again but keeps what was known.
+        app.on_spotify_tab_shown();
+        assert_eq!(app.spotify_login_shown(), SpotifyLogin::LoggedIn);
+    }
+
+    #[test]
+    fn the_poll_also_runs_while_a_login_panel_is_open_on_another_tab() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        *host.state.lock().unwrap() = Some(logged_in_state());
+        let mut app = app_with(&dir, host);
+        open_spotify_tab(&mut app);
+        app.spotify_login = Some(LoginPanel { url: "u".into(), listening: true, paste: None, notice: None });
+        app.set_settings_tab(crate::settings::Tab::Display);
+        app.poll_spotify();
+        assert!(app.spotify_login.is_none(), "the finished login closed the panel");
     }
 }
 ```
 
-Reading the test: `settings_tests::settings_app`, `settings_tests::toast_texts` and `settings_tests::app_with_…` must be visible to the sibling module. In `settings_ui.rs`, the test module is private; make the test helpers used here `pub(crate)` inside `#[cfg(test)] pub(crate) mod tests`, and change `mod tests` in `settings_ui.rs` to `pub(crate) mod tests`. Remove the stray `let _ = OpenBrowser::Auto;` and the `OpenBrowser` import if they are not used by the final tests.
+Visibility for the tests: `spotify_ui::tests` is declared `pub(crate) mod tests` (above) because `settings_ui`'s tests use `FakeHost`. In the other direction, `settings_ui`'s test module becomes `pub(crate) mod tests`, and these helpers in it become `pub(crate) fn`: `settings_app`, `press`, `select`, `saved`, `type_text`, `toast_texts`, `screen_rows`, `screen_buffer`. `spotify_ui` is a private module of `app`, but `settings_ui` is its sibling, so `crate::app::spotify_ui::…` and `crate::app::settings_ui::tests::…` resolve from both test modules. The two test modules use each other's helpers, which is fine in Rust.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -1274,7 +1348,7 @@ Expected: FAIL to compile.
 
 (a) `znicz-tui/src/app.rs`:
 
-- Add `mod spotify_ui;` beside `mod settings_ui;` (line 37).
+- Add `mod spotify_ui;` beside `mod settings_ui;` (line 37), and re-export the types the views need by name: `pub(crate) use spotify_ui::{LoginPanel, SpotifyConfirm, SpotifyPaste};`. `views/settings.rs` is outside `app`, so it cannot name `app::spotify_ui::…` (the module is private) but can name `crate::app::SpotifyConfirm`.
 - Add the App fields (after `folder_prompt_from_settings`):
 
 ```rust
@@ -1300,7 +1374,7 @@ Expected: FAIL to compile.
     pub(crate) spotify_confirm: Option<SpotifyConfirm>,
 ```
 
-- Add the imports: `use znicz_core::{SpotifyConfig, SpotifyDevice, SpotifyHost, SpotifyState};`, `use znicz_spotify::browser::OpenBrowser;`, `use crate::spotify_worker::{SpotifyAsk, SpotifyWorker};`, `use app::spotify_ui::{LoginPanel, SpotifyConfirm};` (use the path the module declares; `settings_ui` is referenced through `mod settings_ui;`, so `spotify_ui` is referenced the same way: `use self::spotify_ui::{LoginPanel, SpotifyConfirm};`).
+- Add the imports: `use znicz_core::{SpotifyConfig, SpotifyDevice, SpotifyHost, SpotifyState};`, `use znicz_spotify::browser::OpenBrowser;`, `use crate::spotify_worker::{SpotifyAsk, SpotifyWorker};`, the re-export above brings `LoginPanel` and `SpotifyConfirm` into scope in `app.rs`.
 - In the struct literal in `with_engine` (around line 738–770), add the defaults: `spotify: SpotifyConfig::default(), open_browser: OpenBrowser::default(), spotify_main: None, spotify_worker: None, spotify_state: SpotifyState::default(), spotify_devices: Vec::new(), spotify_unavailable: None, spotify_polled_at: None, spotify_login: None, spotify_confirm: None,`.
 - `with_remote`:
 
@@ -1341,16 +1415,15 @@ Expected: FAIL to compile.
 
 use std::time::{Duration, Instant};
 
-use znicz_core::{
-    SpotifyErrorKind, SpotifyHost, SpotifyLogin, SpotifyOp, SpotifyReply, SpotifyState,
-    ZniczError,
-};
+use znicz_core::{SpotifyErrorKind, SpotifyLogin, SpotifyOp, SpotifyReply, SpotifyState, ZniczError};
 
 use super::{App, Modal};
 use crate::line_edit::LineEdit;
 use crate::settings::Tab;
 use crate::spotify_rows::{self, LoginOutcome, SpotifyView};
 use crate::spotify_worker::{Done, SpotifyAsk};
+
+// `SpotifyHost` is not imported: its methods are called through `Arc<dyn SpotifyHost>`.
 
 /// How often the status is read while the Spotify tab is open.
 const SPOTIFY_POLL_EVERY: Duration = Duration::from_millis(500);
@@ -1382,14 +1455,16 @@ pub(crate) enum SpotifyConfirm {
 
 impl App {
     /// The login as the Settings rows show it. Without a client ID there is no
-    /// login. Before the first poll a configured client ID reads as not logged in.
+    /// login. The state's default is `NotConfigured`; with a client ID set that
+    /// reads as not logged in until the first poll says otherwise. What an
+    /// earlier poll learned stays when the tab is shown again.
     pub(crate) fn spotify_login_shown(&self) -> SpotifyLogin {
         if !self.spotify.is_configured() {
-            SpotifyLogin::NotConfigured
-        } else if self.spotify_polled_at.is_none() {
-            SpotifyLogin::NotLoggedIn
-        } else {
-            self.spotify_state.login.clone()
+            return SpotifyLogin::NotConfigured;
+        }
+        match &self.spotify_state.login {
+            SpotifyLogin::NotConfigured => SpotifyLogin::NotLoggedIn,
+            login => login.clone(),
         }
     }
 
@@ -1413,9 +1488,11 @@ impl App {
         self.spotify_worker.as_ref().is_some_and(|worker| worker.send(tag, op))
     }
 
-    /// The Spotify tab is on screen with Settings open.
+    /// The status is worth reading: Settings shows the Spotify tab, or a login
+    /// panel waits for the login to finish (the user may have changed tab).
     pub(crate) fn spotify_tab_open(&self) -> bool {
-        self.modal == Modal::Settings && self.settings_tab == Tab::Spotify
+        self.modal == Modal::Settings
+            && (self.settings_tab == Tab::Spotify || self.spotify_login.is_some())
     }
 
     /// The Spotify tab was shown: try the player again and refresh the device list.
@@ -1445,15 +1522,21 @@ impl App {
         let Some(host) = self.spotify_main.clone() else {
             return;
         };
-        // Touch keeps the player's fast poll going; the status read follows it.
-        let _ = host.apply(SpotifyOp::Touch);
+        // Both calls are on the main connection and answer at once. The status
+        // goes first: an older player that does not know `Touch` then costs one
+        // reconnect, and the poll stops.
         match host.try_state() {
-            Ok(state) => self.on_spotify_state(state),
+            Ok(state) => {
+                self.on_spotify_state(state);
+                // Touch keeps the player's fast poll going.
+                let _ = host.apply(SpotifyOp::Touch);
+            }
             Err(ZniczError::Spotify {
                 kind: SpotifyErrorKind::NoService | SpotifyErrorKind::OutdatedPlayer,
                 message,
             }) => self.spotify_unavailable = Some(message),
-            Err(e) => tracing::warn!("spotify status: {e}"),
+            // The next poll shows the truth; do not log every 500 ms at warn.
+            Err(e) => tracing::debug!("spotify status: {e}"),
         }
     }
 
@@ -1498,27 +1581,27 @@ impl App {
 }
 ```
 
-Plus the `open_login_panel`, the key handlers and the rest are added in Task 9. For this task, add a stub `open_login_panel` that only sets `self.spotify_login = Some(LoginPanel { url, listening, paste: None, notice: None })` and sets `self.spotify_state.login = SpotifyLogin::LoggingIn`. Task 9 replaces it with the browser logic.
+The panel's key handlers and the browser logic are added in Task 9. For this task, add a stub `fn open_login_panel(&mut self, url: String, listening: bool)` that only sets `self.spotify_login = Some(LoginPanel { url, listening, paste: None, notice: None })` and `self.spotify_state.login = SpotifyLogin::LoggingIn`. It has the signature Task 9 keeps; Task 9 replaces the body. In `on_spotify_done` the call is `self.open_login_panel(url, listening);`.
 
-Also add `pub client_id_head: String` to `SpotifyView` if Task 3 did not (see Task 3's note).
+In `views/settings.rs`, `values()`: replace the Task 3 placeholder with `spotify: app.spotify_view(),`.
 
 Two things in `on_spotify_done`: the `CompleteLogin` `Err(WrongAddress)` arm comes before `(_, Err(e))`, so it is not toasted. Good.
 
 (c) `znicz/src/main.rs`:
 
-- In the `extras.settings` construction (around line 411): `spotify: spotify_config(&config.spotify), open_browser: open_browser_setting(&config.spotify),`.
-- The three call sites of `run_tui_with_client` (lines 923, 961, 1002): each gets `let spotify = connect_ui(device, config)?;` before the call and passes it: `run_tui_with_client(player, spotify, library_path, …)`. In `play_station_and_run` and `load_playlist_and_run` the `device` and `config` are in scope. In `run_tui` the same.
+- The `extras.settings` literal already carries the two Spotify values (Task 3).
+- The three call sites of `run_tui_with_client` (`run_tui`, `play_station_and_run`, `load_playlist_and_run`; about lines 923, 961, 1002): each gets `let spotify = connect_ui(device, config)?;` right after its own `connect_ui` and before the call, and passes it: `run_tui_with_client(player, spotify, library_path, …)`. `device: Option<&str>` and `config: Option<&Path>` are parameters of all three. `connect_ui` is the same helper the main connection uses, so the second connection is a separate `IpcClient` with its own socket and lock, not a clone of the first. It has the `Ui` role, like the main one.
 - `run_tui_with_client` takes `spotify: IpcClient` as its second parameter and after `App::with_remote(player, library)` does `let mut app = App::with_remote(player, library).with_spotify_worker(Arc::new(spotify)).map_err(|e| color_eyre::eyre::eyre!("{e}"))?;` (the `Arc::new(spotify)` coerces to `Arc<dyn SpotifyHost>`). Add `use znicz_core::SpotifyHost` only if the coercion needs it in scope (it does not).
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cargo test -p znicz-tui spotify_ui && cargo build -p znicz`
+Run: `cargo test -p znicz-tui -- spotify_ui settings_ui && cargo build --workspace`
 Expected: PASS; the binary builds.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add znicz-tui/src/app.rs znicz-tui/src/app/spotify_ui.rs znicz-tui/src/app/settings_ui.rs znicz-tui/src/settings.rs znicz-tui/src/spotify_rows.rs znicz/src/main.rs
+git add znicz-tui/src/app.rs znicz-tui/src/app/spotify_ui.rs znicz-tui/src/app/settings_ui.rs znicz-tui/src/views/settings.rs znicz/src/main.rs
 git commit -m "feat(tui): Spotify status poll and worker replies in the App
 
 Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
@@ -1528,16 +1611,15 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 
 ### Task 7: Open browser, playback device and port saves through `Configure`
 
-Makes the three non-prompt-type rows work end to end: stepping, saving, sending `Configure` for the player-side ones, and restoring a Spotify row whose save was refused by a broken config.
+Makes Open browser, Playback device and Redirect port work end to end: stepping, saving, sending `Configure` for the player-side ones, and restoring a Spotify row whose save was refused (broken config, no config file path, failed write). The Client ID prompt and the Account row come in Task 8, so no row in this task points at code a later task adds.
 
 **Files:**
 - Modify: `znicz-tui/src/app/settings_ui.rs`
-- Modify: `znicz-tui/src/app/spotify_ui.rs` (`on_spotify_tab_shown` is already there; nothing new)
 - Modify: `znicz-tui/src/app/settings_ui.rs` `set_settings_tab`, `switch_settings_tab`, `toggle_settings_modal`: call `self.on_spotify_tab_shown()` when the Spotify tab is shown.
 
 **Interfaces:**
 - Consumes: `spotify_rows::{device_choices, OPEN_BROWSERS, open_browser_name, parse_port, sent_to_player}`; `settings::step`; `SpotifyAsk::Configure`.
-- Produces: in `settings_ui.rs`: `fn open_text_prompt(&mut self, row: &Row)`, `fn submit_port_prompt(&mut self)`, `fn send_spotify_config(&self, row: &Row)`, `fn set_redirect_port(&mut self, port: u16) -> bool`, `fn step_playback_device(&mut self, forward: bool, wrap: bool) -> bool`, `pub(super) fn change_with`, `pub(super) fn save_setting` (made `pub(super)` for `spotify_ui.rs`).
+- Produces: in `settings_ui.rs`: `fn open_text_prompt(&mut self, row: &Row)`, `fn submit_port_prompt(&mut self)`, `fn send_spotify_config(&self, row: &Row)`, `fn set_redirect_port(&mut self, port: u16) -> bool`, `fn step_playback_device(&mut self, forward: bool, wrap: bool) -> bool`, `pub(super) fn change_with` (made `pub(super)` for `spotify_ui.rs`; `save_setting` stays private).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1558,8 +1640,17 @@ In `settings_ui.rs`'s test module:
     }
 
     fn sent_ops(host: &crate::app::spotify_ui::tests::FakeHost) -> Vec<SpotifyOp> {
-        // The worker is asynchronous: give it a moment.
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        // The worker is asynchronous: wait until it has been quiet for one
+        // sample (at least 50 ms, at most 2 s), then read what it was given.
+        let mut last = usize::MAX;
+        for _ in 0..80 {
+            std::thread::sleep(Duration::from_millis(25));
+            let now = host.ops.lock().unwrap().len();
+            if now == last {
+                break;
+            }
+            last = now;
+        }
         host.ops.lock().unwrap().clone()
     }
 
@@ -1697,12 +1788,60 @@ In `settings_ui.rs`'s test module:
         press(&mut app, KeyCode::Enter);
         assert_eq!(app.open_browser, OpenBrowser::Auto);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "[spotify\nclient_id = 1\n");
-        assert!(sent_ops(&host).is_empty());
+        assert!(!sent_ops(&host).iter().any(|op| matches!(op, SpotifyOp::Configure { .. })));
+        assert!(toast_texts(&app).iter().any(|t| t.starts_with("Not saved")));
+    }
+
+    #[test]
+    fn the_first_save_creates_the_file_and_sends_what_the_player_already_has_plus_the_change() {
+        // No config file yet: the app and the player both run on the defaults.
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = settings_app(&dir);
+        app.spotify_worker = Some(SpotifyWorker::spawn(host.clone()).unwrap());
+        assert!(!dir.path().join("config.toml").exists());
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::RedirectPort);
+        press(&mut app, KeyCode::Enter);
+        for _ in 0..4 {
+            press(&mut app, KeyCode::Backspace);
+        }
+        type_text(&mut app, "9001");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(saved(&dir)["spotify"]["redirect_port"].as_integer(), Some(9001));
+        let sent = sent_ops(&host);
+        assert!(sent.iter().any(|op| matches!(
+            op,
+            SpotifyOp::Configure { config }
+                if config.redirect_port == 9001 && config.client_id.is_empty() && config.device.is_empty()
+        )));
+    }
+
+    #[test]
+    fn without_a_config_file_path_a_spotify_row_goes_back_and_nothing_is_sent() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = spotify_app(&dir, host.clone());
+        app.config_file = None;
+        app.spotify_devices = vec![SpotifyDevice {
+            id: "d1".into(),
+            name: "Kitchen".into(),
+            kind: "Speaker".into(),
+            is_active: false,
+            volume_percent: None,
+        }];
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::PlaybackDevice);
+        press(&mut app, KeyCode::Enter);
+        assert!(app.spotify.device.is_empty());
+        assert!(!sent_ops(&host).iter().any(|op| matches!(op, SpotifyOp::Configure { .. })));
         assert!(toast_texts(&app).iter().any(|t| t.starts_with("Not saved")));
     }
 ```
 
-The test `a_broken_config…` uses `ConfigProblem::Parse { message, line, column }`; check the exact variant shape in `znicz-tui/src/config_file.rs` lines 119–131 and adapt the literal. Note: `Enter` on `OpenBrowser` steps it, so `Enter` leaves `auto` → `always`; the assertion reads `open_browser == Auto` after restore. Check `OpenBrowser` derives `PartialEq` (it does, Task 2 relies on it).
+`ConfigProblem::Parse { message, line, column }` is the real shape (`config_file.rs`). `Enter` on `OpenBrowser` steps `auto` to `always`; the broken config refuses the save, so the restore puts `Auto` back. `OpenBrowser` derives `PartialEq`.
 
 Add `use znicz_core::{SpotifyConfig, SpotifyDevice, SpotifyOp}; use znicz_spotify::browser::OpenBrowser; use crate::spotify_worker::SpotifyWorker;` to the test module imports.
 
@@ -1718,11 +1857,10 @@ In `settings_ui.rs`:
 1. `on_settings_key`, the Enter arm: add the rows before the slider arm:
 
 ```rust
-                Row::ClientId | Row::RedirectPort => self.open_text_prompt(&row),
-                Row::Account => self.spotify_account_enter(),
+                Row::RedirectPort => self.open_text_prompt(&row),
 ```
 
-(`spotify_account_enter` is in Task 8.) The `Change::Activate` path for `OpenBrowser` and `PlaybackDevice` is already the `_ => self.change_setting(&row, Change::Activate)` arm.
+Task 8 adds `Row::ClientId` to that arm and the `Row::Account` arm. The `Change::Activate` path for `OpenBrowser` and `PlaybackDevice` is already the `_ => self.change_setting(&row, Change::Activate)` arm.
 
 2. `apply_setting`, Choice arm: before the `CoverProtocol` branch add
 
@@ -1793,10 +1931,12 @@ and add `Kind::Text | Kind::Number` to the `Kind::Action | Kind::Folder => false
     }
 
     /// Send the player its copy of `[spotify]` after a player-side row saved.
-    /// Called only from `save_setting`, after the file was written (or, without
-    /// a file, when the change is for this run only).
+    /// Called only from `save_setting`, after the file was written. An empty
+    /// client ID in that copy logs the user out and deletes the token, so the
+    /// copy is never sent while the config has a problem, even if a caller
+    /// forgets the order.
     fn send_spotify_config(&self, row: &Row) {
-        if !spotify_rows::sent_to_player(row) {
+        if self.config_problem.is_some() || !spotify_rows::sent_to_player(row) {
             return;
         }
         self.ask_spotify(
@@ -1809,48 +1949,44 @@ and add `Kind::Text | Kind::Number` to the `Kind::Action | Kind::Folder => false
 4. `submit_slider_prompt`: at the top, dispatch by row:
 
 ```rust
-        match self.settings_prompt.as_ref().map(|p| p.row.clone()) {
-            Some(Row::ClientId) => return self.submit_client_id_prompt(),
-            Some(Row::RedirectPort) => return self.submit_port_prompt(),
-            _ => {}
+        if self.settings_prompt.as_ref().is_some_and(|p| p.row == Row::RedirectPort) {
+            return self.submit_port_prompt();
         }
 ```
 
-Task 8 adds `submit_client_id_prompt`. For this task, add a stub that closes the prompt: `fn submit_client_id_prompt(&mut self) { self.settings_prompt = None; }`.
+Task 8 adds the client ID to this dispatch.
 
 5. `stored_value`: add the four rows (the values are in the design notes above):
 
 ```rust
-            Row::ClientId => match self.spotify.client_id.is_empty() {
-                true => Stored::Remove,
-                false => Stored::Text(self.spotify.client_id.clone()),
-            },
+            Row::ClientId if self.spotify.client_id.is_empty() => Stored::Remove,
+            Row::ClientId => Stored::Text(self.spotify.client_id.clone()),
             Row::RedirectPort => Stored::Int(i64::from(self.spotify.redirect_port)),
             Row::OpenBrowser => Stored::Str(spotify_rows::open_browser_name(self.open_browser)),
-            Row::PlaybackDevice => match self.spotify.device.is_empty() {
-                true => Stored::Remove,
-                false => Stored::Text(self.spotify.device.clone()),
-            },
+            Row::PlaybackDevice if self.spotify.device.is_empty() => Stored::Remove,
+            Row::PlaybackDevice => Stored::Text(self.spotify.device.clone()),
 ```
 
 (These go inside the `Some(match row {…})` after the existing arms.)
 
-6. `save_setting`: three changes.
-   - In the no-file branch, after the one-time toast: call `self.send_spotify_config(row);` before returning.
-   - In the problem branch, before the `toasts.warn(text)`: `if row.tab() == Tab::Spotify { self.restore_settings(before); }` (this must come before `return`; `before` is moved here, so the `return` follows the restore).
-   - After the write: `match written { Err(e) => {…} Ok(()) => self.send_spotify_config(row) }`. Keep the existing error branch.
+6. `save_setting`: the Spotify rows must never reach the player unless the file was written. Add `let spotify = row.tab() == Tab::Spotify;` after the `config_key` check, then three changes:
+   - No config file path: for a Spotify row, `self.restore_settings(before); self.toasts.warn("Not saved: no config file path"); return;` before the existing one-time "run only" toast, which stays for the other rows. Nothing is sent.
+   - Config problem: compute `text` as now, then `if spotify { self.restore_settings(before); }` before `self.toasts.warn(text); return;`. Nothing is sent. (`text` is an owned `String`, so the borrow of `self.config_problem` has ended.)
+   - After the write: `match written { Err(e) => {…existing…} Ok(()) => self.send_spotify_config(row) }`. A failed write restores through the existing branch and sends nothing.
+
+   So `Configure` leaves the TUI in exactly one place, after `ConfigFile` returned `Ok`, with `config_problem` empty. The first save, when `config.toml` does not exist, is such a write: the file is created and the player gets the copy it already runs on plus the one change.
 
 7. `settings_snapshot` gets `spotify: self.spotify.clone(), open_browser: self.open_browser`; `SettingsSnapshot` gets the two fields; `restore_settings` puts both back. Restoring the config does not send Configure (the player was not told).
 
 8. Show the Spotify tab: in `toggle_settings_modal`, `set_settings_tab` and `switch_settings_tab` (the last one calls `set_settings_tab`, so only `toggle_settings_modal` and `set_settings_tab` need the hook). At the end of `set_settings_tab`: `if tab == Tab::Spotify { self.on_spotify_tab_shown(); }`. At the end of `toggle_settings_modal` after `self.modal = Modal::Settings;`: `if self.settings_tab == Tab::Spotify { self.on_spotify_tab_shown(); }`.
 
-9. Make `change_with` and `save_setting` `pub(super)` (Task 8 needs `change_with`).
+9. Make `change_with` `pub(super)` (Task 8 calls it from `spotify_ui.rs`).
 
 Imports in `settings_ui.rs`: `use znicz_core::{Command, FadeTimes, LibraryOp, SpotifyConfig, SpotifyOp}; use znicz_spotify::browser::OpenBrowser; use crate::spotify_rows; use crate::spotify_worker::SpotifyAsk; use crate::settings::{…}` (add nothing else).
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cargo test -p znicz-tui settings_ui spotify_ui`
+Run: `cargo test -p znicz-tui -- settings_ui spotify_ui`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -1865,6 +2001,8 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 ---
 
 ### Task 8: The client ID prompt, the logout question and the Account action
+
+Clearing or changing the client ID makes the player log the user out (and delete the token), so it never happens without the user's Enter: while logged in, the new ID waits behind a question in the strip. Nothing is saved or sent before that Enter.
 
 **Files:**
 - Modify: `znicz-tui/src/app/settings_ui.rs`
@@ -1903,6 +2041,27 @@ In `settings_ui.rs`'s tests:
     }
 
     #[test]
+    fn clearing_the_client_id_while_logged_in_asks_first_too() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("config.toml"), format!("[spotify]\nclient_id = \"{ID}\"\n")).unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = spotify_app(&dir, host.clone());
+        app.spotify_state.login = SpotifyLogin::LoggedIn;
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::ClientId);
+        press(&mut app, KeyCode::Enter);
+        for _ in 0..ID.len() {
+            press(&mut app, KeyCode::Backspace);
+        }
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.spotify_confirm, Some(SpotifyConfirm::ClientId(String::new())));
+        assert_eq!(app.spotify.client_id, ID);
+        assert!(saved(&dir)["spotify"].get("client_id").is_some(), "the file still has the ID");
+        assert!(!sent_ops(&host).iter().any(|op| matches!(op, SpotifyOp::Configure { .. })));
+    }
+
+    #[test]
     fn an_empty_client_id_clears_the_key() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("config.toml"), format!("[spotify]\nclient_id = \"{ID}\"\n")).unwrap();
@@ -1927,7 +2086,6 @@ In `settings_ui.rs`'s tests:
         let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
         let mut app = spotify_app(&dir, host.clone());
         app.spotify_state.login = SpotifyLogin::LoggedIn;
-        app.spotify_polled_at = Some(std::time::Instant::now());
         press(&mut app, KeyCode::Char('S'));
         press(&mut app, KeyCode::Char('6'));
         select(&mut app, Row::ClientId);
@@ -1939,11 +2097,15 @@ In `settings_ui.rs`'s tests:
         press(&mut app, KeyCode::Enter);
         assert_eq!(app.spotify_confirm, Some(SpotifyConfirm::ClientId(NEW_ID.into())));
         assert_eq!(app.spotify.client_id, ID, "nothing changes before Enter");
-        let line = screen_rows(&mut app).join("\n");
-        assert!(line.contains("Changing the client ID logs you out"), "{line}");
+        assert!(!dir.path().join("config.toml").exists(), "nothing is written before Enter");
+        assert!(!sent_ops(&host).iter().any(|op| matches!(op, SpotifyOp::Configure { .. })));
         press(&mut app, KeyCode::Enter);
         assert_eq!(app.spotify.client_id, NEW_ID);
         assert_eq!(saved(&dir)["spotify"]["client_id"].as_str(), Some(NEW_ID));
+        assert!(sent_ops(&host).iter().any(|op| matches!(
+            op,
+            SpotifyOp::Configure { config } if config.client_id == NEW_ID
+        )));
     }
 
     #[test]
@@ -1952,7 +2114,8 @@ In `settings_ui.rs`'s tests:
         let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
         let mut app = spotify_app(&dir, host);
         app.spotify_state.login = SpotifyLogin::LoggedIn;
-        app.spotify_polled_at = Some(std::time::Instant::now());
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
         app.spotify_confirm = Some(SpotifyConfirm::ClientId(NEW_ID.into()));
         press(&mut app, KeyCode::Esc);
         assert!(app.spotify_confirm.is_none());
@@ -1994,7 +2157,6 @@ In `settings_ui.rs`'s tests:
         let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
         let mut app = spotify_app(&dir, host.clone());
         app.spotify_state.login = SpotifyLogin::LoggedIn;
-        app.spotify_polled_at = Some(std::time::Instant::now());
         press(&mut app, KeyCode::Char('S'));
         press(&mut app, KeyCode::Char('6'));
         select(&mut app, Row::Account);
@@ -2006,18 +2168,20 @@ In `settings_ui.rs`'s tests:
     }
 ```
 
-The `select` helper and `press` already exist; `Row` must be `crate::settings::Row`.
+The `select`, `press`, `saved` and `type_text` helpers are the ones made `pub(crate)` in Task 6; the test module imports `Row` (`crate::settings::Row`), `SpotifyLogin` and `SpotifyConfirm` (`crate::app::SpotifyConfirm`). The screen text of the question is checked in Task 10, where the strip is drawn.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cargo test -p znicz-tui settings_ui`
+Run: `cargo test -p znicz-tui -- settings_ui`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement**
 
 In `settings_ui.rs`:
 
-1. Replace the Task 7 stub with:
+0. `on_settings_key`'s Enter arm: `Row::ClientId | Row::RedirectPort => self.open_text_prompt(&row),` and `Row::Account => self.spotify_account_enter(),`. `submit_slider_prompt`'s dispatch also sends `Row::ClientId` to `submit_client_id_prompt`: replace its `is_some_and` test with `match self.settings_prompt.as_ref().map(|p| p.row.clone()) { Some(Row::ClientId) => return self.submit_client_id_prompt(), Some(Row::RedirectPort) => return self.submit_port_prompt(), _ => {} }`.
+
+1. Add:
 
 ```rust
     /// Enter in the client ID prompt. The value is trimmed and checked; a
@@ -2051,7 +2215,7 @@ In `settings_ui.rs`:
     }
 ```
 
-2. `on_settings_key`: before the `if self.settings_confirm.is_some() && key.code == KeyCode::Enter` line, add
+2. `on_settings_key`: before the `if self.settings_confirm.is_some() && key.code == KeyCode::Enter` line (after the row lookup, so the question is about the row under the cursor), add
 
 ```rust
         if self.spotify_confirm.is_some() && key.code == KeyCode::Enter {
@@ -2060,7 +2224,7 @@ In `settings_ui.rs`:
         }
 ```
 
-3. `set_settings_cursor` also clears `spotify_confirm`: add `self.spotify_confirm = None;` beside `self.settings_confirm = None;`.
+3. `set_settings_cursor` also clears `spotify_confirm`: add `self.spotify_confirm = None;` beside `self.settings_confirm = None;`. The `Up`-to-the-tab-bar arm in `on_settings_key` clears it too, next to its `self.settings_confirm = None;`.
 
 4. `on_settings_key` already routes Esc through `on_esc` (Task 6 added the confirm branch).
 
@@ -2102,7 +2266,7 @@ Note: `change_with` is inside `impl App` in `settings_ui.rs` with `pub(super)` v
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cargo test -p znicz-tui settings_ui spotify_ui`
+Run: `cargo test -p znicz-tui -- settings_ui spotify_ui`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -2121,22 +2285,50 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 **Files:**
 - Modify: `znicz-tui/src/app/spotify_ui.rs`
 - Modify: `znicz-tui/src/app/settings_ui.rs` (`on_settings_key` routes panel keys; `drop_removal_outside_settings` drops the panel)
-- Modify: `znicz-tui/src/app.rs` (`on_esc` branch for the panel)
+- Modify: `znicz-tui/src/app.rs` (the `clipboard` and `browser` fields; `on_esc` branch for the panel; `context()`)
+- Modify: `znicz-tui/src/keys.rs` (`Context::SettingsLogin`, its hints, the help lines)
 
 **Interfaces:**
 - Consumes: `znicz_spotify::browser::{should_open, open}`, `crate::osc52::copy`, `LoginPanel`, `SpotifyPaste`, `spotify_rows::{login_panel_lines, WRONG_ADDRESS}`.
-- Produces: `fn open_login_panel(&mut self, url: String, listening: bool)`, `pub(crate) fn on_spotify_panel_key(&mut self, code: KeyCode)`, `pub(crate) fn esc_spotify_panel(&mut self)`, `fn copy_login_url(&mut self)`, `fn submit_paste(&mut self)`.
+- Produces:
+  - App fields `clipboard` and `browser`: `Box<dyn Fn(&str) -> std::io::Result<()> + Send>`, defaulting to `osc52::copy` and `znicz_spotify::browser::open`. Tests swap them, so no test writes an escape sequence to the developer's terminal or starts a browser.
+  - `fn open_login_panel(&mut self, url: String, listening: bool)` (same signature as Task 6's stub; the body now applies the browser rule), `pub(crate) fn on_spotify_panel_key(&mut self, key: KeyEvent) -> bool`, `pub(crate) fn esc_spotify_panel(&mut self)`, `fn copy_login_url(&mut self)`, `fn submit_paste(&mut self)`.
+  - `Context::SettingsLogin` and the hints `c copy URL`, `Enter paste`, `Esc cancel`; the help lines for the panel in `keys::SETTINGS`.
 
 - [ ] **Step 1: Write the failing tests**
 
 In `spotify_ui.rs`'s tests (the panel and key tests belong with the code in this task):
 
 ```rust
-    fn panel_app(dir: &tempfile::TempDir, host: Arc<FakeHost>) -> App {
+    /// What the app handed to the clipboard and to the browser opener.
+    #[derive(Clone, Default)]
+    struct Recorded {
+        copied: Arc<Mutex<Vec<String>>>,
+        opened: Arc<Mutex<Vec<String>>>,
+    }
+
+    /// An app on the Spotify tab whose clipboard and browser are recorders.
+    /// The host reports `LoggingIn`, as the player does while a panel is open,
+    /// so a status poll during a test does not close the panel.
+    fn panel_app(dir: &tempfile::TempDir, host: Arc<FakeHost>) -> (App, Recorded) {
+        *host.state.lock().unwrap() = Some(SpotifyState {
+            login: SpotifyLogin::LoggingIn,
+            ..SpotifyState::default()
+        });
         let mut app = app_with(dir, host);
+        let recorded = Recorded::default();
+        let copied = recorded.copied.clone();
+        app.clipboard = Box::new(move |text| {
+            copied.lock().unwrap().push(text.to_string());
+            Ok(())
+        });
+        let opened = recorded.opened.clone();
+        app.browser = Box::new(move |url| {
+            opened.lock().unwrap().push(url.to_string());
+            Ok(())
+        });
         open_spotify_tab(&mut app);
-        app.spotify_state.login = SpotifyLogin::NotLoggedIn;
-        app
+        (app, recorded)
     }
 
     #[test]
@@ -2148,35 +2340,48 @@ In `spotify_ui.rs`'s tests (the panel and key tests belong with the code in this
             redirect_uri: "http://127.0.0.1:8898/callback".into(),
             listening: true,
         });
-        let mut app = panel_app(&dir, host.clone());
+        let (mut app, recorded) = panel_app(&dir, host.clone());
+        app.open_browser = OpenBrowser::Always;
         app.ask_spotify(SpotifyAsk::BeginLogin, SpotifyOp::BeginLogin);
         wait_until(&mut app, |app| app.spotify_login.is_some());
         let panel = app.spotify_login.as_ref().unwrap();
         assert_eq!(panel.url, "https://accounts.spotify.com/authorize?x=1");
         assert!(panel.listening);
+        assert!(panel.notice.is_none());
         assert_eq!(app.spotify_state.login, SpotifyLogin::LoggingIn);
+        assert_eq!(recorded.opened.lock().unwrap().as_slice(), ["https://accounts.spotify.com/authorize?x=1"]);
     }
 
     #[test]
     fn a_failed_browser_open_is_one_line_and_the_panel_stays() {
         let dir = tempfile::tempdir().unwrap();
-        let host = Arc::new(FakeHost::default());
-        let mut app = panel_app(&dir, host);
+        let (mut app, _recorded) = panel_app(&dir, Arc::new(FakeHost::default()));
         app.open_browser = OpenBrowser::Always;
-        app.spotify_login = None;
-        // `always` tries the opener. The test points PATH at nothing so spawn fails.
-        std::env::set_var("PATH", "/nonexistent-znicz-test");
+        app.browser = Box::new(|_| Err(std::io::Error::other("no opener")));
         app.open_login_panel("https://accounts.spotify.com/authorize?x=1".into(), false);
         let panel = app.spotify_login.as_ref().expect("the panel waits");
-        assert!(panel.notice.as_deref().unwrap().starts_with("Could not open a browser"));
+        assert_eq!(
+            panel.notice.as_deref(),
+            Some("Could not open a browser: no opener. Use the URL below.")
+        );
         assert!(!panel.listening);
+    }
+
+    #[test]
+    fn the_browser_rule_decides_whether_the_opener_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, recorded) = panel_app(&dir, Arc::new(FakeHost::default()));
+        app.open_browser = OpenBrowser::Never;
+        app.open_login_panel("u".into(), true);
+        assert!(recorded.opened.lock().unwrap().is_empty());
+        assert!(app.spotify_login.as_ref().unwrap().notice.is_none());
     }
 
     #[test]
     fn enter_in_the_panel_opens_the_paste_prompt_and_a_pasted_address_is_sent() {
         let dir = tempfile::tempdir().unwrap();
         let host = Arc::new(FakeHost::default());
-        let mut app = panel_app(&dir, host.clone());
+        let (mut app, _recorded) = panel_app(&dir, host.clone());
         app.spotify_login = Some(LoginPanel { url: "u".into(), listening: false, paste: None, notice: None });
         press(&mut app, KeyCode::Enter);
         assert!(app.spotify_login.as_ref().unwrap().paste.is_some());
@@ -2196,7 +2401,7 @@ In `spotify_ui.rs`'s tests (the panel and key tests belong with the code in this
     fn a_wrong_address_keeps_the_paste_prompt_open_with_the_reason() {
         let dir = tempfile::tempdir().unwrap();
         let host = Arc::new(FakeHost::default());
-        let mut app = panel_app(&dir, host);
+        let (mut app, _recorded) = panel_app(&dir, host);
         app.spotify_login = Some(LoginPanel {
             url: "u".into(),
             listening: false,
@@ -2215,7 +2420,7 @@ In `spotify_ui.rs`'s tests (the panel and key tests belong with the code in this
     fn esc_in_the_paste_prompt_returns_to_the_panel_and_esc_in_the_panel_cancels() {
         let dir = tempfile::tempdir().unwrap();
         let host = Arc::new(FakeHost::default());
-        let mut app = panel_app(&dir, host.clone());
+        let (mut app, _recorded) = panel_app(&dir, host.clone());
         app.spotify_login = Some(LoginPanel {
             url: "u".into(),
             listening: true,
@@ -2232,19 +2437,73 @@ In `spotify_ui.rs`'s tests (the panel and key tests belong with the code in this
     }
 
     #[test]
-    fn c_sends_the_url_to_the_terminal_as_osc_52() {
-        // The copy writes to stdout; the test checks the toast it leaves.
+    fn c_hands_the_url_to_the_clipboard_writer_and_says_it_was_sent() {
         let dir = tempfile::tempdir().unwrap();
-        let mut app = panel_app(&dir, Arc::new(FakeHost::default()));
+        let (mut app, recorded) = panel_app(&dir, Arc::new(FakeHost::default()));
+        app.spotify_login = Some(LoginPanel { url: "https://x/y?z=1".into(), listening: true, paste: None, notice: None });
+        press(&mut app, KeyCode::Char('c'));
+        assert_eq!(recorded.copied.lock().unwrap().as_slice(), ["https://x/y?z=1"]);
+        assert!(settings_tests::toast_texts(&app).iter().any(|t| t.starts_with("Sent the login URL")));
+    }
+
+    #[test]
+    fn a_failed_copy_is_an_error_toast() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _recorded) = panel_app(&dir, Arc::new(FakeHost::default()));
+        app.clipboard = Box::new(|_| Err(std::io::Error::other("closed")));
         app.spotify_login = Some(LoginPanel { url: "u".into(), listening: true, paste: None, notice: None });
         press(&mut app, KeyCode::Char('c'));
-        assert!(settings_tests::toast_texts(&app).iter().any(|t| t.starts_with("Sent the login URL")));
+        assert!(settings_tests::toast_texts(&app).iter().any(|t| t.starts_with("Could not copy the URL")));
+    }
+
+    #[test]
+    fn keys_the_panel_does_not_own_fall_through_so_s_still_closes_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _recorded) = panel_app(&dir, Arc::new(FakeHost::default()));
+        app.spotify_login = Some(LoginPanel { url: "u".into(), listening: true, paste: None, notice: None });
+        press(&mut app, KeyCode::Char('S'));
+        assert_eq!(app.modal, Modal::None);
+        assert!(app.spotify_login.is_none(), "the panel goes with Settings");
+    }
+
+    #[test]
+    fn in_the_paste_prompt_every_key_types() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _recorded) = panel_app(&dir, Arc::new(FakeHost::default()));
+        app.spotify_login = Some(LoginPanel {
+            url: "u".into(),
+            listening: true,
+            paste: Some(SpotifyPaste { text: LineEdit::new(), error: None }),
+            notice: None,
+        });
+        for c in "S?qc6".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        let paste = app.spotify_login.as_ref().unwrap().paste.as_ref().unwrap();
+        assert_eq!(paste.text.as_str(), "S?qc6");
+        assert_eq!(app.modal, Modal::Settings);
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn the_footer_and_help_know_the_panel() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _recorded) = panel_app(&dir, Arc::new(FakeHost::default()));
+        app.spotify_login = Some(LoginPanel { url: "u".into(), listening: true, paste: None, notice: None });
+        assert_eq!(app.context(), crate::keys::Context::SettingsLogin);
+        app.spotify_login.as_mut().unwrap().paste = Some(SpotifyPaste { text: LineEdit::new(), error: None });
+        assert_eq!(app.context(), crate::keys::Context::SettingsPrompt);
+        let lines = crate::keys::SETTINGS;
+        assert!(lines.iter().any(|b| b.keys == "1–6"));
+        assert!(lines.iter().any(|b| b.keys == "Login: c"));
+        assert!(lines.iter().any(|b| b.keys == "Login: Enter"));
+        assert!(lines.iter().any(|b| b.keys == "Login: Esc"));
     }
 
     #[test]
     fn the_panel_is_dropped_when_settings_is_no_longer_on_screen() {
         let dir = tempfile::tempdir().unwrap();
-        let mut app = panel_app(&dir, Arc::new(FakeHost::default()));
+        let (mut app, _recorded) = panel_app(&dir, Arc::new(FakeHost::default()));
         app.spotify_login = Some(LoginPanel { url: "u".into(), listening: true, paste: None, notice: None });
         app.modal = Modal::Help;
         app.drop_removal_outside_settings();
@@ -2252,36 +2511,29 @@ In `spotify_ui.rs`'s tests (the panel and key tests belong with the code in this
     }
 ```
 
-The `press`, `toast_texts` and `settings_app` helpers are in `settings_ui.rs`'s tests; export them (`pub(crate) fn press`, `pub(crate) fn toast_texts`, `pub(crate) fn settings_app`, `pub(crate) fn select` inside `pub(crate) mod tests`) as Task 6 requires. Add `use crate::line_edit::LineEdit; use crate::app::spotify_ui::{LoginPanel, SpotifyPaste}; use crate::spotify_worker::Done; use crate::app::Modal;`.
-
-Test `a_failed_browser_open…` changes process env (`PATH`); use a serial guard or instead inject the opener. Preferable: make `open_login_panel` take the opener as a parameter: `fn open_login_panel(&mut self, url: String, listening: bool, open: &dyn Fn(&str) -> std::io::Result<()>)`, and the caller `on_spotify_done` passes `&|url| znicz_spotify::browser::open(url)`. The test passes `&|_| Err(std::io::Error::other("no opener"))`. Use this form; it avoids touching the environment. Update the test to call `app.open_login_panel(url, false, &|_| Err(std::io::Error::other("no opener")))` and make `should_open` decide with the test env `&|_| None` for `Always` (`Always` ignores env).
+The helpers (`press`, `toast_texts`, `settings_app`) were made `pub(crate)` in Task 6. The test module of `spotify_ui.rs` also needs `use znicz_spotify::browser::OpenBrowser; use crate::line_edit::LineEdit; use crate::app::Modal;` (`LoginPanel`, `SpotifyPaste`, `Done` come in through `use super::*` and Task 6's imports). `press` goes through `App::on_key`, so these tests exercise the real routing: Esc through `on_esc`, `c` and Enter through `on_settings_key`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cargo test -p znicz-tui spotify_ui`
+Run: `cargo test -p znicz-tui -- spotify_ui`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement**
 
 In `spotify_ui.rs`:
 
-1. Replace the Task 6 stub `open_login_panel` with:
+1. Replace the body of the Task 6 stub `open_login_panel` (same signature) with:
 
 ```rust
     /// The URL came back from BeginLogin: show the panel, and open the browser
-    /// when the setting and this terminal's environment say so. `open` is the
-    /// opener (the real one is `znicz_spotify::browser::open`).
-    fn open_login_panel(
-        &mut self,
-        url: String,
-        listening: bool,
-        open: &dyn Fn(&str) -> std::io::Result<()>,
-    ) {
+    /// when the setting and this terminal's environment say so (`self.browser`
+    /// is `znicz_spotify::browser::open` in production).
+    fn open_login_panel(&mut self, url: String, listening: bool) {
         self.spotify_state.login = SpotifyLogin::LoggingIn;
         let mut notice = None;
         let env = |key: &str| std::env::var(key).ok();
         if znicz_spotify::browser::should_open(self.open_browser, &env) {
-            if let Err(e) = open(&url) {
+            if let Err(e) = (self.browser)(&url) {
                 notice = Some(format!("Could not open a browser: {e}. Use the URL below."));
             }
         }
@@ -2289,30 +2541,23 @@ In `spotify_ui.rs`:
     }
 ```
 
-In `on_spotify_done`, the BeginLogin arm passes the real opener:
+`on_spotify_done` already calls `self.open_login_panel(url, listening)`.
+
+2. Add the key handling. The panel owns `c`, `Enter` and `Esc` (Esc arrives through `on_esc`). Every other key returns false, so it falls through to the global keys: `S` and `?` still work, and the login keeps running in the player. In the paste prompt every key types.
 
 ```rust
-                self.open_login_panel(url, listening, &|url| znicz_spotify::browser::open(url));
-```
-
-2. Add the key handling:
-
-```rust
-    /// Keys while the login panel is open. The Settings modal is locked to
-    /// `c`, Enter and Esc (Esc is routed by `on_esc`).
-    pub(crate) fn on_spotify_panel_key(&mut self, key: crossterm::event::KeyEvent) {
+    /// Keys while the login panel is open. Returns false for keys the panel
+    /// does not own.
+    pub(crate) fn on_spotify_panel_key(&mut self, key: KeyEvent) -> bool {
         let pasting = self.spotify_login.as_ref().is_some_and(|p| p.paste.is_some());
         if pasting {
-            match key.code {
-                KeyCode::Enter => self.submit_paste(),
-                _ => {
-                    if let Some(paste) = self.spotify_login.as_mut().and_then(|p| p.paste.as_mut()) {
-                        paste.text.on_key(key);
-                        paste.error = None;
-                    }
-                }
+            if key.code == KeyCode::Enter {
+                self.submit_paste();
+            } else if let Some(paste) = self.spotify_login.as_mut().and_then(|p| p.paste.as_mut()) {
+                paste.text.on_key(key);
+                paste.error = None;
             }
-            return;
+            return true;
         }
         match key.code {
             KeyCode::Char('c') => self.copy_login_url(),
@@ -2321,8 +2566,9 @@ In `on_spotify_done`, the BeginLogin arm passes the real opener:
                     panel.paste = Some(SpotifyPaste { text: LineEdit::new(), error: None });
                 }
             }
-            _ => {}
+            _ => return false,
         }
+        true
     }
 
     /// Esc with the panel open: a paste prompt closes back to the panel;
@@ -2338,12 +2584,13 @@ In `on_spotify_done`, the BeginLogin arm passes the real opener:
         self.ask_spotify(SpotifyAsk::CancelLogin, SpotifyOp::CancelLogin);
     }
 
-    /// `c`: write the OSC 52 sequence. Tells the user it was sent, not that it arrived.
+    /// `c`: write the OSC 52 sequence through `self.clipboard`. Tells the user
+    /// it was sent, not that it arrived: the terminal does not say.
     fn copy_login_url(&mut self) {
         let Some(url) = self.spotify_login.as_ref().map(|p| p.url.clone()) else {
             return;
         };
-        match crate::osc52::copy(&url) {
+        match (self.clipboard)(&url) {
             Ok(()) => self.toasts.info("Sent the login URL to the terminal's clipboard"),
             Err(e) => self.toasts.error(format!("Could not copy the URL: {e}")),
         }
@@ -2363,18 +2610,28 @@ In `on_spotify_done`, the BeginLogin arm passes the real opener:
     }
 ```
 
-Use `crossterm::event::KeyCode` in the imports of `spotify_ui.rs`, and `crossterm::event::KeyEvent` for the key parameter.
+Add `use crossterm::event::{KeyCode, KeyEvent};` to `spotify_ui.rs`. Pasting into the prompt arrives as one key event per character (the TUI does not turn on bracketed paste), and each is typed by `LineEdit::on_key`; a pasted trailing newline is an Enter and sends the address.
 
 3. `on_settings_key` (settings_ui.rs): right after the `if self.settings_prompt.is_some() { … }` block, add:
 
 ```rust
         if self.spotify_login.is_some() {
-            self.on_spotify_panel_key(key);
-            return true;
+            return self.on_spotify_panel_key(key);
         }
 ```
 
-4. `app.rs` `on_esc`: add before the existing `if self.modal == Modal::Settings && self.settings_prompt.is_some()` check... Order: the paste prompt and the panel must win over the slider prompt? They cannot coexist; put the panel branch first:
+4. `app.rs`:
+   - Two fields, after `spotify_confirm`:
+
+```rust
+    /// Writes the clipboard sequence to the terminal. Tests replace it.
+    pub(crate) clipboard: Box<dyn Fn(&str) -> std::io::Result<()> + Send>,
+    /// Opens the login page in a browser. Tests replace it.
+    pub(crate) browser: Box<dyn Fn(&str) -> std::io::Result<()> + Send>,
+```
+
+     with the defaults `clipboard: Box::new(crate::osc52::copy), browser: Box::new(znicz_spotify::browser::open),` in the `with_engine` literal.
+   - `on_esc`: add before the existing `settings_prompt` check. The panel and a slider prompt cannot be open together:
 
 ```rust
         if self.modal == Modal::Settings && self.spotify_login.is_some() {
@@ -2383,13 +2640,21 @@ Use `crossterm::event::KeyCode` in the imports of `spotify_ui.rs`, and `crosster
         }
 ```
 
-5. `drop_removal_outside_settings` (settings_ui.rs): inside the `if self.modal != Modal::Settings` block add `self.spotify_login = None; self.spotify_confirm = None;`. Update its doc comment: "The login panel goes too. The login itself keeps running in the player."
+   - `context()`: before the `Modal::Settings if self.settings_prompt.is_some()` arm add `Modal::Settings if self.spotify_login.as_ref().is_some_and(|p| p.paste.is_some()) => Context::SettingsPrompt,` and `Modal::Settings if self.spotify_login.is_some() => Context::SettingsLogin,`.
 
-6. `Context` for the key bar: in `app.rs` (around line 1733), add `Modal::Settings if self.spotify_login.is_some() => Context::SettingsLogin,` before the `settings_prompt` arm. Add `SettingsLogin` to `keys.rs`'s `Context` enum, and map it in the function that maps contexts to binding lists to `keys::SETTINGS_LOGIN`. Add `pub const SETTINGS_LOGIN: &[Binding] = &[b("c", "copy the login URL"), b("Enter", "paste the address"), b("Esc", "cancel the login")];` in `keys.rs` beside `SETTINGS`.
+5. `drop_removal_outside_settings` (settings_ui.rs): inside the `if self.modal != Modal::Settings` block add `self.spotify_login = None; self.spotify_confirm = None;` (Task 6 may already have added the `spotify_confirm` half; keep one copy). Update its doc comment: "The login panel goes too. The login itself keeps running in the player."
+
+6. `keys.rs`:
+   - `Context::SettingsLogin` in the enum, with a doc line: "Settings with the Spotify login panel open: `c`, Enter and Esc are the panel's."
+   - Hints: `const COPY_URL: Hint = hint("c copy URL", KeyCode::Char('c'));` and `const PASTE_ADDRESS: Hint = hint("Enter paste", KeyCode::Enter);`. In `context_hints`: `Context::SettingsLogin => &[COPY_URL, PASTE_ADDRESS, CANCEL],`.
+   - `context_title`: add `Context::SettingsLogin` to the arm that returns `Some("Settings")`, so help opens on the Settings section.
+   - `more_hint` needs no change (`?` is a global key while the panel waits).
+   - `SETTINGS` (the help table) gets three lines after the `1–6` line: `b("Login: c", "copy the login URL")`, `b("Login: Enter", "paste the redirect address")`, `b("Login: Esc", "cancel the login")`. Help is generated from this table, so the panel keys are listed there.
+   - In the keys tests, `ALL_CONTEXTS` becomes `[Context; 19]` with `Context::SettingsLogin` after `SettingsPrompt`. `every_context_fits_a_wide_footer_with_more` then covers the new hints.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cargo test -p znicz-tui spotify_ui settings_ui keys`
+Run: `cargo test -p znicz-tui -- spotify_ui settings_ui keys`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -2407,10 +2672,10 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `znicz-tui/src/views/settings.rs`
-- Modify: `znicz-tui/src/settings.rs` (the `Values` construction in `views::settings::values`, see below)
+- Modify: `znicz-tui/src/app/settings_ui.rs` (tests only)
 
 **Interfaces:**
-- Consumes: `spotify_rows::{CLIENT_FIRST, LOGOUT_QUESTION, CLIENT_ID_QUESTION, login_panel_lines, WRONG_ADDRESS}`, `settings::{dimmed, prompt_range}`, `App::spotify_view()`.
+- Consumes: `spotify_rows::{CLIENT_FIRST, LOGOUT_QUESTION, CLIENT_ID_QUESTION, login_panel_lines, WRONG_ADDRESS}`, `settings::{dimmed, prompt_range}`, `crate::app::{LoginPanel, SpotifyConfirm}` (the re-export from Task 6).
 - Produces: none (drawing only).
 
 - [ ] **Step 1: Write the failing tests**
@@ -2447,7 +2712,7 @@ In `views/settings.rs`, add a test module section (or in `settings_ui.rs`'s test
         let mut app = settings_app(&dir);
         press(&mut app, KeyCode::Char('S'));
         press(&mut app, KeyCode::Char('6'));
-        app.spotify_login = Some(crate::app::spotify_ui::LoginPanel {
+        app.spotify_login = Some(crate::app::LoginPanel {
             url: "https://accounts.spotify.com/authorize?client_id=0123".into(),
             listening: true,
             paste: None,
@@ -2465,7 +2730,7 @@ In `views/settings.rs`, add a test module section (or in `settings_ui.rs`'s test
         let mut app = settings_app(&dir);
         press(&mut app, KeyCode::Char('S'));
         press(&mut app, KeyCode::Char('6'));
-        app.spotify_login = Some(crate::app::spotify_ui::LoginPanel {
+        app.spotify_login = Some(crate::app::LoginPanel {
             url: "https://accounts.spotify.com/authorize?".repeat(8),
             listening: false,
             paste: None,
@@ -2475,30 +2740,73 @@ In `views/settings.rs`, add a test module section (or in `settings_ui.rs`'s test
     }
 
     #[test]
+    fn a_long_url_wraps_in_the_panel_and_none_of_it_is_lost() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        let url = format!("https://accounts.spotify.com/authorize?{}", "a1b2c3d4".repeat(12));
+        app.spotify_login = Some(crate::app::LoginPanel {
+            url,
+            listening: true,
+            paste: None,
+            notice: None,
+        });
+        let screen = screen_rows(&mut app);
+        // The URL is one word longer than the popup is wide: it must run over
+        // several rows (broken at the width), not be cut at the first.
+        let rows_with_url = screen
+            .iter()
+            .filter(|row| row.contains("a1b2c3d4a1b2c3d4"))
+            .count();
+        assert!(rows_with_url >= 2, "{}", screen.join("\n"));
+    }
+
+    #[test]
+    fn the_paste_prompt_shows_in_the_strip_with_the_reason_when_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        app.spotify_login = Some(crate::app::LoginPanel {
+            url: "u".into(),
+            listening: true,
+            paste: Some(crate::app::SpotifyPaste {
+                text: crate::line_edit::LineEdit::from_text("code=x"),
+                error: Some("that address is not from this login".into()),
+            }),
+            notice: None,
+        });
+        let screen = screen_rows(&mut app).join("\n");
+        assert!(screen.contains("Address: code=x"), "{screen}");
+        assert!(screen.contains("that address is not from this login"), "{screen}");
+    }
+
+    #[test]
     fn the_logout_question_and_the_client_id_question_show_in_the_strip() {
         let dir = tempfile::tempdir().unwrap();
         let mut app = settings_app(&dir);
         press(&mut app, KeyCode::Char('S'));
         press(&mut app, KeyCode::Char('6'));
-        app.spotify_confirm = Some(crate::app::spotify_ui::SpotifyConfirm::Logout);
+        app.spotify_confirm = Some(crate::app::SpotifyConfirm::Logout);
         assert!(screen_rows(&mut app).join("\n").contains("Log out of Spotify?"));
-        app.spotify_confirm = Some(crate::app::spotify_ui::SpotifyConfirm::ClientId("x".into()));
+        app.spotify_confirm = Some(crate::app::SpotifyConfirm::ClientId("x".into()));
         assert!(screen_rows(&mut app).join("\n").contains("Changing the client ID logs you out"));
     }
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cargo test -p znicz-tui settings_ui`
+Run: `cargo test -p znicz-tui -- settings_ui`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement**
 
 In `views/settings.rs`:
 
-1. `values(app)`: add `spotify: app.spotify_view(),` to the `Values { … }` literal.
+1. (`values(app)` already reads `app.spotify_view()` since Task 6.)
 2. `render`: after `let list_area`/`rule`/`strip` are computed and before the rows are drawn, branch:
-   - If `app.spotify_login.is_some()`: draw the panel body into `list_area` with `Paragraph::new(lines).wrap(Wrap { trim: false })`, where `lines` is `spotify_rows::login_panel_lines(&panel.url, panel.listening)` as `Line`s, followed by a `notice` line in `theme::warn()` when present. Skip the row lines.
+   - If `app.spotify_login.is_some()`: draw the panel body into `list_area` with `Paragraph::new(lines).wrap(Wrap { trim: false })` (ratatui 0.30's `ratatui::widgets::Wrap`; with `trim: false` a word longer than the width, such as the URL, is broken at the width instead of being cut off; the strip's own `wrap()` helper would truncate it, so it is not used here), where `lines` is `spotify_rows::login_panel_lines(&panel.url, panel.listening)` as `Line`s, followed by a `notice` line in `theme::warn()` when present. Skip the row lines.
    - Otherwise draw the rows as now.
 3. The strip text, in priority order:
    - `settings_prompt` open: `slider_prompt_line(...)`, generalized (step 4).
@@ -2524,13 +2832,13 @@ fn slider_prompt_line(row: &Row, text: &LineEdit, error: Option<&str>) -> Line<'
 
 For the port, the strip reads "Redirect port (1024–65535): …" and the error "must be 1024–65535". For the client ID: "Client ID (32 hex characters, or empty): …", error "must be 32 hex characters".
 
-- `use ratatui::widgets::Wrap;` if not already imported.
+- Import `ratatui::widgets::Wrap` (the file imports `Clear, Paragraph` today) and `crate::spotify_rows` and `crate::app::SpotifyConfirm`.
 
 In `settings.rs` (`value_text` etc.) nothing more.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cargo test -p znicz-tui settings_ui settings::tests`
+Run: `cargo test -p znicz-tui -- settings_ui settings::tests`
 Expected: PASS. Also run the render test: `cargo test -p znicz-tui --test render`.
 
 - [ ] **Step 5: Commit**
@@ -2544,75 +2852,117 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task 11: Help, keys and the config-error rule, checked end to end
+### Task 11: The config-error rule, checked end to end
+
+Part 2's lesson: the player deletes the user's Spotify token when a `Configure` carries an empty client ID. So the TUI must never send `Configure` from a config that did not load cleanly, and never send it at all when the change was not written. Tasks 7 and 8 build that; this task proves it across rows with tests that read the worker's host, the only place a `Configure` can show up. The help and footer keys were tested in Task 9.
 
 **Files:**
-- Modify: `znicz-tui/src/keys.rs` (done in Task 9 and Task 1; verify)
 - Modify: `znicz-tui/src/app/settings_ui.rs` (tests only)
 
 **Interfaces:**
 - Consumes: the whole of Tasks 1–10.
 - Produces: integration tests for the rules the brief says must hold.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Write the tests**
 
 In `settings_ui.rs`'s tests:
 
 ```rust
-    #[test]
-    fn the_help_screen_lists_the_tab_keys_and_the_login_keys() {
-        let rows = crate::keys::SETTINGS;
-        assert!(rows.iter().any(|b| b.key == "1–6"));
-        assert!(crate::keys::SETTINGS_LOGIN.iter().any(|b| b.key == "c"));
+    /// Every Spotify change a user can make, one after the other.
+    fn change_every_spotify_row(app: &mut App) {
+        press(app, KeyCode::Char('S'));
+        press(app, KeyCode::Char('6'));
+        select(app, Row::OpenBrowser);
+        press(app, KeyCode::Enter);
+        select(app, Row::PlaybackDevice);
+        press(app, KeyCode::Enter);
+        select(app, Row::RedirectPort);
+        press(app, KeyCode::Enter);
+        for _ in 0..4 {
+            press(app, KeyCode::Backspace);
+        }
+        type_text(app, "9001");
+        press(app, KeyCode::Enter);
+        select(app, Row::ClientId);
+        press(app, KeyCode::Enter);
+        for _ in 0..ID.len() {
+            press(app, KeyCode::Backspace);
+        }
+        type_text(app, NEW_ID);
+        press(app, KeyCode::Enter);
+    }
+
+    fn kitchen() -> Vec<SpotifyDevice> {
+        vec![SpotifyDevice {
+            id: "d1".into(),
+            name: "Kitchen".into(),
+            kind: "Speaker".into(),
+            is_active: false,
+            volume_percent: None,
+        }]
     }
 
     #[test]
-    fn a_broken_config_never_changes_the_player_through_the_spotify_tab() {
+    fn a_broken_config_never_changes_the_player_through_any_spotify_row() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         std::fs::write(&path, "[spotify\n").unwrap();
         let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
-        let mut app = settings_app(&dir)
+        let mut app = spotify_app(&dir, host.clone())
             .with_config_file(ConfigFile::new(&path))
             .with_config_problem(ConfigProblem::Parse { message: "bad".into(), line: 1, column: 1 });
-        app.spotify_worker = Some(SpotifyWorker::spawn(host.clone()).unwrap());
-        press(&mut app, KeyCode::Char('S'));
-        press(&mut app, KeyCode::Char('6'));
-        select(&mut app, Row::PlaybackDevice);
-        press(&mut app, KeyCode::Left);
-        select(&mut app, Row::RedirectPort);
-        press(&mut app, KeyCode::Enter);
-        for _ in 0..4 {
-            press(&mut app, KeyCode::Backspace);
-        }
-        type_text(&mut app, "9001");
-        press(&mut app, KeyCode::Enter);
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        assert!(host.ops.lock().unwrap().is_empty(), "nothing reaches the player");
+        app.spotify_devices = kitchen();
+        change_every_spotify_row(&mut app);
+        assert!(
+            !sent_ops(&host).iter().any(|op| matches!(op, SpotifyOp::Configure { .. })),
+            "nothing reaches the player"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "[spotify\n");
         assert_eq!(app.spotify.redirect_port, SpotifyConfig::DEFAULT_PORT);
+        assert_eq!(app.spotify.client_id, ID, "the row shows what the player has");
+        assert!(app.spotify.device.is_empty());
+        assert_eq!(app.open_browser, OpenBrowser::Auto);
+    }
+
+    #[test]
+    fn a_clean_config_sends_one_configure_per_player_side_change_and_never_an_empty_id_unasked() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = spotify_app(&dir, host.clone());
+        app.spotify_devices = kitchen();
+        change_every_spotify_row(&mut app);
+        let configures: Vec<_> = sent_ops(&host)
+            .into_iter()
+            .filter_map(|op| match op {
+                SpotifyOp::Configure { config } => Some(config),
+                _ => None,
+            })
+            .collect();
+        // Device, port, client ID: three saves. The browser setting is not sent.
+        assert_eq!(configures.len(), 3, "{configures:?}");
+        assert!(configures.iter().all(|c| !c.client_id.is_empty()), "an ID was never blanked");
+        assert_eq!(configures.last().unwrap().client_id, NEW_ID);
+        assert_eq!(configures.last().unwrap().redirect_port, 9001);
+        assert_eq!(configures.last().unwrap().device, "Kitchen");
     }
 ```
 
-Check the key-binding struct's field names in `keys.rs` (`Binding`) before using `b.key`; adapt if the field is named differently.
+`ID` and `NEW_ID` are the constants from Task 8; move them to the top of the test module if they are not already visible here. `spotify_app` builds an app with a client ID, so the `ClientId` change here starts from a set ID while logged out (`login_shown` is `NotLoggedIn`), and saves without the question.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [ ] **Step 2: Run the tests**
 
-Run: `cargo test -p znicz-tui settings_ui keys`
-Expected: PASS for the help test once Task 9 is in; the broken-config test should PASS too if Task 7 is correct. If either fails, fix the behaviour, not the test.
+Run: `cargo test -p znicz-tui -- settings_ui`
+Expected: PASS. These tests check Tasks 7 and 8 together, so they may pass at once. If either fails, fix the behaviour in `save_setting` or `send_spotify_config` (Task 7), not the test.
 
-- [ ] **Step 3: Implement**
-
-Only fixes that the tests expose. A failing broken-config test means `send_spotify_config` or the problem branch in `save_setting` has a gap; fix it there.
-
-- [ ] **Step 4: Run the tests to verify they pass**
+- [ ] **Step 3: Run the whole crate**
 
 Run: `cargo test -p znicz-tui`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add znicz-tui/src/app/settings_ui.rs znicz-tui/src/keys.rs
+git add znicz-tui/src/app/settings_ui.rs
 git commit -m "test(tui): the Spotify rules hold end to end
 
 Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
@@ -2637,12 +2987,14 @@ Read `wiki/Architecture/TUI.md` lines 106–141 and 273–355, and `wiki/Archite
 - [ ] **Step 2: Update TUI.md**
 
 In the Settings section:
-- Say Settings has six tabs (Display, Audio, Playback, Library, General, Spotify) and that `1`–`6` select them.
+- Say Settings has six tabs (Display, Audio, Playback, Library, General, Spotify) and that `1`–`6` select them. The page now says "five tabs" (line 275) and shows `1`–`5` in the key table (line 290) and in the paragraph after it (line 301); change all three.
 - Add the Spotify tab's five rows with what each shows and does: Client ID (32 hex characters, empty clears, the strip points at developer.spotify.com/dashboard), Redirect port (1024–65535, default 8898, the row shows `http://127.0.0.1:<port>/callback`), Open browser (`auto` / `always` / `never`), Account (its states, Enter logs in, Enter when logged in asks in the strip, `Enter` logs out, `Esc` cancels), Playback device (Active device or a listed device, offline devices marked, refreshed when the tab opens).
 - Say that Account and Playback device are dimmed until a client ID is set.
 - Describe the login panel: the URL, `c` copies it with OSC 52 (terminals that support it; in tmux, `set-clipboard on`), `Enter` opens the paste prompt, a wrong address keeps the prompt open, `Esc` in the prompt returns to the panel, `Esc` in the panel cancels the login, and the panel closes by itself when the login ends.
 - Describe the browser rule in one paragraph: the front end decides from its own environment (SSH variables mean no; Linux needs `DISPLAY` or `WAYLAND_DISPLAY`); `open_browser` overrides it; a failed open shows one line and the panel keeps waiting.
-- State that every Spotify call except status reads runs on a background connection, and that status is read at most every 500 ms while the tab is open.
+- State that every Spotify call except the status read and `Touch` runs on a background thread with its own connection to the player (a second `IpcClient`, never a clone of the main one), so no frame waits for Spotify; that the status is read at most every 500 ms, only while the Spotify tab (or a login panel) is open, and stops for good when the player has no Spotify service or is too old; and that the thread ends when the TUI closes.
+- State the save rule: a Spotify row is written to `config.toml` in place, and only then is the player told (`Configure`). With a broken config, or no config path, the row goes back and nothing is sent, because an empty client ID would log the user out. Changing the client ID while logged in asks first.
+- Say that `c` writes the OSC 52 sequence between frames and that the terminal gives no sign it was accepted, which is why the toast says "Sent".
 - In the Modules list, add `spotify_rows.rs`, `spotify_worker.rs`, `osc52.rs`, and `app/spotify_ui.rs`, each with one line.
 
 Use simple English. No invented features.
@@ -2653,8 +3005,8 @@ In the Login section, add the TUI route: Settings → Spotify, Enter on Account,
 
 - [ ] **Step 4: Verify**
 
-Run: `grep -n "1–5\|General tab\|five tabs" wiki/Architecture/TUI.md wiki/Architecture/Spotify.md`
-Expected: no lines that still describe five tabs.
+Run: `grep -n '1–5\|`1`–`5`\|five tabs' wiki/Architecture/TUI.md wiki/Architecture/Spotify.md wiki/Home.md`
+Expected: no lines that still describe five tabs. (The wiki writes the range as `` `1`–`5` ``, so a search for plain `1–5` alone would miss it.) The README's Settings row (line 219) names the tabs; it is a final-PR item with the rest of the README, as the spec says.
 
 - [ ] **Step 5: Commit**
 
@@ -2690,8 +3042,8 @@ Expected: all pass.
 
 - [ ] **Step 4: Wiki and keys agreement**
 
-Run: `grep -n "1–6" znicz-tui/src/keys.rs wiki/Architecture/TUI.md`
-Expected: both name `1–6`.
+Run: `grep -n '1–6\|`1`–`6`' znicz-tui/src/keys.rs wiki/Architecture/TUI.md`
+Expected: both name the range.
 
 - [ ] **Step 5: Commit the ticked plan**
 
@@ -2762,7 +3114,14 @@ Expected: `Active device` first, then each device by name. Pick one. `config.tom
 Add a deliberate typo to `config.toml` (for example `[spotify` with no closing bracket), open Settings, press `6`, and change the port with Enter and a typed value.
 Expected: the toast reads `Not saved: config.toml has an error (…)`, the file is unchanged, the row goes back to its old value, and `znicz spotify status` shows the player's settings as they were before the change. Fix the typo and restart the TUI.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 10: The first save, with no config file, and a client ID change**
+
+Move `config.toml` aside and start the TUI (a player that is already running keeps its old settings, so stop it first with `znicz player stop`). Open Settings, press `6`, change Open browser.
+Expected: `config.toml` is created with `[spotify] open_browser = "…"`, and nothing else changes: the player is not told, and a login that was valid stays valid.
+Put the file back. Log in, then change the client ID to another valid one.
+Expected: the strip asks first and says it logs you out; `Esc` leaves everything as it was; `Enter` saves, logs you out, and the Account row reads `Not logged in`.
+
+- [ ] **Step 11: Commit**
 
 Mark the checks that passed, then commit:
 
@@ -2802,38 +3161,40 @@ Also covered: a long URL on a narrow terminal (`the_panel_draws_in_a_small_termi
 | 1. Account states including `Logged in as <name>` with plan suffix, `Failed: <reason>`, Enter logs in, logout confirm in strip | Task 2 (`account_text`), Task 8 (`spotify_account_enter`, `confirm_spotify`), Task 10 (question text) |
 | 1. Playback device: Active device plus devices from `SpotifyState.devices`; configured-but-offline dim `offline`; refreshed on tab open | Task 2 (`device_choices`, `device_online`), Task 3 (hint), Task 6 (`on_spotify_tab_shown`, `Devices`) |
 | 1. Dimmed rows until a client ID is set; strip points at Client ID | Task 3 (`dimmed`), Task 10 (`CLIENT_FIRST`) |
-| 2. Save through `ConfigFile`; never write a broken config; same toast | Task 7 (`save_setting` unchanged path, restore on problem) |
-| 2. `SpotifyOp::Configure` only from a config that loaded; no send on problem | Task 7 (`send_spotify_config` after write only), test `a_broken_config…` |
-| 2. Changing `client_id` logs out; strip says so before confirming | Task 8 (`SpotifyConfirm::ClientId`), Task 10 |
+| 2. Save through `ConfigFile`; never write a broken config; same toast | Task 7 (`save_setting`: restore on problem, on no file path, on a failed write) |
+| 2. `SpotifyOp::Configure` only from a config that loaded; no send on problem, no file path or failed write; first save with no file | Task 7 (`send_spotify_config` after `Ok` only, and itself refuses while `config_problem` is set), tests `a_broken_config…`, `the_first_save_creates_the_file…`, `without_a_config_file_path…`; Task 11 across all rows |
+| 2. Changing or clearing `client_id` logs out; strip says so before confirming; nothing saved or sent before Enter | Task 8 (`SpotifyConfirm::ClientId`, tests for change and clear), Task 10 (the question is drawn) |
 | 2. `open_browser` front-end only, never sent | Task 7 (`open_browser` not in `sent_to_player`), test `enter_steps_the_open_browser_setting…` |
 | 3. Login panel text with `listening` third line | Task 2 (`login_panel_lines`), Task 10 (drawn) |
 | 3. OSC 8 or plain, stated | Spec refinements; Task 10 draws plain text |
-| 3. `c` copies with OSC 52 `\x1b]52;c;<base64>\x07`; tmux check | Task 4 (`sequence`), Task 9 (`copy_login_url`), Task 14 Step 6 |
+| 3. `c` copies with OSC 52 `\x1b]52;c;<base64>\x07`, written between frames; tmux check; tests never write to the real terminal | Task 4 (`sequence`, padding and alphabet tests), Task 9 (`copy_login_url` through `App::clipboard`), Task 14 Step 6 |
 | 3. Browser opens by `should_open`; failure is one line and waits | Task 9 (`open_login_panel`, `notice`), test `a_failed_browser_open…` |
 | 3. `Enter` opens paste prompt; `CompleteLogin`; `wrong_address` message; `Esc` sends `CancelLogin` | Task 9 |
 | 3. Panel closes when status leaves `LoggingIn`; toast `Logged in as` or failure | Task 6 (`on_spotify_state`), test `the_login_panel_closes_and_toasts…` |
 | 4. Second `IpcClient`, created like the main one | Task 6 Step 3(c) (`connect_ui` in each `run_tui` path) |
-| 4. General `SpotifyWorker` with ops in, replies and errors out, tagged | Task 5 |
+| 4. General `SpotifyWorker` with ops in, replies and errors out, tagged; own `IpcClient`; ends when the App drops | Task 5 (incl. `dropping_the_worker_ends_its_thread`), Task 6 Step 3(c) |
 | 4. `try_state` polled on the main client, only with the tab open, at most every 500 ms; `Touch` too | Task 6 (`poll_spotify`) |
 | 4. `no_service` / `outdated_player` stops polling and shows `Spotify is unavailable: …` | Task 6 (`spotify_unavailable`), test `a_player_without_spotify…` |
 | 4. `network` on a change shows the message; next poll shows the truth | Task 6 (`on_spotify_done` toasts), Task 5 (worker keeps running) |
 | 5. `wiki/Architecture/TUI.md` Settings section and `Spotify.md` login route | Task 12 |
-| 5. Help screen lists tab keys and login keys | Task 1 (`keys::SETTINGS`), Task 9 (`SETTINGS_LOGIN`), Task 11 test |
+| 5. Help screen lists tab keys and login keys; footer hints for the panel | Task 1 (`keys::SETTINGS`, `1–6`), Task 9 (`Context::SettingsLogin`, its hints, the `Login: …` help lines, test `the_footer_and_help_know_the_panel`) |
 | 6. Manual check: client ID, redirect, paste, SSH, `c` in terminal and tmux, logout confirm, device, typo | Task 14 Steps 1–9 |
 | 7. Out of scope: Spotify mode (Part 5), shared Stage, version bump, CHANGELOG, README | Not planned here (see Spec refinements) |
 | Pure logic with unit tests: row values, step choices, Account labels, panel text, OSC 52 encoding, port check, device choice list | Task 2 (tests), Task 3 (values), Task 4 (OSC 52) |
 | Commit message `docs(plan): Spotify part 4, TUI Settings and login` | Written when this plan is committed |
 
-**Placeholder scan:** no `TBD`. Tests and signatures are written out. Steps that say "adapt" name the exact thing to check (`ConfigProblem` variant shape in `config_file.rs` lines 119–131, `keys::Binding` field name, the `Context` mapping function in `keys.rs`), since those are the only places the plan could not read the code in full.
+**Placeholder scan:** no `TBD`. Tests and signatures are written out. The real shapes were checked against the code: `ConfigProblem::Parse { line, column, message }`, `keys::Binding { keys, action }`, `Context` (matched in `context_hints`, `context_title` and the `ALL_CONTEXTS` test), `ZniczError: Send`, `Paragraph` and `Wrap` in ratatui 0.30.
+
+**Task order:** each task compiles and passes at its own commit. `spotify_rows.rs` (Task 2) does not use `settings.rs`; `settings.rs` (Task 3) uses it. Task 3 also fills the two non-test constructors its new fields break (`views/settings.rs` and `main.rs`). The Account arm, the client ID prompt and the question's drawing wait for Tasks 8 and 10.
 
 **Type consistency:**
-- `SpotifyView` is defined in Task 2 (with `client_id_head` added in Task 3) and used in Tasks 3, 6, 10.
+- `SpotifyView` is defined in Task 2 (with `client_id_head`) and used in Tasks 3, 6, 10.
 - `SpotifyAsk`, `Done<T>` and `SpotifyWorker<T>` are defined in Task 5 and used in Tasks 6–9.
-- `LoginPanel`, `SpotifyPaste` and `SpotifyConfirm` are declared in Task 6 Step 3(b) and used in Tasks 8–10.
+- `LoginPanel`, `SpotifyPaste` and `SpotifyConfirm` are declared in Task 6 Step 3(b), re-exported as `crate::app::{…}`, and used in Tasks 8–10.
 - `on_spotify_done`, `on_spotify_state`, `poll_spotify`, `spotify_view`, `spotify_login_shown` are defined in Task 6 and used in Tasks 7–10.
-- `open_login_panel(url, listening, open)` is declared in Task 6 as a stub without the opener parameter and changed in Task 9; Task 9 is the source of truth.
-- `change_with` and `save_setting` become `pub(super)` in Task 7 and are used by `spotify_ui.rs` in Task 8.
-- `settings::step` is generic over `Clone` (Task 2) and called with `&current` in Tasks 7 and 2's `OPEN_BROWSERS` and device steps.
+- `open_login_panel(url, listening)` is a stub in Task 6 and gets its body in Task 9 with the same signature; the opener and the clipboard are App fields (`browser`, `clipboard`), not parameters.
+- `change_with` becomes `pub(super)` in Task 7 and is used by `spotify_ui.rs` in Task 8.
+- `settings::step` is generic over `Clone` (Task 3) and called with `&current` in Task 7's `OPEN_BROWSERS` and device steps.
 - `dimmed`, `prompt_range`, `Values.spotify`, `SettingsValues.spotify`, `SettingsValues.open_browser` are defined in Task 3 and used in Tasks 6, 7, 10.
 
 **Proportion:** the plan is shorter than the spec in prose, and its code covers only the pure logic, the worker, and the non-obvious wiring. The rest is named by signature and test, so the implementer writes the body.
