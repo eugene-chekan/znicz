@@ -157,7 +157,11 @@ mod tests {
     fn bundled_skills_loaded() {
         let skills_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skills");
         let registry = SkillRegistry::load(&[skills_dir]);
-        assert!(registry.entries().len() >= 5);
+        assert!(registry.entries().len() >= 6);
+        assert!(
+            registry.entries().iter().any(|e| e.name == "spotify"),
+            "the spotify skill is bundled"
+        );
     }
 
     #[test]
