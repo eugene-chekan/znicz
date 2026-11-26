@@ -502,7 +502,7 @@ pub(crate) fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, state: 
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::path::PathBuf;
     use std::time::Duration;
@@ -521,7 +521,7 @@ mod tests {
             .join("\n")
     }
 
-    fn playing(bit_perfect: bool) -> PlayerState {
+    pub(crate) fn playing(bit_perfect: bool) -> PlayerState {
         PlayerState {
             status: PlaybackStatus::Playing,
             current_track: Some(TrackInfo {
@@ -555,7 +555,7 @@ mod tests {
         }
     }
 
-    fn stream() -> PlayerState {
+    pub(crate) fn stream() -> PlayerState {
         PlayerState {
             status: PlaybackStatus::Playing,
             current_track: Some(TrackInfo {
@@ -787,5 +787,229 @@ mod tests {
         let t = text(&[volume_line(&state, IconSet::Unicode)]);
         assert!(t.starts_with("× █████▁▁▁▁▁ muted"), "{t:?}");
         assert!(!t.contains('%'), "{t:?}");
+    }
+
+    /// The playback position and volume the goldens draw at, so the seek bar
+    /// and the volume line are fixed.
+    pub(crate) fn at_fixed_time(mut state: PlayerState) -> PlayerState {
+        state.position = Duration::from_secs(83);
+        state.volume = 0.7;
+        state
+    }
+
+    /// Draws the Stage into a `TestBackend` and returns each row's symbols.
+    fn stage_rows(state: &PlayerState, width: u16, height: u16, show_cover: bool) -> Vec<String> {
+        let mut app = crate::app::test_app();
+        app.tui.show_cover = show_cover;
+        app.tui.cover_protocol = if show_cover {
+            CoverProtocol::Auto
+        } else {
+            CoverProtocol::Off
+        };
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| render(frame, frame.area(), &mut app, state))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(usize::from(width))
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+            .collect()
+    }
+
+    const GOLDEN_WIDE_FILE: &[&str] = &[
+        "                                                  Sour Times                                        ",
+        "                      ▄▄▄                         Portishead                                        ",
+        "                      ▄▄▄▄▄                       Dummy · 1994 · track 3                            ",
+        "                      ▄▄ ▄▄▄▄                                                                       ",
+        "                    ▄▄▄    ▄▄▄                    ▶ ━━━━━━━━━━━━──────────────────────── 1:23 / 4:11",
+        "                   ▄▄▄      ▄▄▄                   ◢ ███████▁▁▁  70%                                 ",
+        "                  ▄▄▄ ▀▀▀▀▀  ▄▄                                                                     ",
+        "                 ▄▄▄  ▄  ▀▀▀▀ ▄▄                  Signal                                            ",
+        "            ▄▄▄▄▄▄▀     ▄▄▄▄▄ ▀▄▄▄▄▄▄               file    FLAC 96 kHz 24-bit 2882 kbps stereo     ",
+        "           ▄▄▀▀▀▀▀▀▀  ▄▄▄▄   ▀▀▀▀▀▀▀▄▄              device  Topping E30 II · 48 kHz stereo f32      ",
+        "           ▀▀▀▄▄▄▄▄▄▀▀▀▀▀▀▀▀▀▄▄▄▄▄▄▀▀▀              path    ▲ resampled                             ",
+        "           ▀▀▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄▀▀                      file 96 kHz stereo → device 48 kHz ster…",
+        "           ▀▀▄ ▄▄▄▄▄▄▄▄▄▀▄▄▄▄▄▄▄▄▄ ▄▀▀                                                              ",
+        "            ▀▄▄▄▄▄     ▄▄▄     ▄▄▄▄▄▀                                                               ",
+        "            ▀▄▀▀                 ▀▀▄▀                                                               ",
+        "            ▀▀▄▀                 ▀▄▀▀                                                               ",
+        "             ▀▄▀▀               ▀▀▄▀▀                                                               ",
+        "             ▀▄▀▀               ▀▀▄▀                                                                ",
+        "             ▀▀▄▀▀             ▀▀▄▀▀                                                                ",
+        "             ▀▀▄▄▄▀▀▀▀▀▀▀▀▀▀▀▀▀▄▄▄▀▀                                                                ",
+        "              ▀▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄▀                                                                 ",
+        "              ▀▀▀▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▀▀▀                                                                 ",
+        "                ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                                   ",
+        "                                                                                                    ",
+    ];
+    const GOLDEN_WIDE_BIT_PERFECT: &[&str] = &[
+        "                                                  Sour Times                                        ",
+        "                      ▄▄▄                         Portishead                                        ",
+        "                      ▄▄▄▄▄                       Dummy · 1994 · track 3                            ",
+        "                      ▄▄ ▄▄▄▄                                                                       ",
+        "                    ▄▄▄    ▄▄▄                    ▶ ━━━━━━━━━━━━──────────────────────── 1:23 / 4:11",
+        "                   ▄▄▄      ▄▄▄                   ◢ ███████▁▁▁  70%                                 ",
+        "                  ▄▄▄ ▀▀▀▀▀  ▄▄                                                                     ",
+        "                 ▄▄▄  ▄  ▀▀▀▀ ▄▄                  Signal                                            ",
+        "            ▄▄▄▄▄▄▀     ▄▄▄▄▄ ▀▄▄▄▄▄▄               file    FLAC 96 kHz 24-bit 2882 kbps stereo     ",
+        "           ▄▄▀▀▀▀▀▀▀  ▄▄▄▄   ▀▀▀▀▀▀▀▄▄              device  Topping E30 II · 96 kHz stereo f32      ",
+        "           ▀▀▀▄▄▄▄▄▄▀▀▀▀▀▀▀▀▀▄▄▄▄▄▄▀▀▀              path    ● bit perfect                           ",
+        "           ▀▀▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄▀▀                      the device took the file's own rate and…",
+        "           ▀▀▄ ▄▄▄▄▄▄▄▄▄▀▄▄▄▄▄▄▄▄▄ ▄▀▀                                                              ",
+        "            ▀▄▄▄▄▄     ▄▄▄     ▄▄▄▄▄▀                                                               ",
+        "            ▀▄▀▀                 ▀▀▄▀                                                               ",
+        "            ▀▀▄▀                 ▀▄▀▀                                                               ",
+        "             ▀▄▀▀               ▀▀▄▀▀                                                               ",
+        "             ▀▄▀▀               ▀▀▄▀                                                                ",
+        "             ▀▀▄▀▀             ▀▀▄▀▀                                                                ",
+        "             ▀▀▄▄▄▀▀▀▀▀▀▀▀▀▀▀▀▀▄▄▄▀▀                                                                ",
+        "              ▀▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄▀                                                                 ",
+        "              ▀▀▀▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▀▀▀                                                                 ",
+        "                ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                                   ",
+        "                                                                                                    ",
+    ];
+    const GOLDEN_NARROW_FILE: &[&str] = &[
+        "           ▄▄                                   ",
+        "           ▄▄▄▄                                 ",
+        "         ▄▄▄▀▄▄▄                                ",
+        "        ▄▄▄▀▀▀▀▄▄                               ",
+        "     ▄▄▄▀▀▀▄▄▄▄▀▀▄▄▄                            ",
+        "     ▀▀▀▀▀▀▄▄▄▀▀▀▀▀▀                            ",
+        "      ▀▄▄▄▄▄▄▄▄▄▄▄▀▀                            ",
+        "      ▀▀▀   ▄   ▀▀▀                             ",
+        "      ▀▀▀       ▀▀▀                             ",
+        "      ▀▄▀▀▀▀▀▀▀▀▀▄▀                             ",
+        "       ▀▄▄▀▀▀▀▀▄▄▀                              ",
+        "        ▀▀▀▀▀▀▀▀▀                               ",
+        "                                                ",
+        " Sour Times                                     ",
+        " Portishead                                     ",
+        " Dummy · 1994 · track 3                         ",
+        "                                                ",
+        " ▶ ━━━━━━━━━━╾───────────────────── 1:23 / 4:11 ",
+        " ◢ ███████▁▁▁  70%                              ",
+        "                                                ",
+        " Signal                                         ",
+        "   file    FLAC 96 kHz 24-bit 2882 kbps stereo  ",
+        "   device  Topping E30 II · 48 kHz stereo f32   ",
+        "   path    ▲ resampled                          ",
+    ];
+    const GOLDEN_NO_COVER: &[&str] = &[
+        "                                                                                                    ",
+        "          Sour Times                                                                                ",
+        "          Portishead                                                                                ",
+        "          Dummy · 1994 · track 3                                                                    ",
+        "                                                                                                    ",
+        "          ▶ ━━━━━━━━━━━━━━━━━━━━──────────────────────────────────────── 1:23 / 4:11                ",
+        "          ◢ ███████▁▁▁  70%                                                                         ",
+        "                                                                                                    ",
+        "          Signal                                                                                    ",
+        "            file    FLAC 96 kHz 24-bit 2882 kbps stereo                                             ",
+        "            device  Topping E30 II · 48 kHz stereo f32                                              ",
+        "            path    ▲ resampled                                                                     ",
+        "                    file 96 kHz stereo → device 48 kHz stereo                                       ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+    ];
+    const GOLDEN_STREAM: &[&str] = &[
+        "                                                                                                    ",
+        "          Artist - Song                                                                             ",
+        "          Jazz Radio                                                                                ",
+        "          https://example.com/stream                                                                ",
+        "                                                                                                    ",
+        "          ▶ ● live  1:23                                                                            ",
+        "          ◢ ███████▁▁▁  70%                                                                         ",
+        "                                                                                                    ",
+        "          Signal                                                                                    ",
+        "            stream  MP3 44.1 kHz 128 kbps stereo                                                    ",
+        "            device  default device · no stream open                                                 ",
+        "            path    nothing to compare until a stream opens                                         ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+    ];
+    const GOLDEN_NOTHING_PLAYING: &[&str] = &[
+        "                                                                                                    ",
+        "          Nothing playing                                                                           ",
+        "                                                                                                    ",
+        "          Enter a track in Browse (v) to start                                                      ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+    ];
+
+    #[test]
+    fn golden_wide_file_stage() {
+        let state = at_fixed_time(playing(false));
+        assert_eq!(stage_rows(&state, 100, 24, true), GOLDEN_WIDE_FILE);
+    }
+
+    #[test]
+    fn golden_wide_bit_perfect_stage() {
+        let state = at_fixed_time(playing(true));
+        assert_eq!(stage_rows(&state, 100, 24, true), GOLDEN_WIDE_BIT_PERFECT);
+    }
+
+    #[test]
+    fn golden_narrow_file_stage() {
+        let state = at_fixed_time(playing(false));
+        assert_eq!(stage_rows(&state, 48, 24, true), GOLDEN_NARROW_FILE);
+    }
+
+    #[test]
+    fn golden_no_cover_stage() {
+        let state = at_fixed_time(playing(false));
+        assert_eq!(stage_rows(&state, 100, 24, false), GOLDEN_NO_COVER);
+    }
+
+    #[test]
+    fn golden_stream_stage() {
+        let state = at_fixed_time(stream());
+        assert_eq!(stage_rows(&state, 100, 24, false), GOLDEN_STREAM);
+    }
+
+    #[test]
+    fn golden_nothing_playing_stage() {
+        let state = PlayerState::default();
+        assert_eq!(stage_rows(&state, 100, 24, false), GOLDEN_NOTHING_PLAYING);
     }
 }

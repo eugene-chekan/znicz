@@ -448,6 +448,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::views::stage::tests::{at_fixed_time, playing, stream};
 
     #[test]
     fn transport_symbols_differ_per_state() {
@@ -625,5 +626,117 @@ mod tests {
             let plain = chrome_line(&state, width, IconSet::Unicode, None);
             assert!(line_width(&plain) <= width, "normal at {width}");
         }
+    }
+
+    /// Draws the transport into a `TestBackend` and returns each row's symbols.
+    /// `toast` is a message to show on the message row.
+    fn transport_rows(
+        state: &PlayerState,
+        width: u16,
+        height: u16,
+        show_signal: bool,
+        toast: Option<&str>,
+    ) -> Vec<String> {
+        let mut app = crate::app::test_app();
+        if let Some(text) = toast {
+            app.toasts.info(text);
+        }
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| render_transport(frame, frame.area(), &mut app, state, show_signal))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(usize::from(width))
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+            .collect()
+    }
+
+    const GOLDEN_WIDE_TRANSPORT: &[&str] = &[
+        "▶ Sour Times Portishead — Dummy ━━━━━━━━━━━━━─────────────────────────── 1:23 / 4:11 ◢ ████▎▁  70%  ",
+        "FLAC 96 kHz 24-bit 2882 kbps stereo → 48 kHz stereo  ▲ resampled                                    ",
+        "FLAC 96 kHz 24-bit 2882 kbps stereo → 48 kHz stereo  ▲ resampled                                    ",
+        "                                                                                                    ",
+    ];
+    const GOLDEN_NARROW_TRANSPORT: &[&str] = &[
+        "▶ Sour Times Portishe ━━━━──────── 1:23 / 4:11",
+        "FLAC 96 kHz 24-bit 2882 kbps stereo → 48 kHz s",
+        "                                              ",
+    ];
+    const GOLDEN_TRANSPORT_WITHOUT_SIGNAL: &[&str] = &[
+        "▶ Sour Times Portishead — Dummy ━━━━━━━━━━━━━─────────────────────────── 1:23 / 4:11 ◢ ████▎▁  70%  ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+    ];
+    const GOLDEN_STREAM_TRANSPORT: &[&str] = &[
+        "▶ Artist - Song ──────────────────────────────────────── 1:23 / — ◢ ████▎▁  70%                     ",
+        "MP3 44.1 kHz 128 kbps stereo                                                                        ",
+        "                                                                                                    ",
+    ];
+    const GOLDEN_EMPTY_TRANSPORT: &[&str] = &[
+        "■ Nothing playing ──────────────────────────────────────── 0:00 / — ◢ ██████ 100%                   ",
+        "—                                                                                                   ",
+        "                                                                                                    ",
+    ];
+    const GOLDEN_TRANSPORT_WITH_A_MESSAGE: &[&str] = &[
+        "▶ Sour Times Portishead — Dummy ━━━━━━━━━━━━━─────────────────────────── 1:23 / 4:11 ◢ ████▎▁  70%  ",
+        "FLAC 96 kHz 24-bit 2882 kbps stereo → 48 kHz stereo  ▲ resampled                                    ",
+        "● hello                                                                                             ",
+    ];
+
+    #[test]
+    fn golden_wide_transport() {
+        let state = at_fixed_time(playing(false));
+        assert_eq!(
+            transport_rows(&state, 100, 4, true, None),
+            GOLDEN_WIDE_TRANSPORT
+        );
+    }
+
+    #[test]
+    fn golden_narrow_transport() {
+        let state = at_fixed_time(playing(false));
+        assert_eq!(
+            transport_rows(&state, 46, 3, true, None),
+            GOLDEN_NARROW_TRANSPORT
+        );
+    }
+
+    #[test]
+    fn golden_transport_without_signal() {
+        let state = at_fixed_time(playing(false));
+        assert_eq!(
+            transport_rows(&state, 100, 3, false, None),
+            GOLDEN_TRANSPORT_WITHOUT_SIGNAL
+        );
+    }
+
+    #[test]
+    fn golden_stream_transport() {
+        let state = at_fixed_time(stream());
+        assert_eq!(
+            transport_rows(&state, 100, 3, true, None),
+            GOLDEN_STREAM_TRANSPORT
+        );
+    }
+
+    #[test]
+    fn golden_empty_transport() {
+        assert_eq!(
+            transport_rows(&PlayerState::default(), 100, 3, true, None),
+            GOLDEN_EMPTY_TRANSPORT
+        );
+    }
+
+    #[test]
+    fn golden_transport_with_a_message() {
+        let state = at_fixed_time(playing(false));
+        assert_eq!(
+            transport_rows(&state, 100, 3, true, Some("hello")),
+            GOLDEN_TRANSPORT_WITH_A_MESSAGE
+        );
     }
 }

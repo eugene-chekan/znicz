@@ -2974,6 +2974,14 @@ fn temp_fallback(name: &str) -> PathBuf {
     path
 }
 
+/// An `App` with no library and a silent player, for view tests that draw a
+/// frame. The player thread opens no output until something plays.
+#[cfg(test)]
+pub(crate) fn test_app() -> App {
+    let (player, _thread) = znicz_core::spawn_player(znicz_core::AudioConfig::default());
+    App::with_library(player, None)
+}
+
 #[cfg(test)]
 mod tests {
     use znicz_core::LibraryStatus;
