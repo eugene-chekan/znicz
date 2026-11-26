@@ -1488,7 +1488,7 @@ The CLI's decisions and text are pure functions and are tested here. Task 8 wire
 - Create: `znicz/src/spotify_cli.rs`
 - Modify: `znicz/src/main.rs` (`mod` line only)
 
-- [ ] **Step 1: Write the failing tests and the skeleton**
+- [x] **Step 1: Write the failing tests and the skeleton**
 
 Create `znicz/src/spotify_cli.rs`:
 
@@ -1706,12 +1706,12 @@ mod tests {
 
 Register the module: in `znicz/src/main.rs`, after `mod spotify_pause;`, add `mod spotify_cli;`.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz spotify_cli -q`
 Expected: FAIL to compile: `login_intro`, `login_wait`, `LoginWait`, `logged_in_message`, `check_client_id`, `clock`, `status_lines`, `SpotifyConfig`, `Duration` not found.
 
-- [ ] **Step 3: Write the pure functions**
+- [x] **Step 3: Write the pure functions**
 
 Replace the top of `znicz/src/spotify_cli.rs` (everything above `#[cfg(test)]`) with:
 
@@ -1871,12 +1871,12 @@ fn playing_text(state: &SpotifyState, now_ms: u64) -> String {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz spotify_cli -q`
 Expected: PASS (10 tests). `SpotifyConfig` in the test module comes from `super::*`; `Duration` is imported at the top.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz/src/spotify_cli.rs znicz/src/main.rs
