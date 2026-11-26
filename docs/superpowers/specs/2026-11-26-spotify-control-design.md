@@ -15,11 +15,22 @@ works the same on Linux and Windows. It needs:
 
 - **Spotify Premium** for playback control. Without Premium, browsing and
   search still work; control keys and tools say `needs Spotify Premium`.
+  Spotify no longer reports an account's plan, so Premium shows as unknown
+  until the first playback call is accepted or refused.
 - **The user's own Spotify developer app.** Spotify does not allow a shared
   client ID for open-source desktop apps, so each user registers a free app at
   developer.spotify.com, adds the redirect URI Znicz shows, and gives Znicz the
   client ID. Login is OAuth 2.0 Authorization Code with PKCE (no client
-  secret).
+  secret). The app's owner needs Premium, and a Development Mode app allows
+  at most 5 users.
+
+**Development Mode limits** (Spotify, February 2026, in force since March 9,
+2026):
+
+- A playlist's tracks (`/playlists/{id}/items`) are listed only for playlists
+  the user owns or collaborates on. Others still play.
+- Artists have no top-track list.
+- Search returns at most 10 results per type.
 
 ## Out of scope
 
@@ -122,7 +133,7 @@ Front ends that change settings also save them to `[spotify]` in place with
 **10 minutes**. It starts a listener bound to `127.0.0.1:<redirect_port>` and
 returns the authorize URL with the scopes:
 
-`user-read-private user-read-playback-state user-modify-playback-state
+`user-read-playback-state user-modify-playback-state
 user-read-currently-playing user-library-read playlist-read-private
 playlist-read-collaborative`
 
@@ -170,7 +181,7 @@ login state, user, premium and device. `logout` removes the token.
 | Client ID | text prompt | 32 hex characters, else the prompt stays open and says why. The strip explains where to get one. |
 | Redirect URI | number prompt (port, 1024–65535) | Shows `http://127.0.0.1:<port>/callback`; the strip says to add exactly this URI to the Spotify app. |
 | Open browser | choice | `auto` / `always` / `never` |
-| Account | action | `Not logged in` / `Logging in…` / `Logged in as <name> · Premium` / `… · not Premium (control unavailable)` / `Failed: <reason>`. `Enter` logs in; when logged in, it asks in the strip to log out (`Enter` confirms, `Esc` cancels). |
+| Account | action | `Not logged in` / `Logging in…` / `Logged in as <name>`, then `· Premium` or `· not Premium (control unavailable)` once a playback call has told / `Failed: <reason>`. `Enter` logs in; when logged in, it asks in the strip to log out (`Enter` confirms, `Esc` cancels). |
 | Playback device | choice | `Active device` or a Spotify device by name, used when nothing is active. Refreshed when the tab opens. |
 
 Until a client ID is set, the rows below Client ID are dimmed and the strip
@@ -217,11 +228,12 @@ Space pause · / search · Enter play · a queue · ] queue · O znicz · ? more
 - `l` / `Enter` in, `h` back.
 - Lists load 50 rows at a time and fetch the next page near the end.
 - `/` searches from anywhere in the mode. Results are grouped Tracks / Albums
-  / Artists / Playlists, like library search. An artist opens to top tracks,
-  then albums.
+  / Artists / Playlists, like library search (at most 10 per group). An
+  artist opens to their albums.
 - `Enter` on a track plays it in its context (album or playlist, offset to that
-  track). Search results and top tracks play with the result list as context
-  (track URIs). `Enter` on an album or playlist plays it from the top.
+  track). Search results play with the result list as context (track URIs). `Enter` on an album or playlist plays it from the top. Opening a playlist
+  the user neither owns nor collaborates on says `Spotify only lists the
+  tracks of playlists you own or collaborate on; Enter still plays it`.
 - `a` adds a track to Spotify's queue.
 - `]` shows Spotify's queue, read-only.
 
@@ -278,11 +290,12 @@ browse item carries its Spotify `uri`.
 | `spotify_login_begin` | | `{authorize_url}`; the agent hands it to the user |
 | `spotify_login_complete` | `redirect_url` | The paste path |
 | `spotify_logout` | | |
-| `spotify_search` | `query`, `types?`, `limit? = 10` | types: track, album, artist, playlist |
+| `spotify_search` | `query`, `types?`, `limit? = 10` | types: track, album, artist, playlist; at most 10 per type |
 | `spotify_playlists` | `offset?`, `limit?` | |
 | `spotify_liked_songs` | `offset?`, `limit?` | |
 | `spotify_albums` | `offset?`, `limit?` | Saved albums |
-| `spotify_tracks` | `uri` | Album / playlist tracks, or artist top tracks |
+| `spotify_tracks` | `uri` | Album or (own) playlist tracks |
+| `spotify_artist_albums` | `uri`, `offset?`, `limit?` | An artist's albums |
 | `spotify_play` | `uri?`, `context_uri?`, `offset?` | No arguments resumes. Pauses Znicz first. |
 | `spotify_pause`, `spotify_next`, `spotify_previous` | | |
 | `spotify_seek` | `position_ms` | |
@@ -314,7 +327,8 @@ message row, the Messages list, and `SpotifyState.last_error`.
 | Pasted address with wrong `state` or no `code` | Prompt stays open: `that address is not from this login` |
 | PKCE session older than 10 min | `login expired, press Enter to start again` |
 | 401 | Refresh once and retry; on refresh failure delete the token, go to `not_logged_in`, `Spotify login expired` |
-| 403 on playback | `needs Spotify Premium` (from `/me` `product`) |
+| 403 on playback | `needs Spotify Premium`; the account is marked not Premium |
+| 403 / 404 on a playlist's tracks | `Spotify only lists the tracks of playlists you own or collaborate on; Enter still plays it` |
 | 404 `NO_ACTIVE_DEVICE` | Transfer to the preferred device if set and online and retry, else `Spotify has no active device: open Spotify somewhere, or pick one with ,` |
 | 429 | Wait `Retry-After`; slow polling; a user action is retried once after the wait |
 | Network failure / 10 s timeout | Poll errors logged once and shown only when the state changes; user actions report at once |

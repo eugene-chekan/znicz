@@ -20,6 +20,8 @@
 
 **Spec refinement:** `open_browser` is only read by front ends, so it is not part of `SpotifyConfig` (the player never opens a browser). Parts 2 and 4 read it from `config.toml`.
 
+**Spotify's February 2026 rules** (found during Task 9, in force for Development Mode apps since March 9, 2026; see the [changelog](https://developer.spotify.com/documentation/web-api/references/changes/february-2026)): `/playlists/{id}/tracks` became `/playlists/{id}/items` (rows hold `item`) and lists only playlists the user owns or collaborates on; `/artists/{id}/top-tracks` is gone; `/me` no longer returns `product`, so `SpotifyAccount.premium` is `Option<bool>`, learned from a playback answer; search returns at most 10 per type. Commit `6f77f27` adapted Tasks 1, 7, 8 and 9 (their code blocks below are the original plan); Tasks 12 and 13 below already include the change.
+
 **Conventions for every task:**
 - Run commands from the repo root `/home/eugene/projects/znicz`.
 - Commit messages end with the line `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
@@ -2364,7 +2366,7 @@ git commit -m "feat(spotify): read Web API JSON into core types"
 - Create: `znicz-spotify/src/api.rs`
 - Modify: `znicz-spotify/src/lib.rs` (add `mod api;`)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `znicz-spotify/src/api.rs`:
 
@@ -2519,12 +2521,12 @@ mod tests {
 
 Add `mod api;` to `lib.rs`.
 
-- [ ] **Step 2: Run to see it fail**
+- [x] **Step 2: Run to see it fail**
 
 Run: `cargo test -p znicz-spotify api`
 Expected: compile errors (`Api`, `split_uri` missing).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Between the `use` lines and the tests:
 
@@ -2759,12 +2761,12 @@ fn fill_album(page: &mut SpotifyPage, album: &Value) {
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cargo test -p znicz-spotify`
 Expected: everything so far passes (api: 6).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-spotify/src/api.rs znicz-spotify/src/lib.rs
@@ -3781,6 +3783,25 @@ mod tests {
     }
 
     #[test]
+    fn a_playback_answer_tells_whether_the_account_has_premium() {
+        let f = fixture(true, "", |request| match request.path() {
+            "/v1/me" => Response::json(200, r#"{"id":"u","display_name":"Eugene"}"#),
+            "/v1/me/player/next" => Response::json(
+                403,
+                r#"{"error":{"status":403,"message":"Player command failed: Premium required","reason":"PREMIUM_REQUIRED"}}"#,
+            ),
+            _ => api_default(request),
+        });
+        f.service.apply(SpotifyOp::Touch).unwrap();
+        let state = wait_for(&f.service, |s| s.account.is_some());
+        assert_eq!(state.account.unwrap().premium, None, "unknown until a refusal");
+        f.service.apply(SpotifyOp::Next).unwrap_err();
+        assert_eq!(f.service.state().account.unwrap().premium, Some(false));
+        f.service.apply(SpotifyOp::Pause).unwrap();
+        assert_eq!(f.service.state().account.unwrap().premium, Some(true));
+    }
+
+    #[test]
     fn logout_clears_the_state() {
         let f = fixture(true, "", api_default);
         f.service.apply(SpotifyOp::Touch).unwrap();
@@ -4102,12 +4123,24 @@ impl Shared {
             }
             other => other,
         };
-        if result.is_ok() {
-            self.after_control(op);
-            self.state.lock().unwrap().last_error = None;
-            self.wake();
+        // Spotify no longer reports the plan, so a playback answer is how we learn it.
+        match &result {
+            Ok(()) => {
+                self.set_premium(true);
+                self.after_control(op);
+                self.state.lock().unwrap().last_error = None;
+                self.wake();
+            }
+            Err(SpotifyError::PremiumRequired) => self.set_premium(false),
+            Err(_) => {}
         }
         result
+    }
+
+    fn set_premium(&self, premium: bool) {
+        if let Some(account) = self.state.lock().unwrap().account.as_mut() {
+            account.premium = Some(premium);
+        }
     }
 
     fn control_once(&self, op: &SpotifyOp, device: Option<&str>) -> Result<()> {
@@ -4290,7 +4323,7 @@ pub use token::default_token_path;
 - [ ] **Step 5: Run the tests**
 
 Run: `cargo test -p znicz-spotify`
-Expected: everything passes (service: 11). Run it three times to make sure the thread and timing tests are not flaky: `for i in 1 2 3; do cargo test -q -p znicz-spotify || break; done`.
+Expected: everything passes (service: 12). Run it three times to make sure the thread and timing tests are not flaky: `for i in 1 2 3; do cargo test -q -p znicz-spotify || break; done`.
 
 - [ ] **Step 6: Lint**
 
@@ -4324,12 +4357,27 @@ Znicz only sends commands and reads what is playing.
 ## What you need
 
 - **Spotify Premium.** The Web API's playback calls refuse free accounts
-  (`needs Spotify Premium`). Browsing and search work without it.
+  (`needs Spotify Premium`). Browsing and search work without it. Spotify no
+  longer reports an account's plan, so Znicz shows it only after the first
+  playback call has been accepted or refused.
 - **Your own Spotify app.** Spotify does not let open-source desktop apps
   share one client ID, so register a free app at
   <https://developer.spotify.com/dashboard>, add the redirect URI
   `http://127.0.0.1:8898/callback` (or your port), and give Znicz the client
-  ID. No client secret is needed: login uses PKCE.
+  ID. No client secret is needed: login uses PKCE. The app's owner needs
+  Premium, and an app in Development Mode allows at most 5 users (add each
+  under *User Management*).
+
+## Development Mode limits (February 2026)
+
+Spotify's rules for Development Mode apps (in force since March 9, 2026)
+shape what Znicz can browse:
+
+- A playlist's tracks are listed only for playlists you own or collaborate on
+  (`/playlists/{id}/items`). Others still play with `Enter`; opening one says
+  so.
+- Artists have no top-track list any more; an artist opens to their albums.
+- Search returns at most 10 results per type.
 
 ## The crate
 
