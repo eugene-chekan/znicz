@@ -195,7 +195,7 @@ Tests first, then the wire types, the server dispatch and the constructor change
 - Modify: `znicz-core/src/player/ipc.rs`
 - Modify: `znicz/src/main.rs` (one call site, `None` for the new argument)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 At the end of `mod tests` in `znicz-core/src/player/ipc.rs` (after `a_running_scan_holds_off_idle_exit`), add:
 
@@ -363,12 +363,12 @@ At the end of `mod tests` in `znicz-core/src/player/ipc.rs` (after `a_running_sc
     }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz-core ipc -q`
 Expected: FAIL to compile: `start_with_spotify`, `IpcRequest::Spotify`, `IpcRequest::SpotifyStatus`, `IpcResponse::Spotify`, `IpcResponse::SpotifyStatus` and `NO_SPOTIFY` do not exist yet.
 
-- [ ] **Step 3: Add the imports, the wire types and the server field**
+- [x] **Step 3: Add the imports, the wire types and the server field**
 
 At the top of `znicz-core/src/player/ipc.rs`, after `use crate::library_host::{LibraryHost, LibraryOp, LibraryStatus};`, add:
 
@@ -428,7 +428,7 @@ struct Shared {
 }
 ```
 
-- [ ] **Step 4: Thread the host through the constructors**
+- [x] **Step 4: Thread the host through the constructors**
 
 Replace the constructor block from `pub fn start_with_idle` through `fn start_inner`'s body with the following. The public signatures are unchanged except `start_with_session_and_library`, which gains the `spotify` argument.
 
@@ -620,7 +620,7 @@ Add this constant next to `RECENT_CLIENTS`:
 const NO_SPOTIFY: &str = "no Spotify service in this player";
 ```
 
-- [ ] **Step 5: Update the one non-test caller in the binary**
+- [x] **Step 5: Update the one non-test caller in the binary**
 
 In `znicz/src/main.rs`, in `run_player_daemon`, change the `IpcServer::start_with_session_and_library(` call so its last argument list ends with `library,` followed by a new `None,`:
 
@@ -636,12 +636,12 @@ In `znicz/src/main.rs`, in `run_player_daemon`, change the `IpcServer::start_wit
     )
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-core ipc -q`
 Expected: PASS for the four new tests (`a_resent_spotify_change_is_applied_once`, `a_spotify_request_without_an_id_always_runs`, `a_resend_that_arrives_while_the_first_attempt_runs_waits_and_does_not_run_twice`, `the_spotify_snapshot_comes_back_and_a_missing_host_is_an_error`) and the existing IPC tests. `start_with_spotify` is `#[cfg(test)]`, so a non-test build does not warn about it.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add znicz-core/src/player/ipc.rs znicz/src/main.rs
