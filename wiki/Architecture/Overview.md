@@ -1,6 +1,6 @@
 # Architecture overview
 
-Znicz is one workspace with five crates. Each crate has one job.
+Znicz is one workspace with six crates. Each crate has one job.
 
 ```
 AI host (Cursor) --stdio--> znicz-mcp ──┐
@@ -17,6 +17,10 @@ the player process is the **single writer** of `library.db`. It runs a
 `LibraryService` (`znicz-library`), and the TUI, MCP, and `znicz scan` reach it
 through `LibraryHost` over IPC (`Library { op }`; every `Ok` response carries
 the library status). See [Library](Library.md#the-library-service).
+
+`znicz-spotify` controls the Spotify app through the Web API. The player
+process will host its `SpotifyService` the way it hosts the library service;
+see [Spotify](Spotify.md).
 
 `znicz` (the binary) starts the TUI, MCP, library CLI, or **`znicz player`**.
 The first TUI or MCP start **autostarts** the player process if it is not

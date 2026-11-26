@@ -15,6 +15,7 @@
 - [TUI](Architecture/TUI.md)
 - [MCP](Architecture/MCP.md)
 - [Library](Architecture/Library.md)
+- [Spotify](Architecture/Spotify.md)
 - [Stream covers](Architecture/Cover-Sources.md)
 - [Updates](Architecture/Updates.md)
 - [Ownership](Rust/Ownership.md)
