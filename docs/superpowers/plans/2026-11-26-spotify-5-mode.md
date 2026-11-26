@@ -241,7 +241,7 @@ impl StageModel {
 
   `from_player` builds `cover` with `CoverKey::File(path)` for files and `CoverKey::Stream(stream_query(state, track, stations, cover_search))` for streams, only when `cover_on`. Stage's existing `render_cover` keeps the choice of `Logo` when covers are off, so `cover_on` is `shown.cover_protocol != CoverProtocol::Off`.
 
-- [ ] **Step 1: Write the mapping tests**
+- [x] **Step 1: Write the mapping tests**
 
 In `stage_model.rs` tests:
 
@@ -281,12 +281,12 @@ fn covers_off_gives_no_cover_key() {
 
 Make the fixture functions `pub(crate)` in `views/stage.rs` tests (`pub(crate) mod tests`), so the model tests can use them; the title in the assertion is whatever the fixture says (read it from the fixture, do not guess).
 
-- [ ] **Step 2: Run the mapping tests to see them fail**
+- [x] **Step 2: Run the mapping tests to see them fail**
 
 Run: `cargo test -p znicz-tui -- stage_model`
 Expected: FAIL (module missing).
 
-- [ ] **Step 3: Implement the model**
+- [x] **Step 3: Implement the model**
 
 Create `stage_model.rs` with the types above. `from_player` moves the logic of `title_text`, `file_lines`, `stream_lines`, `signal_lines` and the seek and volume choices out of `stage.rs`, with the same strings. Keep the functions in `stage.rs` as thin wrappers until Step 4.
 
@@ -296,16 +296,16 @@ Head rules, copied from the current code:
 
 Signal rules, copied from `signal_lines`: `Signal` heading (`Strong`), then `source` (`stream` or `file`, `Plain`), `device` (`name · stream` or `name · no stream open`), `path` row (`● bit perfect` `Good`, `▲ resampled` `Warn`, or the dim "nothing to compare…" line when no output). `explanation` is the explanation string; it is `None` when there is no output.
 
-- [ ] **Step 4: Render from the model in `stage.rs`**
+- [x] **Step 4: Render from the model in `stage.rs`**
 
 `stage::render` calls `StageModel::from_player(state, &app.stations, shown.cover_search, shown.cover_protocol != CoverProtocol::Off)`, and `detail_lines` takes the model instead of `state`. `detail_lines` keeps its drop order (explanation, then signal, then volume). Convert `StyledText`, `SignalRow` and the seek model to ratatui `Line`s with the same `theme` calls as before. `render_cover` takes the model's `cover` (`Option<CoverKey>`), keeps `keep_previous` and the frozen rule exactly as they are.
 
-- [ ] **Step 5: Run the goldens and the Stage tests**
+- [x] **Step 5: Run the goldens and the Stage tests**
 
 Run: `cargo test -p znicz-tui -- golden_ stage`
 Expected: all pass, including the Task 1 goldens unchanged.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add znicz-tui/src/stage_model.rs znicz-tui/src/lib.rs znicz-tui/src/views/stage.rs
@@ -351,7 +351,7 @@ impl TransportModel {
 
   `signal` is `(source, device)` where `source` is `format_description()` (or `Nothing` when no track: the current `—` line) and `device` is `format!("{} {}", khz, channel_name)` from the output. When no output the current code draws only the source; keep that: `signal` holds `(source, "")` in that case and `path_badge` is `None`. `path_badge` is `● bit perfect` `Good` or `▲ resampled` `Warn`, drawn only when `status != Stopped` and it fits.
 
-- [ ] **Step 1: Write the mapping tests**
+- [x] **Step 1: Write the mapping tests**
 
 ```rust
 #[test]
@@ -370,13 +370,13 @@ fn a_stopped_player_has_no_path_badge() {
 }
 ```
 
-- [ ] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- transport_model` (FAIL: missing).
+- [x] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- transport_model` (FAIL: missing).
 
-- [ ] **Step 3: Implement** `TransportModel` and `from_player` by moving the field choices out of `chrome_line` (title, subtitle from `artist_album()`, seek, volume, toggles) and `signal_line`. `chrome_line` and `signal_line` keep their width-fitting code (the drop order is unchanged) and read the model.
+- [x] **Step 3: Implement** `TransportModel` and `from_player` by moving the field choices out of `chrome_line` (title, subtitle from `artist_album()`, seek, volume, toggles) and `signal_line`. `chrome_line` and `signal_line` keep their width-fitting code (the drop order is unchanged) and read the model.
 
-- [ ] **Step 4: Run the goldens** — `cargo test -p znicz-tui -- golden_ now_playing transport` — all pass unchanged.
+- [x] **Step 4: Run the goldens** — `cargo test -p znicz-tui -- golden_ now_playing transport` — all pass unchanged.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/stage_model.rs znicz-tui/src/views/now_playing.rs
