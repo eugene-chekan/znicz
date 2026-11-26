@@ -52,8 +52,10 @@ The shared types (`SpotifyOp`, `SpotifyReply`, `SpotifyState`, …) and the
 ## Where it runs
 
 The **player process** (`znicz player`) hosts the `SpotifyService`, the same way
-it hosts the library service. It is always built from `[spotify]` and the token
-file. With no client ID it still runs and reports `not configured`.
+it hosts the library service. It is built from `[spotify]` and the token file.
+With no client ID it still runs and reports `not configured`. With no data
+folder for the token file it is not built: the player logs a warning, and every
+`znicz spotify` command prints `Spotify is unavailable: …` and exits 1.
 
 The TUI, MCP and `znicz spotify` reach it over IPC. Playback and browse ops are
 `Spotify { op }`; the snapshot is `SpotifyStatus`. A change op (anything that is
@@ -152,12 +154,9 @@ pause does not go through the "Spotify starts" path.
 
 A login keeps a PKCE session for 10 minutes and starts a listener on
 `127.0.0.1:<port>`. The listener binds only that address and answers one
-finished login. It finishes by whichever comes first:
-
-1. the browser's redirect reaching the listener (a local session, or
-   `ssh -L <port>:127.0.0.1:<port>`);
-2. the address the browser landed on, pasted back (works anywhere; the
-   browser shows "can't connect", which is expected).
+finished login. The redirect or a pasted address finishes it, whichever comes
+first (see [Logging in over SSH](#logging-in-over-ssh)). A login nobody finishes
+expires after the 10 minutes, and its listener lets go of the port.
 
 Logging in again replaces a pending login. The old listener lets go of the
 port first, so the new one can bind it.

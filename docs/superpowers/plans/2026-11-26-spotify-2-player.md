@@ -2088,12 +2088,12 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 **Files:**
 - Modify: `znicz/src/default-config.toml`
 
-- [ ] **Step 1: Confirm the test passes and the block is absent**
+- [x] **Step 1: Confirm the test passes and the block is absent**
 
 Run: `cargo test -p znicz the_default_config_maps_to_an_unconfigured_service -q`
 Expected: PASS (the default file has no `[spotify]` yet, so it parses to defaults).
 
-- [ ] **Step 2: Add the commented block**
+- [x] **Step 2: Add the commented block**
 
 In `znicz/src/default-config.toml`, insert this block directly before `[updates]`:
 
@@ -2109,12 +2109,12 @@ In `znicz/src/default-config.toml`, insert this block directly before `[updates]
 
 ```
 
-- [ ] **Step 3: Run the config tests**
+- [x] **Step 3: Run the config tests**
 
 Run: `cargo test -p znicz spotify -q`
 Expected: PASS, and `the_default_config_maps_to_an_unconfigured_service` still passes with the block present (every key is commented out).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add znicz/src/default-config.toml
@@ -2134,7 +2134,7 @@ Behaviour, config and the IPC request changed, so the wiki changes in this same 
 - Modify: `wiki/Architecture/Overview.md`
 - Check: `wiki/Architecture/MCP.md`
 
-- [ ] **Step 1: Update the crate table in `Spotify.md`**
+- [x] **Step 1: Update the crate table in `Spotify.md`**
 
 In `wiki/Architecture/Spotify.md`, in the table under `## The crate`, after the `| \`listener\` | …` row and before `| \`service\` | …`, the table stays as is; add one row after the `service` row:
 
@@ -2142,7 +2142,7 @@ In `wiki/Architecture/Spotify.md`, in the table under `## The crate`, after the 
 | `browser` | `OpenBrowser` (`auto` / `always` / `never`), the rule for when a front end opens a browser, and the platform opener |
 ```
 
-- [ ] **Step 2: Replace the opening section of `Spotify.md` and add the new sections**
+- [x] **Step 2: Replace the opening section of `Spotify.md` and add the new sections**
 
 In `wiki/Architecture/Spotify.md`, directly after the paragraph that starts `The shared types (\`SpotifyOp\`, …` and its closing sentence, add this new section before `## Login`:
 
@@ -2234,7 +2234,7 @@ The two directions cannot loop. Spotify starting only moves the engine out of
 pause does not go through the "Spotify starts" path.
 ```
 
-- [ ] **Step 3: Update `Overview.md`**
+- [x] **Step 3: Update `Overview.md`**
 
 In `wiki/Architecture/Overview.md`, replace:
 
@@ -2262,13 +2262,13 @@ In the `## Data that moves` table, after the row `| TUI / MCP / CLI | Player pro
 | TUI / MCP / CLI | Player process | Spotify ops (`SpotifyOp`) and the Spotify snapshot (`SpotifyStatus`) |
 ```
 
-- [ ] **Step 4: Check `MCP.md`**
+- [x] **Step 4: Check `MCP.md`**
 
 Run: `grep -n "Command\|Library {\|request" wiki/Architecture/MCP.md`
 
 Expected: the IPC section lists no request kinds (only the `ipc.toml` advert and the autostart behaviour), so `MCP.md` needs no change in this part. If the grep shows a request-kind list, add `Spotify { op }` and `SpotifyStatus` to it in the same style.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add wiki/Architecture/Spotify.md wiki/Architecture/Overview.md
@@ -2286,18 +2286,18 @@ The binary now links `znicz-spotify`, so `THIRD-PARTY-LICENSES.html` changes.
 **Files:**
 - Modify: `THIRD-PARTY-LICENSES.html` (generated)
 
-- [ ] **Step 1: Check the tool**
+- [x] **Step 1: Check the tool**
 
 Run: `cargo about --version`
 Expected: a version line. If the command is missing, install it with `cargo install --locked cargo-about`, then run the next step.
 
-- [ ] **Step 2: Regenerate and check it changed only as expected**
+- [x] **Step 2: Regenerate and check it changed only as expected**
 
 Run: `sh scripts/third-party-licenses.sh && git diff --stat THIRD-PARTY-LICENSES.html`
 
 Expected: the script exits 0 and the diff is limited to the licence entries of the crates `znicz-spotify` pulls in (the existing `ureq` stack is already there; new entries are the Spotify crate's own dependencies, if any are new). `Cargo.lock` is not changed by the script.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add THIRD-PARTY-LICENSES.html
@@ -2312,22 +2312,22 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 
 **Files:** none (verification; fix any finding in the file where it is).
 
-- [ ] **Step 1: Run the whole workspace**
+- [x] **Step 1: Run the whole workspace**
 
 Run: `cargo test --workspace -q`
 Expected: PASS.
 
-- [ ] **Step 2: Clippy and formatting**
+- [x] **Step 2: Clippy and formatting**
 
 Run: `cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check`
 Expected: both pass. If `fmt` reports differences, run `cargo fmt --all`, re-run the check, and commit the formatting as `style: cargo fmt` (its own commit).
 
-- [ ] **Step 3: Confirm the working tree is clean**
+- [x] **Step 3: Confirm the working tree is clean**
 
 Run: `git status --short`
 Expected: no output (everything is committed). If `Cargo.lock` or a generated file still shows, commit it with the task that changed it.
 
-- [ ] **Step 4: Commit any fixes**
+- [x] **Step 4: Commit any fixes**
 
 If steps 1–3 needed changes:
 
