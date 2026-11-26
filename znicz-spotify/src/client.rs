@@ -1,0 +1,464 @@
+//! Holds what a logged-in session needs: the settings, the token (in memory
+//! and on disk), and a login in progress. Every API call goes through `call`,
+//! which refreshes the token before it expires and once more on a 401.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use znicz_core::SpotifyConfig;
+
+use crate::api::Api;
+use crate::auth;
+use crate::error::{Result, SpotifyError};
+use crate::http::{ACCOUNTS_BASE, API_BASE, Http};
+use crate::pkce;
+use crate::redirect;
+use crate::token::{self, Token};
+
+/// How long a started login waits for its redirect.
+pub(crate) const LOGIN_TTL_MS: u64 = 10 * 60 * 1000;
+
+/// Unix time in milliseconds. Tests inject their own.
+pub(crate) type Clock = Arc<dyn Fn() -> u64 + Send + Sync>;
+
+pub(crate) fn system_clock() -> Clock {
+    Arc::new(|| {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    })
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct Endpoints {
+    pub api: String,
+    pub accounts: String,
+}
+
+impl Default for Endpoints {
+    fn default() -> Self {
+        Self {
+            api: API_BASE.into(),
+            accounts: ACCOUNTS_BASE.into(),
+        }
+    }
+}
+
+/// A login that waits for its redirect.
+struct LoginSession {
+    verifier: String,
+    state: String,
+    started_ms: u64,
+}
+
+/// What `begin_login` hands back.
+#[derive(Debug)]
+pub(crate) struct BegunLogin {
+    pub url: String,
+    pub state: String,
+}
+
+pub(crate) struct Client {
+    config: SpotifyConfig,
+    token_path: PathBuf,
+    endpoints: Endpoints,
+    http: Http,
+    clock: Clock,
+    token: Option<Token>,
+    login: Option<LoginSession>,
+}
+
+impl Client {
+    pub(crate) fn new(
+        config: SpotifyConfig,
+        token_path: PathBuf,
+        endpoints: Endpoints,
+        clock: Clock,
+    ) -> Self {
+        let token = token::load(&token_path).unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "could not read the Spotify token");
+            None
+        });
+        Self {
+            config,
+            token_path,
+            endpoints,
+            http: Http::new(),
+            clock,
+            token,
+            login: None,
+        }
+    }
+
+    pub(crate) fn now_ms(&self) -> u64 {
+        (self.clock)()
+    }
+
+    pub(crate) fn config(&self) -> &SpotifyConfig {
+        &self.config
+    }
+
+    /// A different client ID cannot refresh the old token, so it logs out.
+    pub(crate) fn set_config(&mut self, config: SpotifyConfig) {
+        if config.client_id != self.config.client_id {
+            if let Err(e) = self.logout() {
+                tracing::warn!(error = %e, "could not remove the Spotify token");
+            }
+        }
+        if config.redirect_port != self.config.redirect_port {
+            self.login = None;
+        }
+        self.config = config;
+    }
+
+    pub(crate) fn is_logged_in(&self) -> bool {
+        self.config.is_configured() && self.token.is_some()
+    }
+
+    pub(crate) fn login_pending(&self) -> bool {
+        self.login
+            .as_ref()
+            .is_some_and(|login| self.now_ms().saturating_sub(login.started_ms) <= LOGIN_TTL_MS)
+    }
+
+    pub(crate) fn begin_login(&mut self) -> Result<BegunLogin> {
+        if !self.config.is_configured() {
+            return Err(SpotifyError::NotConfigured);
+        }
+        let verifier = pkce::random_verifier();
+        let state = pkce::random_state();
+        let url = auth::authorize_url(
+            &self.endpoints.accounts,
+            &self.config.client_id,
+            &self.config.redirect_uri(),
+            &pkce::challenge(&verifier),
+            &state,
+        );
+        self.login = Some(LoginSession {
+            verifier,
+            state: state.clone(),
+            started_ms: self.now_ms(),
+        });
+        Ok(BegunLogin { url, state })
+    }
+
+    /// Finish the login from a pasted address or a callback query. A wrong
+    /// address keeps the login open; any other outcome ends it.
+    pub(crate) fn complete_login(&mut self, input: &str) -> Result<()> {
+        let login = self.login.as_ref().ok_or(SpotifyError::NoLogin)?;
+        if self.now_ms().saturating_sub(login.started_ms) > LOGIN_TTL_MS {
+            self.login = None;
+            return Err(SpotifyError::LoginExpired);
+        }
+        let code = match redirect::code_from(input, &login.state) {
+            Err(SpotifyError::WrongAddress) => return Err(SpotifyError::WrongAddress),
+            other => other,
+        };
+        let login = self.login.take().expect("checked above");
+        let token = auth::exchange_code(
+            &self.http,
+            &self.endpoints.accounts,
+            &self.config.client_id,
+            &code?,
+            &login.verifier,
+            &self.config.redirect_uri(),
+            self.now_ms() / 1000,
+        )?;
+        token::save(&self.token_path, &token)?;
+        self.token = Some(token);
+        Ok(())
+    }
+
+    pub(crate) fn cancel_login(&mut self) {
+        self.login = None;
+    }
+
+    pub(crate) fn logout(&mut self) -> Result<()> {
+        self.token = None;
+        self.login = None;
+        token::remove(&self.token_path)
+    }
+
+    /// Run `f` with a fresh access token: refresh first when it is about to
+    /// expire, and refresh once more and retry when the API answers 401.
+    pub(crate) fn call<T>(&mut self, f: impl Fn(&Api<'_>) -> Result<T>) -> Result<T> {
+        if !self.config.is_configured() {
+            return Err(SpotifyError::NotConfigured);
+        }
+        let expired = match &self.token {
+            None => return Err(SpotifyError::NotLoggedIn),
+            Some(token) => token.needs_refresh(self.now_ms() / 1000),
+        };
+        if expired {
+            self.refresh()?;
+        }
+        match self.run(&f) {
+            Err(SpotifyError::Unauthorized) => {
+                self.refresh()?;
+                self.run(&f)
+            }
+            result => result,
+        }
+    }
+
+    fn run<T>(&self, f: &impl Fn(&Api<'_>) -> Result<T>) -> Result<T> {
+        let token = self.token.as_ref().ok_or(SpotifyError::NotLoggedIn)?;
+        let api = Api {
+            http: &self.http,
+            base: &self.endpoints.api,
+            token: &token.access_token,
+        };
+        f(&api)
+    }
+
+    fn refresh(&mut self) -> Result<()> {
+        let refresh_token = match &self.token {
+            Some(token) => token.refresh_token.clone(),
+            None => return Err(SpotifyError::NotLoggedIn),
+        };
+        match auth::refresh(
+            &self.http,
+            &self.endpoints.accounts,
+            &self.config.client_id,
+            &refresh_token,
+            self.now_ms() / 1000,
+        ) {
+            Ok(token) => {
+                token::save(&self.token_path, &token)?;
+                self.token = Some(token);
+                Ok(())
+            }
+            Err(SpotifyError::Revoked) => {
+                self.logout()?;
+                Err(SpotifyError::Revoked)
+            }
+            Err(e) => Err(e),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+
+    use super::*;
+    use crate::http::test_server::{Response, serve};
+
+    const CLIENT_ID: &str = "0123456789abcdef0123456789abcdef";
+
+    struct Fixture {
+        client: Client,
+        now: Arc<AtomicU64>,
+        token_path: PathBuf,
+        _dir: tempfile::TempDir,
+    }
+
+    fn fixture(origin: &str, logged_in: Option<Token>) -> Fixture {
+        let dir = tempfile::tempdir().unwrap();
+        let token_path = dir.path().join("spotify_token.json");
+        if let Some(token) = &logged_in {
+            token::save(&token_path, token).unwrap();
+        }
+        let now = Arc::new(AtomicU64::new(1_000_000));
+        let clock_now = now.clone();
+        let clock: Clock = Arc::new(move || clock_now.load(Ordering::SeqCst));
+        let config = SpotifyConfig {
+            client_id: CLIENT_ID.into(),
+            ..SpotifyConfig::default()
+        };
+        let endpoints = Endpoints {
+            api: format!("{origin}/v1"),
+            accounts: origin.to_string(),
+        };
+        Fixture {
+            client: Client::new(config, token_path.clone(), endpoints, clock),
+            now,
+            token_path,
+            _dir: dir,
+        }
+    }
+
+    fn token(expires_at: u64) -> Token {
+        Token {
+            access_token: "old".into(),
+            refresh_token: "r".into(),
+            expires_at,
+            scope: String::new(),
+        }
+    }
+
+    fn token_reply() -> Response {
+        Response::json(
+            200,
+            r#"{"access_token":"new","expires_in":3600,"refresh_token":"r2"}"#,
+        )
+    }
+
+    fn state_of(url: &str) -> String {
+        url.split("state=")
+            .nth(1)
+            .unwrap()
+            .split('&')
+            .next()
+            .unwrap()
+            .to_string()
+    }
+
+    #[test]
+    fn login_needs_a_client_id() {
+        let mut f = fixture("http://127.0.0.1:1", None);
+        f.client.set_config(SpotifyConfig::default());
+        assert_eq!(
+            f.client.begin_login().unwrap_err(),
+            SpotifyError::NotConfigured
+        );
+    }
+
+    #[test]
+    fn a_pasted_address_finishes_the_login_and_saves_the_token() {
+        let (origin, _) = serve(|_| token_reply());
+        let mut f = fixture(&origin, None);
+        assert!(!f.client.is_logged_in());
+        let login = f.client.begin_login().unwrap();
+        assert!(login.url.contains(&format!("client_id={CLIENT_ID}")));
+        assert!(f.client.login_pending());
+        let pasted = format!(
+            "http://127.0.0.1:8898/callback?code=c&state={}",
+            state_of(&login.url)
+        );
+        f.client.complete_login(&pasted).unwrap();
+        assert!(f.client.is_logged_in());
+        assert!(!f.client.login_pending());
+        assert_eq!(
+            token::load(&f.token_path).unwrap().unwrap().access_token,
+            "new"
+        );
+    }
+
+    #[test]
+    fn a_wrong_address_keeps_the_login_open() {
+        let mut f = fixture("http://127.0.0.1:1", None);
+        f.client.begin_login().unwrap();
+        assert_eq!(
+            f.client.complete_login("code=c&state=other").unwrap_err(),
+            SpotifyError::WrongAddress
+        );
+        assert!(f.client.login_pending());
+    }
+
+    #[test]
+    fn a_login_expires_after_ten_minutes() {
+        let mut f = fixture("http://127.0.0.1:1", None);
+        let login = f.client.begin_login().unwrap();
+        f.now.fetch_add(10 * 60 * 1000 + 1, Ordering::SeqCst);
+        assert!(!f.client.login_pending());
+        let pasted = format!("code=c&state={}", state_of(&login.url));
+        assert_eq!(
+            f.client.complete_login(&pasted).unwrap_err(),
+            SpotifyError::LoginExpired
+        );
+        assert_eq!(
+            f.client.complete_login(&pasted).unwrap_err(),
+            SpotifyError::NoLogin
+        );
+    }
+
+    #[test]
+    fn refreshes_before_the_token_expires() {
+        let posts = Arc::new(AtomicUsize::new(0));
+        let counter = posts.clone();
+        let (origin, seen) = serve(move |request| {
+            if request.path() == "/api/token" {
+                counter.fetch_add(1, Ordering::SeqCst);
+                token_reply()
+            } else {
+                Response::json(200, r#"{"id":"u","product":"premium"}"#)
+            }
+        });
+        // 1_000_000 ms = 1_000 s; the token expires 30 s later, inside the margin.
+        let mut f = fixture(&origin, Some(token(1_030)));
+        f.client.call(|api| api.me()).unwrap();
+        assert_eq!(posts.load(Ordering::SeqCst), 1);
+        let me = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|r| r.path() == "/v1/me")
+            .cloned()
+            .unwrap();
+        assert_eq!(me.header("authorization"), Some("Bearer new"));
+    }
+
+    #[test]
+    fn a_401_refreshes_once_and_retries() {
+        let calls = Arc::new(Mutex::new(Vec::<String>::new()));
+        let log = calls.clone();
+        let (origin, _) = serve(move |request| {
+            let auth = request.header("authorization").unwrap_or("").to_string();
+            log.lock()
+                .unwrap()
+                .push(format!("{} {auth}", request.path()));
+            match (request.path(), auth.as_str()) {
+                ("/api/token", _) => token_reply(),
+                ("/v1/me", "Bearer old") => Response::empty(401),
+                _ => Response::json(200, r#"{"id":"u"}"#),
+            }
+        });
+        let mut f = fixture(&origin, Some(token(999_999)));
+        f.client.call(|api| api.me()).unwrap();
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["/v1/me Bearer old", "/api/token ", "/v1/me Bearer new"]
+        );
+    }
+
+    #[test]
+    fn a_revoked_refresh_logs_out() {
+        let (origin, _) = serve(|request| {
+            if request.path() == "/api/token" {
+                Response::json(400, r#"{"error":"invalid_grant"}"#)
+            } else {
+                Response::empty(401)
+            }
+        });
+        let mut f = fixture(&origin, Some(token(999_999)));
+        assert_eq!(
+            f.client.call(|api| api.me()).unwrap_err(),
+            SpotifyError::Revoked
+        );
+        assert!(!f.client.is_logged_in());
+        assert!(!f.token_path.exists());
+    }
+
+    #[test]
+    fn calls_need_a_login() {
+        let mut f = fixture("http://127.0.0.1:1", None);
+        assert_eq!(
+            f.client.call(|api| api.me()).unwrap_err(),
+            SpotifyError::NotLoggedIn
+        );
+    }
+
+    #[test]
+    fn a_new_client_id_logs_out() {
+        let mut f = fixture("http://127.0.0.1:1", Some(token(999_999)));
+        assert!(f.client.is_logged_in());
+        f.client.set_config(SpotifyConfig {
+            client_id: "ffffffffffffffffffffffffffffffff".into(),
+            ..SpotifyConfig::default()
+        });
+        assert!(!f.client.is_logged_in());
+        assert!(!f.token_path.exists());
+    }
+
+    #[test]
+    fn logout_removes_the_token() {
+        let mut f = fixture("http://127.0.0.1:1", Some(token(999_999)));
+        f.client.logout().unwrap();
+        assert!(!f.client.is_logged_in());
+        assert!(!f.token_path.exists());
+    }
+}

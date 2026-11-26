@@ -5,6 +5,7 @@
 
 mod api;
 mod auth;
+mod client;
 mod error;
 mod http;
 mod model;
