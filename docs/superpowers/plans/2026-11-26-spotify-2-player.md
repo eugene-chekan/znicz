@@ -783,7 +783,7 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 - Create: `znicz-spotify/src/browser.rs`
 - Modify: `znicz-spotify/src/lib.rs`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `znicz-spotify/src/browser.rs` with only the tests for now:
 
@@ -867,7 +867,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Register the module first: in `znicz-spotify/src/lib.rs`, add `pub mod browser;` before `mod api;`:
 
@@ -879,7 +879,7 @@ mod api;
 Run: `cargo test -p znicz-spotify browser -q`
 Expected: FAIL to compile: `should_open`, `OpenBrowser`, `spawn_reaped` not found.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Insert above `#[cfg(test)]` in `znicz-spotify/src/browser.rs`:
 
@@ -978,12 +978,12 @@ fn opener(url: &str) -> Command {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-spotify browser -q`
 Expected: PASS (7 tests on Unix, 5 elsewhere).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-spotify/src/browser.rs znicz-spotify/src/lib.rs
