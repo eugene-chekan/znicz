@@ -141,6 +141,9 @@ impl SpotifyHost for SpotifyService {
     fn apply(&self, op: SpotifyOp) -> znicz_core::Result<SpotifyReply> {
         let result = self.shared.apply(op);
         if let Err(e) = &result {
+            if matches!(e, SpotifyError::Revoked) {
+                self.shared.on_revoked();
+            }
             self.shared.state.lock().unwrap().last_error = Some(e.to_string());
         }
         Ok(result?)
@@ -190,6 +193,12 @@ impl Shared {
         state.login = login;
     }
 
+    /// The refresh token was revoked: `Client` has removed the token.
+    fn on_revoked(&self) {
+        self.set_login(SpotifyLogin::NotLoggedIn);
+        self.state.lock().unwrap().last_error = Some(SpotifyError::Revoked.to_string());
+    }
+
     fn apply(self: &Arc<Self>, op: SpotifyOp) -> Result<SpotifyReply> {
         self.touch();
         match op {
@@ -198,12 +207,15 @@ impl Shared {
                 Ok(SpotifyReply::Done)
             }
             SpotifyOp::Configure { config } => {
-                let login = {
+                let (login, pending) = {
                     let mut client = self.client.lock().unwrap();
                     client.set_config(config);
-                    login_of(&client)
+                    (login_of(&client), client.login_pending())
                 };
-                self.listener.lock().unwrap().take();
+                // A login still waiting for its callback keeps its listener.
+                if !pending {
+                    self.listener.lock().unwrap().take();
+                }
                 self.set_login(login);
                 self.wake();
                 Ok(SpotifyReply::Done)
@@ -278,6 +290,8 @@ impl Shared {
         };
         // Before the listener starts: a fast callback must not be overwritten.
         self.set_login(SpotifyLogin::LoggingIn);
+        // Release the port held by an earlier login's listener.
+        self.listener.lock().unwrap().take();
         let weak: Weak<Shared> = Arc::downgrade(self);
         let started = CallbackListener::start(port, move |query| {
             let shared = weak.upgrade()?;
@@ -306,11 +320,13 @@ impl Shared {
             Ok(()) => {
                 self.listener.lock().unwrap().take();
                 self.set_login(SpotifyLogin::LoggedIn);
+                self.state.lock().unwrap().last_error = None;
                 self.refresh_account();
                 self.wake();
                 Ok(())
             }
-            Err(SpotifyError::WrongAddress) => Err(SpotifyError::WrongAddress),
+            // Not a failed login: a wrong address, or a paste with no login to finish.
+            Err(e @ (SpotifyError::WrongAddress | SpotifyError::NoLogin)) => Err(e),
             Err(e) => {
                 self.listener.lock().unwrap().take();
                 self.set_login(SpotifyLogin::Failed(e.to_string()));
@@ -320,8 +336,10 @@ impl Shared {
     }
 
     fn refresh_account(&self) {
-        match self.client.lock().unwrap().call(|api| api.me()) {
+        let result = self.client.lock().unwrap().call(|api| api.me());
+        match result {
             Ok(account) => self.state.lock().unwrap().account = Some(account),
+            Err(SpotifyError::Revoked) => self.on_revoked(),
             Err(e) => tracing::warn!(error = %e, "could not read the Spotify account"),
         }
     }
@@ -329,7 +347,9 @@ impl Shared {
     /// A playback command: pause Znicz first when it starts Spotify, fall
     /// back to the preferred device when none is active, and wait out one 429.
     fn control(&self, op: &SpotifyOp) -> Result<()> {
-        if op.starts_playback() {
+        // Only playback that can run pauses Znicz; a logged-out play fails below.
+        let starts_here = op.starts_playback() && self.client.lock().unwrap().is_logged_in();
+        if starts_here {
             (self.on_start_playback)();
         }
         let result = match self.control_once(op, None) {
@@ -481,39 +501,46 @@ impl Shared {
             Ok((playback, devices))
         });
         if self.login_epoch.load(Ordering::SeqCst) != epoch {
+            *self.last_poll_error.lock().unwrap() = None;
             return;
         }
         match result {
             Ok((playback, devices)) => {
+                // Never hold `last_poll_error` and `state` at once.
+                let previous = self.last_poll_error.lock().unwrap().take();
                 let mut state = self.state.lock().unwrap();
                 if self.login_epoch.load(Ordering::SeqCst) != epoch {
+                    drop(state);
+                    *self.last_poll_error.lock().unwrap() = None;
                     return;
                 }
                 state.playback = playback;
                 if let Some(devices) = devices {
                     state.devices = devices;
                 }
-                let mut last = self.last_poll_error.lock().unwrap();
-                if last.is_some() && state.last_error == *last {
+                if previous.is_some() && state.last_error == previous {
                     state.last_error = None;
                 }
-                *last = None;
             }
-            Err(SpotifyError::Revoked) => {
-                self.set_login(SpotifyLogin::NotLoggedIn);
-                self.state.lock().unwrap().last_error = Some(SpotifyError::Revoked.to_string());
-            }
+            Err(SpotifyError::Revoked) => self.on_revoked(),
             Err(SpotifyError::RateLimited { retry_after_secs }) => {
                 self.backoff_until_ms
                     .store(now + retry_after_secs * 1000, Ordering::SeqCst);
             }
             Err(e) => {
                 let text = e.to_string();
-                let mut last = self.last_poll_error.lock().unwrap();
-                if last.as_deref() != Some(text.as_str()) {
+                let changed = {
+                    let mut last = self.last_poll_error.lock().unwrap();
+                    if last.as_deref() != Some(text.as_str()) {
+                        *last = Some(text.clone());
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if changed {
                     tracing::warn!(error = %text, "Spotify poll failed");
-                    self.state.lock().unwrap().last_error = Some(text.clone());
-                    *last = Some(text);
+                    self.state.lock().unwrap().last_error = Some(text);
                 }
             }
         }
@@ -756,6 +783,7 @@ mod tests {
         let state = f.service.state();
         assert_eq!(state.login, SpotifyLogin::LoggedIn);
         assert_eq!(state.account.unwrap().user, "Eugene");
+        assert_eq!(state.last_error, None);
     }
 
     #[test]
@@ -856,5 +884,82 @@ mod tests {
         assert_eq!(f.service.state().login, SpotifyLogin::NotConfigured);
         let error = f.service.apply(SpotifyOp::Devices).unwrap_err();
         assert_eq!(error.to_string(), SpotifyError::NotConfigured.to_string());
+    }
+
+    #[test]
+    fn a_revoked_token_during_a_command_logs_out() {
+        let f = fixture(true, "", |request| match request.path() {
+            "/v1/me/player/next" => Response::empty(401),
+            "/api/token" => Response::json(400, r#"{"error":"invalid_grant"}"#),
+            _ => api_default(request),
+        });
+        f.service.apply(SpotifyOp::Next).unwrap_err();
+        assert_eq!(f.service.state().login, SpotifyLogin::NotLoggedIn);
+    }
+
+    #[test]
+    fn pasting_after_the_login_finished_keeps_it() {
+        let f = fixture(true, "", api_default);
+        assert!(
+            f.service
+                .apply(SpotifyOp::CompleteLogin {
+                    redirect_url: "code=x&state=y".into()
+                })
+                .is_err()
+        );
+        assert_eq!(f.service.state().login, SpotifyLogin::LoggedIn);
+    }
+
+    #[test]
+    fn logging_in_twice_does_not_report_a_busy_port() {
+        let f = fixture(false, "", api_default);
+        f.service.apply(SpotifyOp::BeginLogin).unwrap();
+        f.service.apply(SpotifyOp::BeginLogin).unwrap();
+        let state = f.service.state();
+        let error = state.last_error.unwrap_or_default();
+        assert!(!error.contains("busy"), "{error}");
+    }
+
+    #[test]
+    fn configure_with_the_same_port_keeps_the_login_listener() {
+        let f = fixture(false, "", api_default);
+        let url = match f.service.apply(SpotifyOp::BeginLogin).unwrap() {
+            SpotifyReply::AuthorizeUrl { url } => url,
+            other => panic!("{other:?}"),
+        };
+        let state = url
+            .split("state=")
+            .nth(1)
+            .unwrap()
+            .split('&')
+            .next()
+            .unwrap()
+            .to_string();
+        let port = f.service.redirect_port();
+        f.service
+            .apply(SpotifyOp::Configure {
+                config: SpotifyConfig {
+                    client_id: CLIENT_ID.into(),
+                    redirect_port: port,
+                    device: "Kitchen".into(),
+                },
+            })
+            .unwrap();
+        let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        use std::io::Write;
+        write!(
+            stream,
+            "GET /callback?code=x&state={state} HTTP/1.1\r\n\r\n"
+        )
+        .unwrap();
+        let state = wait_for(&f.service, |s| s.login == SpotifyLogin::LoggedIn);
+        assert_eq!(state.login, SpotifyLogin::LoggedIn);
+    }
+
+    #[test]
+    fn play_while_logged_out_does_not_pause_znicz() {
+        let f = fixture(false, "", api_default);
+        f.service.apply(play()).unwrap_err();
+        assert_eq!(f.starts.load(Ordering::SeqCst), 0);
     }
 }
