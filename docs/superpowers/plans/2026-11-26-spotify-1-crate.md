@@ -966,7 +966,7 @@ git commit -m "feat(spotify): read the code from a pasted redirect address"
 - Create: `znicz-spotify/src/token.rs`
 - Modify: `znicz-spotify/src/lib.rs` (add `mod token;` and `pub use token::default_token_path;`)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `znicz-spotify/src/token.rs`:
 
@@ -1051,12 +1051,12 @@ mod tests {
 
 Add `mod token;` and `pub use token::default_token_path;` to `lib.rs`.
 
-- [ ] **Step 2: Run to see it fail**
+- [x] **Step 2: Run to see it fail**
 
 Run: `cargo test -p znicz-spotify token`
 Expected: compile errors (`Token`, `save`, `load`, `remove` missing).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Between the `use` lines and the tests:
 
@@ -1158,12 +1158,12 @@ fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cargo test -p znicz-spotify token`
 Expected: 6 pass (5 on Windows).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-spotify/src/token.rs znicz-spotify/src/lib.rs
