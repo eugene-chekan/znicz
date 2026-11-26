@@ -4632,6 +4632,7 @@ dependencies = [
  "znicz-core",
  "znicz-library",
  "znicz-mcp",
+ "znicz-spotify",
  "znicz-tui",
 ]
 

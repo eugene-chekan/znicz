@@ -19,6 +19,7 @@ znicz-core = { path = "../znicz-core" }
 znicz-library = { path = "../znicz-library" }
 znicz-tui = { path = "../znicz-tui" }
 znicz-mcp = { path = "../znicz-mcp" }
+znicz-spotify = { path = "../znicz-spotify" }
 clap.workspace = true
 color-eyre.workspace = true
 serde.workspace = true

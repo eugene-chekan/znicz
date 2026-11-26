@@ -42,9 +42,14 @@ fn poll_interval(logged_in: bool, now_ms: u64, last_touch_ms: u64) -> Option<Dur
 
 pub struct ServiceOptions {
     pub token_path: PathBuf,
-    /// Called before an op that starts Spotify playback, so the player can
+    /// Called inside `SpotifyHost::apply`, on the caller's thread, before a
+    /// playback op that will run (the service is logged in), so the player can
     /// pause its own engine.
-    /// Runs on the caller's thread, inside `apply`. It must not take a lock the caller of `apply` holds (for example the player's), and should hold a `Weak` to the player rather than an `Arc`.
+    ///
+    /// It must not wait for a lock the caller of `apply` holds: the IPC server
+    /// holds one per change request. Capture a cheap handle to the player (a
+    /// clone of its `PlayerHandle`), not an `Arc` that keeps the service and
+    /// the player alive together.
     pub on_start_playback: Box<dyn Fn() + Send + Sync>,
 }
 
@@ -117,7 +122,10 @@ impl SpotifyService {
     }
 
     /// Pause Spotify if it is playing: Znicz is about to play.
-    /// Blocks for a whole Web API request (up to about 40 s: a refresh, a retry and a rate-limit wait), so never call it while holding the player's lock.
+    ///
+    /// Blocks for a whole Web API request (up to about 40 s: a refresh, a retry
+    /// and a rate-limit wait). Never call it while holding the player's lock;
+    /// call it on its own thread.
     pub fn pause_if_playing(&self) {
         if !self.shared.state.lock().unwrap().is_playing() {
             return;

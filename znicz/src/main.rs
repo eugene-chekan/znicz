@@ -22,6 +22,9 @@ use znicz_tui::{
 };
 
 mod daemon;
+// Nothing calls this module until the player wires it in (a later task).
+#[allow(dead_code)]
+mod spotify_pause;
 mod update;
 
 /// The file written on first start and by `znicz config init`.
