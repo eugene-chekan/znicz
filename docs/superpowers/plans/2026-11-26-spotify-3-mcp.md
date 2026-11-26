@@ -1085,7 +1085,7 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 - Modify: `znicz-mcp/src/lib.rs` (`run_stdio`)
 - Modify: `znicz/src/main.rs` (`run_mcp`)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 In `znicz-mcp/src/server.rs`, add to the `tests` module (near `hosted_player`):
 
@@ -1107,12 +1107,12 @@ In `znicz-mcp/src/server.rs`, add to the `tests` module (near `hosted_player`):
     }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cargo test -p znicz-mcp the_server_takes_a_spotify_connection_of_its_own -q`
 Expected: FAIL to compile (`ZniczMcpServer::new` takes 2 arguments, not 3).
 
-- [ ] **Step 3: Add the field and the constructors**
+- [x] **Step 3: Add the field and the constructors**
 
 In `znicz-mcp/src/server.rs`, replace the struct and the constructor block (from `#[derive(Clone)]` through the end of `fn build`) with:
 
@@ -1175,7 +1175,7 @@ impl ZniczMcpServer {
     }
 ```
 
-- [ ] **Step 4: Update `run_stdio` and `run_mcp`**
+- [x] **Step 4: Update `run_stdio` and `run_mcp`**
 
 In `znicz-mcp/src/lib.rs`, replace `run_stdio` with:
 
@@ -1214,7 +1214,7 @@ In `znicz/src/main.rs`, in `fn run_mcp`, replace `let player = connect_agent(dev
 
 and change the `block_on` line to `.block_on(run_stdio(player, spotify, skills_dirs, library))`.
 
-- [ ] **Step 5: Update the existing test constructors**
+- [x] **Step 5: Update the existing test constructors**
 
 In `znicz-mcp/src/server.rs`'s tests:
 
@@ -1256,12 +1256,12 @@ In `znicz-mcp/src/server.rs`'s tests:
 
 - `station_server()`: change `let server = ZniczMcpServer::new(client, Vec::new());` to `let server = ZniczMcpServer::new(client, second_client(dir.path()), Vec::new());`
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-mcp -q && cargo build -p znicz -q`
 Expected: PASS. A dead-code warning for `spotify` may appear until Task 7 reads it; that is fine.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add znicz-mcp/src/server.rs znicz-mcp/src/lib.rs znicz/src/main.rs
@@ -1280,7 +1280,7 @@ Everything here is pure: argument types, the op builders, the status JSON and th
 - Create: `znicz-mcp/src/spotify_json.rs`
 - Modify: `znicz-mcp/src/lib.rs` (`mod spotify_json;`)
 
-- [ ] **Step 1: Write the module with its tests**
+- [x] **Step 1: Write the module with its tests**
 
 Create `znicz-mcp/src/spotify_json.rs` with exactly this content:
 
@@ -1729,16 +1729,16 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Declare the module**
+- [x] **Step 2: Declare the module**
 
 In `znicz-mcp/src/lib.rs`, add `mod spotify_json;` after `mod skills;` (the top of the file reads `mod server;`, `mod skills;`).
 
-- [ ] **Step 3: Run the tests to verify they pass**
+- [x] **Step 3: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-mcp spotify_json -q`
 Expected: PASS, 7 tests. If `SpotifyPlayback`, `SpotifyDevice` or `SpotifyAccount` need a different field, the compiler names it; the field names above are from `znicz-core/src/spotify_host.rs`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add znicz-mcp/src/spotify_json.rs znicz-mcp/src/lib.rs
