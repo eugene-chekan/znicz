@@ -84,7 +84,7 @@ Adds `Tab::Spotify` after General, makes `1`–`6` select tabs, and updates the 
 - Consumes: nothing new.
 - Produces: `Tab::Spotify` with `label() == "Spotify"`, `Tab::from_key('6') == Some(Tab::Spotify)`, and `Tab::ALL` of length 6 in the order Display, Audio, Playback, Library, General, Spotify.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `znicz-tui/src/settings.rs`, replace the body of `tabs_have_labels_and_number_keys` so it asserts the six tabs:
 
@@ -124,12 +124,12 @@ Add a test to the same file's test module:
     }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz-tui -- tabs_have_labels_and_number_keys the_right_arrow_stops_at_the_last_tab_spotify`
 Expected: FAIL (no variant `Spotify`).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `settings.rs`: add `Spotify` after `General` in the `Tab` enum; `ALL: [Tab; 6]` with `Tab::Spotify` last; `label` returns `"Spotify"`; `from_key` doc says `'1'` to `'6'` (its code already uses `ALL.get`); `rows` gets `Tab::Spotify => Vec::new(),` for now. Task 3 fills it in.
 
@@ -139,12 +139,12 @@ In `views/settings.rs`, `TAB_BAR_HELP` says `"←/→ choose a tab, ↓ or Enter
 
 In `keys.rs`, `SETTINGS` has `b("1–6", "go to a tab")`.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-tui -- settings::tests settings_ui::tests`
 Expected: PASS. The tests `each_tab_has_its_rows` and the ones that index `Tab::General` as the last tab still pass, because General is unchanged.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/settings.rs znicz-tui/src/app/settings_ui.rs znicz-tui/src/views/settings.rs znicz-tui/src/keys.rs
@@ -183,7 +183,7 @@ Everything the rows say and check, as functions with no IO. This file is the pla
   - `pub enum LoginOutcome { Success(String), Failure(String) }`
   - `pub fn login_outcome(login: &SpotifyLogin, account: Option<&SpotifyAccount>) -> Option<LoginOutcome>`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `znicz-tui/src/spotify_rows.rs` with the module doc and tests only (the functions come in Step 3). The tests:
 
@@ -333,12 +333,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz-tui spotify_rows`
 Expected: FAIL to compile (the functions are not defined yet).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Write the functions in `spotify_rows.rs`, above the test module:
 
@@ -491,12 +491,12 @@ pub fn login_outcome(login: &SpotifyLogin, account: Option<&SpotifyAccount>) -> 
 
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-tui spotify_rows`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/spotify_rows.rs znicz-tui/src/lib.rs znicz-tui/Cargo.toml Cargo.lock
@@ -529,7 +529,7 @@ Adds the five rows to `settings.rs` and fills `rows(Tab::Spotify, _)`. Adds `Kin
   - `Values` gains `pub spotify: SpotifyView`
   - `SettingsValues` gains `pub spotify: SpotifyConfig` and `pub open_browser: OpenBrowser`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to the `settings.rs` test module (it needs `use znicz_core::SpotifyLogin;`; the `values()` helper gets `spotify: SpotifyView::default()`, and the other `Values { … }` literals in the tests, three of them, get the same field):
 
@@ -654,12 +654,12 @@ And in `spotify_rows.rs`'s test module add (it needs `use crate::settings::Row;`
 
 Update the `every_row_has_an_explanation` test (it iterates `Tab::ALL`, so it already covers the new rows) and the `kinds_match_the_spec_table` test if it lists the kinds exhaustively; leave the existing expectations for the old rows alone.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz-tui -- settings::tests spotify_rows`
 Expected: FAIL to compile (no variants, no `dimmed`, no `prompt_range`, no `Values.spotify`, no generic `step`, no `sent_to_player`).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `settings.rs`:
 
@@ -737,12 +737,12 @@ pub fn sent_to_player(row: &Row) -> bool {
 17. `views/settings.rs` `values()`: add `spotify: SpotifyView::default(),` (import `crate::spotify_rows::SpotifyView`). Task 6 replaces it with `app.spotify_view()`.
 18. `znicz/src/main.rs`, the `SettingsValues` literal (about line 403): add `spotify: spotify_config(&config.spotify), open_browser: open_browser_setting(&config.spotify),`. Both functions already exist in that file.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-tui -- settings::tests spotify_rows && cargo build --workspace`
 Expected: PASS; the whole workspace builds.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/settings.rs znicz-tui/src/spotify_rows.rs znicz-tui/src/views/settings.rs znicz/src/main.rs
