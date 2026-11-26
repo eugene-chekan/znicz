@@ -12,7 +12,9 @@ mod listener;
 mod model;
 mod pkce;
 mod redirect;
+mod service;
 mod token;
 
 pub use error::{Result, SpotifyError};
+pub use service::{ServiceOptions, SpotifyService};
 pub use token::default_token_path;

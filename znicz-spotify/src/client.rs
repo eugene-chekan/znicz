@@ -57,7 +57,6 @@ struct LoginSession {
 #[derive(Debug)]
 pub(crate) struct BegunLogin {
     pub url: String,
-    pub state: String,
 }
 
 pub(crate) struct Client {
@@ -141,7 +140,7 @@ impl Client {
             state: state.clone(),
             started_ms: self.now_ms(),
         });
-        Ok(BegunLogin { url, state })
+        Ok(BegunLogin { url })
     }
 
     /// Finish the login from a pasted address or a callback query. A wrong

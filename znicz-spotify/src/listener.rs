@@ -16,6 +16,7 @@ const POLL: Duration = Duration::from_millis(100);
 const BIND_RETRIES: u32 = 5;
 
 pub(crate) struct CallbackListener {
+    #[cfg(test)]
     port: u16,
     stop: Arc<AtomicBool>,
 }
@@ -30,6 +31,7 @@ impl CallbackListener {
     {
         let listener = bind(port)?;
         listener.set_nonblocking(true)?;
+        #[cfg(test)]
         let port = listener.local_addr()?.port();
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = stop.clone();
@@ -51,9 +53,14 @@ impl CallbackListener {
                     }
                 }
             })?;
-        Ok(Self { port, stop })
+        Ok(Self {
+            #[cfg(test)]
+            port,
+            stop,
+        })
     }
 
+    #[cfg(test)]
     pub(crate) fn port(&self) -> u16 {
         self.port
     }
