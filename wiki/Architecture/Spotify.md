@@ -139,8 +139,10 @@ Znicz and Spotify never play together. The player enforces this, so the TUI,
 CLI and MCP behave the same.
 
 - **Spotify starts** (a `Play` or a `Transfer` with play, sent through Znicz):
-  the player pauses its own engine first, but only if the engine is playing.
-  A Stopped engine is left alone, because `Pause` would show it as paused.
+  the player pauses its own engine once Spotify accepts the command, but only
+  if the engine is playing. A refused command (no active device, Premium
+  required, a network error) leaves Znicz playing. A Stopped engine is left
+  alone, because `Pause` would show it as paused.
 - **Znicz starts:** the player samples the engine every 250 ms. A start is a
   move into `Playing` from a status that was not `Playing` on either of the two
   previous samples. A track change (a one-sample gap) does not count. Each start

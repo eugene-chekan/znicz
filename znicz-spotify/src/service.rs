@@ -42,9 +42,10 @@ fn poll_interval(logged_in: bool, now_ms: u64, last_touch_ms: u64) -> Option<Dur
 
 pub struct ServiceOptions {
     pub token_path: PathBuf,
-    /// Called inside `SpotifyHost::apply`, on the caller's thread, before a
-    /// playback op that will run (the service is logged in), so the player can
-    /// pause its own engine.
+    /// Called inside `SpotifyHost::apply`, on the caller's thread, once Spotify
+    /// has accepted a playback op that starts playback (the service was logged
+    /// in when the op began), so the player can pause its own engine. A refused
+    /// command does not call it, so Znicz keeps playing.
     ///
     /// It must not wait for a lock the caller of `apply` holds: the IPC server
     /// holds one per change request. Capture a cheap handle to the player (a
@@ -437,14 +438,12 @@ impl Shared {
         }
     }
 
-    /// A playback command: pause Znicz first when it starts Spotify, fall
-    /// back to the preferred device when none is active, and wait out one 429.
+    /// A playback command: fall back to the preferred device when none is
+    /// active, wait out one 429, and pause Znicz once Spotify accepts a command
+    /// that starts playback.
     fn control(&self, op: &SpotifyOp) -> Result<()> {
         // Only playback that can run pauses Znicz; a logged-out play fails below.
         let starts_here = op.starts_playback() && self.client.lock().unwrap().is_logged_in();
-        if starts_here {
-            (self.on_start_playback)();
-        }
         let result = match self.control_once(op, None) {
             Err(SpotifyError::NoActiveDevice) => match self.preferred_device()? {
                 Some(id) => self.control_once(op, Some(&id)),
@@ -462,6 +461,9 @@ impl Shared {
         match &result {
             Ok(()) => {
                 self.set_premium(true);
+                if starts_here {
+                    (self.on_start_playback)();
+                }
                 self.after_control(op);
                 self.state.lock().unwrap().last_error = None;
                 self.wake();
@@ -810,7 +812,7 @@ mod tests {
     }
 
     #[test]
-    fn play_pauses_znicz_first_and_calls_the_api() {
+    fn an_accepted_play_pauses_znicz() {
         let f = fixture(true, "", api_default);
         f.service.apply(play()).unwrap();
         assert_eq!(f.starts.load(Ordering::SeqCst), 1);
@@ -1127,6 +1129,22 @@ mod tests {
     #[test]
     fn play_while_logged_out_does_not_pause_znicz() {
         let f = fixture(false, "", api_default);
+        f.service.apply(play()).unwrap_err();
+        assert_eq!(f.starts.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_refused_play_does_not_pause_znicz() {
+        let f = fixture(true, "", |request| {
+            if request.path() == "/v1/me/player/play" {
+                Response::json(
+                    404,
+                    r#"{"error":{"status":404,"message":"No active device found","reason":"NO_ACTIVE_DEVICE"}}"#,
+                )
+            } else {
+                api_default(request)
+            }
+        });
         f.service.apply(play()).unwrap_err();
         assert_eq!(f.starts.load(Ordering::SeqCst), 0);
     }

@@ -48,7 +48,7 @@ A request that does not say "Spotify" is for the local library: use `search_libr
 ## Playing and controlling
 
 - `spotify_play { uri }` plays one track. `spotify_play { context_uri, offset? }` plays an album or playlist from `offset`. `spotify_play {}` resumes.
-- Starting Spotify pauses Znicz's own playback. Starting Znicz playback pauses Spotify.
+- Once Spotify starts playback, Znicz's own playback is paused. A refused play (for example no active device) leaves Znicz playing. Starting Znicz playback pauses Spotify.
 - `spotify_pause`, `spotify_next`, `spotify_previous`, `spotify_seek { position_ms }`, `spotify_set_volume { volume }` (0.0 to 1.0), `spotify_set_repeat { mode }` (off, track or context), `spotify_set_shuffle { on }`, and `spotify_queue_add { uri }`.
 - Transport calls return `{"reply": "done"}`. `spotify_status` reflects the change within about a second.
 

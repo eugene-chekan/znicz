@@ -87,7 +87,8 @@ async runtime.
 ### One rule in the player
 
 Starting or resuming Spotify playback (`SpotifyOp` play / resume / transfer
-with play) pauses Znicz's engine first. Starting or resuming local playback
+with play) pauses Znicz's engine once Spotify accepts the command. A refused
+command leaves Znicz playing. Starting or resuming local playback
 pauses Spotify, if Spotify is playing on the user's account. Both paths live in
 the player, so the TUI, CLI and MCP behave the same.
 
