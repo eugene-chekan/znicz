@@ -410,6 +410,50 @@ In `znicz-core/src/player/ipc.rs`, add this to the test module (put it after `sp
     }
 ```
 
+Add a wire-compatibility test next to it. It pins the JSON, so an older client keeps parsing a newer player's `Err`, and a newer client keeps parsing an older player's:
+
+```rust
+    /// What an older client's `IpcResponse::Err` looked like: no `spotify_kind`.
+    #[derive(Deserialize)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    enum OldResponse {
+        Err { message: String },
+    }
+
+    #[test]
+    fn err_replies_stay_compatible_with_older_players_and_clients() {
+        // A newer client reads an older player's reply: no kind.
+        let old: IpcResponse = serde_json::from_str(r#"{"kind":"err","message":"boom"}"#).unwrap();
+        assert!(matches!(
+            old,
+            IpcResponse::Err {
+                spotify_kind: None,
+                ..
+            }
+        ));
+
+        // Without a kind nothing extra is written, so Command and Library
+        // errors are byte-for-byte what they were.
+        let plain = serde_json::to_string(&IpcResponse::Err {
+            message: "boom".into(),
+            spotify_kind: None,
+        })
+        .unwrap();
+        assert_eq!(plain, r#"{"kind":"err","message":"boom"}"#);
+
+        // An older client reads a newer player's Spotify error: the extra
+        // field is ignored.
+        let with_kind = serde_json::to_string(&IpcResponse::Err {
+            message: "needs Spotify Premium".into(),
+            spotify_kind: Some(SpotifyErrorKind::PremiumRequired),
+        })
+        .unwrap();
+        assert!(with_kind.contains(r#""spotify_kind":"premium_required""#), "{with_kind}");
+        let OldResponse::Err { message } = serde_json::from_str(&with_kind).unwrap();
+        assert_eq!(message, "needs Spotify Premium");
+    }
+```
+
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `cargo test -p znicz-core the_kind_survives_ipc_and_a_resend -q`
@@ -647,7 +691,7 @@ and `fn try_state` becomes:
 - [ ] **Step 7: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-core -q`
-Expected: PASS, including `the_kind_survives_ipc_and_a_resend` and the existing dedupe tests.
+Expected: PASS, including `the_kind_survives_ipc_and_a_resend`, `err_replies_stay_compatible_with_older_players_and_clients` and the existing dedupe tests (Command and Library requests still use the text-only record, and their replies are unchanged on the wire).
 
 - [ ] **Step 8: Commit**
 
@@ -702,6 +746,43 @@ Add to the `tests` module of `ipc.rs`:
     }
 
     #[test]
+    fn a_command_timeout_still_gets_the_outdated_player_hint() {
+        // Only Spotify requests change; Command and Library keep the hint.
+        let text = command_result(Err(RpcFailure::sent(RpcError::TimedOut)))
+            .unwrap_err()
+            .to_string();
+        assert!(text.contains("did not answer in time"), "{text}");
+        assert!(text.contains("znicz player stop"), "{text}");
+    }
+
+    #[test]
+    fn a_silent_player_makes_rpc_on_time_out() {
+        // A real socket that never answers, with a short read timeout, so the
+        // test does not wait 30 s and no network is involved.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (_silent, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
+        let mut live = Live {
+            writer: stream.try_clone().unwrap(),
+            reader: BufReader::new(stream),
+            token: "t".into(),
+            version: None,
+            queue_cache: None,
+        };
+        let request = IpcRequest::Hello {
+            token: "t".into(),
+            role: ClientRole::Agent,
+        };
+        assert!(matches!(
+            rpc_on(&mut live, &request),
+            Err(RpcError::TimedOut)
+        ));
+    }
+
+    #[test]
     fn timeouts_are_recognised_by_their_io_kind() {
         assert!(is_timeout(std::io::ErrorKind::WouldBlock));
         assert!(is_timeout(std::io::ErrorKind::TimedOut));
@@ -713,6 +794,8 @@ Add to the `tests` module of `ipc.rs`:
 
 Run: `cargo test -p znicz-core timeout -q`
 Expected: FAIL to compile ("cannot find type `RpcError`", "no function `sent`").
+
+The timeout wording of Command, Library and shutdown requests changes from `ipc read: <os error>` to `the player did not answer in time` (the outdated-player hint is still added to Command and Library). Nothing else about them changes.
 
 - [ ] **Step 3: Report timeouts from `rpc_on`**
 
@@ -854,6 +937,8 @@ impl RpcFailure {
 }
 ```
 
+The two struct literals in the existing test `command_transport_errors_get_the_hint_and_player_errors_stay_verbatim` (`RpcFailure { error: …, mid_request: … }`) need the new field: add `timed_out: false,` to both.
+
 In `rpc_live`, change the retry's error mapping. Replace:
 
 ```rust
@@ -878,7 +963,7 @@ In `impl crate::spotify_host::SpotifyHost for IpcClient`, in both `fn apply` and
 Run: `cargo test -p znicz-core -q`
 Expected: PASS. The existing `outdated_player_hint` tests still pass because `into_error` is unchanged.
 
-Note: no test sends a request to a player that never answers, because that takes the 30 s read timeout twice. The end-to-end timeout is covered by the manual check in Task 15 only if a Spotify call is slow; otherwise it is covered by the unit tests above.
+Note: no test sends a whole request to a player that never answers through `IpcClient`, because that takes the 30 s read timeout twice. `a_silent_player_makes_rpc_on_time_out` covers the real socket timeout with a 50 ms read timeout, and the `RpcFailure` tests cover the mapping.
 
 - [ ] **Step 8: Commit**
 
@@ -1838,8 +1923,10 @@ Add these to the `tests` module (after `second_client`, from Task 5):
 
     /// A player that hosts `FakeSpotify`, and an MCP server with two
     /// connections to it. The fake is returned to read what it was sent.
-    /// The temp dir comes last, so it is dropped after the server it backs.
-    fn spotify_server() -> (IpcServer, ZniczMcpServer, Arc<FakeSpotify>, tempfile::TempDir) {
+    /// The temp dir comes first: a `let` pattern drops its bindings in reverse
+    /// order, so the dir is dropped last, after the server it backs.
+    fn spotify_server() -> (tempfile::TempDir, IpcServer, ZniczMcpServer, Arc<FakeSpotify>) {
+        let _lock = env_lock();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("ipc.toml");
         let (player, thread) = spawn_player(AudioConfig::default());
@@ -1858,7 +1945,7 @@ Add these to the `tests` module (after `second_client`, from Task 5):
         let player_client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
         let spotify_client = second_client(dir.path());
         let server = ZniczMcpServer::new(player_client, spotify_client, Vec::new());
-        (ipc, server, fake, dir)
+        (dir, ipc, server, fake)
     }
 
     fn json_of(result: &rmcp::model::CallToolResult) -> serde_json::Value {
@@ -1875,7 +1962,7 @@ Add to the `tests` module:
 ```rust
     #[tokio::test]
     async fn spotify_status_reads_the_snapshot_and_marks_spotify_in_use() {
-        let (_ipc, server, fake, _dir) = spotify_server();
+        let (_dir, _ipc, server, fake) = spotify_server();
         let result = server.spotify_status().await.expect("status");
         let json = json_of(&result);
         assert_eq!(json["configured"], true);
@@ -1890,7 +1977,7 @@ Add to the `tests` module:
 
     #[tokio::test]
     async fn login_begin_hands_back_the_url_and_what_to_do_with_it() {
-        let (_ipc, server, _fake, _dir) = spotify_server();
+        let (_dir, _ipc, server, _fake) = spotify_server();
         let result = server.spotify_login_begin().await.expect("begin");
         let json = json_of(&result);
         assert_eq!(
@@ -1904,7 +1991,7 @@ Add to the `tests` module:
 
     #[tokio::test]
     async fn login_complete_and_logout_send_their_ops_and_return_the_status() {
-        let (_ipc, server, fake, _dir) = spotify_server();
+        let (_dir, _ipc, server, fake) = spotify_server();
         let result = server
             .spotify_login_complete(Parameters(spotify_json::SpotifyLoginCompleteParams {
                 redirect_url: "http://127.0.0.1:8898/callback?code=x&state=y".into(),
@@ -1951,7 +2038,7 @@ Add to the `tests` module of `server.rs`:
 ```rust
     #[tokio::test]
     async fn search_sends_one_op_with_every_kind_and_at_most_ten_results() {
-        let (_ipc, server, fake, _dir) = spotify_server();
+        let (_dir, _ipc, server, fake) = spotify_server();
         let result = server
             .spotify_search(Parameters(spotify_json::SpotifySearchParams {
                 query: "blue".into(),
@@ -1971,7 +2058,7 @@ Add to the `tests` module of `server.rs`:
 
     #[tokio::test]
     async fn tracks_pass_the_uri_and_clamp_the_page() {
-        let (_ipc, server, fake, _dir) = spotify_server();
+        let (_dir, _ipc, server, fake) = spotify_server();
         server
             .spotify_tracks(Parameters(spotify_json::SpotifyUriPagedParams {
                 uri: "spotify:album:1".into(),
@@ -2084,7 +2171,7 @@ In the `#[tool_router]` block, after `spotify_logout`, add:
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cargo test -p znicz-mcp spotify_ search_sends tracks_pass -q`
+Run: `cargo test -p znicz-mcp -q`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -2110,7 +2197,7 @@ Add to the `tests` module:
 ```rust
     #[tokio::test]
     async fn a_premium_refusal_comes_back_with_its_kind() {
-        let (_ipc, server, _fake, _dir) = spotify_server();
+        let (_dir, _ipc, server, _fake) = spotify_server();
         let err = server
             .spotify_play(Parameters(spotify_json::SpotifyPlayParams {
                 uri: Some("spotify:track:1".into()),
@@ -2125,7 +2212,7 @@ Add to the `tests` module:
 
     #[tokio::test]
     async fn volume_out_of_range_is_refused_before_it_is_sent() {
-        let (_ipc, server, fake, _dir) = spotify_server();
+        let (_dir, _ipc, server, fake) = spotify_server();
         let err = server
             .spotify_set_volume(Parameters(spotify_json::SpotifyVolumeParams { volume: 1.5 }))
             .await
@@ -2136,7 +2223,7 @@ Add to the `tests` module:
 
     #[tokio::test]
     async fn transfer_without_play_only_moves_the_device() {
-        let (_ipc, server, fake, _dir) = spotify_server();
+        let (_dir, _ipc, server, fake) = spotify_server();
         server
             .spotify_transfer(Parameters(spotify_json::SpotifyTransferParams {
                 device_id: "dev1".into(),
@@ -2447,9 +2534,11 @@ A failed Spotify tool returns its message and a `kind` in the error data. Act on
 | `wrong_address` | The pasted address is not from this login. Call `spotify_login_begin` again and ask for the new address. |
 | `rate_limited` | Wait a little before the next call. Do not retry in a loop. |
 | `unavailable` | Explain the message to the user. Spotify does not offer this for that item. |
-| `network` | Spotify or the player did not answer. Try once more, then tell the user. |
+| `network` | Spotify or the player did not answer. Try once more, then tell the user. If the message mentions an older player, the player must be restarted: ask the user to run `znicz player stop` and try again. |
 | `no_service` | The running player has no Spotify service, perhaps an older version. Ask the user to run `znicz player stop` and try again. |
 | `other` | Show the message. |
+
+Some messages end with a hint for the terminal UI, such as "Enter still plays it" or "pick one with ,". Those keys do not exist here: use the tools above instead, and do not repeat the hint to the user.
 ````
 
 - [ ] **Step 4: Run the tests to verify they pass**
@@ -2671,9 +2760,9 @@ Call `spotify_set_volume { volume: 1.5 }`. Expected: an error with the message a
 
 - [ ] **Step 5: Znicz pauses when `spotify_play` starts**
 
-Start a local track in Znicz first: call `play` with a file path from the library, and confirm it plays (`get_player_state` shows `status: "playing"`). Then call `spotify_play { uri }` with a track.
+Start a local track in Znicz first: call `play` with a file path from the library, and confirm it plays (`get_player_state` shows `status: "Playing"`). Then call `spotify_play { uri }` with a track.
 
-Expected: the local track is paused (`get_player_state` shows `status: "paused"`), and Spotify plays (`spotify_status`). This is the step deferred from Part 2, Task 13, Step 5.
+Expected: the local track is paused (`get_player_state` shows `status: "Paused"`), and Spotify plays (`spotify_status`). This is the step deferred from Part 2, Task 13, Step 5.
 
 - [ ] **Step 6: Devices and transfer**
 
@@ -2685,7 +2774,7 @@ Expected: `spotify_status` shows that device in `device`, and it plays.
 
 Find a playlist that you do not own (search for a public playlist) and call `spotify_tracks { uri }` on it.
 
-Expected: an error with `kind: "unavailable"` and the message "Spotify only lists the tracks of playlists you own or collaborate on" (the service's text). Then `spotify_play { context_uri: <that playlist> }` still plays it.
+Expected: an error with `kind: "unavailable"` and the message "Spotify only lists the tracks of playlists you own or collaborate on; Enter still plays it" (the service's text, which has a terminal-UI hint that the skill tells agents to ignore). Then `spotify_play { context_uri: <that playlist> }` still plays it.
 
 - [ ] **Step 8: Resource**
 
