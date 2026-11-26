@@ -3246,7 +3246,7 @@ git commit -m "feat(spotify): client with login session and token refresh"
 - Create: `znicz-spotify/src/listener.rs`
 - Modify: `znicz-spotify/src/lib.rs` (add `mod listener;`)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `znicz-spotify/src/listener.rs`:
 
@@ -3321,12 +3321,12 @@ mod tests {
 
 Add `mod listener;` to `lib.rs`.
 
-- [ ] **Step 2: Run to see it fail**
+- [x] **Step 2: Run to see it fail**
 
 Run: `cargo test -p znicz-spotify listener`
 Expected: compile error, `CallbackListener` missing.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Between the `use` lines and the tests:
 
@@ -3454,12 +3454,12 @@ fn escape(text: &str) -> String {
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cargo test -p znicz-spotify listener`
 Expected: 2 pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-spotify/src/listener.rs znicz-spotify/src/lib.rs
