@@ -96,7 +96,8 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
             (true, None) => Some(app.tui),
             (false, _) => None,
         };
-        stage::render(frame, stage_area, app, state);
+        let model = stage::model_for(app, state);
+        stage::render(frame, stage_area, app, &model);
         let scanning = app.library_status.scanning.clone();
         frame.render_widget(
             Paragraph::new(now_playing::message_line(

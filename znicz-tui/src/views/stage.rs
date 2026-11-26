@@ -4,44 +4,56 @@ use std::sync::Arc;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui_image::picker::Picker;
 use ratatui_image::{Resize, StatefulImage};
-use znicz_core::{OutputInfo, PlaybackStatus, PlayerState, QueueItem, RepeatMode, TrackInfo};
+use znicz_core::{PlaybackStatus, PlayerState, RepeatMode, TrackInfo};
 
 use crate::app::{App, repeat_label};
 use crate::cover::{CoverKey, CoverReady};
 use crate::format;
+use crate::stage_model::{SeekModel, StageModel, Tone, VolumeModel};
 use crate::theme;
 use crate::tui_config::{CoverProtocol, IconSet};
 
 /// Column where signal values start (`  file    …`).
 const LABEL: usize = 10;
 
-pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState) {
+pub fn render(frame: &mut Frame, area: Rect, app: &mut App, model: &StageModel) {
     if area.width == 0 || area.height == 0 {
         return;
     }
     let layout = stage_layout_for(area, app, app.shown_tui());
     if let Some(cover) = layout.cover {
-        render_cover(frame, cover, app, state);
+        render_cover(frame, cover, app, model.cover.as_ref());
     }
     let width = usize::from(layout.details.width);
-    let full = title_text(state);
     let scroll = app
         .tui
         .marquee
         .then(|| (&mut app.stage_marquee, std::time::Instant::now()));
-    let title = stage_title(&full, width, scroll);
+    let title = stage_title(&model.title, width, scroll);
     let lines = detail_lines(
-        state,
+        model,
         app.tui.icons,
         title,
         width,
         usize::from(layout.details.height),
     );
     frame.render_widget(Paragraph::new(lines), layout.details);
+}
+
+/// The Stage's model for the app's settings and the player's state.
+pub(crate) fn model_for(app: &App, state: &PlayerState) -> StageModel {
+    let shown = app.shown_tui();
+    StageModel::from_player(
+        state,
+        &app.stations,
+        shown.cover_search,
+        shown.cover_protocol != CoverProtocol::Off,
+    )
 }
 
 /// The title fitted to `width`: scrolled when a marquee is given and the
@@ -60,13 +72,16 @@ pub(crate) fn stage_title(
     }
 }
 
-/// What the title line says: the track (or ICY) title, or `Nothing playing`.
-pub(crate) fn title_text(state: &PlayerState) -> String {
-    state
-        .current_track
-        .as_ref()
-        .map(|t| t.title.clone())
-        .unwrap_or_else(|| "Nothing playing".to_string())
+/// The style for a model tone.
+pub(crate) fn tone_style(tone: Tone) -> Style {
+    match tone {
+        Tone::Plain => theme::text(),
+        Tone::Strong => theme::strong(),
+        Tone::Dim => theme::dim(),
+        Tone::Subtitle => theme::subtitle(),
+        Tone::Good => theme::good(),
+        Tone::Warn => theme::warn(),
+    }
 }
 
 /// Every detail line for `rows` rows, `title` already fitted to `width`.
@@ -74,34 +89,46 @@ pub(crate) fn title_text(state: &PlayerState) -> String {
 /// When rows run short, drops the path explanation, then the signal panel,
 /// then the volume line; title, artist, and seek always stay.
 pub(crate) fn detail_lines(
-    state: &PlayerState,
+    model: &StageModel,
     icons: IconSet,
     title: String,
     width: usize,
     rows: usize,
 ) -> Vec<Line<'static>> {
-    let Some(track) = state.current_track.as_ref() else {
-        return vec![
-            Line::from(Span::styled(title, theme::strong())),
-            Line::from(""),
-            Line::from(Span::styled(
-                "Enter a track in Browse (v) to start",
-                theme::dim(),
-            )),
-        ];
+    let Some(empty) = model.empty.as_ref() else {
+        return playing_lines(model, icons, title, width, rows);
     };
+    vec![
+        Line::from(Span::styled(title, theme::strong())),
+        Line::from(""),
+        Line::from(Span::styled(empty.hint.clone(), theme::dim())),
+    ]
+}
 
+fn playing_lines(
+    model: &StageModel,
+    icons: IconSet,
+    title: String,
+    width: usize,
+    rows: usize,
+) -> Vec<Line<'static>> {
     let mut head = vec![Line::from(Span::styled(title, theme::strong()))];
-    if track.url.is_some() {
-        head.extend(stream_lines(state, track, width));
-    } else {
-        head.extend(file_lines(track, width));
-    }
+    head.extend(model.head.iter().map(|line| {
+        Line::from(Span::styled(
+            format::truncate(&line.text, width),
+            tone_style(line.tone),
+        ))
+    }));
     head.push(Line::from(""));
-    head.push(seek_line(state, width));
+    if let Some(seek) = model.seek.as_ref() {
+        head.push(seek_line(seek, model.status, width));
+    }
 
-    let volume = volume_line(state, icons);
-    let (mut signal, mut explanation) = signal_lines(state, width);
+    let mut volume = model
+        .volume
+        .as_ref()
+        .map(|v| volume_line(v, model.repeat, model.shuffle, icons));
+    let (mut signal, mut explanation) = signal_lines(model, width);
 
     let needed = |signal: &[Line], explanation: &Option<Line>, volume: bool| {
         head.len()
@@ -112,21 +139,18 @@ pub(crate) fn detail_lines(
                 1 + signal.len() + usize::from(explanation.is_some())
             }
     };
-    let mut with_volume = true;
-    if needed(&signal, &explanation, with_volume) > rows {
+    if needed(&signal, &explanation, volume.is_some()) > rows {
         explanation = None;
     }
-    if needed(&signal, &explanation, with_volume) > rows {
+    if needed(&signal, &explanation, volume.is_some()) > rows {
         signal.clear();
     }
-    if needed(&signal, &explanation, with_volume) > rows {
-        with_volume = false;
+    if needed(&signal, &explanation, volume.is_some()) > rows {
+        volume = None;
     }
 
     let mut out = head;
-    if with_volume {
-        out.push(volume);
-    }
+    out.extend(volume);
     if !signal.is_empty() {
         out.push(Line::from(""));
         out.extend(signal);
@@ -135,99 +159,30 @@ pub(crate) fn detail_lines(
     out
 }
 
-fn file_lines(track: &TrackInfo, width: usize) -> Vec<Line<'static>> {
-    let mut out = Vec::new();
-    let artist = track
-        .tags
-        .artist
-        .clone()
-        .or_else(|| track.tags.album_artist.clone());
-    if let Some(artist) = artist.filter(|a| !a.is_empty()) {
-        out.push(Line::from(Span::styled(
-            format::truncate(&artist, width),
-            theme::subtitle(),
-        )));
-    }
-    let mut parts = Vec::new();
-    if let Some(album) = track.tags.album.clone().filter(|a| !a.is_empty()) {
-        parts.push(album);
-    }
-    if let Some(year) = track.tags.year {
-        parts.push(year.to_string());
-    }
-    if let Some(n) = track.tags.track_number {
-        parts.push(format!("track {n}"));
-    }
-    if !parts.is_empty() {
-        out.push(Line::from(Span::styled(
-            format::truncate(&parts.join(" · "), width),
-            theme::dim(),
-        )));
-    }
-    out
-}
-
-/// Station name (from the queue row) and the stream URL, dim.
-fn stream_lines(state: &PlayerState, track: &TrackInfo, width: usize) -> Vec<Line<'static>> {
-    let mut out = Vec::new();
-    let station = state
-        .queue
-        .get(state.queue_position)
-        .and_then(|item| match item {
-            QueueItem::Stream { name, .. } => Some(name.clone()),
-            QueueItem::File { .. } => None,
-        });
-    if let Some(name) = station.filter(|n| *n != track.title) {
-        out.push(Line::from(Span::styled(
-            format::truncate(&name, width),
-            theme::subtitle(),
-        )));
-    }
-    if let Some(url) = track.url.as_deref() {
-        out.push(Line::from(Span::styled(
-            format::truncate(url, width),
-            theme::dim(),
-        )));
-    }
-    out
-}
-
 /// `▶ ━━━━●──── 3:32 / 11:04`, or `● live  3:32` for a stream.
-fn seek_line(state: &PlayerState, width: usize) -> Line<'static> {
-    let marker = crate::views::now_playing::status_marker(state.status);
-    let marker_style = match state.status {
+fn seek_line(seek: &SeekModel, status: PlaybackStatus, width: usize) -> Line<'static> {
+    let marker = crate::views::now_playing::status_marker(status);
+    let marker_style = match status {
         PlaybackStatus::Playing => theme::good(),
         PlaybackStatus::Paused => theme::warn(),
         PlaybackStatus::Stopped => theme::dim(),
     };
-    let is_stream = state
-        .current_track
-        .as_ref()
-        .is_some_and(|t| t.url.is_some());
-    if is_stream {
+    if let SeekModel::Live { position } = seek {
         return Line::from(vec![
             Span::styled(marker, marker_style),
             Span::styled("● live", theme::bad()),
-            Span::styled(
-                format!("  {}", format::duration(state.position)),
-                theme::text(),
-            ),
+            Span::styled(format!("  {}", format::duration(*position)), theme::text()),
         ]);
     }
-    let total = state.current_track.as_ref().and_then(|t| t.duration);
     let times = format!(
         " {} / {}",
-        format::duration(state.position),
-        format::duration_opt(total)
+        format::duration(seek.position()),
+        format::duration_opt(seek.total())
     );
     let bar_w = width
         .saturating_sub(marker.chars().count() + times.chars().count())
         .min(60);
-    let ratio = match total {
-        Some(total) if !total.is_zero() => state.position.as_secs_f64() / total.as_secs_f64(),
-        _ => 0.0,
-    };
-    let (done, todo) = format::progress_bar(ratio, bar_w);
+    let (done, todo) = format::progress_bar(seek.ratio(), bar_w);
     Line::from(vec![
         Span::styled(marker, marker_style),
         Span::styled(done, theme::progress()),
@@ -238,10 +193,15 @@ fn seek_line(state: &PlayerState, width: usize) -> Line<'static> {
 
 /// `◢ ███████▁▁▁  70%   repeat all   shuffle` (a 10-cell volume bar). Muted:
 /// `× ███████▁▁▁ muted`, with the bar dimmed.
-fn volume_line(state: &PlayerState, icons: IconSet) -> Line<'static> {
-    let icon = format::volume_icon(icons, state.volume, state.muted);
-    let bar = format::volume_bar(state.volume, 10);
-    let mut spans = if state.muted {
+fn volume_line(
+    volume: &VolumeModel,
+    repeat: RepeatMode,
+    shuffle: bool,
+    icons: IconSet,
+) -> Line<'static> {
+    let icon = format::volume_icon(icons, volume.volume, volume.muted);
+    let bar = format::volume_bar(volume.volume, 10);
+    let mut spans = if volume.muted {
         vec![
             Span::styled(format!("{icon} "), theme::warn()),
             Span::styled(bar, theme::dim()),
@@ -249,17 +209,17 @@ fn volume_line(state: &PlayerState, icons: IconSet) -> Line<'static> {
         ]
     } else {
         vec![Span::styled(
-            format!("{icon} {bar} {:>3.0}%", state.volume * 100.0),
+            format!("{icon} {bar} {:>3.0}%", volume.volume * 100.0),
             theme::text(),
         )]
     };
-    if state.repeat != RepeatMode::Off {
+    if repeat != RepeatMode::Off {
         spans.push(Span::styled(
-            format!("   {}", repeat_label(state.repeat)),
+            format!("   {}", repeat_label(repeat)),
             theme::toggle_on(),
         ));
     }
-    if state.shuffle {
+    if shuffle {
         spans.push(Span::styled("   shuffle", theme::toggle_on()));
     }
     Line::from(spans)
@@ -267,81 +227,32 @@ fn volume_line(state: &PlayerState, icons: IconSet) -> Line<'static> {
 
 /// The signal panel and, separately, the path explanation (dropped first).
 pub(crate) fn signal_lines(
-    state: &PlayerState,
+    model: &StageModel,
     width: usize,
 ) -> (Vec<Line<'static>>, Option<Line<'static>>) {
-    let Some(track) = state.current_track.as_ref() else {
+    if model.signal.is_empty() {
         return (Vec::new(), None);
-    };
+    }
     let mut lines = vec![Line::from(Span::styled("Signal", theme::strong()))];
-    let source_label = if track.url.is_some() {
-        "stream"
-    } else {
-        "file"
-    };
-    lines.push(labelled(
-        width,
-        source_label,
-        track.format_description(),
-        theme::text(),
-    ));
-    let device = state
-        .device_name
-        .clone()
-        .unwrap_or_else(|| "default device".to_string());
-    let device = match state.output.as_ref() {
-        Some(output) => format!("{device} · {}", device_stream(output)),
-        None => format!("{device} · no stream open"),
-    };
-    lines.push(labelled(width, "device", device, theme::text()));
-    let Some(output) = state.output.as_ref() else {
-        lines.push(labelled(
-            width,
-            "path",
-            "nothing to compare until a stream opens".to_string(),
-            theme::dim(),
-        ));
-        return (lines, None);
-    };
-    let explanation = if output.bit_perfect {
-        lines.push(labelled(
-            width,
-            "path",
-            "● bit perfect".to_string(),
-            theme::good(),
-        ));
-        "the device took the file's own rate and channels".to_string()
-    } else {
-        lines.push(labelled(
-            width,
-            "path",
-            "▲ resampled".to_string(),
-            theme::warn(),
-        ));
-        format!(
-            "file {} {} → device {} {}",
-            format::khz(track.sample_rate),
-            format::channel_name(track.channels),
-            format::khz(output.sample_rate),
-            format::channel_name(output.channels),
-        )
-    };
-    let explanation = Line::from(vec![
-        Span::raw(" ".repeat(LABEL)),
-        Span::styled(
-            format::truncate(&explanation, width.saturating_sub(LABEL)),
-            theme::dim(),
-        ),
-    ]);
-    (lines, Some(explanation))
+    lines.extend(
+        model
+            .signal
+            .iter()
+            .map(|row| labelled(width, row.label, row.value.clone(), tone_style(row.tone))),
+    );
+    let explanation = model.explanation.as_ref().map(|text| {
+        Line::from(vec![
+            Span::raw(" ".repeat(LABEL)),
+            Span::styled(
+                format::truncate(text, width.saturating_sub(LABEL)),
+                theme::dim(),
+            ),
+        ])
+    });
+    (lines, explanation)
 }
 
-fn labelled(
-    width: usize,
-    label: &str,
-    value: String,
-    style: ratatui::style::Style,
-) -> Line<'static> {
+fn labelled(width: usize, label: &str, value: String, style: Style) -> Line<'static> {
     Line::from(vec![
         Span::styled(
             format!("  {label:<width$}", width = LABEL - 2),
@@ -349,23 +260,6 @@ fn labelled(
         ),
         Span::styled(format::truncate(&value, width.saturating_sub(LABEL)), style),
     ])
-}
-
-fn device_stream(output: &OutputInfo) -> String {
-    format!(
-        "{} {} {}",
-        format::khz(output.sample_rate),
-        format::channel_name(output.channels),
-        sample_format_label(&output.sample_format),
-    )
-}
-
-fn sample_format_label(fmt: &str) -> &str {
-    if fmt.is_empty() || fmt == "?" {
-        "--"
-    } else {
-        fmt
-    }
 }
 
 fn cover_draw_label(ready: &CoverReady) -> String {
@@ -385,7 +279,7 @@ pub(crate) fn stream_query(
 ) -> znicz_core::StreamQuery {
     let stream_url = track.url.clone().unwrap_or_default();
     let station_name = match state.queue.get(state.queue_position) {
-        Some(QueueItem::Stream { name, .. }) => name.clone(),
+        Some(znicz_core::QueueItem::Stream { name, .. }) => name.clone(),
         _ => String::new(),
     };
     let station = stations.iter().find(|s| s.url == stream_url);
@@ -442,28 +336,23 @@ pub(crate) fn stage_layout_for(
     )
 }
 
-pub(crate) fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState) {
+pub(crate) fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, cover: Option<&CoverKey>) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let shown = app.shown_tui();
-
-    let use_logo_only = shown.cover_protocol == CoverProtocol::Off;
-    let ready = match (use_logo_only, state.current_track.as_ref()) {
-        (true, _) | (_, None) => {
+    let ready = match cover {
+        None => {
             app.last_stream_cover = None;
             CoverReady::Logo
         }
-        (false, Some(track)) => {
-            if let Some(p) = track.path.as_deref() {
-                app.last_stream_cover = None;
-                app.covers.get(CoverKey::File(p.to_path_buf()))
-            } else {
-                let query = stream_query(state, track, &app.stations, shown.cover_search);
-                let stream_url = query.stream_url.clone();
-                let ready = app.covers.get(CoverKey::Stream(query));
-                keep_previous(&mut app.last_stream_cover, &stream_url, ready)
-            }
+        Some(CoverKey::File(path)) => {
+            app.last_stream_cover = None;
+            app.covers.get(CoverKey::File(path.clone()))
+        }
+        Some(CoverKey::Stream(query)) => {
+            let stream_url = query.stream_url.clone();
+            let ready = app.covers.get(CoverKey::Stream(query.clone()));
+            keep_previous(&mut app.last_stream_cover, &stream_url, ready)
         }
     };
 
@@ -506,7 +395,7 @@ pub(crate) mod tests {
     use super::*;
     use std::path::PathBuf;
     use std::time::Duration;
-    use znicz_core::TrackTags;
+    use znicz_core::{OutputInfo, QueueItem, TrackTags};
 
     fn text(lines: &[Line]) -> String {
         lines
@@ -519,6 +408,22 @@ pub(crate) mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// The Stage model of a player state, with covers on.
+    fn model(state: &PlayerState) -> StageModel {
+        StageModel::from_player(state, &[], true, true)
+    }
+
+    /// The Stage's detail lines for a player state.
+    fn detail_of(
+        state: &PlayerState,
+        icons: IconSet,
+        title: String,
+        width: usize,
+        rows: usize,
+    ) -> Vec<Line<'static>> {
+        detail_lines(&model(state), icons, title, width, rows)
     }
 
     pub(crate) fn playing(bit_perfect: bool) -> PlayerState {
@@ -600,7 +505,7 @@ pub(crate) mod tests {
     #[test]
     fn narrow_signal_values_are_cut_to_the_width() {
         let width = 24;
-        let (lines, explanation) = signal_lines(&playing(false), width);
+        let (lines, explanation) = signal_lines(&model(&playing(false)), width);
         for line in lines.iter().chain(explanation.iter()) {
             let w: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
             assert!(
@@ -616,7 +521,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_file_shows_artist_album_seek_and_signal() {
-        let t = text(&detail_lines(
+        let t = text(&detail_of(
             &playing(true),
             IconSet::Unicode,
             "Sour Times".into(),
@@ -641,7 +546,7 @@ pub(crate) mod tests {
     fn resampled_explains_both_rates_and_a_missing_format_is_a_dash() {
         let mut state = playing(false);
         state.output.as_mut().unwrap().sample_format = "?".into();
-        let t = text(&detail_lines(&state, IconSet::Unicode, "x".into(), 70, 30));
+        let t = text(&detail_of(&state, IconSet::Unicode, "x".into(), 70, 30));
         assert!(
             t.contains("resampled") && t.contains("48 kHz") && t.contains("96 kHz"),
             "{t}"
@@ -651,7 +556,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_stream_shows_station_url_and_live() {
-        let t = text(&detail_lines(
+        let t = text(&detail_of(
             &stream(),
             IconSet::Unicode,
             "Artist - Song".into(),
@@ -734,7 +639,7 @@ pub(crate) mod tests {
 
     #[test]
     fn nothing_playing_says_so_without_a_signal_panel() {
-        let t = text(&detail_lines(
+        let t = text(&detail_of(
             &PlayerState::default(),
             IconSet::Unicode,
             "Nothing playing".into(),
@@ -751,8 +656,8 @@ pub(crate) mod tests {
     #[test]
     fn short_rows_drop_explanation_then_signal_then_volume() {
         let state = playing(true);
-        let all = detail_lines(&state, IconSet::Unicode, "x".into(), 70, 30).len();
-        let t = text(&detail_lines(
+        let all = detail_of(&state, IconSet::Unicode, "x".into(), 70, 30).len();
+        let t = text(&detail_of(
             &state,
             IconSet::Unicode,
             "x".into(),
@@ -760,9 +665,9 @@ pub(crate) mod tests {
             all - 1,
         ));
         assert!(!t.contains("own rate") && t.contains("Signal"), "{t}");
-        let t = text(&detail_lines(&state, IconSet::Unicode, "x".into(), 70, 7));
+        let t = text(&detail_of(&state, IconSet::Unicode, "x".into(), 70, 7));
         assert!(!t.contains("Signal") && t.contains('%'), "{t}");
-        let t = text(&detail_lines(&state, IconSet::Unicode, "x".into(), 70, 4));
+        let t = text(&detail_of(&state, IconSet::Unicode, "x".into(), 70, 4));
         assert!(!t.contains('%'), "{t}");
         assert!(
             t.contains("x") && t.contains("Portishead") && t.contains("/ "),
@@ -772,19 +677,32 @@ pub(crate) mod tests {
 
     #[test]
     fn the_volume_line_leads_with_the_icon_then_the_bar() {
-        let mut state = playing(true);
-        state.volume = 0.5;
-        let t = text(&[volume_line(&state, IconSet::Unicode)]);
+        let volume = VolumeModel {
+            volume: 0.5,
+            muted: false,
+        };
+        let t = text(&[volume_line(
+            &volume,
+            RepeatMode::Off,
+            false,
+            IconSet::Unicode,
+        )]);
         assert!(t.starts_with("◢ █████▁▁▁▁▁ "), "{t:?}");
         assert!(t.trim_end().ends_with(" 50%"), "{t:?}");
     }
 
     #[test]
     fn a_muted_volume_line_keeps_the_bar_and_says_muted() {
-        let mut state = playing(true);
-        state.volume = 0.5;
-        state.muted = true;
-        let t = text(&[volume_line(&state, IconSet::Unicode)]);
+        let volume = VolumeModel {
+            volume: 0.5,
+            muted: true,
+        };
+        let t = text(&[volume_line(
+            &volume,
+            RepeatMode::Off,
+            false,
+            IconSet::Unicode,
+        )]);
         assert!(t.starts_with("× █████▁▁▁▁▁ muted"), "{t:?}");
         assert!(!t.contains('%'), "{t:?}");
     }
@@ -808,8 +726,9 @@ pub(crate) mod tests {
         };
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        let model = model_for(&app, state);
         terminal
-            .draw(|frame| render(frame, frame.area(), &mut app, state))
+            .draw(|frame| render(frame, frame.area(), &mut app, &model))
             .unwrap();
         terminal
             .backend()
