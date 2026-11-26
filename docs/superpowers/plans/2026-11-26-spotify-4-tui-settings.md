@@ -1621,7 +1621,7 @@ Makes Open browser, Playback device and Redirect port work end to end: stepping,
 - Consumes: `spotify_rows::{device_choices, OPEN_BROWSERS, open_browser_name, parse_port, sent_to_player}`; `settings::step`; `SpotifyAsk::Configure`.
 - Produces: in `settings_ui.rs`: `fn open_text_prompt(&mut self, row: &Row)`, `fn submit_port_prompt(&mut self)`, `fn send_spotify_config(&self, row: &Row)`, `fn set_redirect_port(&mut self, port: u16) -> bool`, `fn step_playback_device(&mut self, forward: bool, wrap: bool) -> bool`, `pub(super) fn change_with` (made `pub(super)` for `spotify_ui.rs`; `save_setting` stays private).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `settings_ui.rs`'s test module:
 
@@ -1845,12 +1845,12 @@ In `settings_ui.rs`'s test module:
 
 Add `use znicz_core::{SpotifyConfig, SpotifyDevice, SpotifyOp}; use znicz_spotify::browser::OpenBrowser; use crate::spotify_worker::SpotifyWorker;` to the test module imports.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz-tui settings_ui`
 Expected: FAIL (the new rows do nothing yet).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `settings_ui.rs`:
 
@@ -1984,12 +1984,12 @@ Task 8 adds the client ID to this dispatch.
 
 Imports in `settings_ui.rs`: `use znicz_core::{Command, FadeTimes, LibraryOp, SpotifyConfig, SpotifyOp}; use znicz_spotify::browser::OpenBrowser; use crate::spotify_rows; use crate::spotify_worker::SpotifyAsk; use crate::settings::{…}` (add nothing else).
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-tui -- settings_ui spotify_ui`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/app/settings_ui.rs
@@ -2012,7 +2012,7 @@ Clearing or changing the client ID makes the player log the user out (and delete
 - Consumes: `spotify_rows::{client_id_problem, CLIENT_ID_QUESTION, LOGOUT_QUESTION, CLIENT_FIRST}`, `SpotifyConfirm`.
 - Produces: `pub(crate) fn spotify_account_enter(&mut self)` (spotify_ui.rs), `pub(crate) fn confirm_spotify(&mut self)` (spotify_ui.rs), `fn submit_client_id_prompt(&mut self)` and `fn set_client_id(&mut self, id: String) -> bool` (settings_ui.rs).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `settings_ui.rs`'s tests:
 
@@ -2170,12 +2170,12 @@ In `settings_ui.rs`'s tests:
 
 The `select`, `press`, `saved` and `type_text` helpers are the ones made `pub(crate)` in Task 6; the test module imports `Row` (`crate::settings::Row`), `SpotifyLogin` and `SpotifyConfirm` (`crate::app::SpotifyConfirm`). The screen text of the question is checked in Task 10, where the strip is drawn.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz-tui -- settings_ui`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `settings_ui.rs`:
 
@@ -2264,12 +2264,12 @@ Add `use crate::settings::Row;` to `spotify_ui.rs` and `use super::settings_ui`-
 
 Note: `change_with` is inside `impl App` in `settings_ui.rs` with `pub(super)` visibility, so `spotify_ui.rs` can call `self.change_with(...)`.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-tui -- settings_ui spotify_ui`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/app/settings_ui.rs znicz-tui/src/app/spotify_ui.rs
