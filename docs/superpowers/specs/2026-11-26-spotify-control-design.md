@@ -404,3 +404,19 @@ No test calls the real API.
   "outdated player" or `NO_SPOTIFY` answer.
 - **README.** The `[spotify]` configuration and `znicz spotify` usage go into
   the README with the final PR.
+
+## Notes for parts 4–5 (from the part 3 review)
+
+- **Two connections, split by speed.** Poll `SpotifyStatus` and send `Touch`
+  on the main `IpcClient`: both answer at once. Send every other Spotify op on
+  a second, Spotify-only `IpcClient` that runs off the UI thread. A slow op
+  (up to about 40 s) must never stall a frame.
+- **`network` on a change means "may still happen".** The player keeps one
+  dedupe record for all Spotify changes and holds it while the change runs, so
+  one client's change can wait behind another's slow one, time out, and still
+  run later. After `network`, read the state instead of retrying blindly.
+- **Stop polling an outdated player.** On `outdated_player` or `no_service`
+  from `try_state`, stop polling Spotify and show why, instead of reconnecting
+  every frame.
+- **Poll errors carry no kind.** `SpotifyState.last_error` is plain text; the
+  TUI gets kinds only from its own calls.
