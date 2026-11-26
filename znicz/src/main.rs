@@ -23,6 +23,8 @@ use znicz_tui::{
 };
 
 mod daemon;
+#[allow(dead_code)] // used by the `znicz spotify` command (next task)
+mod spotify_cli;
 mod spotify_pause;
 mod update;
 
