@@ -5,5 +5,6 @@
 
 mod error;
 mod pkce;
+mod redirect;
 
 pub use error::{Result, SpotifyError};
