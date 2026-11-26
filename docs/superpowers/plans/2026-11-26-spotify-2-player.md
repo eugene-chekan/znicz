@@ -1004,7 +1004,7 @@ The rule's decision is a pure function, tested. The engine-side actions are smal
 - Modify: `znicz/src/main.rs` (`mod` line only)
 - Modify: `znicz-spotify/src/service.rs` (two doc comments)
 
-- [ ] **Step 1: Add the dependency**
+- [x] **Step 1: Add the dependency**
 
 In `znicz/Cargo.toml`, after `znicz-mcp = { path = "../znicz-mcp" }`, add:
 
@@ -1012,7 +1012,7 @@ In `znicz/Cargo.toml`, after `znicz-mcp = { path = "../znicz-mcp" }`, add:
 znicz-spotify = { path = "../znicz-spotify" }
 ```
 
-- [ ] **Step 2: Write the failing tests and the module skeleton**
+- [x] **Step 2: Write the failing tests and the module skeleton**
 
 Create `znicz/src/spotify_pause.rs`:
 
@@ -1069,12 +1069,12 @@ mod tests {
 
 Register it: in `znicz/src/main.rs`, after `mod daemon;`, add `mod spotify_pause;` (a line each; keep the existing `mod update;` after them).
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz spotify_pause -q`
 Expected: FAIL to compile: `started_playing`, `pause_engine_if_playing`, `PauseSlot` not found.
 
-- [ ] **Step 4: Write the implementation**
+- [x] **Step 4: Write the implementation**
 
 Insert above `#[cfg(test)]` in `znicz/src/spotify_pause.rs`:
 
@@ -1193,12 +1193,12 @@ Also add this test to the `tests` module (it documents that the watcher's check 
     }
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz spotify_pause -q`
 Expected: PASS (4 tests). The binary builds with the new dependency.
 
-- [ ] **Step 6: Tidy the two service doc comments**
+- [x] **Step 6: Tidy the two service doc comments**
 
 In `znicz-spotify/src/service.rs`, replace:
 
@@ -1240,12 +1240,12 @@ with:
     /// call it on its own thread.
 ```
 
-- [ ] **Step 7: Run the crate tests**
+- [x] **Step 7: Run the crate tests**
 
 Run: `cargo test -p znicz-spotify -q`
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add znicz/Cargo.toml Cargo.lock znicz/src/spotify_pause.rs znicz/src/main.rs znicz-spotify/src/service.rs
