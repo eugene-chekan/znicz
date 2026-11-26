@@ -72,11 +72,9 @@ fn spawn_reaped(mut command: Command) -> std::io::Result<std::thread::JoinHandle
 
 #[cfg(target_os = "windows")]
 fn opener(url: &str) -> Command {
-    use std::os::windows::process::CommandExt;
-    let mut command = Command::new("cmd");
-    // `&` in the URL would end the cmd line, and `args` would leave it unquoted,
-    // so the line is passed raw with the URL in quotes.
-    command.raw_arg(format!("/C start \"\" \"{url}\""));
+    // Not through `cmd`: it would expand the URL's `%xx` escapes and stop at `&`.
+    let mut command = Command::new("rundll32.exe");
+    command.arg("url.dll,FileProtocolHandler").arg(url);
     command
 }
 
