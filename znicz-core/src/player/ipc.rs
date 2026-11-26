@@ -729,6 +729,8 @@ struct RpcFailure {
     /// The request was sent (or tried) on an open connection. Errors from
     /// (re)opening the connection, such as "connection refused", are not.
     mid_request: bool,
+    /// The reply did not come within the read timeout.
+    timed_out: bool,
 }
 
 impl RpcFailure {
@@ -736,16 +738,50 @@ impl RpcFailure {
         Self {
             error,
             mid_request: false,
+            timed_out: false,
+        }
+    }
+
+    /// A request that was sent on an open connection and failed there.
+    fn sent(error: RpcError) -> Self {
+        match error {
+            RpcError::TimedOut => Self {
+                error: ZniczError::Player(TIMED_OUT.into()),
+                mid_request: true,
+                timed_out: true,
+            },
+            RpcError::Other(error) => Self {
+                error,
+                mid_request: true,
+                timed_out: false,
+            },
         }
     }
 
     /// The outdated-player hint only fits a request that died on an open
     /// connection; a player that is simply not running stays a plain error.
+    /// Command and Library requests still use this.
     fn into_error(self) -> ZniczError {
         if self.mid_request {
             outdated_player_hint(self.error)
         } else {
             self.error
+        }
+    }
+
+    /// A Spotify request that failed. A timeout or a dropped connection is a
+    /// network error; the outdated-player hint is Library wording and is not used.
+    fn into_spotify_error(self) -> ZniczError {
+        let message = if self.timed_out {
+            TIMED_OUT.to_string()
+        } else if self.mid_request {
+            "lost the connection to the player; an older player may not know Spotify requests (run `znicz player stop` and try again)".to_string()
+        } else {
+            self.error.to_string()
+        };
+        ZniczError::Spotify {
+            kind: SpotifyErrorKind::Network,
+            message,
         }
     }
 }
@@ -905,9 +941,53 @@ fn open_live(advertise_path: &Path, role: ClientRole, ensure: Option<&EnsureFn>)
     }
 }
 
-fn rpc_on(live: &mut Live, request: &IpcRequest) -> Result<IpcResponse> {
+/// Why a request on an open connection failed.
+enum RpcError {
+    /// No reply within the read timeout.
+    TimedOut,
+    Other(ZniczError),
+}
+
+impl From<ZniczError> for RpcError {
+    fn from(error: ZniczError) -> Self {
+        Self::Other(error)
+    }
+}
+
+impl RpcError {
+    /// As a plain error, for callers that do not retry or label timeouts.
+    fn into_player_error(self) -> ZniczError {
+        match self {
+            Self::TimedOut => ZniczError::Player(TIMED_OUT.into()),
+            Self::Other(error) => error,
+        }
+    }
+}
+
+/// The text of a request that got no reply in time.
+const TIMED_OUT: &str = "the player did not answer in time";
+
+/// A read timeout shows as `WouldBlock` on Unix and `TimedOut` on Windows.
+fn is_timeout(kind: std::io::ErrorKind) -> bool {
+    matches!(
+        kind,
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    )
+}
+
+fn rpc_on(live: &mut Live, request: &IpcRequest) -> std::result::Result<IpcResponse, RpcError> {
     write_json_line(&mut live.writer, request)?;
-    read_json_line(&mut live.reader)
+    let mut line = String::new();
+    match live.reader.read_line(&mut line) {
+        Ok(_) => {}
+        Err(e) if is_timeout(e.kind()) => return Err(RpcError::TimedOut),
+        Err(e) => return Err(ZniczError::Player(format!("ipc read: {e}")).into()),
+    }
+    if line.is_empty() {
+        return Err(ZniczError::Player("ipc empty".into()).into());
+    }
+    serde_json::from_str(line.trim())
+        .map_err(|e| ZniczError::Player(format!("ipc json: {e}")).into())
 }
 
 impl IpcClient {
@@ -998,10 +1078,7 @@ impl IpcClient {
                     *version = live.version.clone();
                 }
                 let request = make(&live);
-                rpc_on(&mut live, &request).map_err(|error| RpcFailure {
-                    error,
-                    mid_request: true,
-                })?
+                rpc_on(&mut live, &request).map_err(RpcFailure::sent)?
             }
         };
         Ok(finish(&mut live, response))
@@ -1010,13 +1087,15 @@ impl IpcClient {
     #[cfg(test)]
     fn rpc_raw(&self, request: IpcRequest) -> Result<IpcResponse> {
         let mut live = self.lock_live()?;
-        rpc_on(&mut live, &request)
+        rpc_on(&mut live, &request).map_err(RpcError::into_player_error)
     }
 
     pub fn shutdown(&self) -> Result<()> {
         let mut live = self.lock_live()?;
         let token = live.token.clone();
-        match rpc_on(&mut live, &IpcRequest::Shutdown { token })? {
+        match rpc_on(&mut live, &IpcRequest::Shutdown { token })
+            .map_err(RpcError::into_player_error)?
+        {
             IpcResponse::Ok { .. } => Ok(()),
             IpcResponse::Err { message, .. } => Err(ZniczError::Player(message)),
             IpcResponse::Spotify { .. } | IpcResponse::SpotifyStatus { .. } => {
@@ -1100,7 +1179,7 @@ impl crate::spotify_host::SpotifyHost for IpcClient {
                 op: op.clone(),
                 id,
             })
-            .map_err(RpcFailure::into_error)?
+            .map_err(RpcFailure::into_spotify_error)?
         {
             IpcResponse::Spotify { reply } => Ok(reply),
             IpcResponse::Err {
@@ -1122,7 +1201,7 @@ impl crate::spotify_host::SpotifyHost for IpcClient {
             .rpc_detailed(|live| IpcRequest::SpotifyStatus {
                 token: live.token.clone(),
             })
-            .map_err(RpcFailure::into_error)?
+            .map_err(RpcFailure::into_spotify_error)?
         {
             IpcResponse::SpotifyStatus { state } => Ok(*state),
             IpcResponse::Err {
@@ -1162,6 +1241,7 @@ mod tests {
         let transport = command_result(Err(RpcFailure {
             error: ZniczError::Player("broken pipe".into()),
             mid_request: true,
+            timed_out: false,
         }))
         .unwrap_err()
         .to_string();
@@ -1171,6 +1251,7 @@ mod tests {
         let connect = command_result(Err(RpcFailure {
             error: ZniczError::Player("ipc connect: connection refused".into()),
             mid_request: false,
+            timed_out: false,
         }))
         .unwrap_err()
         .to_string();
@@ -1193,6 +1274,79 @@ mod tests {
         assert!(msg.contains("connection reset"), "{msg}");
         assert!(msg.contains("older version"), "{msg}");
         assert!(msg.contains("znicz player stop"), "{msg}");
+    }
+
+    #[test]
+    fn a_timeout_is_a_network_error_not_the_outdated_player_hint() {
+        let failure = RpcFailure::sent(RpcError::TimedOut);
+        match failure.into_spotify_error() {
+            ZniczError::Spotify { kind, message } => {
+                assert_eq!(kind, SpotifyErrorKind::Network);
+                assert_eq!(message, "the player did not answer in time");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_dropped_connection_mentions_an_older_player() {
+        let failure = RpcFailure::sent(RpcError::Other(ZniczError::Player("ipc empty".into())));
+        let err = failure.into_spotify_error();
+        assert!(
+            matches!(
+                err,
+                ZniczError::Spotify {
+                    kind: SpotifyErrorKind::Network,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        assert!(err.to_string().contains("older player"), "{err}");
+    }
+
+    #[test]
+    fn a_command_timeout_still_gets_the_outdated_player_hint() {
+        // Only Spotify requests change; Command and Library keep the hint.
+        let text = command_result(Err(RpcFailure::sent(RpcError::TimedOut)))
+            .unwrap_err()
+            .to_string();
+        assert!(text.contains("did not answer in time"), "{text}");
+        assert!(text.contains("znicz player stop"), "{text}");
+    }
+
+    #[test]
+    fn a_silent_player_makes_rpc_on_time_out() {
+        // A real socket that never answers, with a short read timeout, so the
+        // test does not wait 30 s and no network is involved.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (_silent, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
+        let mut live = Live {
+            writer: stream.try_clone().unwrap(),
+            reader: BufReader::new(stream),
+            token: "t".into(),
+            version: None,
+            queue_cache: None,
+        };
+        let request = IpcRequest::Hello {
+            token: "t".into(),
+            role: ClientRole::Agent,
+        };
+        assert!(matches!(
+            rpc_on(&mut live, &request),
+            Err(RpcError::TimedOut)
+        ));
+    }
+
+    #[test]
+    fn timeouts_are_recognised_by_their_io_kind() {
+        assert!(is_timeout(std::io::ErrorKind::WouldBlock));
+        assert!(is_timeout(std::io::ErrorKind::TimedOut));
+        assert!(!is_timeout(std::io::ErrorKind::ConnectionReset));
     }
 
     fn advertise_path() -> (tempfile::TempDir, PathBuf) {
