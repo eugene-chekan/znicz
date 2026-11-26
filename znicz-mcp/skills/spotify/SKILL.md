@@ -15,7 +15,7 @@ Call `spotify_status` first. It returns:
 |-------|---------|
 | `configured` | `false`: no client ID is set in `config.toml` |
 | `login` | `not_configured`, `not_logged_in`, `logging_in`, `logged_in` or `failed` |
-| `user` and `premium` | The account. `premium` is `null` until Spotify has refused a playback call, so it is not known yet |
+| `user` and `premium` | The account. `premium` is `null` until the first playback call has been accepted (then `true`) or refused for Premium (then `false`) |
 | `device` | The device Spotify plays on, if any |
 | `playing` | The current track and position, or `null` |
 | `last_error` | The last Spotify error text |
@@ -50,12 +50,16 @@ A request that does not say "Spotify" is for the local library: use `search_libr
 - `spotify_play { uri }` plays one track. `spotify_play { context_uri, offset? }` plays an album or playlist from `offset`. `spotify_play {}` resumes.
 - Starting Spotify pauses Znicz's own playback. Starting Znicz playback pauses Spotify.
 - `spotify_pause`, `spotify_next`, `spotify_previous`, `spotify_seek { position_ms }`, `spotify_set_volume { volume }` (0.0 to 1.0), `spotify_set_repeat { mode }` (off, track or context), `spotify_set_shuffle { on }`, and `spotify_queue_add { uri }`.
-- Transport calls return `{"reply": "done"}`. Call `spotify_status` to see the new state.
+- Transport calls return `{"reply": "done"}`. `spotify_status` reflects the change within about a second.
 
 ## Devices
 
 - `spotify_devices` lists the devices Spotify can see, with their ids.
 - `spotify_transfer { device_id, play }` moves playback to a device. Use `play: true` to start it there.
+
+## The now-playing resource
+
+`znicz://spotify/now-playing` is the same snapshot as `spotify_status`, as JSON. Reading it does not speed up the player's polling, so when nobody is watching it can be up to about 15 s old. Prefer `spotify_status` when freshness matters.
 
 ## Errors
 
@@ -65,13 +69,14 @@ A failed Spotify tool returns its message and a `kind` in the error data. Act on
 |------|------------|
 | `premium_required` | Tell the user that playback needs Spotify Premium. Search and browsing still work. |
 | `no_active_device` | Ask the user to open Spotify on a phone or computer. Or call `spotify_devices`, pick one, and call `spotify_transfer` with `play: true`. |
-| `not_configured` | Tell the user to set `client_id` under `[spotify]` in `config.toml` and run `znicz spotify login`. |
+| `not_configured` | The client ID is missing or wrong, or the Spotify app does not have the exact redirect URI registered. Tell the user what the message says, including the URI it names. The user sets `client_id` under `[spotify]` in `config.toml` and runs `znicz spotify login`. |
 | `not_logged_in`, `login_expired` | Start the login steps above. |
 | `wrong_address` | The pasted address is not from this login. Call `spotify_login_begin` again and ask for the new address. |
 | `rate_limited` | Wait a little before the next call. Do not retry in a loop. |
 | `unavailable` | Explain the message to the user. Spotify does not offer this for that item. |
-| `network` | Spotify or the player did not answer. Try once more, then tell the user. If the message mentions an older player, the player must be restarted: ask the user to run `znicz player stop` and try again. |
-| `no_service` | The running player has no Spotify service, perhaps an older version. Ask the user to run `znicz player stop` and try again. |
+| `network` | Spotify or the player did not answer. For a change such as play or pause, the change may still happen, so call `spotify_status` before retrying. For a read, try once more, then tell the user. |
+| `outdated_player` | The running player is an older Znicz without Spotify support. Ask the user to run `znicz player stop` and try again. |
+| `no_service` | The player was started without a data folder for the login token. It is not an older version. Tell the user, and ask them to restart the player with a data folder. |
 | `other` | Show the message. |
 
 Some messages end with a hint for the terminal UI, such as "Enter still plays it" or "pick one with ,". Those keys do not exist here: use the tools above instead, and do not repeat the hint to the user.

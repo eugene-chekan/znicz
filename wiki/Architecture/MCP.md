@@ -110,7 +110,9 @@ They are also MCP resources (`skill://name/SKILL.md`) and listed by the `skills_
 The `spotify_*` tools control Spotify through the player (see [Spotify](Spotify.md)).
 `znicz mcp` opens a **second** IPC connection for them. A Spotify call can take
 about 40 s, and sharing one connection would hold up the player tools. Each
-Spotify tool runs on a blocking thread, as library scans do.
+Spotify tool runs on a blocking thread, as library scans do. Status
+(`spotify_status`) and the now-playing resource read over the main (player)
+connection, so they answer at once even while a slow Spotify call is running.
 
 | Group | Tools |
 | --- | --- |
@@ -128,7 +130,8 @@ browser lands on into `spotify_login_complete`.
 `data`, for example `{"kind": "premium_required"}`. The kinds are
 `not_configured`, `not_logged_in`, `login_expired`, `wrong_address`,
 `premium_required`, `no_active_device`, `rate_limited`, `unavailable`, `network`,
-`no_service` and `other`. The bundled `spotify` skill says what to do for each.
+`no_service`, `outdated_player` and `other`. The bundled `spotify` skill says what
+to do for each.
 
 **Resource:** `znicz://spotify/now-playing` is the Spotify snapshot as JSON: login,
 account, playback, devices and the last error. Reading it does not mark Spotify

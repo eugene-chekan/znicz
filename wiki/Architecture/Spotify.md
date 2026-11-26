@@ -203,12 +203,16 @@ Tokens never appear in logs (`Token`'s `Debug` redacts them).
 kind is sent as `spotify_kind` next to the message, so the CLI and the MCP tools
 act on the kind and show the message. The kinds are `not_configured`,
 `not_logged_in`, `login_expired`, `wrong_address`, `premium_required`,
-`no_active_device`, `rate_limited`, `unavailable`, `network`, `no_service` and
+`no_active_device`, `rate_limited`, `unavailable`, `network`, `no_service`,
+`outdated_player` and `other`. An unknown kind from a newer player reads as
 `other`.
 
 - A player that does not answer within the 30 s read timeout is `network`, with
   the text "the player did not answer in time". The client reconnects and resends
-  a change once first. A dropped connection is `network` too.
-- `no_service` is a player without a Spotify service: an older player, or one
-  started without a data folder for the token.
+  a change once first. A player that is not reachable at all is `network` too.
+- A connection lost mid-request is `outdated_player`: the player is an older
+  version that does not know Spotify requests. The text says to run
+  `znicz player stop` and try again.
+- `no_service` is a player without a Spotify service: one started without a data
+  folder for the token. It is not an older version.
 - A resent change keeps its kind, because the player stores the failure with it.
