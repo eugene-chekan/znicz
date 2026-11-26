@@ -31,7 +31,12 @@ pub(crate) fn split_uri(uri: &str) -> Option<(SpotifyKind, &str)> {
         "track" => SpotifyKind::Track,
         _ => return None,
     };
-    let id = parts.next().filter(|id| !id.is_empty())?;
+    let id = parts
+        .next()
+        .filter(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric()))?;
+    if parts.next().is_some() {
+        return None;
+    }
     Some((kind, id))
 }
 
@@ -320,6 +325,10 @@ mod tests {
         );
         assert_eq!(split_uri("spotify:show:s"), None);
         assert_eq!(split_uri("nonsense"), None);
+        assert_eq!(split_uri("spotify:album:../me/player"), None);
+        assert_eq!(split_uri("spotify:album:abc?x=1"), None);
+        assert_eq!(split_uri("spotify:playlist:a/b"), None);
+        assert_eq!(split_uri("spotify:album:abc:extra"), None);
     }
 
     #[test]
