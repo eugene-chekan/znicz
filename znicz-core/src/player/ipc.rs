@@ -107,7 +107,8 @@ struct Shared {
     advertise: PathBuf,
     persist: Mutex<Option<SessionPersister>>,
     library: Option<Arc<dyn LibraryHost>>,
-    recent: Mutex<RecentOutcomes>,
+    /// Command and Library change requests.
+    recent: Mutex<RecentOutcomes<()>>,
 }
 
 impl Shared {
@@ -120,30 +121,9 @@ impl Shared {
         }
     }
 
-    /// Run a change request once per id. A resend of the last id from the
-    /// same client gets the stored outcome instead of running `apply` again.
-    ///
-    /// The lock is held while `apply` runs, so a resend that arrives while the
-    /// first attempt is still running waits for it rather than racing it.
+    /// Run a Command or Library change request once per id (see [`run_once`]).
     fn apply_once(&self, id: Option<RequestId>, apply: impl FnOnce() -> Result<()>) -> IpcResponse {
-        let outcome = match id {
-            None => apply().map_err(|e| e.to_string()),
-            Some(id) => {
-                let mut recent = self
-                    .recent
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                match recent.get(id) {
-                    Some(outcome) => outcome,
-                    None => {
-                        let outcome = apply().map_err(|e| e.to_string());
-                        recent.record(id, outcome.clone());
-                        outcome
-                    }
-                }
-            }
-        };
-        match outcome {
+        match run_once(&self.recent, id, apply) {
             Ok(()) => self.ok(),
             Err(message) => IpcResponse::Err { message },
         }
@@ -154,26 +134,58 @@ impl Shared {
 const RECENT_CLIENTS: usize = 64;
 
 /// The last change request's outcome per client, oldest client first.
-#[derive(Default)]
-struct RecentOutcomes {
-    entries: std::collections::VecDeque<(RequestId, std::result::Result<(), String>)>,
+struct RecentOutcomes<T> {
+    entries: std::collections::VecDeque<(RequestId, std::result::Result<T, String>)>,
 }
 
-impl RecentOutcomes {
-    fn get(&self, id: RequestId) -> Option<std::result::Result<(), String>> {
+impl<T> Default for RecentOutcomes<T> {
+    fn default() -> Self {
+        Self {
+            entries: std::collections::VecDeque::new(),
+        }
+    }
+}
+
+impl<T: Clone> RecentOutcomes<T> {
+    fn get(&self, id: RequestId) -> Option<std::result::Result<T, String>> {
         self.entries
             .iter()
             .find(|(seen, _)| *seen == id)
             .map(|(_, outcome)| outcome.clone())
     }
 
-    fn record(&mut self, id: RequestId, outcome: std::result::Result<(), String>) {
+    fn record(&mut self, id: RequestId, outcome: std::result::Result<T, String>) {
         self.entries.retain(|(seen, _)| seen.client != id.client);
         self.entries.push_back((id, outcome));
         if self.entries.len() > RECENT_CLIENTS {
             self.entries.pop_front();
         }
     }
+}
+
+/// Run one change request once per id. A resend of the last id from the same
+/// client gets the stored outcome instead of running `apply` again. A request
+/// without an id always runs.
+///
+/// The lock is held while `apply` runs, so a resend that arrives while the
+/// first attempt is still running waits for it rather than racing it.
+fn run_once<T: Clone>(
+    recent: &Mutex<RecentOutcomes<T>>,
+    id: Option<RequestId>,
+    apply: impl FnOnce() -> Result<T>,
+) -> std::result::Result<T, String> {
+    let Some(id) = id else {
+        return apply().map_err(|e| e.to_string());
+    };
+    let mut recent = recent
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(outcome) = recent.get(id) {
+        return outcome;
+    }
+    let outcome = apply().map_err(|e| e.to_string());
+    recent.record(id, outcome.clone());
+    outcome
 }
 
 fn random_u64() -> u64 {
