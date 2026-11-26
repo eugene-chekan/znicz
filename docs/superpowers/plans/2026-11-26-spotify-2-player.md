@@ -23,6 +23,9 @@
 - The pause rule's glue lives in a new binary module, `znicz/src/spotify_pause.rs`, not in `daemon.rs`. `daemon.rs` is about lock files and autostart; keeping the watcher beside the rule keeps it testable on its own.
 - The state request is `SpotifyStatus` (the spec's "SpotifyStatus query").
 - A Spotify change request gets its own dedupe record (`recent_spotify`), not the `Command`/`Library` one. Reason: `apply_once` holds its lock for the whole `apply`, and a Spotify call can take about 40 s.
+- The dedupe record holds its lock for the whole Spotify call (up to about 40 s). That is accepted: the service already serialises its playback and login calls on one client lock, so a second change request would wait there anyway, and a resend of the same id must wait for the first attempt rather than run twice. Reads and `SpotifyStatus` carry no id and never take the lock. The IPC client's read timeout is 30 s, so a call over 30 s makes the client reconnect and resend the same id; the resend waits on the lock and gets the stored answer.
+- The watcher allows one Spotify pause call at a time (an `AtomicBool` slot), so a flapping engine state cannot pile up threads.
+- `browser::open` reaps the opener on a small thread (`child.wait()`), so the long-lived TUI (Part 4) does not collect zombie processes.
 - Pausing Znicz for Spotify sends `Command::Pause` only while the engine is `Playing`. On a Stopped engine, `Pause` sets the status to `Paused`, which would show a stopped player as paused.
 
 **Conventions for every task:**
@@ -186,7 +189,7 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 
 ### Task 2: Spotify requests, replies and the server side
 
-Tests first, then the wire types, the server dispatch and the constructor changes. The binary's one caller of `start_with_session_and_library` passes `None` until Task 7 wires the service in.
+Tests first, then the wire types, the server dispatch and the constructor changes. The binary's one caller of `start_with_session_and_library` passes `None` until Task 6 wires the service in. The tests here talk to the server with raw requests (`rpc_raw`); Task 3 adds the `IpcClient` side and its tests.
 
 **Files:**
 - Modify: `znicz-core/src/player/ipc.rs`
@@ -222,6 +225,24 @@ At the end of `mod tests` in `znicz-core/src/player/ipc.rs` (after `a_running_sc
         }
     }
 
+    /// Takes 300 ms per call and counts the calls.
+    #[derive(Default)]
+    struct SlowSpotify {
+        calls: AtomicUsize,
+    }
+
+    impl crate::spotify_host::SpotifyHost for SlowSpotify {
+        fn apply(&self, _op: SpotifyOp) -> Result<SpotifyReply> {
+            thread::sleep(Duration::from_millis(300));
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(SpotifyReply::Done)
+        }
+
+        fn state(&self) -> SpotifyState {
+            SpotifyState::default()
+        }
+    }
+
     fn spotify_pause(token: &str, id: Option<RequestId>) -> IpcRequest {
         IpcRequest::Spotify {
             token: token.to_string(),
@@ -230,25 +251,13 @@ At the end of `mod tests` in `znicz-core/src/player/ipc.rs` (after `a_running_sc
         }
     }
 
-    #[test]
-    fn spotify_ops_reach_the_host_and_errors_come_back_as_text() {
-        let (_dir, path) = advertise_path();
-        let (player, _thread) = spawn_player(AudioConfig::default());
-        let host = Arc::new(FakeSpotify::default());
-        let _server =
-            IpcServer::start_with_spotify(player, &path, Duration::ZERO, host.clone())
-                .expect("start ipc");
-        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
-
-        let reply = crate::spotify_host::SpotifyHost::apply(&client, SpotifyOp::Pause)
-            .expect("apply");
-        assert_eq!(reply, SpotifyReply::Done);
-        assert_eq!(host.ops.lock().unwrap().len(), 1);
-
-        let err = crate::spotify_host::SpotifyHost::apply(&client, SpotifyOp::Logout)
-            .expect_err("host refused");
-        assert!(matches!(err, ZniczError::Spotify(_)), "{err:?}");
-        assert_eq!(err.to_string(), "refused");
+    fn is_done(response: &IpcResponse) -> bool {
+        matches!(
+            response,
+            IpcResponse::Spotify {
+                reply: SpotifyReply::Done
+            }
+        )
     }
 
     #[test]
@@ -267,41 +276,97 @@ At the end of `mod tests` in `znicz-core/src/player/ipc.rs` (after `a_running_sc
             let reply = client
                 .rpc_raw(spotify_pause(&token, Some(id)))
                 .expect("rpc");
-            assert!(
-                matches!(reply, IpcResponse::Spotify { reply: SpotifyReply::Done }),
-                "{reply:?}"
-            );
+            assert!(is_done(&reply), "{reply:?}");
         }
 
         assert_eq!(host.ops.lock().unwrap().len(), 1);
     }
 
     #[test]
-    fn spotify_state_comes_back_and_a_missing_host_is_an_error() {
+    fn a_spotify_request_without_an_id_always_runs() {
+        let (_dir, path) = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let host = Arc::new(FakeSpotify::default());
+        let _server =
+            IpcServer::start_with_spotify(player, &path, Duration::ZERO, host.clone())
+                .expect("start ipc");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        let token = load_advertise(&path).expect("advertise").token;
+
+        for _ in 0..2 {
+            let reply = client.rpc_raw(spotify_pause(&token, None)).expect("rpc");
+            assert!(is_done(&reply), "{reply:?}");
+        }
+
+        assert_eq!(host.ops.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_resend_that_arrives_while_the_first_attempt_runs_waits_and_does_not_run_twice() {
+        let (_dir, path) = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let host = Arc::new(SlowSpotify::default());
+        let _server =
+            IpcServer::start_with_spotify(player, &path, Duration::ZERO, host.clone())
+                .expect("start ipc");
+        let first = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        let second = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        let token = load_advertise(&path).expect("advertise").token;
+        let id = RequestId { client: 7, seq: 1 };
+
+        let first_token = token.clone();
+        let running = thread::spawn(move || first.rpc_raw(spotify_pause(&first_token, Some(id))));
+        // The first attempt is inside the 300 ms call by now.
+        thread::sleep(Duration::from_millis(100));
+        let reply = second
+            .rpc_raw(spotify_pause(&token, Some(id)))
+            .expect("rpc");
+
+        assert!(is_done(&reply), "{reply:?}");
+        let first_reply = running.join().expect("thread").expect("rpc");
+        assert!(is_done(&first_reply), "{first_reply:?}");
+        assert_eq!(host.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn the_spotify_snapshot_comes_back_and_a_missing_host_is_an_error() {
         let (_dir, path) = advertise_path();
         let (player, _thread) = spawn_player(AudioConfig::default());
         let host = Arc::new(FakeSpotify::default());
         let _server =
             IpcServer::start_with_spotify(player, &path, Duration::ZERO, host).expect("start ipc");
         let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
-        let state = crate::spotify_host::SpotifyHost::try_state(&client).expect("state");
-        assert_eq!(state.login, SpotifyLogin::LoggedIn);
+        let token = load_advertise(&path).expect("advertise").token;
+        match client.rpc_raw(IpcRequest::SpotifyStatus { token }) {
+            Ok(IpcResponse::SpotifyStatus { state }) => {
+                assert_eq!(state.login, SpotifyLogin::LoggedIn);
+            }
+            other => panic!("{other:?}"),
+        }
 
         let (_dir2, path2) = advertise_path();
         let (player2, _thread2) = spawn_player(AudioConfig::default());
         let _bare = IpcServer::start(player2, &path2).expect("start ipc");
         let bare = IpcClient::connect(&path2, ClientRole::Agent).expect("connect");
-        let err = crate::spotify_host::SpotifyHost::apply(&bare, SpotifyOp::Devices)
-            .expect_err("no host");
-        assert!(err.to_string().contains("no Spotify service"), "{err}");
-        assert!(crate::spotify_host::SpotifyHost::try_state(&bare).is_err());
+        let token2 = load_advertise(&path2).expect("advertise").token;
+        for request in [
+            spotify_pause(&token2, None),
+            IpcRequest::SpotifyStatus {
+                token: token2.clone(),
+            },
+        ] {
+            match bare.rpc_raw(request) {
+                Ok(IpcResponse::Err { message }) => assert_eq!(message, NO_SPOTIFY),
+                other => panic!("{other:?}"),
+            }
+        }
     }
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz-core ipc -q`
-Expected: FAIL to compile: `start_with_spotify`, `IpcRequest::Spotify`, `IpcResponse::Spotify`, `SpotifyHost` on `IpcClient` do not exist yet.
+Expected: FAIL to compile: `start_with_spotify`, `IpcRequest::Spotify`, `IpcRequest::SpotifyStatus`, `IpcResponse::Spotify`, `IpcResponse::SpotifyStatus` and `NO_SPOTIFY` do not exist yet.
 
 - [ ] **Step 3: Add the imports, the wire types and the server field**
 
@@ -573,14 +638,10 @@ In `znicz/src/main.rs`, in `run_player_daemon`, change the `IpcServer::start_wit
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
-These tests call `IpcClient` through `SpotifyHost`, so they compile only once Task 3 Step 1 is in the tree. Do Task 3 Step 1 now, then run:
-
 Run: `cargo test -p znicz-core ipc -q`
-Expected: PASS for the three new tests (`spotify_ops_reach_the_host_and_errors_come_back_as_text`, `a_resent_spotify_change_is_applied_once`, `spotify_state_comes_back_and_a_missing_host_is_an_error`) and the existing IPC tests.
+Expected: PASS for the four new tests (`a_resent_spotify_change_is_applied_once`, `a_spotify_request_without_an_id_always_runs`, `a_resend_that_arrives_while_the_first_attempt_runs_waits_and_does_not_run_twice`, `the_spotify_snapshot_comes_back_and_a_missing_host_is_an_error`) and the existing IPC tests. `start_with_spotify` is `#[cfg(test)]`, so a non-test build does not warn about it.
 
-- [ ] **Step 7: Commit Task 2 with Task 3**
-
-Task 2 and Task 3 land in one commit, because `ipc.rs` holds both and the tests need both:
+- [ ] **Step 7: Commit**
 
 ```bash
 git add znicz-core/src/player/ipc.rs znicz/src/main.rs
@@ -596,7 +657,65 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 **Files:**
 - Modify: `znicz-core/src/player/ipc.rs`
 
-- [ ] **Step 1: Add the client impl**
+- [ ] **Step 1: Write the failing tests**
+
+At the end of `mod tests` in `znicz-core/src/player/ipc.rs` (after the Task 2 tests), add:
+
+```rust
+    #[test]
+    fn spotify_ops_reach_the_host_and_errors_come_back_as_text() {
+        let (_dir, path) = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let host = Arc::new(FakeSpotify::default());
+        let _server =
+            IpcServer::start_with_spotify(player, &path, Duration::ZERO, host.clone())
+                .expect("start ipc");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+
+        let reply =
+            crate::spotify_host::SpotifyHost::apply(&client, SpotifyOp::Pause).expect("apply");
+        assert_eq!(reply, SpotifyReply::Done);
+        assert_eq!(host.ops.lock().unwrap().len(), 1);
+
+        let err = crate::spotify_host::SpotifyHost::apply(&client, SpotifyOp::Logout)
+            .expect_err("host refused");
+        assert!(matches!(err, ZniczError::Spotify(_)), "{err:?}");
+        assert_eq!(err.to_string(), "refused");
+    }
+
+    #[test]
+    fn the_client_reads_the_snapshot_and_reports_a_player_without_spotify() {
+        let (_dir, path) = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let host = Arc::new(FakeSpotify::default());
+        let _server =
+            IpcServer::start_with_spotify(player, &path, Duration::ZERO, host).expect("start ipc");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        let state = crate::spotify_host::SpotifyHost::try_state(&client).expect("state");
+        assert_eq!(state.login, SpotifyLogin::LoggedIn);
+
+        let (_dir2, path2) = advertise_path();
+        let (player2, _thread2) = spawn_player(AudioConfig::default());
+        let _bare = IpcServer::start(player2, &path2).expect("start ipc");
+        let bare = IpcClient::connect(&path2, ClientRole::Agent).expect("connect");
+        let err = crate::spotify_host::SpotifyHost::apply(&bare, SpotifyOp::Devices)
+            .expect_err("no host");
+        assert_eq!(err.to_string(), NO_SPOTIFY);
+        assert!(crate::spotify_host::SpotifyHost::try_state(&bare).is_err());
+        // `state` never fails: it falls back to the default.
+        assert_eq!(
+            crate::spotify_host::SpotifyHost::state(&bare),
+            SpotifyState::default()
+        );
+    }
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `cargo test -p znicz-core ipc -q`
+Expected: FAIL to compile: `SpotifyHost` is not implemented for `IpcClient`.
+
+- [ ] **Step 3: Add the client impl**
 
 In `znicz-core/src/player/ipc.rs`, directly after the `impl LibraryHost for IpcClient { … }` block, add:
 
@@ -640,14 +759,21 @@ impl crate::spotify_host::SpotifyHost for IpcClient {
 }
 ```
 
-- [ ] **Step 2: Run the core tests**
+The client's read timeout is 30 s and a Spotify call can take about 40 s. A change op that times out is reconnected and resent with the same id; the server answers the resend from its record once the first attempt ends (tested in Task 2).
+
+- [ ] **Step 4: Run the core tests**
 
 Run: `cargo test -p znicz-core -q`
-Expected: PASS, including the three tests from Task 2 and the existing `library_ops_reach_the_host_and_status_comes_back` (which still compiles because the Library calls are unqualified and `SpotifyHost` is not in scope in this module).
+Expected: PASS, including the two new tests and the existing `library_ops_reach_the_host_and_status_comes_back` (the Library calls are unqualified and `SpotifyHost` is not in scope in this module, so they stay unambiguous).
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 5: Commit**
 
-This impl is in the same file as Task 2 and is committed with it, as Task 2 Step 7 says. There is nothing separate to commit here. Continue to Task 4 only after Task 2's commit exists.
+```bash
+git add znicz-core/src/player/ipc.rs
+git commit -m "feat(core): IpcClient implements SpotifyHost
+
+Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
+```
 
 ---
 
@@ -724,6 +850,20 @@ mod tests {
         assert_eq!(from_serde, OpenBrowser::Never);
         assert_eq!(OpenBrowser::default(), OpenBrowser::Auto);
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_opener_is_waited_for_so_it_leaves_no_zombie() {
+        // The reaper thread ends once the child has exited and been waited on.
+        let reaper = spawn_reaped(Command::new("true")).expect("spawn");
+        reaper.join().expect("reaper thread");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_missing_opener_is_an_error() {
+        assert!(spawn_reaped(Command::new("/nonexistent/znicz-opener")).is_err());
+    }
 }
 ```
 
@@ -737,7 +877,7 @@ mod api;
 ```
 
 Run: `cargo test -p znicz-spotify browser -q`
-Expected: FAIL to compile: `should_open`, `OpenBrowser` not found.
+Expected: FAIL to compile: `should_open`, `OpenBrowser`, `spawn_reaped` not found.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -792,14 +932,25 @@ pub fn should_open(setting: OpenBrowser, env: &dyn Fn(&str) -> Option<String>) -
 }
 
 /// Start the platform's opener on `url` and return without waiting for it.
-/// Its output goes to null.
+/// Its output goes to null. A small thread waits for the opener to exit, so a
+/// long-lived caller (the TUI) does not collect zombie processes.
 pub fn open(url: &str) -> std::io::Result<()> {
-    opener(url)
+    spawn_reaped(opener(url)).map(|_| ())
+}
+
+/// Spawn `command` with its stdio on null, and reap it on a thread. The handle
+/// finishes once the child has exited.
+fn spawn_reaped(mut command: Command) -> std::io::Result<std::thread::JoinHandle<()>> {
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()?;
-    Ok(())
+    std::thread::Builder::new()
+        .name("znicz-browser-reap".into())
+        .spawn(move || {
+            let _ = child.wait();
+        })
 }
 
 #[cfg(target_os = "windows")]
@@ -830,7 +981,7 @@ fn opener(url: &str) -> Command {
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-spotify browser -q`
-Expected: PASS (5 tests).
+Expected: PASS (7 tests on Unix, 5 elsewhere).
 
 - [ ] **Step 5: Commit**
 
@@ -876,6 +1027,9 @@ Create `znicz/src/spotify_pause.rs`:
 //! The two cannot loop. The first only moves the engine away from `Playing`,
 //! and the watcher acts only on a move into `Playing`. Spotify's own pause
 //! never goes through the first path, because `Pause` does not start playback.
+//!
+//! The watcher allows one pause call at a time, so an engine that flaps in and
+//! out of `Playing` while a call is slow cannot pile up threads.
 
 #[cfg(test)]
 mod tests {
@@ -890,6 +1044,15 @@ mod tests {
         assert!(!started_playing(Playing, Paused));
         assert!(!started_playing(Stopped, Paused));
         assert!(!started_playing(Paused, Stopped));
+    }
+
+    #[test]
+    fn only_one_pause_call_runs_at_a_time() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let first = PauseSlot::take(&flag).expect("free");
+        assert!(PauseSlot::take(&flag).is_none(), "busy while the first is held");
+        drop(first);
+        assert!(PauseSlot::take(&flag).is_some(), "free again once it is dropped");
     }
 
     #[test]
@@ -909,7 +1072,7 @@ Register it: in `znicz/src/main.rs`, after `mod daemon;`, add `mod spotify_pause
 - [ ] **Step 3: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz spotify_pause -q`
-Expected: FAIL to compile: `started_playing`, `pause_engine_if_playing` not found.
+Expected: FAIL to compile: `started_playing`, `pause_engine_if_playing`, `PauseSlot` not found.
 
 - [ ] **Step 4: Write the implementation**
 
@@ -965,8 +1128,30 @@ pub fn start_service(config: SpotifyConfig, player: &PlayerHandle) -> Option<Arc
     Some(Arc::new(SpotifyService::start(config, options)))
 }
 
+/// The right to run one Spotify pause call. Held by the call's thread and
+/// released when it ends, however it ends (including a failed thread spawn,
+/// which drops the closure and with it the slot).
+struct PauseSlot(Arc<AtomicBool>);
+
+impl PauseSlot {
+    /// `None` while another pause call holds the slot.
+    fn take(flag: &Arc<AtomicBool>) -> Option<Self> {
+        flag.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .ok()
+            .map(|_| Self(flag.clone()))
+    }
+}
+
+impl Drop for PauseSlot {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
 /// Watch the engine until `stop` is set. Each move into `Playing` asks
 /// Spotify to pause, on its own thread, so this loop never blocks on Spotify.
+/// A start that comes while an earlier call still runs is skipped: that call
+/// reads Spotify's state itself, and flapping must not spawn a thread per flap.
 pub fn spawn_pause_watcher(
     player: PlayerHandle,
     spotify: Arc<SpotifyService>,
@@ -975,15 +1160,21 @@ pub fn spawn_pause_watcher(
     thread::Builder::new()
         .name("znicz-spotify-pause".into())
         .spawn(move || {
+            let in_flight = Arc::new(AtomicBool::new(false));
             let mut prev = player.state().status;
             while !stop.load(Ordering::SeqCst) {
                 thread::sleep(SAMPLE);
                 let now = player.state().status;
                 if started_playing(prev, now) {
-                    let spotify = spotify.clone();
-                    let _ = thread::Builder::new()
-                        .name("znicz-spotify-pause-call".into())
-                        .spawn(move || spotify.pause_if_playing());
+                    if let Some(slot) = PauseSlot::take(&in_flight) {
+                        let spotify = spotify.clone();
+                        let _ = thread::Builder::new()
+                            .name("znicz-spotify-pause-call".into())
+                            .spawn(move || {
+                                let _slot = slot;
+                                spotify.pause_if_playing();
+                            });
+                    }
                 }
                 prev = now;
             }
@@ -1005,7 +1196,7 @@ Also add this test to the `tests` module (it documents that the watcher's check 
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz spotify_pause -q`
-Expected: PASS (3 tests). The binary builds with the new dependency.
+Expected: PASS (4 tests). The binary builds with the new dependency.
 
 - [ ] **Step 6: Tidy the two service doc comments**
 
@@ -1176,7 +1367,7 @@ fn open_browser_setting(section: &SpotifySection) -> OpenBrowser {
 - [ ] **Step 4: Run the config tests to verify they pass**
 
 Run: `cargo test -p znicz spotify -q`
-Expected: PASS for the three config tests. (The default-config test already passes because the block is not yet in the default file; Task 10 adds it and re-runs this test.)
+Expected: PASS for the three config tests. (The default-config test already passes because the block is not yet in the default file; Task 9 adds it and re-runs this test.)
 
 - [ ] **Step 5: Host the service in the player**
 
@@ -1276,7 +1467,7 @@ fn run_player_daemon(
 - [ ] **Step 6: Run the binary's tests and a build**
 
 Run: `cargo test -p znicz -q && cargo build -p znicz -q`
-Expected: PASS and build. The `[spotify]` config types are now used, so the dead-code warnings from Task 5 for the mapping functions are gone.
+Expected: PASS and build. The `spotify_pause` functions are now used, so the dead-code warnings from Task 5 are gone. (`spotify_config` and `open_browser_setting` stay unused in non-test code until Task 8 uses `open_browser_setting`; `spotify_config` is used here.)
 
 - [ ] **Step 7: Commit**
 
@@ -1386,9 +1577,10 @@ mod tests {
             login: SpotifyLogin::Failed("login expired, press Enter to start again".into()),
             ..SpotifyState::default()
         };
+        // The service's wording is for the TUI (Enter); the CLI says what to run.
         assert_eq!(
             login_wait(&failed, Duration::ZERO),
-            LoginWait::Failed("login expired, press Enter to start again".into())
+            LoginWait::Failed("login expired, run `znicz spotify login` again".into())
         );
         let cancelled = SpotifyState {
             login: SpotifyLogin::NotLoggedIn,
@@ -1566,7 +1758,9 @@ pub fn login_wait(state: &SpotifyState, account_wait: Duration) -> LoginWait {
             None if account_wait < ACCOUNT_WAIT => LoginWait::Pending,
             None => LoginWait::LoggedIn { user: None },
         },
-        SpotifyLogin::Failed(reason) => LoginWait::Failed(reason.clone()),
+        SpotifyLogin::Failed(reason) => LoginWait::Failed(
+            reason.replace("press Enter to start again", "run `znicz spotify login` again"),
+        ),
         SpotifyLogin::NotLoggedIn | SpotifyLogin::NotConfigured => {
             LoginWait::Failed("the login was cancelled".into())
         }
@@ -1733,19 +1927,27 @@ pub enum SpotifyCmd {
     Status,
 }
 
-/// Run one `znicz spotify` command against the player.
+/// Run one `znicz spotify` command against the player. `connect` autostarts
+/// and connects to the player; `login` with no usable client ID fails before
+/// it, so nothing is started or sent for a setting that cannot work.
 pub fn run(
     command: SpotifyCmd,
-    host: IpcClient,
     config: SpotifyConfig,
     open: OpenBrowser,
+    connect: impl FnOnce() -> color_eyre::Result<IpcClient>,
 ) -> color_eyre::Result<()> {
+    if matches!(command, SpotifyCmd::Login) {
+        if let Err(message) = check_client_id(&config) {
+            bail!("{message}");
+        }
+    }
+    let host = connect()?;
     host.apply(SpotifyOp::Configure {
-        config: config.clone(),
+        config,
     })
     .map_err(|e| eyre!("{e}"))?;
     match command {
-        SpotifyCmd::Login => login(&host, &config, open),
+        SpotifyCmd::Login => login(&host, open),
         SpotifyCmd::Logout => {
             host.apply(SpotifyOp::Logout).map_err(|e| eyre!("{e}"))?;
             println!("Logged out of Spotify");
@@ -1761,10 +1963,7 @@ pub fn run(
     }
 }
 
-fn login(host: &IpcClient, config: &SpotifyConfig, open: OpenBrowser) -> color_eyre::Result<()> {
-    if let Err(message) = check_client_id(config) {
-        bail!("{message}");
-    }
+fn login(host: &IpcClient, open: OpenBrowser) -> color_eyre::Result<()> {
     let SpotifyReply::AuthorizeUrl { url, listening, .. } = host
         .apply(SpotifyOp::BeginLogin)
         .map_err(|e| eyre!("{e}"))?
@@ -1828,7 +2027,7 @@ fn now_ms() -> u64 {
 }
 ```
 
-Note: `login` uses `SpotifyLogin` and `ZniczError` display via `{e}`; add `SpotifyLogin` to the `znicz_core` import line: `use znicz_core::{SpotifyConfig, SpotifyLogin, SpotifyState, valid_client_id};` already includes it.
+`login` ends with exit 0 on `Logged in…`, and with exit 1 (an `Err` out of `main`) on a missing or bad client ID, a failed or cancelled login, or a player that stops answering. A wrong pasted address only prints the service's message and the wait goes on.
 
 - [ ] **Step 2: Wire the subcommand into the binary**
 
@@ -1849,12 +2048,11 @@ In `znicz/src/main.rs`:
 
 ```rust
         Some(Commands::Spotify { command }) => {
-            let host = connect_agent(audio_config.device_id.as_deref(), config_file.as_deref())?;
             spotify_cli::run(
                 command,
-                host,
                 spotify_config(&config.spotify),
                 open_browser_setting(&config.spotify),
+                || connect_agent(audio_config.device_id.as_deref(), config_file.as_deref()),
             )?;
         }
 ```
@@ -1868,11 +2066,11 @@ Expected: PASS. `znicz spotify --help` lists login, logout and status.
 
 Run: `ZNICZ_SPOTIFY_TOKEN_PATH=/tmp/znicz-check-token.json cargo run -q -p znicz -- --config /dev/null spotify status; echo "exit $?"`
 
-Expected: prints `Login: not configured (set client_id under [spotify] in config.toml)` and the other four lines, then `exit 0`. (This uses a throwaway token path; the player it autostarts can be stopped with `cargo run -q -p znicz -- player stop`.)
+Expected: prints `Login: not configured (set client_id under [spotify] in config.toml)` and the other four lines, then `exit 0`. (This uses a throwaway token path, and only if no player is already running: a running player keeps its own environment and config, so run `cargo run -q -p znicz -- player stop` first. Stop the autostarted one the same way afterwards.)
 
 Run: `cargo run -q -p znicz -- --config /dev/null spotify login; echo "exit $?"`
 
-Expected: an error that says Spotify is not configured and names `http://127.0.0.1:8898/callback`, then `exit 1`.
+Expected: an error that says Spotify is not configured and names `http://127.0.0.1:8898/callback`, then `exit 1`. The check runs before the player is contacted.
 
 - [ ] **Step 5: Commit**
 
@@ -2152,7 +2350,7 @@ Run these on a real machine with a real Spotify Premium account and a Developmen
 
 With `client_id` unset (or the `[spotify]` block commented out), run: `znicz spotify status`
 
-Expected: the five status lines, login `not configured`, exit 0.
+Expected: the five status lines, login `not configured`, exit 0. (Stop any running player first, so it is restarted with the current config.)
 
 Run: `znicz spotify login; echo "exit $?"`
 
@@ -2202,14 +2400,14 @@ Nothing to commit unless a check found a bug. If one did, fix it, run Task 12, a
 | 2. Player always hosts `SpotifyService`, `NotConfigured` without a client ID | Task 6 (`start_service`, daemon wiring) |
 | 3a. Spotify starts → pause the engine; no lock held; a cheap handle, not an `Arc` cycle; non-blocking send | Task 5 (`pause_engine_if_playing`, `start_service`), Task 5 service doc tidy |
 | 3b. Znicz starts → Spotify pauses; watcher ~250 ms; short-lived thread; pure `started_playing` | Task 5 (`started_playing`, `spawn_pause_watcher`) |
-| 3 loop-safety argument | Task 5 module doc, Task 10 wiki "The pause rule" |
+| 3 loop-safety argument | Task 5 module doc, Task 10 wiki "The pause rule"; the watcher's one-call-at-a-time guard is `PauseSlot` |
 | 4. `Spotify { op, id }` with token; state request; dedupe for non-reads; reads carry no id | Task 2 (wire types, server), Task 3 (client sends ids only for change ops) |
 | 4. `IpcClient: SpotifyHost`: apply sends; state default when unreachable; try_state errors | Task 3 |
 | 4. Player without a host answers with an error | Task 2 (`NO_SPOTIFY`), tested |
 | 4. Errors cross IPC as text (`ZniczError::Spotify`); no typed codes | Task 2 and 3 (`ZniczError::Spotify(message)`) |
 | 5. `OpenBrowser` (serde lowercase), `should_open` with injected env, `open` | Task 4 |
 | 6. `znicz spotify login | logout | status`; Configure before each command | Task 8 (`run`), Task 7 (pure) |
-| 6. login: no client ID → message and non-zero; BeginLogin; listening text; open browser; print failure; paste thread; poll 500 ms; LoggedIn/Failed exit codes | Task 7 (`check_client_id`, `login_intro`, `login_wait`, `logged_in_message`), Task 8 (`login`, `paste_lines`) |
+| 6. login: no client ID → message and non-zero, before the player is contacted; BeginLogin; listening text; open browser; print failure; paste thread; poll 500 ms; LoggedIn/Failed exit codes | Task 7 (`check_client_id`, `login_intro`, `login_wait`, `logged_in_message`), Task 8 (`login`, `paste_lines`) |
 | 6. logout message | Task 8 |
 | 6. status fields and formatting as a pure function | Task 7 (`status_lines`) |
 | 7. Wiki: Spotify.md (host, CLI, login incl. SSH and `ssh -L`, config, pause rule); Overview (table, host); MCP.md checked | Task 10 |
@@ -2217,6 +2415,8 @@ Nothing to commit unless a check found a bug. If one did, fix it, run Task 12, a
 | 8. Out of scope: MCP, TUI, version bump, CHANGELOG | Not planned here (Parts 3–5 and the final PR) |
 | Manual check: no client ID; paste over SSH; `ssh -L`; pausing both ways | Task 13 (the Spotify-starts direction is deferred to Part 3, see Step 5) |
 | Commit message `docs(plan): Spotify part 2, player, IPC and CLI` | Written when this plan is committed |
+
+**Review fixes (concurrency and cleanup):** the Spotify dedupe lock is held across the call on purpose and a test covers a resend arriving mid-call (Task 2); the watcher has a one-call-at-a-time guard, `PauseSlot` (Task 5); `browser::open` reaps its child (Task 4); the CLI checks the client ID before autostarting the player and rewords the TUI-only expiry text (Tasks 7, 8).
 
 **Placeholder scan:** no `TBD`, no "handle edge cases" left open. Every code step has its code. Task 13 Step 5 is an explicit deferral with a reason, not a gap.
 
