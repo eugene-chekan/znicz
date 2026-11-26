@@ -2323,6 +2323,98 @@ pub(crate) mod tests {
         assert!(toast_texts(&app).iter().any(|t| t.starts_with("Not saved")));
     }
 
+    /// Every Spotify change a user can make, one after the other.
+    fn change_every_spotify_row(app: &mut App) {
+        press(app, KeyCode::Char('S'));
+        press(app, KeyCode::Char('6'));
+        select(app, Row::OpenBrowser);
+        press(app, KeyCode::Enter);
+        select(app, Row::PlaybackDevice);
+        press(app, KeyCode::Enter);
+        select(app, Row::RedirectPort);
+        press(app, KeyCode::Enter);
+        for _ in 0..4 {
+            press(app, KeyCode::Backspace);
+        }
+        type_text(app, "9001");
+        press(app, KeyCode::Enter);
+        select(app, Row::ClientId);
+        press(app, KeyCode::Enter);
+        for _ in 0..ID.len() {
+            press(app, KeyCode::Backspace);
+        }
+        type_text(app, NEW_ID);
+        press(app, KeyCode::Enter);
+        // A set client ID always asks first, so the change waits for Enter.
+        press(app, KeyCode::Enter);
+    }
+
+    fn kitchen() -> Vec<SpotifyDevice> {
+        vec![SpotifyDevice {
+            id: "d1".into(),
+            name: "Kitchen".into(),
+            kind: "Speaker".into(),
+            is_active: false,
+            volume_percent: None,
+        }]
+    }
+
+    #[test]
+    fn a_broken_config_never_changes_the_player_through_any_spotify_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[spotify\n").unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = spotify_app(&dir, host.clone())
+            .with_config_file(ConfigFile::new(&path))
+            .with_config_problem(ConfigProblem::Parse {
+                message: "bad".into(),
+                line: 1,
+                column: 1,
+            });
+        app.spotify_devices = kitchen();
+        change_every_spotify_row(&mut app);
+        assert!(
+            !sent_ops(&host)
+                .iter()
+                .any(|op| matches!(op, SpotifyOp::Configure { .. })),
+            "nothing reaches the player"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "[spotify\n");
+        assert_eq!(app.spotify.redirect_port, SpotifyConfig::DEFAULT_PORT);
+        assert_eq!(
+            app.spotify.client_id, ID,
+            "the row shows what the player has"
+        );
+        assert!(app.spotify.device.is_empty());
+        assert_eq!(app.open_browser, OpenBrowser::Auto);
+    }
+
+    #[test]
+    fn a_clean_config_sends_one_configure_per_player_side_change_and_never_an_empty_id_unasked() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = spotify_app(&dir, host.clone());
+        app.spotify_devices = kitchen();
+        change_every_spotify_row(&mut app);
+        let configures: Vec<_> = sent_ops(&host)
+            .into_iter()
+            .filter_map(|op| match op {
+                SpotifyOp::Configure { config } => Some(config),
+                _ => None,
+            })
+            .collect();
+        // Device, port, client ID: three saves. The browser setting is not sent.
+        assert_eq!(configures.len(), 3, "{configures:?}");
+        assert!(
+            configures.iter().all(|c| !c.client_id.is_empty()),
+            "an ID was never blanked"
+        );
+        assert_eq!(configures.last().unwrap().client_id, NEW_ID);
+        assert_eq!(configures.last().unwrap().redirect_port, 9001);
+        assert_eq!(configures.last().unwrap().device, "Kitchen");
+    }
+
     // --- Spotify rows: client ID, logout question, Account ---
 
     const ID: &str = "0123456789abcdef0123456789abcdef";
