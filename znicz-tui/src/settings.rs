@@ -721,7 +721,8 @@ pub struct SettingsValues {
     pub default_device: Option<String>,
     /// `[audio.fade]`.
     pub fades: FadeTimes,
-    /// The `[spotify]` section as the player has it.
+    /// Mirrors the `[spotify]` section of `config.toml`. It is re-read from the
+    /// file after each Spotify save, so it is what the file says, not this run's copy.
     pub spotify: SpotifyConfig,
     /// `[spotify] open_browser`.
     pub open_browser: OpenBrowser,

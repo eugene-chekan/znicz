@@ -374,19 +374,22 @@ and Open browser stay editable without one.
 When Spotify is unavailable, the Account row says `Spotify is unavailable: …`
 and ends with `(switch tab to retry)`.
 
-**Client ID.** Setting the first ID saves at once. Changing or clearing an ID
-that is already set always asks first in the strip: `Changing the client ID
-logs you out of Spotify. Enter confirms · Esc cancels.` The player deletes the
-login when the ID changes, so the question is never skipped. Only this
-confirmed change tells the player it may replace the ID; any other save that
-would change the ID is refused by the player.
+**Client ID.** Setting the first ID saves at once, when neither the screen nor
+`config.toml` has one. Changing or clearing an ID that is already set always
+asks first in the strip: `Changing the client ID logs you out of Spotify.
+Enter confirms · Esc cancels.` The player deletes the login when the ID
+changes, so the question is never skipped. Only this confirmed change tells the
+player it may replace the ID; any other save that would change the ID is
+refused by the player.
 
 **Saving.** A row the player needs (Client ID, Redirect port and Playback
-device) is written to `[spotify]` in `config.toml` in place. The player is told
-only after the file was written (`Configure`). Open browser is read only by the
-TUI, so it is saved but not sent. With a config error, or no config file path,
-the row goes back to its old value, nothing is written, and nothing is sent. An
-empty client ID would log the user out.
+device) is written to `[spotify]` in `config.toml` in place. Then the TUI reads
+`[spotify]` back from the file and takes that as the truth for the screen, and
+only then tells the player (`Configure`) with what the file says. If the file
+cannot be read back, nothing is sent and a toast says why. Open browser is read
+only by the TUI, so it is saved but not sent. With a config error, or no config
+file path, the row goes back to its old value, nothing is written, and nothing
+is sent. An empty client ID would log the user out.
 
 **Login panel.** `Enter` on Account (logged out) starts a login. The panel
 opens in the list area and shows the URL, with a line that says the TUI is

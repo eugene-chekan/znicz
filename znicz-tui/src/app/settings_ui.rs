@@ -12,6 +12,7 @@ use znicz_spotify::browser::OpenBrowser;
 
 use super::spotify_ui::SpotifyConfirm;
 use super::{App, DevicesMode, Modal};
+use crate::config_file::ConfigFile;
 use crate::line_edit::LineEdit;
 use crate::settings::{self, Kind, Row, Tab};
 use crate::spotify_rows;
@@ -70,6 +71,36 @@ fn picker_protocol(wanted: CoverProtocol, queried: ProtocolType) -> ProtocolType
         CoverProtocol::Sixel => ProtocolType::Sixel,
         CoverProtocol::Halfblocks | CoverProtocol::Off => ProtocolType::Halfblocks,
     }
+}
+
+/// The `[spotify]` section as `config.toml` has it now, and its browser setting.
+/// A missing key is the default; a value of the wrong kind is an error.
+fn read_spotify(file: &ConfigFile) -> Result<(SpotifyConfig, OpenBrowser), String> {
+    let text = |key: &str| -> Result<Option<String>, String> {
+        match file.get("spotify", key)? {
+            None => Ok(None),
+            Some(value) => value
+                .as_str()
+                .map(|found| Some(found.to_string()))
+                .ok_or_else(|| format!("[spotify] {key} must be text")),
+        }
+    };
+    let redirect_port = match file.get("spotify", "redirect_port")? {
+        None => SpotifyConfig::DEFAULT_PORT,
+        Some(value) => value
+            .as_integer()
+            .and_then(|n| u16::try_from(n).ok())
+            .ok_or_else(|| "[spotify] redirect_port must be a port number".to_string())?,
+    };
+    let config = SpotifyConfig {
+        client_id: text("client_id")?.unwrap_or_default().trim().to_string(),
+        redirect_port,
+        device: text("device")?.unwrap_or_default(),
+    };
+    let open_browser = text("open_browser")?
+        .and_then(|value| OpenBrowser::parse(&value))
+        .unwrap_or_default();
+    Ok((config, open_browser))
 }
 
 impl App {
@@ -507,8 +538,13 @@ impl App {
             return;
         }
         // A set ID asks first, whatever the login state: the player logs out
-        // and deletes the token. Only the first ID saves directly.
-        if !self.spotify.client_id.is_empty() {
+        // and deletes the token. The file is asked too, since it may hold an ID
+        // this run never showed. Only a first ID saves directly.
+        let file_id = self.file_client_id();
+        let asks = [self.spotify.client_id.as_str(), file_id.as_str()]
+            .iter()
+            .any(|id| !id.is_empty() && *id != text.as_str());
+        if asks {
             self.spotify_confirm = Some(SpotifyConfirm::ClientId(text));
             return;
         }
@@ -522,19 +558,40 @@ impl App {
         changed
     }
 
-    /// Send the player its copy of `[spotify]` after a player-side row saved.
-    /// Called only from `save_setting`, after the file was written. An empty
-    /// client ID in that copy logs the user out and deletes the token, so the
-    /// copy is never sent while the config has a problem, even if a caller
-    /// forgets the order.
-    fn send_spotify_config(&self, row: &Row, replace_client_id: bool) {
-        if self.config_problem.is_some() || !spotify_rows::sent_to_player(row) {
+    /// The client ID `config.toml` has now, or empty when it cannot be read.
+    fn file_client_id(&self) -> String {
+        self.config_file
+            .as_ref()
+            .and_then(|file| read_spotify(file).ok())
+            .map(|(config, _)| config.client_id)
+            .unwrap_or_default()
+    }
+
+    /// After a Spotify row was written, read `[spotify]` back from the file and
+    /// take that as the truth: the screen shows it, and the player gets it. A
+    /// row the player needs is then sent. If the file holds an ID this run did
+    /// not show, it was edited outside Znicz; the player still refuses a swap
+    /// unless `replace_client_id` is set, and its refusal is toasted.
+    /// Called only from `save_setting`, after the file was written.
+    fn sync_spotify_from_file(&mut self, file: &ConfigFile, row: &Row, replace_client_id: bool) {
+        let (config, open_browser) = match read_spotify(file) {
+            Ok(values) => values,
+            Err(e) => {
+                self.toasts.error(format!(
+                    "Not sent to Spotify: could not read [spotify] from config.toml: {e}"
+                ));
+                return;
+            }
+        };
+        self.spotify = config.clone();
+        self.open_browser = open_browser;
+        if !spotify_rows::sent_to_player(row) {
             return;
         }
         self.ask_spotify(
             SpotifyAsk::Configure,
             SpotifyOp::Configure {
-                config: self.spotify.clone(),
+                config,
                 replace_client_id,
             },
         );
@@ -748,8 +805,9 @@ impl App {
                 self.restore_settings(before);
                 self.toasts.error(format!("Could not save settings: {e}"));
             }
-            // The only place Configure is sent: the file holds the change now.
-            Ok(()) => self.send_spotify_config(row, replace_client_id),
+            // The file holds the change now: a Spotify row is read back from it.
+            Ok(()) if spotify => self.sync_spotify_from_file(&file, row, replace_client_id),
+            Ok(()) => {}
         }
     }
 
@@ -2405,6 +2463,12 @@ pub(crate) mod tests {
     #[test]
     fn a_clean_config_sends_one_configure_per_player_side_change_and_never_an_empty_id_unasked() {
         let dir = tempfile::tempdir().unwrap();
+        // The file holds the ID the app shows, as a clean config does.
+        std::fs::write(
+            dir.path().join("config.toml"),
+            format!("[spotify]\nclient_id = \"{ID}\"\n"),
+        )
+        .unwrap();
         let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
         let mut app = spotify_app(&dir, host.clone());
         app.spotify_devices = kitchen();
@@ -2616,6 +2680,69 @@ pub(crate) mod tests {
             op,
             SpotifyOp::Configure { config, .. } if config.client_id == NEW_ID
         )));
+    }
+
+    #[test]
+    fn a_port_save_sends_the_client_id_the_file_has_not_the_stale_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = settings_app(&dir);
+        app.spotify_worker = Some(SpotifyWorker::spawn(host.clone()).unwrap());
+        // The TUI started with no ID; the file gained one since.
+        std::fs::write(
+            dir.path().join("config.toml"),
+            format!("[spotify]\nclient_id = \"{ID}\"\n"),
+        )
+        .unwrap();
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::RedirectPort);
+        press(&mut app, KeyCode::Enter);
+        for _ in 0..4 {
+            press(&mut app, KeyCode::Backspace);
+        }
+        type_text(&mut app, "9001");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.spotify.client_id, ID, "the screen shows the file");
+        let sent = sent_ops(&host);
+        assert!(
+            sent.iter().any(|op| matches!(
+                op,
+                SpotifyOp::Configure { config, replace_client_id: false }
+                    if config.client_id == ID && config.redirect_port == 9001
+            )),
+            "{sent:?}"
+        );
+    }
+
+    #[test]
+    fn entering_a_client_id_asks_when_the_file_already_has_one() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("config.toml"),
+            format!("[spotify]\nclient_id = \"{ID}\"\n"),
+        )
+        .unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = settings_app(&dir);
+        app.spotify_worker = Some(SpotifyWorker::spawn(host.clone()).unwrap());
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::ClientId);
+        press(&mut app, KeyCode::Enter);
+        type_text(&mut app, NEW_ID);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            app.spotify_confirm,
+            Some(SpotifyConfirm::ClientId(NEW_ID.into()))
+        );
+        assert!(app.spotify.client_id.is_empty());
+        assert_eq!(saved(&dir)["spotify"]["client_id"].as_str(), Some(ID));
+        assert!(
+            !sent_ops(&host)
+                .iter()
+                .any(|op| matches!(op, SpotifyOp::Configure { .. }))
+        );
     }
 
     #[test]

@@ -30,6 +30,19 @@ impl ConfigFile {
         self.set(section, key, Value::from(v))
     }
 
+    /// The value of `key` in `[section]` as the file has it now. `None` when the
+    /// file, the section or the key is missing.
+    pub fn get(&self, section: &str, key: &str) -> Result<Option<Value>, String> {
+        let Some(mut doc) = self.read_doc()? else {
+            return Ok(None);
+        };
+        let parts: Vec<&str> = section.split('.').collect();
+        Ok(existing_table(doc.as_table_mut(), &parts)
+            .and_then(|table| table.get(key))
+            .and_then(Item::as_value)
+            .cloned())
+    }
+
     /// Drop `key` from `[section]`. A missing file, section or key is a no-op:
     /// nothing is created and nothing is written.
     pub fn remove(&self, section: &str, key: &str) -> Result<(), String> {
