@@ -1028,6 +1028,100 @@ impl ZniczMcpServer {
         })
         .await
     }
+
+    #[tool(
+        description = "Play on Spotify. uri plays one track; context_uri plays an album or playlist from offset; giving neither resumes. Starting Spotify pauses Znicz's own playback"
+    )]
+    async fn spotify_play(
+        &self,
+        Parameters(params): Parameters<spotify_json::SpotifyPlayParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let op = spotify_json::play_op(params)?;
+        self.spotify_reply(op).await
+    }
+
+    #[tool(description = "Pause Spotify. Znicz's playback is not affected")]
+    async fn spotify_pause(&self) -> Result<rmcp::model::CallToolResult, McpError> {
+        self.spotify_reply(SpotifyOp::Pause).await
+    }
+
+    #[tool(description = "Next track on Spotify")]
+    async fn spotify_next(&self) -> Result<rmcp::model::CallToolResult, McpError> {
+        self.spotify_reply(SpotifyOp::Next).await
+    }
+
+    #[tool(description = "Previous track on Spotify")]
+    async fn spotify_previous(&self) -> Result<rmcp::model::CallToolResult, McpError> {
+        self.spotify_reply(SpotifyOp::Previous).await
+    }
+
+    #[tool(description = "Seek within the Spotify track, in milliseconds")]
+    async fn spotify_seek(
+        &self,
+        Parameters(params): Parameters<spotify_json::SpotifySeekParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        self.spotify_reply(SpotifyOp::Seek {
+            position_ms: params.position_ms,
+        })
+        .await
+    }
+
+    #[tool(description = "Spotify volume between 0.0 and 1.0, the same scale as set_volume")]
+    async fn spotify_set_volume(
+        &self,
+        Parameters(params): Parameters<spotify_json::SpotifyVolumeParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let volume = spotify_json::volume(params.volume)?;
+        self.spotify_reply(SpotifyOp::SetVolume { volume }).await
+    }
+
+    #[tool(description = "Spotify repeat mode: off, track or context")]
+    async fn spotify_set_repeat(
+        &self,
+        Parameters(params): Parameters<spotify_json::SpotifyRepeatParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        self.spotify_reply(SpotifyOp::SetRepeat {
+            mode: params.mode.into(),
+        })
+        .await
+    }
+
+    #[tool(description = "Turn Spotify shuffle on or off")]
+    async fn spotify_set_shuffle(
+        &self,
+        Parameters(params): Parameters<spotify_json::SpotifyShuffleParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        self.spotify_reply(SpotifyOp::SetShuffle { on: params.on })
+            .await
+    }
+
+    #[tool(description = "Add a track to the Spotify queue")]
+    async fn spotify_queue_add(
+        &self,
+        Parameters(params): Parameters<spotify_json::SpotifyQueueAddParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        self.spotify_reply(SpotifyOp::QueueAdd { uri: params.uri })
+            .await
+    }
+
+    #[tool(description = "Spotify devices the account can see, with their ids")]
+    async fn spotify_devices(&self) -> Result<rmcp::model::CallToolResult, McpError> {
+        self.spotify_reply(SpotifyOp::Devices).await
+    }
+
+    #[tool(
+        description = "Move Spotify playback to a device from spotify_devices. play: true starts it there"
+    )]
+    async fn spotify_transfer(
+        &self,
+        Parameters(params): Parameters<spotify_json::SpotifyTransferParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        self.spotify_reply(SpotifyOp::Transfer {
+            device_id: params.device_id,
+            play: params.play.unwrap_or(false),
+        })
+        .await
+    }
 }
 
 #[tool_handler]
@@ -1515,6 +1609,58 @@ mod tests {
             matches!(
                 ops.last(),
                 Some(SpotifyOp::Tracks { uri, limit: 50, .. }) if uri.as_str() == "spotify:album:1"
+            ),
+            "{ops:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_premium_refusal_comes_back_with_its_kind() {
+        let (_dir, _ipc, server, _fake) = spotify_server();
+        let err = server
+            .spotify_play(Parameters(spotify_json::SpotifyPlayParams {
+                uri: Some("spotify:track:1".into()),
+                context_uri: None,
+                offset: None,
+            }))
+            .await
+            .expect_err("a free account cannot play");
+        assert_eq!(err.message.as_ref(), "needs Spotify Premium");
+        assert_eq!(
+            err.data,
+            Some(serde_json::json!({ "kind": "premium_required" }))
+        );
+    }
+
+    #[tokio::test]
+    async fn volume_out_of_range_is_refused_before_it_is_sent() {
+        let (_dir, _ipc, server, fake) = spotify_server();
+        let err = server
+            .spotify_set_volume(Parameters(spotify_json::SpotifyVolumeParams {
+                volume: 1.5,
+            }))
+            .await
+            .expect_err("out of range");
+        assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert!(fake.ops.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn transfer_without_play_only_moves_the_device() {
+        let (_dir, _ipc, server, fake) = spotify_server();
+        server
+            .spotify_transfer(Parameters(spotify_json::SpotifyTransferParams {
+                device_id: "dev1".into(),
+                play: None,
+            }))
+            .await
+            .expect("transfer");
+        let ops = fake.ops.lock().unwrap();
+        assert!(
+            matches!(
+                ops.last(),
+                Some(SpotifyOp::Transfer { device_id, play: false })
+                    if device_id.as_str() == "dev1"
             ),
             "{ops:?}"
         );

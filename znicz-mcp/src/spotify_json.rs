@@ -1,8 +1,5 @@
 //! Spotify tool arguments, and the JSON the Spotify tools return. The tools in
 //! `server.rs` send the ops built here. Everything in this file is pure.
-// Used by the Spotify tools added in Tasks 7-9 of the Spotify part 3 plan.
-#![allow(dead_code)]
-
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rmcp::ErrorData as McpError;
