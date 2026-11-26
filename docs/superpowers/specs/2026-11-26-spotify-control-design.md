@@ -225,9 +225,10 @@ Space pause · / search · Enter play · a queue · ] queue · O znicz · ? more
 - `a` adds a track to Spotify's queue.
 - `]` shows Spotify's queue, read-only.
 
-**Keys go to Spotify.** `Space`, `n` / `p`, seek arrows, `+` / `-`, `e` (repeat: off, all, one),
-`z` (shuffle), `m` (mute: volume 0, then the previous volume on unmute). The
-devices key `,` lists Spotify Connect devices; choosing one transfers playback.
+**Keys go to Spotify.** `Space`, `n` / `p`, seek arrows, `+` / `-`, `e`
+(repeat: off, all, one), `z` (shuffle), `m` (mute: volume 0, then the previous
+volume on unmute). The devices key `,` lists Spotify Connect devices; choosing
+one transfers playback.
 Library-only keys (`A`, `L`, `F`, `U`, `J`) toast `not in Spotify mode`.
 
 **Leaving the mode** keeps Spotify playing and returns the keys to the engine.
