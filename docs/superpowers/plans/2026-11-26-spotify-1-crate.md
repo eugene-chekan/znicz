@@ -3474,7 +3474,7 @@ git commit -m "feat(spotify): one-shot login callback listener"
 - Create: `znicz-spotify/src/service.rs`
 - Modify: `znicz-spotify/src/lib.rs` (final form below)
 
-- [ ] **Step 1: Write the service skeleton, the pure interval function and the tests**
+- [x] **Step 1: Write the service skeleton, the pure interval function and the tests**
 
 Create `znicz-spotify/src/service.rs`:
 
@@ -3826,12 +3826,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run to see it fail**
+- [x] **Step 2: Run to see it fail**
 
 Run: `cargo test -p znicz-spotify service`
 Expected: compile errors (`SpotifyService` missing).
 
-- [ ] **Step 3: Implement the service**
+- [x] **Step 3: Implement the service**
 
 Between `ServiceOptions` and the tests:
 
@@ -4293,7 +4293,7 @@ impl Shared {
 
 **Lock order:** `client` before `state`, and never `listener` while holding `client`. `now_ms` reads the clock directly so it never waits for the client lock. Every method above takes the locks in that order or one at a time; keep it that way in later parts.
 
-- [ ] **Step 4: Final `lib.rs`**
+- [x] **Step 4: Final `lib.rs`**
 
 Replace `znicz-spotify/src/lib.rs` with:
 
@@ -4320,17 +4320,17 @@ pub use service::{ServiceOptions, SpotifyService};
 pub use token::default_token_path;
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `cargo test -p znicz-spotify`
 Expected: everything passes (service: 12). Run it three times to make sure the thread and timing tests are not flaky: `for i in 1 2 3; do cargo test -q -p znicz-spotify || break; done`.
 
-- [ ] **Step 6: Lint**
+- [x] **Step 6: Lint**
 
 Run: `cargo clippy -p znicz-spotify -p znicz-core --all-targets -- -D warnings` and `cargo fmt --all`.
 Expected: no warnings. Fix any (for example `too_many_arguments` on `exchange_code`: add `#[allow(clippy::too_many_arguments)]` above it, since its parameters are the OAuth form fields).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add znicz-spotify
