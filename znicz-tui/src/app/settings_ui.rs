@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui_image::picker::ProtocolType;
-use znicz_core::{Command, FadeTimes, LibraryOp, SpotifyConfig, SpotifyLogin, SpotifyOp};
+use znicz_core::{Command, FadeTimes, LibraryOp, SpotifyConfig, SpotifyOp};
 use znicz_spotify::browser::OpenBrowser;
 
 use super::spotify_ui::SpotifyConfirm;
@@ -476,8 +476,8 @@ impl App {
     }
 
     /// Enter in the client ID prompt. The value is trimmed and checked; a
-    /// refused value keeps the prompt open with the reason. A changed ID while
-    /// logged in waits for Enter in the strip, because the player logs out.
+    /// refused value keeps the prompt open with the reason. Changing or clearing
+    /// a set ID waits for Enter in the strip, because the player logs out.
     fn submit_client_id_prompt(&mut self) {
         let Some(prompt) = self.settings_prompt.as_mut() else {
             return;
@@ -491,7 +491,9 @@ impl App {
         if text == self.spotify.client_id {
             return;
         }
-        if self.spotify_login_shown() == SpotifyLogin::LoggedIn {
+        // A set ID asks first, whatever the login state: the player logs out
+        // and deletes the token. Only the first ID saves directly.
+        if !self.spotify.client_id.is_empty() {
             self.spotify_confirm = Some(SpotifyConfirm::ClientId(text));
             return;
         }
@@ -2394,9 +2396,79 @@ pub(crate) mod tests {
             press(&mut app, KeyCode::Backspace);
         }
         press(&mut app, KeyCode::Enter);
+        // Clearing a set ID asks first, whatever the login state is.
+        assert_eq!(
+            app.spotify_confirm,
+            Some(SpotifyConfirm::ClientId(String::new()))
+        );
+        assert_eq!(app.spotify.client_id, ID, "nothing changes before Enter");
+        assert!(
+            saved(&dir)["spotify"].get("client_id").is_some(),
+            "the file still has the ID"
+        );
+        assert!(
+            !sent_ops(&host)
+                .iter()
+                .any(|op| matches!(op, SpotifyOp::Configure { .. }))
+        );
+        press(&mut app, KeyCode::Enter);
         assert!(app.settings_prompt.is_none());
         assert!(app.spotify.client_id.is_empty());
         assert!(saved(&dir)["spotify"].get("client_id").is_none());
+        assert!(sent_ops(&host).iter().any(|op| matches!(
+            op,
+            SpotifyOp::Configure { config } if config.client_id.is_empty()
+        )));
+    }
+
+    #[test]
+    fn changing_a_set_client_id_asks_first_even_before_the_login_is_known() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = spotify_app(&dir, host.clone());
+        // No poll has run: the login state is still the default.
+        assert_eq!(app.spotify_state.login, SpotifyLogin::NotConfigured);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::ClientId);
+        press(&mut app, KeyCode::Enter);
+        for _ in 0..ID.len() {
+            press(&mut app, KeyCode::Backspace);
+        }
+        type_text(&mut app, NEW_ID);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            app.spotify_confirm,
+            Some(SpotifyConfirm::ClientId(NEW_ID.into()))
+        );
+        assert_eq!(app.spotify.client_id, ID);
+        assert!(!dir.path().join("config.toml").exists());
+        assert!(
+            !sent_ops(&host)
+                .iter()
+                .any(|op| matches!(op, SpotifyOp::Configure { .. }))
+        );
+    }
+
+    #[test]
+    fn setting_the_first_client_id_saves_without_a_question() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = settings_app(&dir).with_settings_values(SettingsValues::default());
+        app.spotify_worker = Some(SpotifyWorker::spawn(host.clone()).unwrap());
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::ClientId);
+        press(&mut app, KeyCode::Enter);
+        type_text(&mut app, ID);
+        press(&mut app, KeyCode::Enter);
+        assert!(app.spotify_confirm.is_none());
+        assert_eq!(app.spotify.client_id, ID);
+        assert_eq!(saved(&dir)["spotify"]["client_id"].as_str(), Some(ID));
+        assert!(sent_ops(&host).iter().any(|op| matches!(
+            op,
+            SpotifyOp::Configure { config } if config.client_id == ID
+        )));
     }
 
     #[test]

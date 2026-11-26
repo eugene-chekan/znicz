@@ -15,7 +15,7 @@ pub const OPEN_BROWSERS: [OpenBrowser; 3] =
 pub const CLIENT_FIRST: &str = "Set a client ID first, in the Client ID row.";
 pub const LOGOUT_QUESTION: &str = "Log out of Spotify? Enter logs out · Esc cancels";
 pub const CLIENT_ID_QUESTION: &str =
-    "Changing the client ID logs you out of Spotify. Enter saves · Esc cancels";
+    "Changing the client ID logs you out of Spotify. Enter confirms · Esc cancels";
 /// Shown under the paste prompt when Spotify rejects the pasted address.
 pub const WRONG_ADDRESS: &str = "that address is not from this login";
 
