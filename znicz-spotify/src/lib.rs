@@ -6,6 +6,7 @@
 mod auth;
 mod error;
 mod http;
+mod model;
 mod pkce;
 mod redirect;
 mod token;
