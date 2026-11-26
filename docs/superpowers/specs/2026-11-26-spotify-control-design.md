@@ -425,3 +425,21 @@ No test calls the real API.
   every frame.
 - **Poll errors carry no kind.** `SpotifyState.last_error` is plain text; the
   TUI gets kinds only from its own calls.
+
+## Notes for part 5 (from the part 4 review)
+
+- **The worker is one FIFO queue.** In Spotify mode, typed searches and page
+  fetches must not hold up playback commands. Give each request a generation
+  so stale `Page` replies are dropped, coalesce searches and page fetches, and
+  use a separate lane (or worker) for transport so Pause never waits behind a
+  search.
+- **`SpotifyAsk` needs payloads.** Browse tags must say which list, offset and
+  generation a reply belongs to.
+- **Route replies by mode.** `on_spotify_done` lives in the Settings module and
+  toasts every error; Spotify mode needs its own handling.
+- **Widen the status poll.** It runs only while Settings tab 6 or a login
+  panel is open. Spotify mode (`O`) is also "watched", and opening it resets
+  the "unavailable" stop, as showing tab 6 does.
+- **One device list.** `spotify_devices` (from `Devices`) duplicates
+  `SpotifyState.devices` (from the poll); pick one before the Stage shows
+  devices.
