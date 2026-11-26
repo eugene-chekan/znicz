@@ -2295,7 +2295,7 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
   - `fn open_login_panel(&mut self, url: String, listening: bool)` (same signature as Task 6's stub; the body now applies the browser rule), `pub(crate) fn on_spotify_panel_key(&mut self, key: KeyEvent) -> bool`, `pub(crate) fn esc_spotify_panel(&mut self)`, `fn copy_login_url(&mut self)`, `fn submit_paste(&mut self)`.
   - `Context::SettingsLogin` and the hints `c copy URL`, `Enter paste`, `Esc cancel`; the help lines for the panel in `keys::SETTINGS`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `spotify_ui.rs`'s tests (the panel and key tests belong with the code in this task):
 
@@ -2513,12 +2513,12 @@ In `spotify_ui.rs`'s tests (the panel and key tests belong with the code in this
 
 The helpers (`press`, `toast_texts`, `settings_app`) were made `pub(crate)` in Task 6. The test module of `spotify_ui.rs` also needs `use znicz_spotify::browser::OpenBrowser; use crate::line_edit::LineEdit; use crate::app::Modal;` (`LoginPanel`, `SpotifyPaste`, `Done` come in through `use super::*` and Task 6's imports). `press` goes through `App::on_key`, so these tests exercise the real routing: Esc through `on_esc`, `c` and Enter through `on_settings_key`.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz-tui -- spotify_ui`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `spotify_ui.rs`:
 
@@ -2652,12 +2652,12 @@ Add `use crossterm::event::{KeyCode, KeyEvent};` to `spotify_ui.rs`. Pasting int
    - `SETTINGS` (the help table) gets three lines after the `1–6` line: `b("Login: c", "copy the login URL")`, `b("Login: Enter", "paste the redirect address")`, `b("Login: Esc", "cancel the login")`. Help is generated from this table, so the panel keys are listed there.
    - In the keys tests, `ALL_CONTEXTS` becomes `[Context; 19]` with `Context::SettingsLogin` after `SettingsPrompt`. `every_context_fits_a_wide_footer_with_more` then covers the new hints.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-tui -- spotify_ui settings_ui keys`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/app/spotify_ui.rs znicz-tui/src/app/settings_ui.rs znicz-tui/src/app.rs znicz-tui/src/keys.rs
@@ -2678,7 +2678,7 @@ Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"
 - Consumes: `spotify_rows::{CLIENT_FIRST, LOGOUT_QUESTION, CLIENT_ID_QUESTION, login_panel_lines, WRONG_ADDRESS}`, `settings::{dimmed, prompt_range}`, `crate::app::{LoginPanel, SpotifyConfirm}` (the re-export from Task 6).
 - Produces: none (drawing only).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `views/settings.rs`, add a test module section (or in `settings_ui.rs`'s tests, which already have `screen_rows` and `screen_buffer`). Put these in `settings_ui.rs`'s test module, since it owns the helpers:
 
@@ -2795,12 +2795,12 @@ In `views/settings.rs`, add a test module section (or in `settings_ui.rs`'s test
     }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz-tui -- settings_ui`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `views/settings.rs`:
 
@@ -2836,12 +2836,12 @@ For the port, the strip reads "Redirect port (1024–65535): …" and the error 
 
 In `settings.rs` (`value_text` etc.) nothing more.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-tui -- settings_ui settings::tests`
 Expected: PASS. Also run the render test: `cargo test -p znicz-tui --test render`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/views/settings.rs znicz-tui/src/app/settings_ui.rs
