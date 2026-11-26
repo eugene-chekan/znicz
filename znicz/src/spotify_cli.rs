@@ -11,7 +11,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use clap::Subcommand;
 use color_eyre::eyre::{bail, eyre};
 use znicz_core::{
-    IpcClient, NO_SPOTIFY, SpotifyConfig, SpotifyHost, SpotifyLogin, SpotifyOp, SpotifyReply,
+    IpcClient, SpotifyConfig, SpotifyErrorKind, SpotifyHost, SpotifyLogin, SpotifyOp, SpotifyReply,
     SpotifyState, ZniczError, valid_client_id,
 };
 use znicz_spotify::browser::{self, OpenBrowser};
@@ -152,15 +152,22 @@ fn now_ms() -> u64 {
 
 /// The line for a player that has no Spotify service, or `None` for any
 /// other error.
-pub fn unavailable_message(error: &str) -> Option<&'static str> {
-    (error == NO_SPOTIFY).then_some(
+pub fn unavailable_message(error: &ZniczError) -> Option<&'static str> {
+    matches!(
+        error,
+        ZniczError::Spotify {
+            kind: SpotifyErrorKind::NoService,
+            ..
+        }
+    )
+    .then_some(
         "Spotify is unavailable: this player has no Spotify service (no data folder for the login token?)",
     )
 }
 
 /// An IPC error as the command's error: the no-service case gets its own line.
 fn host_error(error: ZniczError) -> color_eyre::Report {
-    match unavailable_message(&error.to_string()) {
+    match unavailable_message(&error) {
         Some(line) => eyre!(line),
         None => eyre!("{error}"),
     }
@@ -346,6 +353,7 @@ fn playing_text(state: &SpotifyState, now_ms: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use znicz_core::NO_SPOTIFY;
     use znicz_core::{
         SpotifyAccount, SpotifyDevice, SpotifyLogin, SpotifyPlayback, SpotifyState, SpotifyTrack,
     };
@@ -567,13 +575,25 @@ mod tests {
 
     #[test]
     fn a_player_without_a_spotify_service_gets_a_clear_line() {
+        let no_service = ZniczError::Spotify {
+            kind: SpotifyErrorKind::NoService,
+            message: NO_SPOTIFY.into(),
+        };
         assert_eq!(
-            unavailable_message(NO_SPOTIFY),
+            unavailable_message(&no_service),
             Some(
                 "Spotify is unavailable: this player has no Spotify service (no data folder for the login token?)"
             )
         );
-        assert_eq!(unavailable_message("the player went away"), None);
+        let other = ZniczError::Spotify {
+            kind: SpotifyErrorKind::Other,
+            message: NO_SPOTIFY.into(),
+        };
+        assert_eq!(unavailable_message(&other), None);
+        assert_eq!(
+            unavailable_message(&ZniczError::Player("the player went away".into())),
+            None
+        );
     }
 
     #[test]
