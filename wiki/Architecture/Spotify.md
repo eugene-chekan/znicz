@@ -195,3 +195,20 @@ once. The same poll error is shown once, not every second.
 | No active device | retries on the preferred device if set and online, else `Spotify has no active device: …` |
 
 Tokens never appear in logs (`Token`'s `Debug` redacts them).
+
+### Typed errors
+
+`SpotifyError` maps to a `SpotifyErrorKind`. The core error is
+`ZniczError::Spotify { kind, message }`, and its text is the message. Over IPC the
+kind is sent as `spotify_kind` next to the message, so the CLI and the MCP tools
+act on the kind and show the message. The kinds are `not_configured`,
+`not_logged_in`, `login_expired`, `wrong_address`, `premium_required`,
+`no_active_device`, `rate_limited`, `unavailable`, `network`, `no_service` and
+`other`.
+
+- A player that does not answer within the 30 s read timeout is `network`, with
+  the text "the player did not answer in time". The client reconnects and resends
+  a change once first. A dropped connection is `network` too.
+- `no_service` is a player without a Spotify service: an older player, or one
+  started without a data folder for the token.
+- A resent change keeps its kind, because the player stores the failure with it.
