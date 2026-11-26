@@ -1,18 +1,21 @@
 //! `znicz spotify login | logout | status`. Each command autostarts the
-//! player like the other CLI commands, sends the current `[spotify]` settings
-//! first, then talks to the player over IPC. The decisions and the wording
-//! are pure functions here; `run` and `login` are the thin IO wrappers.
+//! player like the other CLI commands, then talks to it over IPC. Only
+//! `login` sends the `[spotify]` settings first; `status` and `logout` never
+//! change them. The decisions and the wording are pure functions here; `run`
+//! and `login` are the thin IO wrappers.
 
 use std::io::BufRead;
+use std::path::Path;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::Subcommand;
 use color_eyre::eyre::{bail, eyre};
 use znicz_core::{
-    IpcClient, SpotifyConfig, SpotifyHost, SpotifyLogin, SpotifyOp, SpotifyReply, SpotifyState,
-    ZniczError, valid_client_id,
+    IpcClient, NO_SPOTIFY, SpotifyConfig, SpotifyHost, SpotifyLogin, SpotifyOp, SpotifyReply,
+    SpotifyState, ZniczError, valid_client_id,
 };
 use znicz_spotify::browser::{self, OpenBrowser};
+use znicz_tui::ConfigProblem;
 
 /// How long the login waits for the account name after `LoggedIn`. The
 /// account read runs after the login is recorded, so it can lag.
@@ -31,23 +34,38 @@ pub enum SpotifyCmd {
     Status,
 }
 
+/// Whether a command sends the `[spotify]` settings to the player first. Only
+/// login does: changing the client ID logs out, so `status` and `logout` must
+/// never send them.
+pub fn configure_before(command: &SpotifyCmd) -> bool {
+    matches!(command, SpotifyCmd::Login)
+}
+
 /// Run one `znicz spotify` command against the player. `connect` autostarts
-/// and connects to the player; `login` with no usable client ID fails before
-/// it, so nothing is started or sent for a setting that cannot work.
+/// and connects to the player. `login` fails before anything is started or
+/// sent when `config.toml` has a problem or the client ID is not usable.
+/// `config_problem` is the text from `config_problem_text`, when the file
+/// did not load.
 pub fn run(
     command: SpotifyCmd,
     config: SpotifyConfig,
+    config_problem: Option<String>,
     open: OpenBrowser,
     connect: impl FnOnce() -> color_eyre::Result<IpcClient>,
 ) -> color_eyre::Result<()> {
     if matches!(command, SpotifyCmd::Login) {
+        if let Some(problem) = &config_problem {
+            bail!("{problem}. Fix config.toml, then run `znicz spotify login` again.");
+        }
         if let Err(message) = check_client_id(&config) {
             bail!("{message}");
         }
     }
     let host = connect()?;
-    host.apply(SpotifyOp::Configure { config })
-        .map_err(host_error)?;
+    if configure_before(&command) {
+        host.apply(SpotifyOp::Configure { config })
+            .map_err(host_error)?;
+    }
     match command {
         SpotifyCmd::Login => login(&host, open),
         SpotifyCmd::Logout => {
@@ -66,6 +84,11 @@ pub fn run(
 }
 
 fn login(host: &IpcClient, open: OpenBrowser) -> color_eyre::Result<()> {
+    let state = host.try_state().map_err(host_error)?;
+    if let Some(message) = already_logged_in_message(&state) {
+        println!("{message}");
+        return Ok(());
+    }
     let SpotifyReply::AuthorizeUrl { url, listening, .. } =
         host.apply(SpotifyOp::BeginLogin).map_err(host_error)?
     else {
@@ -127,14 +150,10 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// The text the player's IPC server sends when it runs without a Spotify
-/// service (no data folder for the token).
-const NO_SERVICE: &str = "no Spotify service in this player";
-
 /// The line for a player that has no Spotify service, or `None` for any
 /// other error.
 pub fn unavailable_message(error: &str) -> Option<&'static str> {
-    (error == NO_SERVICE).then_some(
+    (error == NO_SPOTIFY).then_some(
         "Spotify is unavailable: this player has no Spotify service (no data folder for the login token?)",
     )
 }
@@ -191,6 +210,37 @@ pub fn logged_in_message(user: Option<&str>) -> String {
         Some(user) => format!("Logged in as {user}"),
         None => "Logged in to Spotify".into(),
     }
+}
+
+/// The line login prints when `config.toml` did not load: where the problem
+/// is, in `file`.
+pub fn config_problem_text(file: &Path, problem: &ConfigProblem) -> String {
+    match problem {
+        ConfigProblem::Parse {
+            line,
+            column,
+            message,
+        } => format!(
+            "{} has an error (line {line}, column {column}): {message}",
+            file.display()
+        ),
+        ConfigProblem::Unreadable { message } => {
+            format!("{} could not be read: {message}", file.display())
+        }
+    }
+}
+
+/// The line for a login that is already done, or `None` when a login can
+/// start.
+pub fn already_logged_in_message(state: &SpotifyState) -> Option<String> {
+    if state.login != SpotifyLogin::LoggedIn {
+        return None;
+    }
+    let hint = "(run `znicz spotify logout` first to switch accounts).";
+    Some(match &state.account {
+        Some(account) => format!("Already logged in to Spotify as {} {hint}", account.user),
+        None => format!("Already logged in to Spotify {hint}"),
+    })
 }
 
 /// Why login cannot start, or `Ok` when the client ID is usable.
@@ -518,11 +568,73 @@ mod tests {
     #[test]
     fn a_player_without_a_spotify_service_gets_a_clear_line() {
         assert_eq!(
-            unavailable_message("no Spotify service in this player"),
+            unavailable_message(NO_SPOTIFY),
             Some(
                 "Spotify is unavailable: this player has no Spotify service (no data folder for the login token?)"
             )
         );
         assert_eq!(unavailable_message("the player went away"), None);
+    }
+
+    #[test]
+    fn only_login_sends_the_settings() {
+        assert!(configure_before(&SpotifyCmd::Login));
+        assert!(!configure_before(&SpotifyCmd::Status));
+        assert!(!configure_before(&SpotifyCmd::Logout));
+    }
+
+    #[test]
+    fn a_second_login_says_so_and_names_the_user() {
+        let known = SpotifyState {
+            login: SpotifyLogin::LoggedIn,
+            account: Some(SpotifyAccount {
+                user: "Eugene".into(),
+                premium: None,
+            }),
+            ..SpotifyState::default()
+        };
+        assert_eq!(
+            already_logged_in_message(&known).as_deref(),
+            Some(
+                "Already logged in to Spotify as Eugene (run `znicz spotify logout` first to switch accounts)."
+            )
+        );
+
+        let no_name = SpotifyState {
+            login: SpotifyLogin::LoggedIn,
+            ..SpotifyState::default()
+        };
+        assert_eq!(
+            already_logged_in_message(&no_name).as_deref(),
+            Some(
+                "Already logged in to Spotify (run `znicz spotify logout` first to switch accounts)."
+            )
+        );
+
+        let logged_out = SpotifyState {
+            login: SpotifyLogin::NotLoggedIn,
+            ..SpotifyState::default()
+        };
+        assert_eq!(already_logged_in_message(&logged_out), None);
+    }
+
+    #[test]
+    fn a_config_problem_names_the_file_and_the_place() {
+        let parse = ConfigProblem::Parse {
+            line: 3,
+            column: 5,
+            message: "expected a value".into(),
+        };
+        assert_eq!(
+            config_problem_text(Path::new("/home/x/config.toml"), &parse),
+            "/home/x/config.toml has an error (line 3, column 5): expected a value"
+        );
+        let unreadable = ConfigProblem::Unreadable {
+            message: "permission denied".into(),
+        };
+        assert_eq!(
+            config_problem_text(Path::new("/c.toml"), &unreadable),
+            "/c.toml could not be read: permission denied"
+        );
     }
 }

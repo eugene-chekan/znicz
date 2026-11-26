@@ -371,6 +371,13 @@ fn main() -> color_eyre::Result<()> {
         ensure_default_config();
     }
     let (config, config_problem) = load_config(cli.config.as_deref());
+    // Text for `znicz spotify login`, which refuses to run on a broken file.
+    let spotify_problem = config_problem.as_ref().map(|problem| {
+        spotify_cli::config_problem_text(
+            &config_path(cli.config.as_deref()).unwrap_or_default(),
+            problem,
+        )
+    });
 
     if cli.list_devices {
         list_devices()?;
@@ -546,6 +553,7 @@ fn main() -> color_eyre::Result<()> {
             spotify_cli::run(
                 command,
                 spotify_config(&config.spotify),
+                spotify_problem,
                 open_browser_setting(&config.spotify),
                 || connect_agent(audio_config.device_id.as_deref(), config_file.as_deref()),
             )?;

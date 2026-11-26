@@ -17,7 +17,7 @@ use crate::player::commands::Command;
 use crate::player::engine::{PlayerHandle, PlayerOps};
 use crate::player::state::{PlaybackStatus, PlayerState, Queue};
 use crate::session::SessionPersister;
-use crate::spotify_host::{SpotifyOp, SpotifyReply, SpotifyState};
+use crate::spotify_host::{SpotifyLogin, SpotifyOp, SpotifyReply, SpotifyState};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(400);
 
@@ -155,7 +155,7 @@ impl Shared {
 }
 
 /// What a player without a Spotify service answers Spotify requests with.
-const NO_SPOTIFY: &str = "no Spotify service in this player";
+pub const NO_SPOTIFY: &str = "no Spotify service in this player";
 
 /// A reply of a kind the request did not ask for.
 const UNEXPECTED_REPLY: &str = "unexpected reply from the player";
@@ -493,14 +493,20 @@ fn should_idle_exit(shared: &Shared, idle_since: &mut Option<Instant>) -> bool {
     }
     let stopped = shared.player.state().status == PlaybackStatus::Stopped;
     let no_ui = shared.ui_count.load(Ordering::SeqCst) == 0;
-    // Only ask the library when nothing else keeps the player up.
+    // Only ask the library and Spotify when nothing else keeps the player up.
     let scanning = || {
         shared
             .library
             .as_ref()
             .is_some_and(|host| host.status().busy())
     };
-    if stopped && no_ui && !scanning() {
+    let logging_in = || {
+        shared
+            .spotify
+            .as_ref()
+            .is_some_and(|host| host.state().login == SpotifyLogin::LoggingIn)
+    };
+    if stopped && no_ui && !scanning() && !logging_in() {
         let since = idle_since.get_or_insert_with(Instant::now);
         since.elapsed() >= shared.idle
     } else {
@@ -1036,7 +1042,7 @@ impl crate::spotify_host::SpotifyHost for IpcClient {
         {
             IpcResponse::Spotify { reply } => Ok(reply),
             IpcResponse::Err { message } => Err(ZniczError::Spotify(message)),
-            other => Err(ZniczError::Spotify(format!("unexpected reply: {other:?}"))),
+            _ => Err(ZniczError::Spotify(UNEXPECTED_REPLY.into())),
         }
     }
 
@@ -1055,7 +1061,7 @@ impl crate::spotify_host::SpotifyHost for IpcClient {
         {
             IpcResponse::SpotifyStatus { state } => Ok(*state),
             IpcResponse::Err { message } => Err(ZniczError::Spotify(message)),
-            other => Err(ZniczError::Spotify(format!("unexpected reply: {other:?}"))),
+            _ => Err(ZniczError::Spotify(UNEXPECTED_REPLY.into())),
         }
     }
 }
@@ -1755,6 +1761,49 @@ mod tests {
             thread::sleep(Duration::from_millis(50));
         }
         assert!(!path.exists(), "idles out once the scan is done");
+    }
+
+    /// Reports a login in progress while `logging_in` is set.
+    #[derive(Default)]
+    struct LoginSpotify {
+        logging_in: AtomicBool,
+    }
+
+    impl crate::spotify_host::SpotifyHost for LoginSpotify {
+        fn apply(&self, _op: SpotifyOp) -> Result<SpotifyReply> {
+            Ok(SpotifyReply::Done)
+        }
+
+        fn state(&self) -> SpotifyState {
+            let login = if self.logging_in.load(Ordering::SeqCst) {
+                SpotifyLogin::LoggingIn
+            } else {
+                SpotifyLogin::NotLoggedIn
+            };
+            SpotifyState {
+                login,
+                ..SpotifyState::default()
+            }
+        }
+    }
+
+    #[test]
+    fn a_spotify_login_in_progress_holds_off_idle_exit() {
+        let (_dir, path) = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let host = Arc::new(LoginSpotify::default());
+        host.logging_in.store(true, Ordering::SeqCst);
+        let _server =
+            IpcServer::start_with_spotify(player, &path, Duration::from_millis(80), host.clone())
+                .expect("start ipc");
+        thread::sleep(Duration::from_millis(500));
+        assert!(path.exists(), "must not idle-exit during a login");
+        host.logging_in.store(false, Ordering::SeqCst);
+        let start = Instant::now();
+        while path.exists() && start.elapsed() < Duration::from_secs(3) {
+            thread::sleep(Duration::from_millis(50));
+        }
+        assert!(!path.exists(), "idles out once the login is over");
     }
 
     use crate::spotify_host::SpotifyLogin;

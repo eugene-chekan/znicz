@@ -55,7 +55,8 @@ The **player process** (`znicz player`) hosts the `SpotifyService`, the same way
 it hosts the library service. It is built from `[spotify]` and the token file.
 With no client ID it still runs and reports `not configured`. With no data
 folder for the token file it is not built: the player logs a warning, and every
-`znicz spotify` command prints `Spotify is unavailable: …` and exits 1.
+`znicz spotify` command prints `Spotify is unavailable: …` and exits 1. The
+player does not exit for idleness while a login is waiting.
 
 The TUI, MCP and `znicz spotify` reach it over IPC. Playback and browse ops are
 `Spotify { op }`; the snapshot is `SpotifyStatus`. A change op (anything that is
@@ -71,8 +72,11 @@ znicz spotify logout   # forget the token
 znicz spotify status   # login, user, Premium, device, what is playing, last error
 ```
 
-Each command first sends the current `[spotify]` settings to the player, so a
-client ID added after the player started takes effect without a restart. The
+`login` sends the current `[spotify]` settings to the player first, so a client
+ID added after the player started takes effect without a restart; `status` and
+`logout` never change the settings. Changing `client_id` logs you out, because
+the old token cannot be refreshed with another app. `login` refuses to run while
+`config.toml` has an error, and it says so if you are already logged in. Each
 command starts the player if it is not running.
 
 `login` checks the client ID before it starts the player. With no client ID it

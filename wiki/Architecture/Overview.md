@@ -35,8 +35,9 @@ random client number plus a counter. The player remembers the last id and
 outcome per client (up to 64 clients), so a resend after a lost reply gets the
 stored answer instead of adding, removing, or moving a queue row twice
 ([#63](https://github.com/eugene-chekan/znicz/issues/63)). Requests without an
-id, from older clients, are applied as before. Spotify change requests have
-their own record, so a slow Spotify call does not hold up the others.
+id, from older clients, are applied as before. On the player side, Spotify
+changes have their own record, so a slow Spotify call does not block Command or
+Library requests. One client connection still handles one request at a time.
 
 ## Why split crates?
 
