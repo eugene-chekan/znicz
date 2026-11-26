@@ -102,7 +102,7 @@ impl Client {
     /// is simply not logged in.
     pub(crate) fn set_config(&mut self, config: SpotifyConfig, replace: bool) {
         if config.client_id != self.config.client_id {
-            if replace {
+            if replace && !self.config.client_id.is_empty() {
                 if let Err(e) = self.logout() {
                     tracing::warn!(error = %e, "could not remove the Spotify token");
                 }
@@ -249,7 +249,13 @@ impl Client {
             self.now_ms() / 1000,
         ) {
             Ok(mut token) => {
-                token.client_id = client_id;
+                // A legacy token (no client ID recorded) is stamped with the
+                // ID it was just refreshed under.
+                token.client_id = if client_id.is_empty() {
+                    self.config.client_id.clone()
+                } else {
+                    client_id
+                };
                 // Keep the token in memory first: Spotify may have rotated the
                 // refresh token, so a failed save must not drop it.
                 self.token = Some(token);
@@ -261,13 +267,31 @@ impl Client {
                 Ok(())
             }
             Err(SpotifyError::Revoked) => {
-                if let Err(e) = self.logout() {
-                    tracing::warn!(error = %e, "could not remove the Spotify token");
+                // Drop the failed token from memory. Delete the file only when
+                // it is this app's token and the file still holds that same
+                // refresh token; another player may have rotated it since.
+                self.token = None;
+                let belongs_to_app = !client_id.is_empty() && client_id == self.config.client_id;
+                if belongs_to_app && self.file_holds_refresh_token(&refresh_token) {
+                    if let Err(e) = token::remove(&self.token_path) {
+                        tracing::warn!(error = %e, "could not remove the Spotify token");
+                    }
                 }
                 Err(SpotifyError::Revoked)
             }
             Err(e) => Err(e),
         }
+    }
+}
+
+impl Client {
+    /// Whether the token file reads and still holds `refresh_token`. A missing
+    /// or unreadable file counts as no.
+    fn file_holds_refresh_token(&self, refresh_token: &str) -> bool {
+        matches!(
+            token::load(&self.token_path),
+            Ok(Some(saved)) if saved.refresh_token == refresh_token
+        )
     }
 }
 
@@ -583,6 +607,100 @@ mod tests {
         std::fs::create_dir(&f.token_path).unwrap();
         f.client.call(|api| api.me()).unwrap();
         assert!(f.client.is_logged_in());
+    }
+
+    fn revoking_server() -> String {
+        let (origin, _) = serve(|request| {
+            if request.path() == "/api/token" {
+                Response::json(400, r#"{"error":"invalid_grant"}"#)
+            } else {
+                Response::empty(401)
+            }
+        });
+        origin
+    }
+
+    #[test]
+    fn a_revoked_legacy_token_is_dropped_but_its_file_is_kept() {
+        let origin = revoking_server();
+        let legacy = Token {
+            client_id: String::new(),
+            ..token(999_999)
+        };
+        let mut f = fixture(&origin, Some(legacy));
+        assert_eq!(
+            f.client.call(|api| api.me()).unwrap_err(),
+            SpotifyError::Revoked
+        );
+        assert!(!f.client.is_logged_in());
+        assert!(f.token_path.exists());
+    }
+
+    #[test]
+    fn a_revoked_refresh_keeps_a_file_another_player_rotated() {
+        let path_slot: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(None));
+        let slot = path_slot.clone();
+        let (origin, _) = serve(move |request| {
+            if request.path() == "/api/token" {
+                if let Some(path) = slot.lock().unwrap().clone() {
+                    let rotated = Token {
+                        refresh_token: "rotated".into(),
+                        ..token(999_999)
+                    };
+                    token::save(&path, &rotated).unwrap();
+                }
+                Response::json(400, r#"{"error":"invalid_grant"}"#)
+            } else {
+                Response::empty(401)
+            }
+        });
+        let mut f = fixture(&origin, Some(token(999_999)));
+        *path_slot.lock().unwrap() = Some(f.token_path.clone());
+        assert_eq!(
+            f.client.call(|api| api.me()).unwrap_err(),
+            SpotifyError::Revoked
+        );
+        assert!(!f.client.is_logged_in());
+        let kept = token::load(&f.token_path).unwrap().unwrap();
+        assert_eq!(kept.refresh_token, "rotated");
+    }
+
+    #[test]
+    fn a_revoked_refresh_keeps_a_pending_login() {
+        let origin = revoking_server();
+        let mut f = fixture(&origin, Some(token(999_999)));
+        f.client.begin_login().unwrap();
+        assert_eq!(
+            f.client.call(|api| api.me()).unwrap_err(),
+            SpotifyError::Revoked
+        );
+        assert!(f.client.login_pending());
+    }
+
+    #[test]
+    fn a_refresh_stamps_a_legacy_token_with_the_current_id() {
+        let (origin, _) = serve(|request| {
+            if request.path() == "/api/token" {
+                token_reply()
+            } else {
+                Response::json(200, r#"{"id":"u"}"#)
+            }
+        });
+        let legacy = Token {
+            client_id: String::new(),
+            ..token(1_030)
+        };
+        let mut f = fixture(&origin, Some(legacy));
+        f.client.call(|api| api.me()).unwrap();
+        let saved = token::load(&f.token_path).unwrap().unwrap();
+        assert_eq!(saved.client_id, CLIENT_ID);
+    }
+
+    #[test]
+    fn a_confirmed_switch_from_no_id_keeps_the_token_on_disk() {
+        let mut f = fixture_with_config_id("http://127.0.0.1:1", Some(token(999_999)), "");
+        f.client.set_config(config_for(OTHER_ID), true);
+        assert!(f.token_path.exists());
     }
 
     #[test]

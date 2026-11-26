@@ -188,11 +188,19 @@ has none and matches any ID. The token file is deleted only by:
 
 - `znicz spotify logout`, or the TUI's Logout;
 - a confirmed client-ID replacement (`Configure` with `replace_client_id`);
-- a refresh that Spotify reports as revoked.
+- a refresh that Spotify reports as revoked, under the rule below.
 
 A configuration change on its own never deletes it. A token for another ID
 stays on disk, the app is not logged in with it, and switching back to that ID
-logs in again. The player does not log in with another ID's token either.
+logs in again until you log in with another ID: the file holds one token. The
+player does not log in with another ID's token either.
+
+**Revoked refresh.** A token that fails to refresh with Spotify's revoked
+answer is dropped from memory at once. The file is deleted only when the token
+belongs to the current app (its client ID is the configured one, not a legacy
+token without one) and the file still holds that same refresh token. If another
+player rotated the token in the meantime, or the file is missing or unreadable,
+the file is left alone. A pending login is kept.
 
 **The CLI asks.** `znicz spotify login` first sends `Configure` without
 replacing. When the player refuses a different ID (`client_id_differs`), it asks
@@ -230,7 +238,7 @@ A transfer waits up to about 5 s for the device to take over, and otherwise repo
 | --- | --- |
 | No client ID | `Spotify is not configured: set a client ID in Settings → Spotify` |
 | Refused client ID / redirect URI | names the exact URI to register |
-| Revoked refresh token, at any point | `Spotify login expired`; you are logged out and the token file is deleted |
+| Revoked refresh token, at any point | `Spotify login expired`; the token is dropped, and the token file is deleted only under the revoked-refresh rule above |
 | Different client ID, not confirmed | `the player uses a different Spotify client ID` (kind `client_id_differs`); nothing changes |
 | 403 on playback | `needs Spotify Premium` |
 | No active device | retries on the preferred device if set and online, else `Spotify has no active device: …` |
