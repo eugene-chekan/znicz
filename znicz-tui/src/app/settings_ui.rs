@@ -7,9 +7,10 @@ use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui_image::picker::ProtocolType;
-use znicz_core::{Command, FadeTimes, LibraryOp, SpotifyConfig, SpotifyOp};
+use znicz_core::{Command, FadeTimes, LibraryOp, SpotifyConfig, SpotifyLogin, SpotifyOp};
 use znicz_spotify::browser::OpenBrowser;
 
+use super::spotify_ui::SpotifyConfirm;
 use super::{App, DevicesMode, Modal};
 use crate::line_edit::LineEdit;
 use crate::settings::{self, Kind, Row, Tab};
@@ -127,6 +128,7 @@ impl App {
     /// slider value was about the row the cursor was on, so both are dropped here.
     pub(super) fn set_settings_cursor(&mut self, index: usize) {
         self.settings_confirm = None;
+        self.spotify_confirm = None;
         self.settings_prompt = None;
         self.settings_cursor = index;
     }
@@ -160,16 +162,22 @@ impl App {
             self.remove_confirmed_folder();
             return true;
         }
+        if self.spotify_confirm.is_some() && key.code == KeyCode::Enter {
+            self.confirm_spotify();
+            return true;
+        }
         match key.code {
             KeyCode::Up | KeyCode::Char('k') if self.settings_cursor == 0 => {
                 self.settings_on_tab_bar = true;
                 self.settings_confirm = None;
+                self.spotify_confirm = None;
             }
             KeyCode::Enter | KeyCode::Char(' ') => match row {
                 Row::DefaultDevice => self.open_default_device_picker(),
                 Row::AddFolder => self.open_folder_prompt_from_settings(),
                 Row::RescanAll => self.rescan_folders(),
-                Row::RedirectPort => self.open_text_prompt(&row),
+                Row::ClientId | Row::RedirectPort => self.open_text_prompt(&row),
+                Row::Account => self.spotify_account_enter(),
                 _ if settings::slider(&row).is_some() => self.open_slider_prompt(&row),
                 _ => self.change_setting(&row, Change::Activate),
             },
@@ -386,12 +394,10 @@ impl App {
     /// Enter in the slider prompt. A value in range closes the prompt and is
     /// saved like a step; anything else keeps the prompt open with the range.
     fn submit_slider_prompt(&mut self) {
-        if self
-            .settings_prompt
-            .as_ref()
-            .is_some_and(|p| p.row == Row::RedirectPort)
-        {
-            return self.submit_port_prompt();
+        match self.settings_prompt.as_ref().map(|p| p.row.clone()) {
+            Some(Row::ClientId) => return self.submit_client_id_prompt(),
+            Some(Row::RedirectPort) => return self.submit_port_prompt(),
+            _ => {}
         }
         let Some(prompt) = self.settings_prompt.as_mut() else {
             return;
@@ -467,6 +473,36 @@ impl App {
                 self.change_with(&Row::RedirectPort, |app| app.set_redirect_port(port));
             }
         }
+    }
+
+    /// Enter in the client ID prompt. The value is trimmed and checked; a
+    /// refused value keeps the prompt open with the reason. A changed ID while
+    /// logged in waits for Enter in the strip, because the player logs out.
+    fn submit_client_id_prompt(&mut self) {
+        let Some(prompt) = self.settings_prompt.as_mut() else {
+            return;
+        };
+        let text = prompt.text.as_str().trim().to_string();
+        if let Some(problem) = spotify_rows::client_id_problem(&text) {
+            prompt.error = Some(problem.into());
+            return;
+        }
+        self.settings_prompt = None;
+        if text == self.spotify.client_id {
+            return;
+        }
+        if self.spotify_login_shown() == SpotifyLogin::LoggedIn {
+            self.spotify_confirm = Some(SpotifyConfirm::ClientId(text));
+            return;
+        }
+        self.change_with(&Row::ClientId, |app| app.set_client_id(text));
+    }
+
+    /// Set the client ID. Returns whether it changed.
+    pub(super) fn set_client_id(&mut self, id: String) -> bool {
+        let changed = self.spotify.client_id != id;
+        self.spotify.client_id = id;
+        changed
     }
 
     /// Send the player its copy of `[spotify]` after a player-side row saved.
@@ -755,9 +791,11 @@ pub(crate) mod tests {
     use znicz_library::Library;
 
     use super::*;
+    use crate::app::SpotifyConfirm;
     use crate::config_file::{ConfigFile, ConfigProblem};
     use crate::library_pane::{EffectiveLayout, LibraryPane};
     use crate::spotify_worker::SpotifyWorker;
+    use znicz_core::SpotifyLogin;
     use znicz_core::{SpotifyConfig, SpotifyDevice, SpotifyOp};
     use znicz_spotify::browser::OpenBrowser;
 
@@ -2276,5 +2314,192 @@ pub(crate) mod tests {
                 .any(|op| matches!(op, SpotifyOp::Configure { .. }))
         );
         assert!(toast_texts(&app).iter().any(|t| t.starts_with("Not saved")));
+    }
+
+    // --- Spotify rows: client ID, logout question, Account ---
+
+    const ID: &str = "0123456789abcdef0123456789abcdef";
+    const NEW_ID: &str = "fedcba9876543210fedcba9876543210";
+
+    #[test]
+    fn a_client_id_that_is_not_32_hex_keeps_the_prompt_open_with_why() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = spotify_app(&dir, host);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::ClientId);
+        press(&mut app, KeyCode::Enter);
+        for _ in 0..ID.len() {
+            press(&mut app, KeyCode::Backspace);
+        }
+        type_text(&mut app, "xyz");
+        press(&mut app, KeyCode::Enter);
+        let prompt = app.settings_prompt.as_ref().expect("still open");
+        assert_eq!(prompt.error.as_deref(), Some("32 hex characters"));
+        assert_eq!(app.spotify.client_id, ID);
+        assert!(!dir.path().join("config.toml").exists());
+    }
+
+    #[test]
+    fn clearing_the_client_id_while_logged_in_asks_first_too() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("config.toml"),
+            format!("[spotify]\nclient_id = \"{ID}\"\n"),
+        )
+        .unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = spotify_app(&dir, host.clone());
+        app.spotify_state.login = SpotifyLogin::LoggedIn;
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::ClientId);
+        press(&mut app, KeyCode::Enter);
+        for _ in 0..ID.len() {
+            press(&mut app, KeyCode::Backspace);
+        }
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            app.spotify_confirm,
+            Some(SpotifyConfirm::ClientId(String::new()))
+        );
+        assert_eq!(app.spotify.client_id, ID);
+        assert!(
+            saved(&dir)["spotify"].get("client_id").is_some(),
+            "the file still has the ID"
+        );
+        assert!(
+            !sent_ops(&host)
+                .iter()
+                .any(|op| matches!(op, SpotifyOp::Configure { .. }))
+        );
+    }
+
+    #[test]
+    fn an_empty_client_id_clears_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("config.toml"),
+            format!("[spotify]\nclient_id = \"{ID}\"\n"),
+        )
+        .unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = spotify_app(&dir, host.clone());
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::ClientId);
+        press(&mut app, KeyCode::Enter);
+        for _ in 0..ID.len() {
+            press(&mut app, KeyCode::Backspace);
+        }
+        press(&mut app, KeyCode::Enter);
+        assert!(app.settings_prompt.is_none());
+        assert!(app.spotify.client_id.is_empty());
+        assert!(saved(&dir)["spotify"].get("client_id").is_none());
+    }
+
+    #[test]
+    fn a_new_client_id_while_logged_in_asks_first_and_says_it_logs_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = spotify_app(&dir, host.clone());
+        app.spotify_state.login = SpotifyLogin::LoggedIn;
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::ClientId);
+        press(&mut app, KeyCode::Enter);
+        for _ in 0..ID.len() {
+            press(&mut app, KeyCode::Backspace);
+        }
+        type_text(&mut app, NEW_ID);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            app.spotify_confirm,
+            Some(SpotifyConfirm::ClientId(NEW_ID.into()))
+        );
+        assert_eq!(app.spotify.client_id, ID, "nothing changes before Enter");
+        assert!(
+            !dir.path().join("config.toml").exists(),
+            "nothing is written before Enter"
+        );
+        assert!(
+            !sent_ops(&host)
+                .iter()
+                .any(|op| matches!(op, SpotifyOp::Configure { .. }))
+        );
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.spotify.client_id, NEW_ID);
+        assert_eq!(saved(&dir)["spotify"]["client_id"].as_str(), Some(NEW_ID));
+        assert!(sent_ops(&host).iter().any(|op| matches!(
+            op,
+            SpotifyOp::Configure { config } if config.client_id == NEW_ID
+        )));
+    }
+
+    #[test]
+    fn esc_cancels_a_pending_client_id_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = spotify_app(&dir, host);
+        app.spotify_state.login = SpotifyLogin::LoggedIn;
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        app.spotify_confirm = Some(SpotifyConfirm::ClientId(NEW_ID.into()));
+        press(&mut app, KeyCode::Esc);
+        assert!(app.spotify_confirm.is_none());
+        assert_eq!(app.spotify.client_id, ID);
+        assert!(
+            app.modal == Modal::Settings,
+            "Esc only cancels the question"
+        );
+    }
+
+    #[test]
+    fn enter_on_account_without_a_client_id_does_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = settings_app(&dir);
+        app.spotify_worker = Some(SpotifyWorker::spawn(host.clone()).unwrap());
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::Account);
+        press(&mut app, KeyCode::Enter);
+        assert!(app.spotify_login.is_none());
+        assert!(app.spotify_confirm.is_none());
+        assert!(
+            sent_ops(&host)
+                .iter()
+                .all(|op| !matches!(op, SpotifyOp::BeginLogin))
+        );
+    }
+
+    #[test]
+    fn enter_on_account_when_logged_out_begins_a_login() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = spotify_app(&dir, host.clone());
+        app.spotify_state.login = SpotifyLogin::NotLoggedIn;
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::Account);
+        press(&mut app, KeyCode::Enter);
+        assert!(sent_ops(&host).contains(&SpotifyOp::BeginLogin));
+    }
+
+    #[test]
+    fn enter_on_account_when_logged_in_asks_then_logs_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
+        let mut app = spotify_app(&dir, host.clone());
+        app.spotify_state.login = SpotifyLogin::LoggedIn;
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::Account);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.spotify_confirm, Some(SpotifyConfirm::Logout));
+        assert!(!sent_ops(&host).contains(&SpotifyOp::Logout));
+        press(&mut app, KeyCode::Enter);
+        assert!(sent_ops(&host).contains(&SpotifyOp::Logout));
     }
 }

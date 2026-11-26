@@ -10,7 +10,7 @@ use znicz_core::{
 
 use super::{App, Modal};
 use crate::line_edit::LineEdit;
-use crate::settings::Tab;
+use crate::settings::{Row, Tab};
 use crate::spotify_rows::{self, LoginOutcome, SpotifyView};
 use crate::spotify_worker::{Done, SpotifyAsk};
 
@@ -39,8 +39,6 @@ pub(crate) struct LoginPanel {
 }
 
 /// A change that waits for Enter in the strip.
-// Constructed by the logout and client ID rows (Task 8).
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SpotifyConfirm {
     Logout,
@@ -179,6 +177,32 @@ impl App {
             (SpotifyAsk::Devices, Err(e)) => tracing::warn!("spotify devices: {e}"),
             (_, Err(e)) => self.toasts.error(e.to_string()),
             (_, Ok(_)) => {}
+        }
+    }
+
+    /// Enter on Account. Without a client ID nothing happens (the strip says
+    /// so). Logged in: ask before logging out. Otherwise start the login.
+    pub(crate) fn spotify_account_enter(&mut self) {
+        if !self.spotify.is_configured() {
+            return;
+        }
+        if self.spotify_login_shown() == SpotifyLogin::LoggedIn {
+            self.spotify_confirm = Some(SpotifyConfirm::Logout);
+        } else {
+            self.ask_spotify(SpotifyAsk::BeginLogin, SpotifyOp::BeginLogin);
+        }
+    }
+
+    /// Enter on the strip's question: log out, or save the new client ID.
+    pub(crate) fn confirm_spotify(&mut self) {
+        match self.spotify_confirm.take() {
+            Some(SpotifyConfirm::Logout) => {
+                self.ask_spotify(SpotifyAsk::Logout, SpotifyOp::Logout);
+            }
+            Some(SpotifyConfirm::ClientId(id)) => {
+                self.change_with(&Row::ClientId, |app| app.set_client_id(id));
+            }
+            None => {}
         }
     }
 
