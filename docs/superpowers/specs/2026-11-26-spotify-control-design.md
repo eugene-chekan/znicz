@@ -387,3 +387,20 @@ No test calls the real API.
   - `CHANGELOG.md`
   - the commented `[spotify]` block in `znicz/src/default-config.toml`
 - Bump the minor version over `main` at merge time.
+
+## Notes for parts 3–5 (from the part 2 review)
+
+- **Give Spotify its own IPC connection.** `IpcClient` serialises requests on
+  one connection, and its clones share it. A Spotify call can take about 40 s,
+  so a front end that sent it on its shared client would block its own
+  per-frame `state()` read: the TUI would freeze, and overlapping MCP tool
+  calls would stall. MCP and the TUI connect a second `IpcClient` for
+  `SpotifyHost`.
+- **Typed errors.** A Spotify call that times out twice currently comes back
+  as a Library-flavoured "outdated player" error. Part 3 decides on typed
+  Spotify errors over IPC and fixes this with them.
+- **Old players.** Against a player without Spotify support, every Spotify
+  request costs a reconnect. The TUI stops polling `try_state` after the first
+  "outdated player" or `NO_SPOTIFY` answer.
+- **README.** The `[spotify]` configuration and `znicz spotify` usage go into
+  the README with the final PR.
