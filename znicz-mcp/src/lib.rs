@@ -1,5 +1,6 @@
 mod server;
 mod skills;
+mod spotify_json;
 
 use std::path::PathBuf;
 
