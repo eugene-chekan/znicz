@@ -2346,7 +2346,7 @@ If nothing needed changing, there is no commit for this task.
 
 Run these on a real machine with a real Spotify Premium account and a Development Mode app (client ID set under `[spotify]`, redirect URI `http://127.0.0.1:8898/callback` registered, the account added under User Management). No code is written in this task. Note any surprise and fix it in its own commit.
 
-- [ ] **Step 1: No client ID**
+- [x] **Step 1: No client ID**
 
 With `client_id` unset (or the `[spotify]` block commented out), run: `znicz spotify status`
 
@@ -2356,7 +2356,7 @@ Run: `znicz spotify login; echo "exit $?"`
 
 Expected: the "Spotify is not configured" message naming `http://127.0.0.1:8898/callback`, then `exit 1`.
 
-- [ ] **Step 2: Login by paste over SSH**
+- [x] **Step 2: Login by paste over SSH**
 
 On the server, over SSH, with a client ID set: `znicz spotify login`
 
@@ -2364,13 +2364,13 @@ Expected: the URL is printed and no browser opens (`SSH_CONNECTION` is set). The
 
 Expected: `Logged in as <your name>`, exit 0. Then `znicz spotify status` shows `Login: logged in`, your name, and `Premium: yes` once a playback call has been accepted (`unknown (learned at the first play)` before that).
 
-- [ ] **Step 3: Login with `ssh -L`**
+- [x] **Step 3: Login with `ssh -L`**
 
 Log out first: `znicz spotify logout`. From your machine: `ssh -L 8898:127.0.0.1:8898 user@server`. In that session: `znicz spotify login`. Approve in the browser on your machine.
 
 Expected: the redirect goes through the tunnel and the login finishes without any paste: `Logged in as <your name>`, exit 0.
 
-- [ ] **Step 4: Spotify pauses when Znicz starts**
+- [x] **Step 4: Spotify pauses when Znicz starts**
 
 Start Spotify playing on a device (phone or desktop app). Run `znicz` (the TUI, with any local track in the queue) and press play.
 
@@ -2380,13 +2380,13 @@ Expected: Spotify pauses within a second or two. Check with `znicz spotify statu
 
 Part 2 has no CLI or TUI command that starts Spotify, so this direction cannot be checked by hand here. The engine side (`pause_engine_if_playing` on a Playing engine only) is covered by the Task 5 tests, and the service side by the Part 1 `play_pauses_znicz_first_and_calls_the_api` test. Re-check this step in Part 3, once MCP `spotify_play` exists: start a local track in Znicz, call `spotify_play` through MCP, and the local track must pause while Spotify plays.
 
-- [ ] **Step 6: Logout**
+- [x] **Step 6: Logout**
 
 Run: `znicz spotify logout`
 
 Expected: `Logged out of Spotify`. `znicz spotify status` then shows `Login: not logged in`, and the token file at the data folder path is gone.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 Nothing to commit unless a check found a bug. If one did, fix it, run Task 12, and commit with `fix(spotify): <what the manual check found>` and the Haiku trailer.
 
