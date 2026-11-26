@@ -166,7 +166,9 @@ impl Client {
             &self.config.redirect_uri(),
             self.now_ms() / 1000,
         )?;
-        token::save(&self.token_path, &token)?;
+        if let Err(e) = token::save(&self.token_path, &token) {
+            tracing::warn!(error = %e, "could not save the Spotify token");
+        }
         self.token = Some(token);
         Ok(())
     }
@@ -226,12 +228,20 @@ impl Client {
             self.now_ms() / 1000,
         ) {
             Ok(token) => {
-                token::save(&self.token_path, &token)?;
+                // Keep the token in memory first: Spotify may have rotated the
+                // refresh token, so a failed save must not drop it.
                 self.token = Some(token);
+                if let Some(token) = &self.token {
+                    if let Err(e) = token::save(&self.token_path, token) {
+                        tracing::warn!(error = %e, "could not save the refreshed Spotify token");
+                    }
+                }
                 Ok(())
             }
             Err(SpotifyError::Revoked) => {
-                self.logout()?;
+                if let Err(e) = self.logout() {
+                    tracing::warn!(error = %e, "could not remove the Spotify token");
+                }
                 Err(SpotifyError::Revoked)
             }
             Err(e) => Err(e),
@@ -452,6 +462,24 @@ mod tests {
         });
         assert!(!f.client.is_logged_in());
         assert!(!f.token_path.exists());
+    }
+
+    #[test]
+    fn a_refresh_that_cannot_be_saved_still_keeps_the_new_token() {
+        let (origin, _) = serve(|request| {
+            let auth = request.header("authorization").unwrap_or("").to_string();
+            match (request.path(), auth.as_str()) {
+                ("/api/token", _) => token_reply(),
+                ("/v1/me", "Bearer old") => Response::empty(401),
+                _ => Response::json(200, r#"{"id":"u"}"#),
+            }
+        });
+        let mut f = fixture(&origin, Some(token(999_999)));
+        // A directory at the token path makes the save fail.
+        std::fs::remove_file(&f.token_path).unwrap();
+        std::fs::create_dir(&f.token_path).unwrap();
+        f.client.call(|api| api.me()).unwrap();
+        assert!(f.client.is_logged_in());
     }
 
     #[test]
