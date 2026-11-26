@@ -25,6 +25,7 @@ pub mod playing;
 pub mod scan_status;
 pub mod settings;
 pub mod spotify_rows;
+pub mod spotify_worker;
 pub mod theme;
 pub mod toast;
 pub mod tui_config;
