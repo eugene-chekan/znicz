@@ -42,7 +42,7 @@ pub struct SpotifyView {
 /// The account row's text.
 pub fn account_text(view: &SpotifyView) -> String {
     if let Some(reason) = &view.unavailable {
-        return format!("Spotify is unavailable: {reason}");
+        return format!("Spotify is unavailable: {reason} (switch tab to retry)");
     }
     match &view.login {
         SpotifyLogin::NotConfigured => "Not configured".into(),
@@ -244,7 +244,7 @@ mod tests {
         v.unavailable = Some("the running player has no Spotify service".into());
         assert_eq!(
             account_text(&v),
-            "Spotify is unavailable: the running player has no Spotify service"
+            "Spotify is unavailable: the running player has no Spotify service (switch tab to retry)"
         );
     }
 

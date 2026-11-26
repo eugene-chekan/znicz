@@ -2579,4 +2579,144 @@ pub(crate) mod tests {
         press(&mut app, KeyCode::Enter);
         assert!(sent_ops(&host).contains(&SpotifyOp::Logout));
     }
+
+    // --- Spotify tab: drawing ---
+
+    #[test]
+    fn the_spotify_tab_shows_its_five_rows_and_the_tab_label() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        let screen = screen_rows(&mut app).join("\n");
+        for text in [
+            "Client ID",
+            "Redirect port",
+            "Open browser",
+            "Account",
+            "Playback device",
+            "Spotify",
+        ] {
+            assert!(screen.contains(text), "{text} missing:\n{screen}");
+        }
+    }
+
+    #[test]
+    fn without_a_client_id_the_strip_points_at_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        select(&mut app, Row::Account);
+        let screen = screen_rows(&mut app).join("\n");
+        assert!(screen.contains("Set a client ID first"), "{screen}");
+    }
+
+    #[test]
+    fn the_login_panel_shows_the_url_and_the_keys_in_the_list_area() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        app.spotify_login = Some(crate::app::LoginPanel {
+            url: "https://accounts.spotify.com/authorize?client_id=0123".into(),
+            listening: true,
+            paste: None,
+            notice: None,
+        });
+        let screen = screen_rows(&mut app).join("\n");
+        assert!(
+            screen.contains("Open this URL in any browser and approve:"),
+            "{screen}"
+        );
+        assert!(
+            screen.contains("accounts.spotify.com/authorize"),
+            "{screen}"
+        );
+        assert!(screen.contains("Waiting for the browser"), "{screen}");
+    }
+
+    #[test]
+    fn the_panel_draws_in_a_small_terminal_without_panicking() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        app.spotify_login = Some(crate::app::LoginPanel {
+            url: "https://accounts.spotify.com/authorize?".repeat(8),
+            listening: false,
+            paste: None,
+            notice: Some("Could not open a browser: no opener.".into()),
+        });
+        let _ = screen_buffer(&mut app);
+    }
+
+    #[test]
+    fn a_long_url_wraps_in_the_panel_and_none_of_it_is_lost() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        let url = format!(
+            "https://accounts.spotify.com/authorize?{}",
+            "a1b2c3d4".repeat(12)
+        );
+        app.spotify_login = Some(crate::app::LoginPanel {
+            url,
+            listening: true,
+            paste: None,
+            notice: None,
+        });
+        let screen = screen_rows(&mut app);
+        // The URL is one word longer than the popup is wide: it must run over
+        // several rows (broken at the width), not be cut at the first.
+        let rows_with_url = screen
+            .iter()
+            .filter(|row| row.contains("a1b2c3d4a1b2c3d4"))
+            .count();
+        assert!(rows_with_url >= 2, "{}", screen.join("\n"));
+    }
+
+    #[test]
+    fn the_paste_prompt_shows_in_the_strip_with_the_reason_when_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        app.spotify_login = Some(crate::app::LoginPanel {
+            url: "u".into(),
+            listening: true,
+            paste: Some(crate::app::SpotifyPaste {
+                text: crate::line_edit::LineEdit::from_text("code=x"),
+                error: Some("that address is not from this login".into()),
+            }),
+            notice: None,
+        });
+        let screen = screen_rows(&mut app).join("\n");
+        assert!(screen.contains("Address: code=x"), "{screen}");
+        assert!(
+            screen.contains("that address is not from this login"),
+            "{screen}"
+        );
+    }
+
+    #[test]
+    fn the_logout_question_and_the_client_id_question_show_in_the_strip() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        app.spotify_confirm = Some(crate::app::SpotifyConfirm::Logout);
+        assert!(
+            screen_rows(&mut app)
+                .join("\n")
+                .contains("Log out of Spotify?")
+        );
+        app.spotify_confirm = Some(crate::app::SpotifyConfirm::ClientId("x".into()));
+        assert!(
+            screen_rows(&mut app)
+                .join("\n")
+                .contains("Changing the client ID logs you out")
+        );
+    }
 }

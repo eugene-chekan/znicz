@@ -40,7 +40,7 @@ mod spotify_ui;
 use crate::spotify_worker::{SpotifyAsk, SpotifyWorker};
 use crate::update::{Release, Updates};
 use crate::views;
-pub(crate) use spotify_ui::{LoginPanel, SpotifyConfirm};
+pub(crate) use spotify_ui::{LoginPanel, SpotifyConfirm, SpotifyPaste};
 
 /// GitHub Windows runners expose WASAPI, but enumerating devices from tests
 /// crashes the process. Production (no `CI`) still lists devices at start.

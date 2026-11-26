@@ -26,9 +26,6 @@ pub(crate) struct SpotifyPaste {
 }
 
 /// The login panel: the URL to open and, when the user pastes, the prompt.
-// `listening` and `notice` are read by the panel drawing (Task 10), which
-// removes this allow.
-#[allow(dead_code)]
 pub(crate) struct LoginPanel {
     pub url: String,
     /// The callback listener is up, so the browser redirect can finish the login.
