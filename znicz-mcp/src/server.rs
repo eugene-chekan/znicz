@@ -31,8 +31,9 @@ type SharedLibrary = Option<Arc<Mutex<Library>>>;
 #[derive(Clone)]
 pub struct ZniczMcpServer {
     player: IpcClient,
-    /// A second, independent connection for Spotify calls. A call can take
-    /// about 40 s, and it must not hold up the player tools on `player`.
+    /// A second, independent connection for the Spotify ops that can be slow:
+    /// a call can take about 40 s, and it must not hold up the player tools on
+    /// `player`. Status reads use `player`, since they answer at once.
     spotify: IpcClient,
     skills: SkillRegistry,
     library: SharedLibrary,
@@ -156,12 +157,13 @@ impl ZniczMcpServer {
     }
 
     /// The Spotify snapshot. It sends `Touch` first, so the player polls fast
-    /// for the next minute, as it does after any Spotify call.
+    /// for the next minute, as it does after any Spotify call. Both go over
+    /// the main connection, so a slow Spotify call on `spotify` does not delay them.
     async fn spotify_status_state(&self) -> Result<SpotifyState, McpError> {
-        let spotify = self.spotify.clone();
+        let player = self.player.clone();
         tokio::task::spawn_blocking(move || {
-            SpotifyHost::apply(&spotify, SpotifyOp::Touch)?;
-            SpotifyHost::try_state(&spotify)
+            SpotifyHost::apply(&player, SpotifyOp::Touch)?;
+            SpotifyHost::try_state(&player)
         })
         .await
         .map_err(|e| McpError::internal_error(e.to_string(), None))?
@@ -1185,7 +1187,7 @@ impl ServerHandler for ZniczMcpServer {
     ) -> impl std::future::Future<Output = Result<ReadResourceResult, McpError>> + Send + '_ {
         let uri = request.uri.clone();
         let state = self.live_state();
-        let spotify = self.spotify.clone();
+        let player = self.player.clone();
         let skills = self.skills.clone();
         let stations_path = self.stations_path.clone();
 
@@ -1201,11 +1203,10 @@ impl ServerHandler for ZniczMcpServer {
             }
 
             if uri == "znicz://spotify/now-playing" {
-                let snapshot =
-                    tokio::task::spawn_blocking(move || SpotifyHost::try_state(&spotify))
-                        .await
-                        .map_err(|e| McpError::internal_error(e.to_string(), None))?
-                        .map_err(spotify_json::error_of)?;
+                let snapshot = tokio::task::spawn_blocking(move || SpotifyHost::try_state(&player))
+                    .await
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?
+                    .map_err(spotify_json::error_of)?;
                 let text = serde_json::to_string_pretty(&snapshot)
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?;
                 return Ok(ReadResourceResult {
@@ -1473,6 +1474,8 @@ mod tests {
     #[derive(Default)]
     struct FakeSpotify {
         ops: Mutex<Vec<SpotifyOp>>,
+        /// How long `Next` takes, as a slow Spotify call does.
+        next_delay: Duration,
     }
 
     impl SpotifyHost for FakeSpotify {
@@ -1491,6 +1494,10 @@ mod tests {
                     redirect_uri: "http://127.0.0.1:8898/callback".into(),
                     listening: true,
                 }),
+                SpotifyOp::Next => {
+                    std::thread::sleep(self.next_delay);
+                    Ok(SpotifyReply::Done)
+                }
                 _ => Ok(SpotifyReply::Done),
             }
         }
@@ -1521,12 +1528,23 @@ mod tests {
         ZniczMcpServer,
         Arc<FakeSpotify>,
     ) {
+        spotify_server_with(FakeSpotify::default())
+    }
+
+    fn spotify_server_with(
+        fake: FakeSpotify,
+    ) -> (
+        tempfile::TempDir,
+        IpcServer,
+        ZniczMcpServer,
+        Arc<FakeSpotify>,
+    ) {
         let _lock = env_lock();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("ipc.toml");
         let (player, thread) = spawn_player(AudioConfig::default());
         std::mem::forget(thread);
-        let fake = Arc::new(FakeSpotify::default());
+        let fake = Arc::new(fake);
         let ipc = IpcServer::start_with_session_and_library(
             player,
             &path,
@@ -1545,6 +1563,35 @@ mod tests {
 
     fn json_of(result: &rmcp::model::CallToolResult) -> serde_json::Value {
         serde_json::from_str(&result_text(result)).expect("tool result is JSON")
+    }
+
+    /// A slow Spotify call on the Spotify connection must not hold up the
+    /// status read or a player read: each has its own connection.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn status_and_player_reads_do_not_wait_behind_a_slow_spotify_call() {
+        let (_dir, _ipc, server, _fake) = spotify_server_with(FakeSpotify {
+            next_delay: Duration::from_secs(2),
+            ..FakeSpotify::default()
+        });
+        let slow = server.clone();
+        let next = tokio::spawn(async move { slow.spotify_next().await });
+        std::thread::sleep(Duration::from_millis(100));
+
+        let started = std::time::Instant::now();
+        let status = server.spotify_status().await.expect("status");
+        let waited = started.elapsed();
+        assert!(waited < Duration::from_secs(1), "status waited {waited:?}");
+        assert_eq!(json_of(&status)["login"], "logged_in");
+
+        let started = std::time::Instant::now();
+        server.get_player_state().expect("player state");
+        let waited = started.elapsed();
+        assert!(
+            waited < Duration::from_secs(1),
+            "player state waited {waited:?}"
+        );
+
+        next.await.expect("join").expect("next");
     }
 
     #[tokio::test]

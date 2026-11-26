@@ -98,7 +98,7 @@ pub struct SpotifyPlayParams {
     pub uri: Option<String>,
     /// An album, playlist or artist URI to play from its start or from `offset`.
     pub context_uri: Option<String>,
-    /// Position to start from, 0-based.
+    /// Position to start from, 0-based. Needs `context_uri`.
     pub offset: Option<u32>,
 }
 
@@ -169,6 +169,9 @@ pub fn search_op(params: SpotifySearchParams) -> SpotifyOp {
 
 /// `uri` plays that track; `context_uri` plays an album or playlist; neither resumes.
 pub fn play_op(params: SpotifyPlayParams) -> Result<SpotifyOp, McpError> {
+    if params.offset.is_some() && params.context_uri.is_none() {
+        return Err(McpError::invalid_params("offset needs context_uri", None));
+    }
     let (uris, context_uri) = match (params.uri, params.context_uri) {
         (Some(_), Some(_)) => {
             return Err(McpError::invalid_params(
@@ -381,6 +384,24 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    #[test]
+    fn an_offset_without_a_context_is_refused() {
+        let error = play_op(SpotifyPlayParams {
+            uri: Some("spotify:track:1".into()),
+            context_uri: None,
+            offset: Some(2),
+        })
+        .unwrap_err();
+        assert_eq!(error.message.as_ref(), "offset needs context_uri");
+        let error = play_op(SpotifyPlayParams {
+            uri: None,
+            context_uri: None,
+            offset: Some(2),
+        })
+        .unwrap_err();
+        assert_eq!(error.message.as_ref(), "offset needs context_uri");
     }
 
     #[test]

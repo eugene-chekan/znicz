@@ -769,19 +769,25 @@ impl RpcFailure {
         }
     }
 
-    /// A Spotify request that failed. A timeout or a dropped connection is a
-    /// network error; the outdated-player hint is Library wording and is not used.
+    /// A Spotify request that failed. A timeout or a player that is not
+    /// reachable is a network error. A connection lost mid-request means an
+    /// older player, which does not know Spotify requests.
     fn into_spotify_error(self) -> ZniczError {
-        let message = if self.timed_out {
-            TIMED_OUT.to_string()
-        } else if self.mid_request {
-            "lost the connection to the player; an older player may not know Spotify requests (run `znicz player stop` and try again)".to_string()
-        } else {
-            self.error.to_string()
-        };
+        if self.timed_out {
+            return ZniczError::Spotify {
+                kind: SpotifyErrorKind::Network,
+                message: TIMED_OUT.to_string(),
+            };
+        }
+        if self.mid_request {
+            return ZniczError::Spotify {
+                kind: SpotifyErrorKind::OutdatedPlayer,
+                message: "the player is an older version without Spotify support; run `znicz player stop`, then try again".to_string(),
+            };
+        }
         ZniczError::Spotify {
             kind: SpotifyErrorKind::Network,
-            message,
+            message: self.error.to_string(),
         }
     }
 }
@@ -1289,20 +1295,29 @@ mod tests {
     }
 
     #[test]
-    fn a_dropped_connection_mentions_an_older_player() {
+    fn a_dropped_connection_is_an_outdated_player() {
         let failure = RpcFailure::sent(RpcError::Other(ZniczError::Player("ipc empty".into())));
-        let err = failure.into_spotify_error();
-        assert!(
-            matches!(
-                err,
-                ZniczError::Spotify {
-                    kind: SpotifyErrorKind::Network,
-                    ..
-                }
-            ),
-            "{err:?}"
-        );
-        assert!(err.to_string().contains("older player"), "{err}");
+        match failure.into_spotify_error() {
+            ZniczError::Spotify { kind, message } => {
+                assert_eq!(kind, SpotifyErrorKind::OutdatedPlayer);
+                assert!(message.contains("older version"), "{message}");
+                assert!(message.contains("znicz player stop"), "{message}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_player_that_is_not_reachable_is_a_network_error() {
+        let failure =
+            RpcFailure::connect(ZniczError::Player("ipc connect: connection refused".into()));
+        match failure.into_spotify_error() {
+            ZniczError::Spotify { kind, message } => {
+                assert_eq!(kind, SpotifyErrorKind::Network);
+                assert!(message.contains("connection refused"), "{message}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

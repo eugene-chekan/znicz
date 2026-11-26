@@ -69,7 +69,7 @@ pub enum SpotifyErrorKind {
     NotConfigured,
     /// No login, or the login was removed.
     NotLoggedIn,
-    /// The login was started too long ago, or it was refused.
+    /// The login was started too long ago.
     LoginExpired,
     /// The pasted address is not from the login in progress.
     WrongAddress,
@@ -85,7 +85,10 @@ pub enum SpotifyErrorKind {
     Network,
     /// The running player has no Spotify service.
     NoService,
-    /// Anything else.
+    /// The player is an older version without Spotify support.
+    OutdatedPlayer,
+    /// Anything else, including a kind from a newer player.
+    #[serde(other)]
     Other,
 }
 
@@ -561,6 +564,14 @@ mod tests {
         assert!(page.has_more());
         let last = SpotifyPage { offset: 1, ..page };
         assert!(!last.has_more());
+    }
+
+    #[test]
+    fn an_unknown_error_kind_from_a_newer_player_reads_as_other() {
+        assert_eq!(
+            serde_json::from_str::<SpotifyErrorKind>("\"some_new_kind\"").unwrap(),
+            SpotifyErrorKind::Other
+        );
     }
 
     #[test]
