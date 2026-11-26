@@ -1642,7 +1642,7 @@ git commit -m "feat(spotify): HTTP transport and status-to-error mapping"
 - Create: `znicz-spotify/src/auth.rs`
 - Modify: `znicz-spotify/src/lib.rs` (add `mod auth;`)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `znicz-spotify/src/auth.rs`:
 
@@ -1760,12 +1760,12 @@ mod tests {
 
 Add `mod auth;` to `lib.rs`.
 
-- [ ] **Step 2: Run to see it fail**
+- [x] **Step 2: Run to see it fail**
 
 Run: `cargo test -p znicz-spotify auth`
 Expected: compile errors (`authorize_url`, `exchange_code`, `refresh` missing).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Between the `use` lines and the tests:
 
@@ -1911,12 +1911,12 @@ fn token_http_error(reply: &Reply, description: &str) -> SpotifyError {
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cargo test -p znicz-spotify auth`
 Expected: 4 pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-spotify/src/auth.rs znicz-spotify/src/lib.rs
