@@ -1178,7 +1178,7 @@ git commit -m "feat(spotify): token file, owner-only and redacted"
 - Create: `znicz-spotify/src/http.rs`
 - Modify: `znicz-spotify/src/lib.rs` (add `mod http;`)
 
-- [ ] **Step 1: Write the module with the test server and failing tests**
+- [x] **Step 1: Write the module with the test server and failing tests**
 
 Create `znicz-spotify/src/http.rs`:
 
@@ -1488,12 +1488,12 @@ mod tests {
 
 Add `mod http;` to `lib.rs`.
 
-- [ ] **Step 2: Run to see it fail**
+- [x] **Step 2: Run to see it fail**
 
 Run: `cargo test -p znicz-spotify http`
 Expected: compile errors (`Http`, `Reply`, `Method`, `Body`, `check` missing).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Between `USER_AGENT` and `mod test_server`:
 
@@ -1622,12 +1622,12 @@ fn error_detail(body: &str) -> (String, String) {
 
 If `read_to_string` does not resolve on the owned body, bind it first: `let mut body = response.into_body(); let body = body.read_to_string()…`. ureq 3.4 has both an owned and a `&mut` form.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cargo test -p znicz-spotify http`
 Expected: 6 pass. If `sends_json_form_and_empty_bodies` fails because the empty PUT has no `content-length: 0`, change `Body::None => request.send("")` to `request.header("Content-Length", "0").send_empty()` and rerun. Spotify answers 411 to a PUT or POST without a length.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-spotify/src/http.rs znicz-spotify/src/lib.rs
