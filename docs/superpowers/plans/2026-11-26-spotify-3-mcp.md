@@ -74,7 +74,7 @@ Adds the kind and the struct variant. The IPC layer still sends only text, so it
 - Modify: `znicz-spotify/src/error.rs`
 - Modify: `znicz-core/src/player/ipc.rs` (the client's `SpotifyHost` impl, one helper, two tests)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `znicz-spotify/src/error.rs`, add to the `tests` module (keep the two existing tests):
 
@@ -149,12 +149,12 @@ In `znicz-core/src/spotify_host.rs`, add to its `tests` module:
     }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz-spotify every_error_has_a_kind -q`
 Expected: FAIL to compile with "no method named `kind`" and "cannot find type `SpotifyErrorKind`".
 
-- [ ] **Step 3: Add the kind enum**
+- [x] **Step 3: Add the kind enum**
 
 In `znicz-core/src/spotify_host.rs`, add this block directly above `/// A request to the Spotify service.` (it sits after `valid_client_id`):
 
@@ -189,7 +189,7 @@ pub enum SpotifyErrorKind {
 }
 ```
 
-- [ ] **Step 4: Change the error variant**
+- [x] **Step 4: Change the error variant**
 
 Replace the whole of `znicz-core/src/error.rs` with:
 
@@ -240,7 +240,7 @@ pub use spotify_host::{
 };
 ```
 
-- [ ] **Step 5: Map every `SpotifyError` to a kind**
+- [x] **Step 5: Map every `SpotifyError` to a kind**
 
 In `znicz-spotify/src/error.rs`, change the `use` line at the top to:
 
@@ -280,7 +280,7 @@ impl From<SpotifyError> for ZniczError {
 }
 ```
 
-- [ ] **Step 6: Keep `ipc.rs` compiling with the new variant**
+- [x] **Step 6: Keep `ipc.rs` compiling with the new variant**
 
 In `znicz-core/src/player/ipc.rs`, make these changes.
 
@@ -326,12 +326,12 @@ fn unexpected_spotify() -> ZniczError {
 
 Also the `IpcResponse::Err { message }` patterns in the Spotify impl are the only ones this task touches; the other `IpcResponse::Err` sites are untouched until Task 2.
 
-- [ ] **Step 7: Run the tests to verify they pass**
+- [x] **Step 7: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-spotify -q && cargo test -p znicz-core -q`
 Expected: PASS. The compiler may still report unused-import or dead-code warnings for `SpotifyErrorKind` in `ipc.rs` until Task 2 lands; that is fine for this commit.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add znicz-core/src/spotify_host.rs znicz-core/src/error.rs znicz-core/src/lib.rs znicz-core/src/player/ipc.rs znicz-spotify/src/error.rs
