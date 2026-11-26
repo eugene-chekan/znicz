@@ -1099,7 +1099,7 @@ Connects everything to the App without a panel yet. Adds the fields, the constru
   - `pub(crate) fn spotify_view(&self) -> SpotifyView`
   - `pub(crate) fn poll_spotify(&mut self)`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `znicz-tui/src/app/spotify_ui.rs`, the test module (the implementation comes in Step 3). The fake host and app helper:
 
@@ -1339,12 +1339,12 @@ pub(crate) mod tests {
 
 Visibility for the tests: `spotify_ui::tests` is declared `pub(crate) mod tests` (above) because `settings_ui`'s tests use `FakeHost`. In the other direction, `settings_ui`'s test module becomes `pub(crate) mod tests`, and these helpers in it become `pub(crate) fn`: `settings_app`, `press`, `select`, `saved`, `type_text`, `toast_texts`, `screen_rows`, `screen_buffer`. `spotify_ui` is a private module of `app`, but `settings_ui` is its sibling, so `crate::app::spotify_ui::…` and `crate::app::settings_ui::tests::…` resolve from both test modules. The two test modules use each other's helpers, which is fine in Rust.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p znicz-tui spotify_ui`
 Expected: FAIL to compile.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 (a) `znicz-tui/src/app.rs`:
 
@@ -1593,12 +1593,12 @@ Two things in `on_spotify_done`: the `CompleteLogin` `Err(WrongAddress)` arm com
 - The three call sites of `run_tui_with_client` (`run_tui`, `play_station_and_run`, `load_playlist_and_run`; about lines 923, 961, 1002): each gets `let spotify = connect_ui(device, config)?;` right after its own `connect_ui` and before the call, and passes it: `run_tui_with_client(player, spotify, library_path, …)`. `device: Option<&str>` and `config: Option<&Path>` are parameters of all three. `connect_ui` is the same helper the main connection uses, so the second connection is a separate `IpcClient` with its own socket and lock, not a clone of the first. It has the `Ui` role, like the main one.
 - `run_tui_with_client` takes `spotify: IpcClient` as its second parameter and after `App::with_remote(player, library)` does `let mut app = App::with_remote(player, library).with_spotify_worker(Arc::new(spotify)).map_err(|e| color_eyre::eyre::eyre!("{e}"))?;` (the `Arc::new(spotify)` coerces to `Arc<dyn SpotifyHost>`). Add `use znicz_core::SpotifyHost` only if the coercion needs it in scope (it does not).
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-tui -- spotify_ui settings_ui && cargo build --workspace`
 Expected: PASS; the binary builds.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/app.rs znicz-tui/src/app/spotify_ui.rs znicz-tui/src/app/settings_ui.rs znicz-tui/src/views/settings.rs znicz/src/main.rs
