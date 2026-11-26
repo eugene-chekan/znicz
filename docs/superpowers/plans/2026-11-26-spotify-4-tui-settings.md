@@ -3064,23 +3064,23 @@ If Steps 1–3 needed fixes, those fixes were committed separately before this o
 
 Run with a real Spotify Premium account and a Development Mode app. Set the client ID in Settings, not by hand in `config.toml`, to check the whole route. Redirect URI `http://127.0.0.1:8898/callback` is registered and the account is added under User Management. No code is written in this task. Note any surprise and fix it in its own commit.
 
-- [ ] **Step 1: Client ID**
+- [x] **Step 1: Client ID**
 
 Open Settings (`S`), press `6`, Enter on Client ID. Type a 31-character string and press Enter.
 Expected: the prompt stays open with `must be 32 hex characters`. Clear it and type the real 32-character ID, Enter.
 Check: `config.toml` has `[spotify] client_id = "…"`, the row shows the first eight characters then `…`, and the Account row shows `Not logged in`.
 
-- [ ] **Step 2: Redirect port**
+- [x] **Step 2: Redirect port**
 
 Enter on Redirect port. Type `80` and Enter: the prompt stays open with `must be 1024–65535`. Type `8898` and Enter.
 Expected: the row shows `http://127.0.0.1:8898/callback`.
 
-- [ ] **Step 3: Login by redirect**
+- [x] **Step 3: Login by redirect**
 
 Enter on Account. Expected: the panel shows the URL and `Waiting for the browser; or paste the address you were sent to.`, and a browser opens (on a desktop session). Approve in the browser.
 Expected: the panel closes and the toast reads `Logged in as <name>`. The Account row shows `Logged in as <name> · Premium`, or `not Premium (control unavailable)` after a refused playback call.
 
-- [ ] **Step 4: Login by paste, and `c` copy**
+- [x] **Step 4: Login by paste, and `c` copy**
 
 Log out first (Enter on Account, Enter on the question). Enter on Account. Press `c`.
 Expected: the toast says the URL was sent to the clipboard. Paste somewhere to confirm it is the authorize URL (the terminal must support OSC 52).
@@ -3089,39 +3089,39 @@ Expected: `that address is not from this login` under the prompt, and the prompt
 Paste the real address from the browser's "can't connect" page and press Enter.
 Expected: the panel closes and the toast reads `Logged in as <name>`.
 
-- [ ] **Step 5: Login over SSH**
+- [x] **Step 5: Login over SSH**
 
 From a machine on SSH into the test machine: run the TUI there. Enter on Account.
 Expected: no browser opens (SSH variables are set). The panel says `Paste the address you were sent to.` or the listening line if the listener is up over `ssh -L 8898:127.0.0.1:8898`. Approve on the local machine. With the tunnel, the callback finishes the login; without it, paste.
 
-- [ ] **Step 6: `c` in tmux**
+- [x] **Step 6: `c` in tmux**
 
 Start the TUI inside tmux with `set -g set-clipboard on`. Open the panel and press `c`. Paste into another application.
 Expected: the URL is pasted. If it is not, record the tmux version and whether `set-clipboard` is on. This is the open question from Spec refinements. If the copy fails only in tmux, the fix is the DCS passthrough wrapper in `osc52.rs` (`\x1bPtmux;` … `\x1b\\`), gated on the `TMUX` environment variable. Plan that as its own task before closing this check.
 
-- [ ] **Step 7: Logout with confirmation**
+- [x] **Step 7: Logout with confirmation**
 
 Enter on Account. The strip reads `Log out of Spotify? Enter logs out · Esc cancels`. Press Esc: nothing changes. Enter on Account, Enter on the question.
 Expected: the toast reads `Logged out of Spotify`, and the Account row shows `Not logged in`.
 
-- [ ] **Step 8: Playback device**
+- [x] **Step 8: Playback device**
 
 With the tab open, the device list is refreshed. Step Playback device with `l` and `h`.
 Expected: `Active device` first, then each device by name. Pick one. `config.toml` has `device = "<name>"`, and a `Configure` reaches the player (a later `spotify_devices` MCP call or `znicz spotify status` shows it as the preferred device). Choose `Active device` again: the `device` key is removed.
 
-- [ ] **Step 9: Typo in config.toml**
+- [x] **Step 9: Typo in config.toml**
 
 Add a deliberate typo to `config.toml` (for example `[spotify` with no closing bracket), open Settings, press `6`, and change the port with Enter and a typed value.
 Expected: the toast reads `Not saved: config.toml has an error (…)`, the file is unchanged, the row goes back to its old value, and `znicz spotify status` shows the player's settings as they were before the change. Fix the typo and restart the TUI.
 
-- [ ] **Step 10: The first save, with no config file, and a client ID change**
+- [x] **Step 10: The first save, with no config file, and a client ID change**
 
 Move `config.toml` aside and start the TUI (a player that is already running keeps its old settings, so stop it first with `znicz player stop`). Open Settings, press `6`, change Open browser.
 Expected: `config.toml` is created with `[spotify] open_browser = "…"`, and nothing else changes: the player is not told, and a login that was valid stays valid.
 Put the file back. Log in, then change the client ID to another valid one.
 Expected: the strip asks first and says it logs you out; `Esc` leaves everything as it was; `Enter` saves, logs you out, and the Account row reads `Not logged in`.
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 Mark the checks that passed, then commit:
 
@@ -3198,3 +3198,12 @@ Also covered: a long URL on a narrow terminal (`the_panel_draws_in_a_small_termi
 - `dimmed`, `prompt_range`, `Values.spotify`, `SettingsValues.spotify`, `SettingsValues.open_browser` are defined in Task 3 and used in Tasks 6, 7, 10.
 
 **Proportion:** the plan is shorter than the spec in prose, and its code covers only the pure logic, the worker, and the non-obvious wiring. The rest is named by signature and test, so the implementer writes the body.
+
+**Manual check result (2026-11-26):** passed for opening the tab, the device
+choice, logout with its question, the CLI paste login, the broken-config rule
+and the client-ID question. Not verified in that environment: the browser
+opening from the panel (snap Firefox could not start from the launched
+process), `c` reaching the OS clipboard (xfce4-terminal ignores OSC 52; the
+app side said "Sent"), the panel's own paste path, and tmux (not installed).
+Fixed from the findings: comments kept in `config.toml`, the tab re-reads
+`[spotify]` after the file is fixed, and no "offline" hint while logged out.
