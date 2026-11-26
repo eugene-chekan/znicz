@@ -349,7 +349,7 @@ The server sends `spotify_kind` on error replies. The Spotify dedupe record stor
 **Files:**
 - Modify: `znicz-core/src/player/ipc.rs`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 In `znicz-core/src/player/ipc.rs`, add this to the test module (put it after `spotify_ops_reach_the_host_and_errors_come_back_as_text`):
 
@@ -454,12 +454,12 @@ Add a wire-compatibility test next to it. It pins the JSON, so an older client k
     }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cargo test -p znicz-core the_kind_survives_ipc_and_a_resend -q`
 Expected: FAIL to compile ("no field `spotify_kind`" on `IpcResponse::Err`).
 
-- [ ] **Step 3: Add the field to the reply**
+- [x] **Step 3: Add the field to the reply**
 
 In `ipc.rs`, replace the `Err` variant of `enum IpcResponse` with:
 
@@ -475,7 +475,7 @@ In `ipc.rs`, replace the `Err` variant of `enum IpcResponse` with:
 
 Every constructor `IpcResponse::Err { message: … }` now needs `spotify_kind: None` (or the kind, where a Spotify failure is built), and every pattern `IpcResponse::Err { message }` needs `..` or `spotify_kind`. The compiler lists them: run `cargo build -p znicz-core` and fix each site. There are about 21 `IpcResponse::Err {` occurrences in this file. Do not change which error text is sent, only the struct shape.
 
-- [ ] **Step 4: Make the dedupe record generic over the stored error**
+- [x] **Step 4: Make the dedupe record generic over the stored error**
 
 Replace the block from `/// The last change request's outcome per client, oldest client first.` through the end of `fn run_once` (the existing `run_once` ends with `    outcome\n}`) with:
 
@@ -607,7 +607,7 @@ In the existing test `recent_outcomes_keep_the_last_request_per_client_and_cap_t
         let mut recent: RecentOutcomes<()> = RecentOutcomes::default();
 ```
 
-- [ ] **Step 5: Send the kind from the server**
+- [x] **Step 5: Send the kind from the server**
 
 In `handle_client`'s request loop, replace the `IpcRequest::Spotify { op, id, .. }` arm and the `IpcRequest::SpotifyStatus { .. }` arm with:
 
@@ -640,7 +640,7 @@ In `handle_client`'s request loop, replace the `IpcRequest::Spotify { op, id, ..
 
 Also in the `IpcRequest::Library` arm, the `None` case stays as it is, with `spotify_kind: None`.
 
-- [ ] **Step 6: Read the kind on the client**
+- [x] **Step 6: Read the kind on the client**
 
 In `impl crate::spotify_host::SpotifyHost for IpcClient`, replace the whole `fn apply` and `fn try_state` bodies' error arms so they read the kind. The final `fn apply` is:
 
@@ -688,12 +688,12 @@ and `fn try_state` becomes:
 
 (Task 3 changes the `.map_err(RpcFailure::into_error)` in these two functions.)
 
-- [ ] **Step 7: Run the tests to verify they pass**
+- [x] **Step 7: Run the tests to verify they pass**
 
 Run: `cargo test -p znicz-core -q`
 Expected: PASS, including `the_kind_survives_ipc_and_a_resend`, `err_replies_stay_compatible_with_older_players_and_clients` and the existing dedupe tests (Command and Library requests still use the text-only record, and their replies are unchanged on the wire).
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add znicz-core/src/player/ipc.rs
