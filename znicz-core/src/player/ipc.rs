@@ -1022,6 +1022,44 @@ fn finish_state(live: &mut Live, response: IpcResponse) -> Result<PlayerState> {
     }
 }
 
+impl crate::spotify_host::SpotifyHost for IpcClient {
+    fn apply(&self, op: SpotifyOp) -> Result<SpotifyReply> {
+        // Reads carry no id; change ops do, so a resend is answered from memory.
+        let id = (!op.is_read()).then(|| self.next_request_id());
+        match self
+            .rpc_detailed(|live| IpcRequest::Spotify {
+                token: live.token.clone(),
+                op: op.clone(),
+                id,
+            })
+            .map_err(RpcFailure::into_error)?
+        {
+            IpcResponse::Spotify { reply } => Ok(reply),
+            IpcResponse::Err { message } => Err(ZniczError::Spotify(message)),
+            other => Err(ZniczError::Spotify(format!("unexpected reply: {other:?}"))),
+        }
+    }
+
+    /// The player's snapshot; the default when it is unreachable or has no
+    /// Spotify service. `try_state` says which.
+    fn state(&self) -> SpotifyState {
+        crate::spotify_host::SpotifyHost::try_state(self).unwrap_or_default()
+    }
+
+    fn try_state(&self) -> Result<SpotifyState> {
+        match self
+            .rpc_detailed(|live| IpcRequest::SpotifyStatus {
+                token: live.token.clone(),
+            })
+            .map_err(RpcFailure::into_error)?
+        {
+            IpcResponse::SpotifyStatus { state } => Ok(*state),
+            IpcResponse::Err { message } => Err(ZniczError::Spotify(message)),
+            other => Err(ZniczError::Spotify(format!("unexpected reply: {other:?}"))),
+        }
+    }
+}
+
 impl PlayerOps for IpcClient {
     fn send_blocking(&self, command: Command) -> Result<()> {
         IpcClient::send_blocking(self, command)
@@ -1876,5 +1914,51 @@ mod tests {
                 other => panic!("{other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn spotify_ops_reach_the_host_and_errors_come_back_as_text() {
+        let (_dir, path) = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let host = Arc::new(FakeSpotify::default());
+        let _server = IpcServer::start_with_spotify(player, &path, Duration::ZERO, host.clone())
+            .expect("start ipc");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+
+        let reply =
+            crate::spotify_host::SpotifyHost::apply(&client, SpotifyOp::Pause).expect("apply");
+        assert_eq!(reply, SpotifyReply::Done);
+        assert_eq!(host.ops.lock().unwrap().len(), 1);
+
+        let err = crate::spotify_host::SpotifyHost::apply(&client, SpotifyOp::Logout)
+            .expect_err("host refused");
+        assert!(matches!(err, ZniczError::Spotify(_)), "{err:?}");
+        assert_eq!(err.to_string(), "refused");
+    }
+
+    #[test]
+    fn the_client_reads_the_snapshot_and_reports_a_player_without_spotify() {
+        let (_dir, path) = advertise_path();
+        let (player, _thread) = spawn_player(AudioConfig::default());
+        let host = Arc::new(FakeSpotify::default());
+        let _server =
+            IpcServer::start_with_spotify(player, &path, Duration::ZERO, host).expect("start ipc");
+        let client = IpcClient::connect(&path, ClientRole::Agent).expect("connect");
+        let state = crate::spotify_host::SpotifyHost::try_state(&client).expect("state");
+        assert_eq!(state.login, SpotifyLogin::LoggedIn);
+
+        let (_dir2, path2) = advertise_path();
+        let (player2, _thread2) = spawn_player(AudioConfig::default());
+        let _bare = IpcServer::start(player2, &path2).expect("start ipc");
+        let bare = IpcClient::connect(&path2, ClientRole::Agent).expect("connect");
+        let err = crate::spotify_host::SpotifyHost::apply(&bare, SpotifyOp::Devices)
+            .expect_err("no host");
+        assert_eq!(err.to_string(), NO_SPOTIFY);
+        assert!(crate::spotify_host::SpotifyHost::try_state(&bare).is_err());
+        // `state` never fails: it falls back to the default.
+        assert_eq!(
+            crate::spotify_host::SpotifyHost::state(&bare),
+            SpotifyState::default()
+        );
     }
 }
