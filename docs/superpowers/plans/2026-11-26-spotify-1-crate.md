@@ -1931,7 +1931,7 @@ git commit -m "feat(spotify): authorize URL, code exchange and refresh"
 - Create: `znicz-spotify/src/model.rs`
 - Modify: `znicz-spotify/src/lib.rs` (add `mod model;`)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `znicz-spotify/src/model.rs`:
 
@@ -2117,12 +2117,12 @@ mod tests {
 
 Add `mod model;` to `lib.rs`.
 
-- [ ] **Step 2: Run to see it fail**
+- [x] **Step 2: Run to see it fail**
 
 Run: `cargo test -p znicz-spotify model`
 Expected: compile errors (`track`, `image`, `playback`, … missing).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Between the `use` lines and the tests:
 
@@ -2344,12 +2344,12 @@ pub(crate) fn queue(value: &Value) -> (Option<SpotifyTrack>, Vec<SpotifyTrack>) 
 
 A typed `"track"` without an `album` key (album track rows) is still a track; the album fields stay empty and `api::tracks` fills them (Task 9).
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cargo test -p znicz-spotify model`
 Expected: 10 pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-spotify/src/model.rs znicz-spotify/src/lib.rs
