@@ -141,6 +141,10 @@ impl App {
             self.on_slider_prompt_key(key);
             return true;
         }
+        // The login panel owns c, Enter and Esc; other keys fall through.
+        if self.spotify_login.is_some() {
+            return self.on_spotify_panel_key(key);
+        }
         // Tab keys work from either focus, and focus stays where it is.
         let tab = match key.code {
             KeyCode::Tab => Some(self.settings_tab.next()),
@@ -769,9 +773,10 @@ impl App {
         self.library.set_preferred_layout(self.tui.library_layout);
     }
 
-    /// A removal question and a slider prompt belong to the Settings modal: once
-    /// that modal is no longer on screen (closed, or replaced by another modal),
-    /// they go.
+    /// A removal question, a slider prompt and a Spotify question belong to the
+    /// Settings modal: once that modal is no longer on screen (closed, or
+    /// replaced by another modal), they go. The login panel goes too. The login
+    /// itself keeps running in the player.
     pub(super) fn drop_removal_outside_settings(&mut self) {
         if self.modal != Modal::Settings {
             self.settings_confirm = None;
@@ -810,7 +815,7 @@ pub(crate) mod tests {
         app.toasts.recent().iter().map(|t| t.text.clone()).collect()
     }
 
-    fn press(app: &mut App, code: KeyCode) {
+    pub(crate) fn press(app: &mut App, code: KeyCode) {
         app.on_key(KeyEvent::new(code, KeyModifiers::NONE));
     }
 

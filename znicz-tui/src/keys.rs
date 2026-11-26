@@ -30,6 +30,8 @@ pub enum Context {
     SettingsTabs,
     /// Settings with a slider's typed value open: keys type, Enter saves.
     SettingsPrompt,
+    /// Settings with the Spotify login panel open: `c`, Enter and Esc are the panel's.
+    SettingsLogin,
     Stage,
     Playlists,
     Radio,
@@ -91,6 +93,8 @@ pub const MESSAGES_OPEN: Hint = hint("M messages", KeyCode::Char('M'));
 const ENTER_SEARCH: Hint = hint("Enter search", KeyCode::Enter);
 const ENTER_SAVE: Hint = hint("Enter save", KeyCode::Enter);
 const CANCEL: Hint = hint("Esc cancel", KeyCode::Esc);
+const COPY_URL: Hint = hint("c copy URL", KeyCode::Char('c'));
+const PASTE_ADDRESS: Hint = hint("Enter paste", KeyCode::Enter);
 const NEXT_FIELD: Hint = hint("Tab next field", KeyCode::Tab);
 const FILTER: Hint = hint("/ filter", KeyCode::Char('/'));
 const ENTER_KEEP: Hint = hint("Enter keep", KeyCode::Enter);
@@ -129,6 +133,7 @@ pub fn context_hints(context: Context) -> &'static [Hint] {
         Context::Settings => &[ENTER_CHANGE, CHOOSE, NEXT_TAB, CLOSE],
         Context::SettingsTabs => &[TAB_SWITCH, ROWS, CLOSE],
         Context::SettingsPrompt => &[ENTER_SAVE, CANCEL],
+        Context::SettingsLogin => &[COPY_URL, PASTE_ADDRESS, CANCEL],
         Context::Stage => &[SPACE_PAUSE, NEXT, BROWSE, QUEUE_OPEN],
         Context::Playlists | Context::Radio => &[ENTER_PLAY, ADD, NEW, EDIT, DELETE, CLOSE],
         Context::Messages => &[CLEAR, CLOSE],
@@ -247,6 +252,9 @@ pub const SETTINGS: &[Binding] = &[
     b("d", "remove folder"),
     b("Tab / Shift-Tab", "next / previous tab"),
     b("1–6", "go to a tab"),
+    b("Login: c", "copy the login URL"),
+    b("Login: Enter", "paste the redirect address"),
+    b("Login: Esc", "cancel the login"),
     b("↑ on the first row", "tab bar"),
     b("Esc", "close"),
 ];
@@ -287,7 +295,10 @@ pub fn context_title(context: Context) -> Option<&'static str> {
         Context::FolderPrompt => None,
         Context::Queue => Some("Queue"),
         Context::Devices => Some("Devices"),
-        Context::Settings | Context::SettingsTabs | Context::SettingsPrompt => Some("Settings"),
+        Context::Settings
+        | Context::SettingsTabs
+        | Context::SettingsPrompt
+        | Context::SettingsLogin => Some("Settings"),
         Context::Stage => Some("Stage"),
         Context::Playlists => Some("Playlists"),
         Context::Radio => Some("Radio"),
@@ -381,7 +392,7 @@ mod tests {
         }
     }
 
-    const ALL_CONTEXTS: [Context; 18] = [
+    const ALL_CONTEXTS: [Context; 19] = [
         Context::Library,
         Context::LibraryTree,
         Context::Search,
@@ -391,6 +402,7 @@ mod tests {
         Context::Settings,
         Context::SettingsTabs,
         Context::SettingsPrompt,
+        Context::SettingsLogin,
         Context::Stage,
         Context::Playlists,
         Context::Radio,

@@ -180,6 +180,9 @@ pub enum DevicesMode {
     Default,
 }
 
+/// An action that takes a string from the app: the clipboard writer or the browser opener.
+pub(crate) type TextAction = Box<dyn Fn(&str) -> std::io::Result<()> + Send>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Modal {
     None,
@@ -434,6 +437,10 @@ pub struct App {
     pub(crate) spotify_login: Option<LoginPanel>,
     /// A question in the Settings strip that waits for Enter.
     pub(crate) spotify_confirm: Option<SpotifyConfirm>,
+    /// Writes the clipboard sequence to the terminal. Tests replace it.
+    pub(crate) clipboard: TextAction,
+    /// Opens the login page in a browser. Tests replace it.
+    pub(crate) browser: TextAction,
     pub covers: CoverCache,
     pub picker: Option<ratatui_image::picker::Picker>,
     pub(crate) cover_image: Option<ratatui_image::protocol::StatefulProtocol>,
@@ -799,6 +806,8 @@ impl App {
             spotify_polled_at: None,
             spotify_login: None,
             spotify_confirm: None,
+            clipboard: Box::new(crate::osc52::copy),
+            browser: Box::new(znicz_spotify::browser::open),
             covers: CoverCache::new(),
             picker: Some(ratatui_image::picker::Picker::halfblocks()),
             cover_image: None,
@@ -1443,6 +1452,12 @@ impl App {
     }
 
     fn on_esc(&mut self) {
+        // The login panel's Esc: a paste prompt closes back to the panel,
+        // otherwise the login is cancelled. Settings stays open.
+        if self.modal == Modal::Settings && self.spotify_login.is_some() {
+            self.esc_spotify_panel();
+            return;
+        }
         // Esc cancels the typed value and leaves Settings open.
         if self.modal == Modal::Settings && self.settings_prompt.is_some() {
             self.settings_prompt = None;
@@ -1780,6 +1795,15 @@ impl App {
             Modal::Help if self.help.editing => Context::HelpFilter,
             Modal::Help => Context::Help,
             Modal::Devices => Context::Devices,
+            Modal::Settings
+                if self
+                    .spotify_login
+                    .as_ref()
+                    .is_some_and(|p| p.paste.is_some()) =>
+            {
+                Context::SettingsPrompt
+            }
+            Modal::Settings if self.spotify_login.is_some() => Context::SettingsLogin,
             Modal::Settings if self.settings_prompt.is_some() => Context::SettingsPrompt,
             Modal::Settings if self.settings_on_tab_bar => Context::SettingsTabs,
             Modal::Settings => Context::Settings,
