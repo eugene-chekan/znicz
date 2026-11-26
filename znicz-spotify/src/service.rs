@@ -27,6 +27,10 @@ const DEVICES_EVERY_MS: u64 = 15_000;
 const LOGIN_CHECK: Duration = Duration::from_secs(1);
 /// A user action waits for a 429 at most this long before retrying once.
 const MAX_RETRY_WAIT_SECS: u64 = 10;
+/// After a transfer, Spotify is read this many times to see the device take over...
+const TRANSFER_CHECKS: u32 = 10;
+/// ...this far apart: about 5 s in all.
+const TRANSFER_CHECK_EVERY: Duration = Duration::from_millis(500);
 
 /// How long to wait before the next poll. `None`: not logged in, wait for a wake.
 fn poll_interval(logged_in: bool, now_ms: u64, last_touch_ms: u64) -> Option<Duration> {
@@ -73,6 +77,8 @@ struct Shared {
     wake: (Mutex<bool>, Condvar),
     stop: AtomicBool,
     on_start_playback: Box<dyn Fn() + Send + Sync>,
+    /// How many times, and how far apart, a transfer reads playback for its device.
+    transfer_check: (u32, Duration),
 }
 
 pub struct SpotifyService {
@@ -82,7 +88,13 @@ pub struct SpotifyService {
 
 impl SpotifyService {
     pub fn start(config: SpotifyConfig, options: ServiceOptions) -> Self {
-        Self::start_with(config, options, Endpoints::default(), system_clock())
+        Self::start_with(
+            config,
+            options,
+            Endpoints::default(),
+            system_clock(),
+            (TRANSFER_CHECKS, TRANSFER_CHECK_EVERY),
+        )
     }
 
     pub(crate) fn start_with(
@@ -90,6 +102,7 @@ impl SpotifyService {
         options: ServiceOptions,
         endpoints: Endpoints,
         clock: Clock,
+        transfer_check: (u32, Duration),
     ) -> Self {
         let client = Client::new(config, options.token_path, endpoints, clock.clone());
         let state = SpotifyState {
@@ -110,6 +123,7 @@ impl SpotifyService {
             wake: (Mutex::new(false), Condvar::new()),
             stop: AtomicBool::new(false),
             on_start_playback: options.on_start_playback,
+            transfer_check,
         });
         let worker_shared = shared.clone();
         let worker = thread::Builder::new()
@@ -457,6 +471,11 @@ impl Shared {
             }
             other => other,
         };
+        // Spotify accepts a transfer to a stale device too, so check that it took over.
+        let result = match (result, op) {
+            (Ok(()), SpotifyOp::Transfer { device_id, .. }) => self.verify_transfer(device_id),
+            (result, _) => result,
+        };
         // Spotify no longer reports the plan, so a playback answer is how we learn it.
         match &result {
             Ok(()) => {
@@ -473,6 +492,50 @@ impl Shared {
             Err(_) => {}
         }
         result
+    }
+
+    /// Read playback until `device_id` is the playing device, up to the
+    /// transfer check's budget. No lock is held while waiting.
+    fn verify_transfer(&self, device_id: &str) -> Result<()> {
+        let (attempts, every) = self.transfer_check;
+        for attempt in 0..attempts {
+            if attempt > 0 {
+                thread::sleep(every);
+            }
+            let now = self.now_ms();
+            let epoch = self.login_epoch.load(Ordering::SeqCst);
+            let read = self.client.lock().unwrap().call(|api| api.playback(now));
+            match read {
+                Ok(playback) => {
+                    let took = playback
+                        .as_ref()
+                        .and_then(|p| p.device.as_ref())
+                        .is_some_and(|d| d.id == device_id);
+                    if took {
+                        let mut state = self.state.lock().unwrap();
+                        if self.login_epoch.load(Ordering::SeqCst) == epoch {
+                            state.playback = playback;
+                        }
+                        return Ok(());
+                    }
+                }
+                Err(SpotifyError::Revoked) => return Err(SpotifyError::Revoked),
+                // A failed read is not an answer: try again.
+                Err(_) => {}
+            }
+        }
+        let name = self
+            .state
+            .lock()
+            .unwrap()
+            .devices
+            .iter()
+            .find(|d| d.id == device_id)
+            .map(|d| d.name.clone())
+            .unwrap_or_else(|| "the device".into());
+        Err(SpotifyError::Unavailable(format!(
+            "Spotify accepted the move, but {name} did not take over; it may be asleep, or its Spotify app may need a restart"
+        )))
     }
 
     fn set_premium(&self, premium: bool) {
@@ -678,6 +741,7 @@ mod tests {
     use super::*;
     use crate::http::test_server::{Response, Seen, serve};
     use crate::token::{self, Token};
+    use znicz_core::{SpotifyErrorKind, ZniczError};
 
     const CLIENT_ID: &str = "0123456789abcdef0123456789abcdef";
 
@@ -735,7 +799,13 @@ mod tests {
             api: format!("{origin}/v1"),
             accounts: origin,
         };
-        let service = SpotifyService::start_with(config, options, endpoints, clock);
+        let service = SpotifyService::start_with(
+            config,
+            options,
+            endpoints,
+            clock,
+            (3, Duration::from_millis(20)),
+        );
         Fixture {
             service,
             seen,
@@ -1232,5 +1302,73 @@ mod tests {
         assert!(!f.service.state().is_playing());
         f.service.apply(play()).unwrap();
         assert!(f.service.state().is_playing());
+    }
+
+    fn transfer(device_id: &str, play: bool) -> SpotifyOp {
+        SpotifyOp::Transfer {
+            device_id: device_id.into(),
+            play,
+        }
+    }
+
+    /// Playback on `device_id`, as `GET /me/player` answers it.
+    fn playback_on(device_id: &str) -> String {
+        format!(
+            r#"{{"is_playing":true,"progress_ms":5,"currently_playing_type":"track",
+                "device":{{"id":"{device_id}","name":"Phone","type":"Smartphone","is_active":true}},
+                "item":{{"type":"track","uri":"spotify:track:t","name":"So What","duration_ms":9,
+                        "artists":[],"album":{{"name":"Kind of Blue","images":[]}}}}}}"#
+        )
+    }
+
+    #[test]
+    fn a_transfer_that_takes_over_is_done() {
+        let f = fixture(true, "", |request| {
+            match (request.method.as_str(), request.path()) {
+                ("PUT", "/v1/me/player") => Response::empty(204),
+                ("GET", "/v1/me/player") => Response::json(200, &playback_on("target")),
+                _ => api_default(request),
+            }
+        });
+        f.service.apply(transfer("target", false)).unwrap();
+        assert!(requests(&f.seen).contains(&"PUT /v1/me/player".to_string()));
+        let playback = f.service.state().playback.expect("playback");
+        assert_eq!(playback.device.map(|d| d.id).as_deref(), Some("target"));
+    }
+
+    #[test]
+    fn a_transfer_the_device_never_takes_is_reported() {
+        let f = fixture(true, "", |request| {
+            match (request.method.as_str(), request.path()) {
+                ("PUT", "/v1/me/player") => Response::empty(204),
+                ("GET", "/v1/me/player") => Response::json(200, &playback_on("other")),
+                _ => api_default(request),
+            }
+        });
+        let error = f.service.apply(transfer("target", false)).unwrap_err();
+        assert!(error.to_string().contains("did not take over"), "{error}");
+        assert!(
+            matches!(
+                error,
+                ZniczError::Spotify {
+                    kind: SpotifyErrorKind::Unavailable,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_play_transfer_the_device_never_takes_does_not_pause_znicz() {
+        let f = fixture(true, "", |request| {
+            match (request.method.as_str(), request.path()) {
+                ("PUT", "/v1/me/player") => Response::empty(204),
+                ("GET", "/v1/me/player") => Response::json(200, &playback_on("other")),
+                _ => api_default(request),
+            }
+        });
+        f.service.apply(transfer("target", true)).unwrap_err();
+        assert_eq!(f.starts.load(Ordering::SeqCst), 0);
     }
 }

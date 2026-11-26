@@ -121,6 +121,11 @@ pub(crate) fn check(reply: Reply) -> Result<Reply> {
         403 if reason == "PREMIUM_REQUIRED" || message.contains("Premium") => {
             SpotifyError::PremiumRequired
         }
+        403 if reason == "VOLUME_CONTROL_DISALLOW"
+            || message.contains("Cannot control device volume") =>
+        {
+            SpotifyError::Unavailable("this device does not let Spotify change its volume".into())
+        }
         404 if reason == "NO_ACTIVE_DEVICE" || message.contains("No active device") => {
             SpotifyError::NoActiveDevice
         }
@@ -353,6 +358,23 @@ mod tests {
                 status: 500,
                 message: "Server error".into()
             }
+        );
+    }
+
+    #[test]
+    fn a_device_that_refuses_volume_changes_is_unavailable() {
+        let refused = r#"{"error":{"status":403,"message":"Player command failed: Cannot control device volume","reason":"VOLUME_CONTROL_DISALLOW"}}"#;
+        let expected =
+            SpotifyError::Unavailable("this device does not let Spotify change its volume".into());
+        assert_eq!(check(reply(403, refused)).unwrap_err(), expected);
+        // Without the reason, the message alone is enough.
+        let by_message = r#"{"error":{"status":403,"message":"Cannot control device volume"}}"#;
+        assert_eq!(check(reply(403, by_message)).unwrap_err(), expected);
+        // Premium still wins for its own reason.
+        let premium = r#"{"error":{"status":403,"message":"Player command failed: Premium required","reason":"PREMIUM_REQUIRED"}}"#;
+        assert_eq!(
+            check(reply(403, premium)).unwrap_err(),
+            SpotifyError::PremiumRequired
         );
     }
 

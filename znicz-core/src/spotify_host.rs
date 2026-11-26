@@ -335,6 +335,9 @@ pub enum SpotifyOp {
     QueueAdd {
         uri: String,
     },
+    /// Move playback to a device. Spotify accepts the move even when the device
+    /// is stale or asleep, so the service then waits up to about 5 s for the
+    /// device to take over, and errors (`unavailable`) if it does not.
     Transfer {
         device_id: String,
         play: bool,

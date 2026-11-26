@@ -1112,7 +1112,7 @@ impl ZniczMcpServer {
     }
 
     #[tool(
-        description = "Move Spotify playback to a device from spotify_devices. play: true starts it there"
+        description = "Move Spotify playback to a device from spotify_devices. play: true starts it there. Waits up to about 5 s for the device to take over, and errors if it does not"
     )]
     async fn spotify_transfer(
         &self,

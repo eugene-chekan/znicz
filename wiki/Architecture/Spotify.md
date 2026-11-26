@@ -186,6 +186,8 @@ re-read at most every 15 s. After a 429 the service skips polls until
 `Retry-After` has passed; a user command waits it out (up to 10 s) and retries
 once. The same poll error is shown once, not every second.
 
+A transfer waits up to about 5 s for the device to take over, and otherwise reports that it did not.
+
 ## Errors
 
 | Case | Message |

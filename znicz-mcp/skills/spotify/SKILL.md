@@ -55,7 +55,7 @@ A request that does not say "Spotify" is for the local library: use `search_libr
 ## Devices
 
 - `spotify_devices` lists the devices Spotify can see, with their ids.
-- `spotify_transfer { device_id, play }` moves playback to a device. Use `play: true` to start it there.
+- `spotify_transfer { device_id, play }` moves playback to a device. Use `play: true` to start it there. It waits up to about 5 s for the device to take over; if it does not, the error says so (the device may be asleep, or its Spotify app may need a restart).
 
 ## The now-playing resource
 
