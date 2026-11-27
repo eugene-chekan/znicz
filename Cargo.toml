@@ -1,9 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["znicz-core", "znicz-library", "znicz-tui", "znicz-mcp", "znicz"]
+members = ["znicz-core", "znicz-library", "znicz-spotify", "znicz-tui", "znicz-mcp", "znicz"]
 
 [workspace.package]
-version = "0.19.0"
+version = "0.20.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = ["Eugene Chekan"]
@@ -16,6 +16,10 @@ semver = "1"
 tempfile = "3"
 unicode-normalization = "0.1"
 ureq = "3"
+sha2 = "0.10"
+base64 = "0.22"
+getrandom = "0.3"
+percent-encoding = "2"
 symphonia = { version = "0.5", features = ["all"] }
 cpal = "0.15"
 rtrb = "0.3"

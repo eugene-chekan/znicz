@@ -5,14 +5,15 @@ use std::path::Path;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph, Wrap};
 
-use crate::app::App;
+use crate::app::{App, LoginPanel, SpotifyConfirm, SpotifyPaste};
 use crate::folder_complete;
 use crate::format;
 use crate::hit::ListHit;
 use crate::line_edit::LineEdit;
 use crate::settings::{self, Row, Tab, Values, hint_text, value_text};
+use crate::spotify_rows;
 use crate::theme;
 use crate::views::{self, window::visible_window};
 
@@ -24,7 +25,7 @@ const TAB_SEPARATOR_WIDTH: u16 = 3;
 
 /// The strip's text while the tab bar has focus.
 const TAB_BAR_HELP: &str =
-    "←/→ choose a tab, ↓ or Enter go to its settings. Tab and 1–5 switch tabs from anywhere.";
+    "←/→ choose a tab, ↓ or Enter go to its settings. Tab and 1–6 switch tabs from anywhere.";
 
 /// Columns the row's label is indented by.
 const INDENT: &str = "    ";
@@ -94,11 +95,14 @@ pub fn render(frame: &mut Frame, list: Rect, app: &mut App) {
         usize::from(list_height),
     );
     app.settings_scroll = window.start;
-    app.hits.overlay_list = Some(ListHit {
-        inner: list_area,
-        offset: window.start,
-        len,
-    });
+    // A login panel covers the rows, so they take no clicks or wheel.
+    if app.spotify_login.is_none() {
+        app.hits.overlay_list = Some(ListHit {
+            inner: list_area,
+            offset: window.start,
+            len,
+        });
+    }
     app.hits.settings_tabs = tab_label_rects(tab_bar);
     let app: &App = app;
 
@@ -114,15 +118,21 @@ pub fn render(frame: &mut Frame, list: Rect, app: &mut App) {
     let rows_focused = !app.settings_on_tab_bar;
     let values = values(app);
     let width = usize::from(list_area.width);
-    let lines: Vec<Line> = app.settings_rows[window.clone()]
-        .iter()
-        .enumerate()
-        .map(|(i, row)| {
-            let selected = rows_focused && window.start + i == cursor;
-            row_line(row, &values, selected, width)
-        })
-        .collect();
-    frame.render_widget(Paragraph::new(lines), list_area);
+    if let Some(panel) = &app.spotify_login {
+        // The URL is one long word: the paragraph breaks it at the width.
+        let body = Paragraph::new(login_panel_body(panel)).wrap(Wrap { trim: false });
+        frame.render_widget(body, list_area);
+    } else {
+        let lines: Vec<Line> = app.settings_rows[window.clone()]
+            .iter()
+            .enumerate()
+            .map(|(i, row)| {
+                let selected = rows_focused && window.start + i == cursor;
+                row_line(row, &values, selected, width)
+            })
+            .collect();
+        frame.render_widget(Paragraph::new(lines), list_area);
+    }
 
     if rule.height > 0 {
         let line = "─".repeat(usize::from(rule.width));
@@ -130,27 +140,20 @@ pub fn render(frame: &mut Frame, list: Rect, app: &mut App) {
     }
 
     let strip_width = usize::from(strip.width);
-    let text: Vec<Line> = match &app.settings_prompt {
-        Some(prompt) => vec![slider_prompt_line(
+    let text: Vec<Line> = if let Some(prompt) = &app.settings_prompt {
+        vec![slider_prompt_line(
             &prompt.row,
             &prompt.text,
             prompt.error.as_deref(),
-        )],
-        None => {
-            let explanation = match &app.settings_confirm {
-                Some((path, tracks)) => removal_question(path, *tracks),
-                None if app.settings_on_tab_bar => TAB_BAR_HELP.to_string(),
-                None => app
-                    .settings_rows
-                    .get(cursor)
-                    .map_or("", Row::explanation)
-                    .to_string(),
-            };
-            wrap(&explanation, strip_width, usize::from(strip_lines))
-                .into_iter()
-                .map(|line| Line::from(Span::styled(line, theme::dim())))
-                .collect()
-        }
+        )]
+    } else if let Some(paste) = app.spotify_login.as_ref().and_then(|p| p.paste.as_ref()) {
+        vec![paste_prompt_line(paste)]
+    } else {
+        let explanation = strip_explanation(app, &values);
+        wrap(&explanation, strip_width, usize::from(strip_lines))
+            .into_iter()
+            .map(|line| Line::from(Span::styled(line, theme::dim())))
+            .collect()
     };
     frame.render_widget(Paragraph::new(text), strip);
 }
@@ -158,15 +161,69 @@ pub fn render(frame: &mut Frame, list: Rect, app: &mut App) {
 /// The strip while a slider's typed value is open: the label with its range,
 /// then the text with its caret, then why the last Enter was refused.
 fn slider_prompt_line(row: &Row, text: &LineEdit, error: Option<&str>) -> Line<'static> {
-    let range = settings::slider(row)
-        .map(settings::slider_range_text)
-        .unwrap_or_default();
+    let range = settings::prompt_range(row).unwrap_or_default();
     let mut line = views::prompt_line(&format!("{} ({range}): ", row.label()), text);
     if let Some(range) = error {
         line.spans
             .push(Span::styled(format!("  must be {range}"), theme::warn()));
     }
     line
+}
+
+/// The strip while a pasted address is typed: the prompt, then why Spotify
+/// refused the last one.
+fn paste_prompt_line(paste: &SpotifyPaste) -> Line<'static> {
+    let mut line = views::prompt_line("Address: ", &paste.text);
+    if let Some(reason) = &paste.error {
+        line.spans
+            .push(Span::styled(format!("  {reason}"), theme::warn()));
+    }
+    line
+}
+
+/// The login panel's body in the list area: the URL with its keys, the wait
+/// line, and the notice when the browser did not open.
+fn login_panel_body(panel: &LoginPanel) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> =
+        spotify_rows::login_panel_lines(&panel.url, panel.listening)
+            .into_iter()
+            .map(|line| Line::from(Span::styled(line, theme::text())))
+            .collect();
+    if let Some(notice) = &panel.notice {
+        lines.push(Line::from(Span::styled(notice.clone(), theme::warn())));
+    }
+    lines
+}
+
+/// The dim strip text when no prompt is open: the login panel's keys, a
+/// Spotify or folder question, the tab bar's help, or the explanation of the
+/// row under the cursor (or why it cannot be changed yet).
+fn strip_explanation(app: &App, values: &Values) -> String {
+    if app.spotify_login.is_some() {
+        return "c copy · Enter paste · Esc cancel the login".into();
+    }
+    match &app.spotify_confirm {
+        Some(SpotifyConfirm::Logout) => return spotify_rows::LOGOUT_QUESTION.into(),
+        Some(SpotifyConfirm::ClientId(_)) => return spotify_rows::CLIENT_ID_QUESTION.into(),
+        None => {}
+    }
+    if let Some((path, tracks)) = &app.settings_confirm {
+        return removal_question(path, *tracks);
+    }
+    if app.settings_on_tab_bar {
+        return TAB_BAR_HELP.into();
+    }
+    match app.settings_rows.get(app.settings_cursor) {
+        Some(row) if settings::dimmed(row, values) => spotify_rows::CLIENT_FIRST.into(),
+        Some(row)
+            if values.spotify.player_differs
+                && matches!(row, Row::RedirectPort | Row::PlaybackDevice) =>
+        {
+            spotify_rows::NOT_APPLIED.into()
+        }
+        Some(row) => row.explanation().into(),
+        None => String::new(),
+    }
 }
 
 /// The tab labels, ` Display │ Audio │ … `. The active tab is strong while the
@@ -226,13 +283,20 @@ fn values(app: &App) -> Values<'_> {
         stage_shows: app.stage_frozen.as_ref(),
         bit_perfect_changed: app.bit_perfect_changed(),
         fades: app.fades,
+        spotify: app.spotify_view(),
     }
 }
 
 /// One row: the label with its value and hint flush right. A slider row has its
 /// bar between the label and the value, as wide as fits.
 fn row_line(row: &Row, values: &Values, selected: bool, width: usize) -> Line<'static> {
-    let mut tail = vec![Span::styled(value_text(row, values), theme::text())];
+    // A row that needs a client ID first is drawn dim.
+    let body = if settings::dimmed(row, values) {
+        theme::dim()
+    } else {
+        theme::text()
+    };
+    let mut tail = vec![Span::styled(value_text(row, values), body)];
     if let Some(hint) = hint_text(row, values) {
         tail.push(Span::styled(format!("  {hint}"), theme::dim()));
     }
@@ -251,7 +315,7 @@ fn row_line(row: &Row, values: &Values, selected: bool, width: usize) -> Line<'s
             // `bar_cells` leaves at least BAR_GAP columns before the value.
             let pad = width - label_width - BAR_GAP - cells - tail_width;
             vec![
-                Span::styled(format!("{label}{}", " ".repeat(BAR_GAP)), theme::text()),
+                Span::styled(format!("{label}{}", " ".repeat(BAR_GAP)), body),
                 Span::styled(done, theme::text()),
                 Span::styled(todo, theme::dim()),
                 Span::styled(" ".repeat(pad), theme::text()),
@@ -260,10 +324,7 @@ fn row_line(row: &Row, values: &Values, selected: bool, width: usize) -> Line<'s
         None => {
             let head = format::truncate(&label, width.saturating_sub(tail_width + 1));
             let gap = width.saturating_sub(head.chars().count() + tail_width);
-            vec![Span::styled(
-                format!("{head}{}", " ".repeat(gap)),
-                theme::text(),
-            )]
+            vec![Span::styled(format!("{head}{}", " ".repeat(gap)), body)]
         }
     };
     spans.extend(tail);

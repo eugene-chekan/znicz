@@ -7,12 +7,18 @@ use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui_image::picker::ProtocolType;
-use znicz_core::{Command, FadeTimes, LibraryOp};
+use znicz_core::{Command, FadeTimes, LibraryOp, SpotifyConfig, SpotifyOp};
+use znicz_spotify::browser::OpenBrowser;
 
 use super::{App, DevicesMode, Modal};
+use crate::config_file::ConfigFile;
 use crate::line_edit::LineEdit;
 use crate::settings::{self, Kind, Row, Tab};
+use crate::spotify_rows;
+use crate::spotify_worker::SpotifyAsk;
 use crate::tui_config::{CoverProtocol, TuiConfig};
+
+pub(super) mod spotify;
 
 /// How a key changes a Settings row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +50,8 @@ struct SettingsSnapshot {
     default_device: Option<String>,
     protocol: Option<ProtocolType>,
     fades: FadeTimes,
+    spotify: SpotifyConfig,
+    open_browser: OpenBrowser,
 }
 
 /// A slider row's typed value, being entered in the Settings strip.
@@ -79,6 +87,9 @@ impl App {
         self.set_settings_cursor(0);
         self.settings_scroll = 0;
         self.modal = Modal::Settings;
+        if self.settings_tab == Tab::Spotify {
+            self.on_spotify_tab_shown();
+        }
     }
 
     /// Show `tab` with the cursor on its first row. Focus stays where it was.
@@ -91,10 +102,18 @@ impl App {
     }
 
     pub(super) fn set_settings_tab(&mut self, tab: Tab) {
+        // The login panel is the Spotify tab's: leaving the tab closes it, as
+        // closing Settings does, so it cannot take keys while hidden.
+        if tab != Tab::Spotify {
+            self.close_login_panel();
+        }
         self.settings_tab = tab;
         self.settings_rows = settings::rows(tab, &self.library_status.folders);
         self.settings_scroll = 0;
         self.set_settings_cursor(0);
+        if tab == Tab::Spotify {
+            self.on_spotify_tab_shown();
+        }
     }
 
     /// Move the Settings cursor `delta` rows, stopping at either end. The tab
@@ -116,6 +135,7 @@ impl App {
     /// slider value was about the row the cursor was on, so both are dropped here.
     pub(super) fn set_settings_cursor(&mut self, index: usize) {
         self.settings_confirm = None;
+        self.spotify_confirm = None;
         self.settings_prompt = None;
         self.settings_cursor = index;
     }
@@ -127,6 +147,10 @@ impl App {
         if self.settings_prompt.is_some() {
             self.on_slider_prompt_key(key);
             return true;
+        }
+        // The login panel owns c, Enter and Esc; other keys fall through.
+        if self.spotify_login.is_some() {
+            return self.on_spotify_panel_key(key);
         }
         // Tab keys work from either focus, and focus stays where it is.
         let tab = match key.code {
@@ -149,15 +173,27 @@ impl App {
             self.remove_confirmed_folder();
             return true;
         }
+        if self.spotify_confirm.is_some() && key.code == KeyCode::Enter {
+            self.confirm_spotify();
+            return true;
+        }
+        // Space is not a confirm: while the question waits, it does nothing, so
+        // it neither opens the row's prompt nor starts a login.
+        if self.spotify_confirm.is_some() && key.code == KeyCode::Char(' ') {
+            return true;
+        }
         match key.code {
             KeyCode::Up | KeyCode::Char('k') if self.settings_cursor == 0 => {
                 self.settings_on_tab_bar = true;
                 self.settings_confirm = None;
+                self.spotify_confirm = None;
             }
             KeyCode::Enter | KeyCode::Char(' ') => match row {
                 Row::DefaultDevice => self.open_default_device_picker(),
                 Row::AddFolder => self.open_folder_prompt_from_settings(),
                 Row::RescanAll => self.rescan_folders(),
+                Row::ClientId | Row::RedirectPort => self.open_text_prompt(&row),
+                Row::Account => self.spotify_account_enter(),
                 _ if settings::slider(&row).is_some() => self.open_slider_prompt(&row),
                 _ => self.change_setting(&row, Change::Activate),
             },
@@ -180,7 +216,7 @@ impl App {
             KeyCode::Left | KeyCode::Char('h') if self.settings_tab != Tab::Display => {
                 self.set_settings_tab(self.settings_tab.previous());
             }
-            KeyCode::Right | KeyCode::Char('l') if self.settings_tab != Tab::General => {
+            KeyCode::Right | KeyCode::Char('l') if self.settings_tab != Tab::Spotify => {
                 self.set_settings_tab(self.settings_tab.next());
             }
             KeyCode::Down | KeyCode::Char('j') | KeyCode::Enter => {
@@ -243,7 +279,7 @@ impl App {
         let before = self.settings_snapshot();
         self.default_device = device.map(|(id, _)| id);
         self.return_to_settings_from_devices();
-        self.save_setting(&Row::DefaultDevice, before);
+        self.save_setting(&Row::DefaultDevice, before, false);
     }
 
     /// Leave the default-device list for Settings, on the device row.
@@ -331,13 +367,24 @@ impl App {
     /// Run `apply` on the in-memory value of `row`. When it reports a change, do
     /// what the row needs and save it, so a step and a typed value share one path.
     /// A save that fails puts the previous values back.
-    fn change_with(&mut self, row: &Row, apply: impl FnOnce(&mut Self) -> bool) {
+    pub(super) fn change_with(&mut self, row: &Row, apply: impl FnOnce(&mut Self) -> bool) {
+        self.change_saved(row, false, apply);
+    }
+
+    /// `change_with`, with the player told whether a confirmed new client ID
+    /// may replace the current one. Only the confirmed Client ID change sends `true`.
+    pub(super) fn change_saved(
+        &mut self,
+        row: &Row,
+        replace_client_id: bool,
+        apply: impl FnOnce(&mut Self) -> bool,
+    ) {
         let before = self.settings_snapshot();
         if !apply(self) {
             return;
         }
         self.after_setting_changed(row);
-        self.save_setting(row, before);
+        self.save_setting(row, before, replace_client_id);
     }
 
     /// Enter or Space on a slider row: a prompt holding the current value, in
@@ -374,6 +421,11 @@ impl App {
     /// Enter in the slider prompt. A value in range closes the prompt and is
     /// saved like a step; anything else keeps the prompt open with the range.
     fn submit_slider_prompt(&mut self) {
+        match self.settings_prompt.as_ref().map(|p| p.row.clone()) {
+            Some(Row::ClientId) => return self.submit_client_id_prompt(),
+            Some(Row::RedirectPort) => return self.submit_port_prompt(),
+            _ => {}
+        }
         let Some(prompt) = self.settings_prompt.as_mut() else {
             return;
         };
@@ -423,6 +475,20 @@ impl App {
                     Change::Forward => (true, false),
                     Change::Back => (false, false),
                 };
+                if *row == Row::OpenBrowser {
+                    let new = settings::step(
+                        &spotify_rows::OPEN_BROWSERS,
+                        &self.open_browser,
+                        forward,
+                        wrap,
+                    );
+                    let changed = new != self.open_browser;
+                    self.open_browser = new;
+                    return changed;
+                }
+                if *row == Row::PlaybackDevice {
+                    return self.step_playback_device(forward, wrap);
+                }
                 if *row == Row::CoverProtocol {
                     let choices = settings::protocol_choices(self.protocol_support);
                     settings::step_protocol(&mut self.tui, &choices, forward, wrap)
@@ -448,6 +514,8 @@ impl App {
             }
             // Actions and folder rows are run by `on_settings_key`, not changed here.
             Kind::Action | Kind::Folder => false,
+            // Typed rows are set by their prompt, not by the arrows.
+            Kind::Text | Kind::Number => false,
         }
     }
 
@@ -527,6 +595,9 @@ impl App {
             return Some(Stored::Int(slot.as_millis() as i64));
         }
         Some(match row {
+            Row::ClientId | Row::RedirectPort | Row::OpenBrowser | Row::PlaybackDevice => {
+                return self.spotify_stored_value(row);
+            }
             Row::CoverSize => Stored::Int(i64::from(self.tui.cover_size.percent())),
             Row::CoverProtocol => Stored::Str(settings::protocol_name(self.tui.cover_protocol)),
             Row::LibraryLayout => Stored::Str(settings::layout_name(self.tui.library_layout)),
@@ -541,11 +612,19 @@ impl App {
 
     /// Write a changed row to the config file. Without a usable file the change
     /// stays for this run and the user is told why.
-    fn save_setting(&mut self, row: &Row, before: SettingsSnapshot) {
+    fn save_setting(&mut self, row: &Row, before: SettingsSnapshot, replace_client_id: bool) {
         let (Some((section, key)), Some(value)) = (row.config_key(), self.stored_value(row)) else {
             return;
         };
+        // A Spotify row that is not written goes back to its old value: the
+        // screen must not show a client ID or device the player does not have.
+        let restore_unsaved = spotify::restores_when_unsaved(row);
         let Some(file) = self.config_file.clone() else {
+            if restore_unsaved {
+                self.restore_settings(before);
+                self.toasts.warn("Not saved: no config file path");
+                return;
+            }
             if !self.run_only_warned {
                 self.run_only_warned = true;
                 self.toasts
@@ -553,11 +632,17 @@ impl App {
             }
             return;
         };
-        if let Some(problem) = &self.config_problem {
-            let text = match problem.location() {
+        let problem_text = self
+            .config_problem
+            .as_ref()
+            .map(|problem| match problem.location() {
                 Some(place) => format!("Not saved: config.toml has an error ({place})"),
                 None => "Not saved: config.toml could not be read".to_string(),
-            };
+            });
+        if let Some(text) = problem_text {
+            if restore_unsaved {
+                self.restore_settings(before);
+            }
             self.toasts.warn(text);
             return;
         }
@@ -568,9 +653,20 @@ impl App {
             Stored::Text(v) => file.set_str(section, key, &v),
             Stored::Remove => file.remove(section, key),
         };
-        if let Err(e) = written {
-            self.restore_settings(before);
-            self.toasts.error(format!("Could not save settings: {e}"));
+        match written {
+            Err(e) => {
+                self.restore_settings(before);
+                self.toasts.error(format!("Could not save settings: {e}"));
+            }
+            Ok(()) => self.after_write(&file, row, replace_client_id),
+        }
+    }
+
+    /// After a row is written: a Spotify row is read back from the file, which
+    /// now holds the change.
+    fn after_write(&mut self, file: &ConfigFile, row: &Row, replace_client_id: bool) {
+        if row.tab() == Tab::Spotify {
+            self.sync_spotify_from_file(file, row, replace_client_id);
         }
     }
 
@@ -582,6 +678,8 @@ impl App {
             default_device: self.default_device.clone(),
             protocol: self.picker.as_ref().map(|p| p.protocol_type()),
             fades: self.fades,
+            spotify: self.spotify.clone(),
+            open_browser: self.open_browser,
         }
     }
 
@@ -590,6 +688,8 @@ impl App {
         self.bit_perfect = before.bit_perfect;
         self.check_for_updates = before.update_check;
         self.default_device = before.default_device;
+        self.spotify = before.spotify;
+        self.open_browser = before.open_browser;
         if let (Some(picker), Some(protocol)) = (self.picker.as_mut(), before.protocol) {
             picker.set_protocol_type(protocol);
         }
@@ -602,19 +702,31 @@ impl App {
         self.library.set_preferred_layout(self.tui.library_layout);
     }
 
-    /// A removal question and a slider prompt belong to the Settings modal: once
-    /// that modal is no longer on screen (closed, or replaced by another modal),
-    /// they go.
+    /// A removal question, a slider prompt and a Spotify question belong to the
+    /// Settings modal: once that modal is no longer on screen (closed, or
+    /// replaced by another modal), they go. The login panel goes too, and a
+    /// login it was showing is cancelled in the player.
     pub(super) fn drop_removal_outside_settings(&mut self) {
         if self.modal != Modal::Settings {
             self.settings_confirm = None;
             self.settings_prompt = None;
+            self.spotify_confirm = None;
+            self.close_login_panel();
+        }
+    }
+
+    /// Close the login panel, if one is open, and cancel its login in the
+    /// player. The panel is the only view of a login, so the Account row
+    /// would otherwise stay on Logging in.
+    pub(super) fn close_login_panel(&mut self) {
+        if self.spotify_login.take().is_some() {
+            self.ask_spotify(SpotifyAsk::CancelLogin, SpotifyOp::CancelLogin);
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::path::Path;
     use std::sync::Arc;
     use std::time::Duration;
@@ -632,16 +744,16 @@ mod tests {
         player
     }
 
-    fn toast_texts(app: &App) -> Vec<String> {
+    pub(crate) fn toast_texts(app: &App) -> Vec<String> {
         app.toasts.recent().iter().map(|t| t.text.clone()).collect()
     }
 
-    fn press(app: &mut App, code: KeyCode) {
+    pub(crate) fn press(app: &mut App, code: KeyCode) {
         app.on_key(KeyEvent::new(code, KeyModifiers::NONE));
     }
 
     /// The screen as one string per row, for checking what a frame shows.
-    fn screen_rows(app: &mut App) -> Vec<String> {
+    pub(crate) fn screen_rows(app: &mut App) -> Vec<String> {
         let state = app.player.state();
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
@@ -657,7 +769,7 @@ mod tests {
             .collect()
     }
 
-    fn click(app: &mut App, column: u16, row: u16) {
+    pub(crate) fn click(app: &mut App, column: u16, row: u16) {
         app.on_mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column,
@@ -671,14 +783,14 @@ mod tests {
     use crate::tui_config::{CoverSize, LibraryLayout};
     use znicz_core::FadeTimes;
 
-    fn settings_app(dir: &tempfile::TempDir) -> App {
+    pub(crate) fn settings_app(dir: &tempfile::TempDir) -> App {
         App::with_library(test_player(), None)
             .with_config_file(ConfigFile::new(dir.path().join("config.toml")))
     }
 
     /// Put the Settings cursor on `row`, switching to its tab first, as pressing
     /// keys to reach it would.
-    fn select(app: &mut App, row: Row) {
+    pub(crate) fn select(app: &mut App, row: Row) {
         app.settings_tab = row.tab();
         app.settings_rows = settings::rows(app.settings_tab, &app.library_status.folders);
         app.settings_cursor = app
@@ -689,7 +801,7 @@ mod tests {
     }
 
     /// The config file as the test sees it on disk.
-    fn saved(dir: &tempfile::TempDir) -> toml::Table {
+    pub(crate) fn saved(dir: &tempfile::TempDir) -> toml::Table {
         let text = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
         toml::from_str(&text).unwrap()
     }
@@ -1403,7 +1515,20 @@ mod tests {
         assert_eq!(app.settings_rows[app.settings_cursor], Row::DefaultDevice);
         press(&mut app, KeyCode::BackTab);
         press(&mut app, KeyCode::BackTab);
-        assert_eq!(app.settings_tab, Tab::General);
+        assert_eq!(app.settings_tab, Tab::Spotify);
+    }
+
+    #[test]
+    fn the_right_arrow_stops_at_the_last_tab_spotify() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = settings_app(&dir);
+        press(&mut app, KeyCode::Char('S'));
+        press(&mut app, KeyCode::Char('6'));
+        assert_eq!(app.settings_tab, Tab::Spotify);
+        // The tab has no rows yet, so there is no row to press Up on.
+        app.settings_on_tab_bar = true;
+        press(&mut app, KeyCode::Right);
+        assert_eq!(app.settings_tab, Tab::Spotify);
     }
 
     #[test]
@@ -1471,10 +1596,10 @@ mod tests {
         press(&mut app, KeyCode::Up);
         press(&mut app, KeyCode::Left);
         assert_eq!(app.settings_tab, Tab::Display);
-        press(&mut app, KeyCode::Char('5'));
+        press(&mut app, KeyCode::Char('6'));
         press(&mut app, KeyCode::Up);
         press(&mut app, KeyCode::Right);
-        assert_eq!(app.settings_tab, Tab::General);
+        assert_eq!(app.settings_tab, Tab::Spotify);
     }
 
     #[test]
@@ -1588,7 +1713,9 @@ mod tests {
         let mut app = settings_app(&dir);
         press(&mut app, KeyCode::Char('S'));
         let screen = screen_rows(&mut app).join("\n");
-        for label in ["Display", "Audio", "Playback", "Library", "General"] {
+        for label in [
+            "Display", "Audio", "Playback", "Library", "General", "Spotify",
+        ] {
             assert!(screen.contains(label), "{label} missing:\n{screen}");
         }
     }
@@ -1606,7 +1733,7 @@ mod tests {
     }
 
     /// The frame's cells, for checking how a frame is styled.
-    fn screen_buffer(app: &mut App) -> ratatui::buffer::Buffer {
+    pub(crate) fn screen_buffer(app: &mut App) -> ratatui::buffer::Buffer {
         let state = app.player.state();
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
@@ -1690,7 +1817,7 @@ mod tests {
     // --- settings: slider prompt ---
 
     /// Type each character of `text` as a key press.
-    fn type_text(app: &mut App, text: &str) {
+    pub(crate) fn type_text(app: &mut App, text: &str) {
         for c in text.chars() {
             press(app, KeyCode::Char(c));
         }

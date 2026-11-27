@@ -151,6 +151,13 @@ pub fn spawn_detached_player_exe(
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
+    // Its own process group: a Ctrl-C in the terminal goes to the foreground
+    // group, and must not stop a player that a command only autostarted.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     let mut child = without_inherited_stdio(|| cmd.spawn())?;
     // Collect the player's exit status when it ends, so a parent that keeps
     // running (`znicz mcp`) is not left with a zombie entry.

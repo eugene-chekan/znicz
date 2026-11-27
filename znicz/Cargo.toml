@@ -19,8 +19,10 @@ znicz-core = { path = "../znicz-core" }
 znicz-library = { path = "../znicz-library" }
 znicz-tui = { path = "../znicz-tui" }
 znicz-mcp = { path = "../znicz-mcp" }
+znicz-spotify = { path = "../znicz-spotify" }
 clap.workspace = true
 color-eyre.workspace = true
+crossbeam-channel.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true

@@ -4613,10 +4613,11 @@ checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
 name = "znicz"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "clap",
  "color-eyre",
+ "crossbeam-channel",
  "dirs",
  "libc",
  "semver",
@@ -4632,12 +4633,13 @@ dependencies = [
  "znicz-core",
  "znicz-library",
  "znicz-mcp",
+ "znicz-spotify",
  "znicz-tui",
 ]
 
 [[package]]
 name = "znicz-core"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "cpal",
  "crossbeam-channel",
@@ -4657,7 +4659,7 @@ dependencies = [
 
 [[package]]
 name = "znicz-library"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "rusqlite",
  "serde",
@@ -4671,7 +4673,7 @@ dependencies = [
 
 [[package]]
 name = "znicz-mcp"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "dirs",
  "rmcp",
@@ -4688,9 +4690,28 @@ dependencies = [
 ]
 
 [[package]]
-name = "znicz-tui"
-version = "0.19.0"
+name = "znicz-spotify"
+version = "0.20.0"
 dependencies = [
+ "base64 0.22.1",
+ "dirs",
+ "getrandom 0.3.4",
+ "percent-encoding",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tracing",
+ "ureq",
+ "znicz-core",
+]
+
+[[package]]
+name = "znicz-tui"
+version = "0.20.0"
+dependencies = [
+ "base64 0.22.1",
  "color-eyre",
  "crossbeam-channel",
  "crossterm 0.28.1",
@@ -4706,6 +4727,7 @@ dependencies = [
  "unicode-width",
  "znicz-core",
  "znicz-library",
+ "znicz-spotify",
 ]
 
 [[package]]

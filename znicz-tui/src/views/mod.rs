@@ -9,6 +9,7 @@ mod playlists;
 mod queue;
 mod radio;
 mod settings;
+mod spotify;
 
 pub mod stage;
 mod status;
@@ -96,12 +97,14 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
             (true, None) => Some(app.tui),
             (false, _) => None,
         };
-        stage::render(frame, stage_area, app, state);
+        let model = stage::model_for(app, state);
+        stage::render(frame, stage_area, app, &model);
         let scanning = app.library_status.scanning.clone();
         frame.render_widget(
             Paragraph::new(now_playing::message_line(
                 &app.toasts,
                 scanning.as_ref(),
+                now_playing::spotify_message(app).as_deref(),
                 usize::from(message_row.width),
             )),
             message_row,
@@ -118,18 +121,35 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
             app.playing.as_ref(),
         );
 
-        library::render(frame, list, app);
-        now_playing::render_transport(frame, chunks[1], app, state, !compact);
+        if app.in_spotify_mode() {
+            spotify::render_browser(frame, list, app);
+        } else {
+            library::render(frame, list, app);
+        }
+        let transport = if app.in_spotify_mode() {
+            crate::stage_model::TransportModel::from_spotify(
+                &app.spotify_state,
+                crate::spotify_mode::now_unix_ms(),
+                app.spotify_mute_restore.is_some(),
+            )
+        } else {
+            crate::stage_model::TransportModel::from_player(state)
+        };
+        now_playing::render_transport(frame, chunks[1], app, &transport, !compact);
     }
 
     match crate::layout::drawer(drawer_area, app.queue_open) {
         crate::layout::Drawer::Overlay(rect) | crate::layout::Drawer::Sheet(rect) => {
             frame.render_widget(Clear, rect);
-            let stats = queue::stats(app, &state.queue);
-            app.queue_title_slot =
-                queue::title_slot(&stats, state.queue.len(), crate::views::inner_width(rect));
-            app.clamp_queue_pan(state);
-            queue::render(frame, rect, app, state, &stats);
+            if app.in_spotify_mode() {
+                spotify::render_queue(frame, rect, app);
+            } else {
+                let stats = queue::stats(app, &state.queue);
+                app.queue_title_slot =
+                    queue::title_slot(&stats, state.queue.len(), crate::views::inner_width(rect));
+                app.clamp_queue_pan(state);
+                queue::render(frame, rect, app, state, &stats);
+            }
         }
         crate::layout::Drawer::Closed => {}
     }
@@ -144,6 +164,7 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
         Modal::Messages => messages::render_modal(frame, list, app),
         Modal::Update => update::render_modal(frame, list, app),
         Modal::Settings => settings::render(frame, list, app),
+        Modal::SpotifyDevices => spotify::render_devices(frame, list, app),
         Modal::None => {}
     }
 }

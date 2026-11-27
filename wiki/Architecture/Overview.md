@@ -1,6 +1,6 @@
 # Architecture overview
 
-Znicz is one workspace with five crates. Each crate has one job.
+Znicz is one workspace with six crates. Each crate has one job.
 
 ```
 AI host (Cursor) --stdio--> znicz-mcp ──┐
@@ -18,18 +18,26 @@ the player process is the **single writer** of `library.db`. It runs a
 through `LibraryHost` over IPC (`Library { op }`; every `Ok` response carries
 the library status). See [Library](Library.md#the-library-service).
 
+`znicz-spotify` controls the Spotify app through the Web API. The player
+process hosts its `SpotifyService` the way it hosts the library service: the
+TUI, MCP, and `znicz spotify` reach it through `SpotifyHost` over IPC
+(`Spotify { op }`, and `SpotifyStatus` for the snapshot). See
+[Spotify](Spotify.md).
+
 `znicz` (the binary) starts the TUI, MCP, library CLI, or **`znicz player`**.
 The first TUI or MCP start **autostarts** the player process if it is not
 running. Only that process calls `spawn_player` and opens the DAC.
 [#27](https://github.com/eugene-chekan/znicz/issues/27).
 
 IPC clients reconnect and resend a request once when a connection fails
-([#32](https://github.com/eugene-chekan/znicz/issues/32)). Change requests (`Command`, `Library`) carry an id: a
+([#32](https://github.com/eugene-chekan/znicz/issues/32)). Change requests (`Command`, `Library`, `Spotify`) carry an id: a
 random client number plus a counter. The player remembers the last id and
 outcome per client (up to 64 clients), so a resend after a lost reply gets the
 stored answer instead of adding, removing, or moving a queue row twice
 ([#63](https://github.com/eugene-chekan/znicz/issues/63)). Requests without an
-id, from older clients, are applied as before.
+id, from older clients, are applied as before. On the player side, Spotify
+changes have their own record, so a slow Spotify call does not block Command or
+Library requests. One client connection still handles one request at a time.
 
 ## Why split crates?
 
@@ -46,6 +54,7 @@ id, from older clients, are applied as before.
 | Decoder thread | Audio callback | `f32` samples in a lock-free ring |
 | TUI / MCP / CLI | Library | search and album queries (direct reads) |
 | TUI / MCP / CLI | Player process | scan, rescan, and prune jobs (`LibraryOp`) |
+| TUI / MCP / CLI | Player process | Spotify ops (`SpotifyOp`) and the Spotify snapshot (`SpotifyStatus`) |
 
 `PlayerState` is the whole of what a front end can see: transport status, current
 track with its tags, position, volume and mute, queue and position within it,

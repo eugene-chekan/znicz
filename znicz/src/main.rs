@@ -6,15 +6,17 @@ use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
+use spotify_cli::SpotifyCmd;
 use znicz_core::wait_for_library;
 use znicz_core::{
     AudioConfig, AudioOutput, ClientRole, Command, FadeTimes, IpcClient, IpcServer, LibraryHost,
-    LibraryOp, SESSION_SAVE_DEBOUNCE, ScanSummary, apply_to_player, copy_saved, list_saved,
-    load_path, remove_saved, rename_saved, restore_session, save_session_from_player, saved_path,
-    skipped_notice, spawn_player,
+    LibraryOp, SESSION_SAVE_DEBOUNCE, ScanSummary, SpotifyConfig, apply_to_player, copy_saved,
+    list_saved, load_path, remove_saved, rename_saved, restore_session, save_session_from_player,
+    saved_path, skipped_notice, spawn_player,
 };
 use znicz_library::Library;
 use znicz_mcp::run_stdio;
+use znicz_spotify::browser::OpenBrowser;
 use znicz_tui::app::Engine;
 use znicz_tui::{
     App, ConfigFile, ConfigProblem, CoverSize, Resume, RunOutcome, SettingsValues, TuiConfig,
@@ -22,6 +24,8 @@ use znicz_tui::{
 };
 
 mod daemon;
+mod spotify_cli;
+mod spotify_pause;
 mod update;
 
 /// The file written on first start and by `znicz config init`.
@@ -100,6 +104,12 @@ enum Commands {
     Station {
         #[command(subcommand)]
         command: StationCmd,
+    },
+
+    /// Log in to Spotify, log out, or show its status
+    Spotify {
+        #[command(subcommand)]
+        command: SpotifyCmd,
     },
 
     /// Check for a newer release, or install it
@@ -202,6 +212,49 @@ struct Config {
     tui: TuiSection,
     covers: CoversSection,
     updates: UpdatesSection,
+    spotify: SpotifySection,
+}
+
+/// `[spotify]`: the player's Spotify service, and how front ends open a browser.
+#[derive(Debug, Deserialize, Default)]
+struct SpotifySection {
+    /// The Spotify app's client ID: 32 hex characters. Unset: not configured.
+    client_id: Option<String>,
+    /// The login listener's port on 127.0.0.1. Default 8898.
+    redirect_port: Option<u16>,
+    /// The device used when nothing is active. Unset: none.
+    device: Option<String>,
+    /// `auto`, `always` or `never`. Read by front ends only.
+    open_browser: Option<String>,
+}
+
+/// The core config the player is given. `open_browser` is not part of it.
+fn spotify_config(section: &SpotifySection) -> SpotifyConfig {
+    SpotifyConfig {
+        client_id: section
+            .client_id
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
+        redirect_port: section.redirect_port.unwrap_or(SpotifyConfig::DEFAULT_PORT),
+        device: section.device.clone().unwrap_or_default(),
+    }
+}
+
+/// The browser setting. An unknown value logs a warning and means `auto`; it
+/// does not discard the rest of the config.
+fn open_browser_setting(section: &SpotifySection) -> OpenBrowser {
+    match section.open_browser.as_deref() {
+        None => OpenBrowser::default(),
+        Some(text) => OpenBrowser::parse(text).unwrap_or_else(|| {
+            tracing::warn!(
+                value = text,
+                "[spotify] open_browser: use auto, always or never"
+            );
+            OpenBrowser::default()
+        }),
+    }
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -318,6 +371,13 @@ fn main() -> color_eyre::Result<()> {
         ensure_default_config();
     }
     let (config, config_problem) = load_config(cli.config.as_deref());
+    // Text for `znicz spotify login`, which refuses to run on a broken file.
+    let spotify_problem = config_problem.as_ref().map(|problem| {
+        spotify_cli::config_problem_text(
+            &config_path(cli.config.as_deref()).unwrap_or_default(),
+            problem,
+        )
+    });
 
     if cli.list_devices {
         list_devices()?;
@@ -345,6 +405,8 @@ fn main() -> color_eyre::Result<()> {
             update_check: config.updates.check.unwrap_or(true),
             default_device: config.audio.device.clone(),
             fades,
+            spotify: spotify_config(&config.spotify),
+            open_browser: open_browser_setting(&config.spotify),
         },
     };
     let config_file = cli.config.clone();
@@ -378,6 +440,7 @@ fn main() -> color_eyre::Result<()> {
                 audio_config,
                 config.player.idle_secs.unwrap_or(900),
                 library_path.clone(),
+                spotify_config(&config.spotify),
             )?,
         },
         Some(Commands::Scan { dirs, prune }) => {
@@ -488,6 +551,15 @@ fn main() -> color_eyre::Result<()> {
                 }
             }
         },
+        Some(Commands::Spotify { command }) => {
+            spotify_cli::run(
+                command,
+                spotify_config(&config.spotify),
+                spotify_problem,
+                open_browser_setting(&config.spotify),
+                || connect_agent(audio_config.device_id.as_deref(), config_file.as_deref()),
+            )?;
+        }
         None => {
             run_tui(
                 &cli.files,
@@ -735,6 +807,7 @@ fn run_player_daemon(
     audio_config: AudioConfig,
     idle_secs: u64,
     library_path: Option<PathBuf>,
+    spotify: SpotifyConfig,
 ) -> color_eyre::Result<()> {
     let ipc = ipc_path()?;
     let lock_path = player_lock_path()?;
@@ -764,6 +837,11 @@ fn run_player_daemon(
                 None
             }
         });
+    // Always built: with no client ID it answers as `NotConfigured`.
+    let spotify_service = spotify_pause::start_service(spotify, &player);
+    let spotify_host: Option<Arc<dyn znicz_core::SpotifyHost>> = spotify_service
+        .clone()
+        .map(|service| -> Arc<dyn znicz_core::SpotifyHost> { service });
     let mut server = IpcServer::start_with_session_and_library(
         player.clone(),
         ipc,
@@ -771,8 +849,16 @@ fn run_player_daemon(
         session_path()?,
         SESSION_SAVE_DEBOUNCE,
         library,
+        spotify_host,
     )
     .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
+    if let Some(service) = spotify_service {
+        if let Err(e) =
+            spotify_pause::spawn_pause_watcher(player.clone(), service, server.stop_flag())
+        {
+            tracing::warn!("Spotify pause watcher: {e}");
+        }
+    }
     install_player_signals(server.stop_flag());
     server.wait();
     if let Err(e) = save_session_from_player(&player, &session_path()?) {
@@ -810,6 +896,8 @@ fn run_tui(
     extras: TuiExtras,
 ) -> color_eyre::Result<()> {
     let player = connect_ui(device, config)?;
+    let spotify = connect_ui(device, config)?;
+    let transport = connect_ui(device, config)?;
 
     if !files.is_empty() {
         let items: Vec<znicz_core::QueueItem> = files
@@ -836,7 +924,7 @@ fn run_tui(
         }
     }
 
-    run_tui_with_client(player, library_path, None, tui, extras)
+    run_tui_with_client(player, spotify, transport, library_path, None, tui, extras)
 }
 
 fn playlists_dir() -> color_eyre::Result<PathBuf> {
@@ -872,9 +960,11 @@ fn play_station_and_run(
         .ok_or_else(|| color_eyre::eyre::eyre!("no station named {name}"))?
         .clone();
     let player = connect_ui(device, config)?;
+    let spotify = connect_ui(device, config)?;
+    let transport = connect_ui(device, config)?;
     znicz_core::play_station(&player, &station, append)
         .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-    run_tui_with_client(player, library_path, None, tui, extras)
+    run_tui_with_client(player, spotify, transport, library_path, None, tui, extras)
 }
 
 fn list_stations() -> color_eyre::Result<()> {
@@ -914,8 +1004,18 @@ fn load_playlist_and_run(
 ) -> color_eyre::Result<()> {
     let result = load_path(&path)?;
     let player = connect_ui(device, config)?;
+    let spotify = connect_ui(device, config)?;
+    let transport = connect_ui(device, config)?;
     apply_to_player(&player, &result, append).map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-    run_tui_with_client(player, library_path, skipped_notice(&result), tui, extras)
+    run_tui_with_client(
+        player,
+        spotify,
+        transport,
+        library_path,
+        skipped_notice(&result),
+        tui,
+        extras,
+    )
 }
 
 /// What a TUI run gets besides the playback target: the update checker and,
@@ -937,6 +1037,8 @@ struct TuiExtras {
 
 fn run_tui_with_client(
     player: IpcClient,
+    spotify: IpcClient,
+    transport: IpcClient,
     library_path: Option<PathBuf>,
     skip_notice: Option<String>,
     tui: TuiConfig,
@@ -955,7 +1057,13 @@ fn run_tui_with_client(
     // full-screen interface means drawing over it. Send stderr to a file for as
     // long as the TUI owns the terminal; nothing is lost, it just moves.
     let log = stderr::redirect_to_log();
-    let mut app = App::with_remote(player, library);
+    // The Spotify lanes have their own connections: a browse call can take
+    // about 40 s, and playback must not wait behind it.
+    let mut app = App::with_remote(player, library)
+        .with_spotify_worker(Arc::new(spotify))
+        .map_err(|e| color_eyre::eyre::eyre!("{e}"))?
+        .with_spotify_transport(Arc::new(transport))
+        .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
     app.tui = tui;
     app.library.set_preferred_layout(app.tui.library_layout);
     if let Some(updates) = extras.updates {
@@ -1158,6 +1266,9 @@ fn run_mcp(
     config: Option<&Path>,
 ) -> color_eyre::Result<()> {
     let player = connect_agent(device, config)?;
+    // A second connection: a Spotify call can take about 40 s, and it must not
+    // hold up the player tools that use the first one.
+    let spotify = connect_agent(device, config)?;
 
     // A broken library must not stop the player tools from working.
     let library = library_path.and_then(|path| match Library::open(&path) {
@@ -1171,7 +1282,7 @@ fn run_mcp(
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
-        .block_on(run_stdio(player, skills_dirs, library))
+        .block_on(run_stdio(player, spotify, skills_dirs, library))
         .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
     Ok(())
 }
@@ -1599,5 +1710,37 @@ mod tests {
             "mine\n"
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), DEFAULT_CONFIG);
+    }
+
+    #[test]
+    fn spotify_section_maps_to_the_core_config() {
+        let config = parse_config_text(
+            "[spotify]\nclient_id = \"0123456789abcdef0123456789abcdef\"\nredirect_port = 9001\ndevice = \"Kitchen\"\nopen_browser = \"never\"\n",
+        )
+        .expect("parses");
+        assert_eq!(
+            spotify_config(&config.spotify),
+            SpotifyConfig {
+                client_id: "0123456789abcdef0123456789abcdef".into(),
+                redirect_port: 9001,
+                device: "Kitchen".into(),
+            }
+        );
+        assert_eq!(open_browser_setting(&config.spotify), OpenBrowser::Never);
+    }
+
+    #[test]
+    fn a_bad_open_browser_falls_back_to_auto_without_losing_the_config() {
+        let config =
+            parse_config_text("[spotify]\nopen_browser = \"sometimes\"\n").expect("parses");
+        assert_eq!(open_browser_setting(&config.spotify), OpenBrowser::Auto);
+        assert_eq!(spotify_config(&config.spotify), SpotifyConfig::default());
+    }
+
+    #[test]
+    fn the_default_config_maps_to_an_unconfigured_service() {
+        let config = parse_config_text(DEFAULT_CONFIG).expect("default config parses");
+        assert_eq!(spotify_config(&config.spotify), SpotifyConfig::default());
+        assert!(!spotify_config(&config.spotify).is_configured());
     }
 }

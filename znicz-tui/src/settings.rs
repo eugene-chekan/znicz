@@ -4,10 +4,13 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use znicz_core::FadeTimes;
+use znicz_core::{FadeTimes, SpotifyConfig};
+use znicz_spotify::browser::OpenBrowser;
 
 use crate::folder_complete;
+use crate::spotify_rows::{self, SpotifyView};
 use crate::tui_config::{CoverProtocol, CoverSize, IconSet, LibraryLayout, TuiConfig};
+use znicz_core::SpotifyLogin;
 
 /// The Settings tabs, in the order the tab bar shows them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,15 +20,17 @@ pub enum Tab {
     Playback,
     Library,
     General,
+    Spotify,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 5] = [
+    pub const ALL: [Tab; 6] = [
         Tab::Display,
         Tab::Audio,
         Tab::Playback,
         Tab::Library,
         Tab::General,
+        Tab::Spotify,
     ];
 
     pub fn label(self) -> &'static str {
@@ -35,10 +40,11 @@ impl Tab {
             Tab::Playback => "Playback",
             Tab::Library => "Library",
             Tab::General => "General",
+            Tab::Spotify => "Spotify",
         }
     }
 
-    /// The tab for a number key `'1'` to `'5'`.
+    /// The tab for a number key `'1'` to `'6'`.
     pub fn from_key(c: char) -> Option<Tab> {
         let index = c.to_digit(10)?.checked_sub(1)?;
         Tab::ALL.get(index as usize).copied()
@@ -84,6 +90,11 @@ pub enum Row {
     AddFolder,
     RescanAll,
     UpdateCheck,
+    ClientId,
+    RedirectPort,
+    OpenBrowser,
+    Account,
+    PlaybackDevice,
 }
 
 /// How a row is edited.
@@ -91,6 +102,10 @@ pub enum Row {
 pub enum Kind {
     Switch,
     Choice,
+    /// A text row, typed in a prompt.
+    Text,
+    /// A number row, typed in a prompt.
+    Number,
     Slider(Slider),
     Action,
     Folder,
@@ -163,6 +178,13 @@ pub fn rows(tab: Tab, folders: &[PathBuf]) -> Vec<Row> {
             rows
         }
         Tab::General => vec![Row::UpdateCheck],
+        Tab::Spotify => vec![
+            Row::ClientId,
+            Row::RedirectPort,
+            Row::OpenBrowser,
+            Row::Account,
+            Row::PlaybackDevice,
+        ],
     }
 }
 
@@ -186,6 +208,11 @@ impl Row {
             | Row::Crossfade => Tab::Playback,
             Row::Folder(_) | Row::AddFolder | Row::RescanAll => Tab::Library,
             Row::UpdateCheck => Tab::General,
+            Row::ClientId
+            | Row::RedirectPort
+            | Row::OpenBrowser
+            | Row::Account
+            | Row::PlaybackDevice => Tab::Spotify,
         }
     }
 
@@ -203,6 +230,10 @@ impl Row {
             Row::Crossfade => Kind::Slider(CROSSFADE_SLIDER),
             Row::DefaultDevice | Row::AddFolder | Row::RescanAll => Kind::Action,
             Row::Folder(_) => Kind::Folder,
+            Row::ClientId => Kind::Text,
+            Row::RedirectPort => Kind::Number,
+            Row::OpenBrowser | Row::PlaybackDevice => Kind::Choice,
+            Row::Account => Kind::Action,
         }
     }
 
@@ -231,6 +262,11 @@ impl Row {
             Row::AddFolder => "+ Add a folder…".into(),
             Row::RescanAll => "Rescan all folders".into(),
             Row::UpdateCheck => "Check for updates daily".into(),
+            Row::ClientId => "Client ID".into(),
+            Row::RedirectPort => "Redirect port".into(),
+            Row::OpenBrowser => "Open browser".into(),
+            Row::Account => "Account".into(),
+            Row::PlaybackDevice => "Playback device".into(),
         }
     }
 
@@ -278,6 +314,19 @@ impl Row {
             Row::AddFolder => "Index another folder.",
             Row::RescanAll => "Look for new, changed and deleted files in every folder.",
             Row::UpdateCheck => "Ask GitHub once a day whether a new Znicz is out.",
+            Row::ClientId => {
+                "Your Spotify app's client ID, 32 hex characters. Get one at developer.spotify.com/dashboard: register a free app and add the redirect URI below to it. Empty clears it."
+            }
+            Row::RedirectPort => {
+                "The local port the login callback listens on. Add exactly the URI shown to the Spotify app's Redirect URIs."
+            }
+            Row::OpenBrowser => {
+                "Open the login page in a browser. auto guesses from the terminal and does not open over SSH; always and never override the guess."
+            }
+            Row::Account => "Log in to Spotify, or log out. Spotify playback needs Premium.",
+            Row::PlaybackDevice => {
+                "The Spotify device to use when none is active. Active device keeps whichever device Spotify is using."
+            }
         }
     }
 
@@ -300,7 +349,11 @@ impl Row {
             Row::FadeTrack => Some(("audio.fade", "track_ms")),
             Row::FadeMute => Some(("audio.fade", "mute_ms")),
             Row::Crossfade => Some(("audio.fade", "crossfade_ms")),
-            Row::Folder(_) | Row::AddFolder | Row::RescanAll => None,
+            Row::ClientId => Some(("spotify", "client_id")),
+            Row::RedirectPort => Some(("spotify", "redirect_port")),
+            Row::OpenBrowser => Some(("spotify", "open_browser")),
+            Row::PlaybackDevice => Some(("spotify", "device")),
+            Row::Folder(_) | Row::AddFolder | Row::RescanAll | Row::Account => None,
         }
     }
 }
@@ -430,6 +483,8 @@ pub struct Values<'a> {
     pub stage_shows: Option<&'a TuiConfig>,
     /// `[audio.fade]` as the player has it.
     pub fades: FadeTimes,
+    /// What the Spotify rows show.
+    pub spotify: SpotifyView,
 }
 
 /// A slider's value as its row shows it: `off` for zero, else in its unit.
@@ -496,6 +551,17 @@ pub fn value_text(row: &Row, v: &Values) -> String {
         Row::FadeTrack => slider_text(v.fades.track, FADE_SLIDER),
         Row::FadeMute => slider_text(v.fades.mute, FADE_SLIDER),
         Row::Crossfade => slider_text(v.fades.crossfade, CROSSFADE_SLIDER),
+        Row::ClientId => {
+            if v.spotify.configured {
+                format!("{}…", v.spotify.client_id_head)
+            } else {
+                "not set".into()
+            }
+        }
+        Row::RedirectPort => spotify_rows::redirect_uri(v.spotify.redirect_port),
+        Row::OpenBrowser => spotify_rows::open_browser_name(v.spotify.open_browser).into(),
+        Row::Account => spotify_rows::account_text(&v.spotify),
+        Row::PlaybackDevice => spotify_rows::device_value(&v.spotify.device),
         Row::Folder(_) | Row::AddFolder | Row::RescanAll => String::new(),
     }
 }
@@ -512,7 +578,37 @@ pub fn hint_text(row: &Row, v: &Values) -> Option<&'static str> {
         }
         Row::Folder(_) => Some("d remove"),
         Row::AddFolder | Row::RescanAll => Some("↵"),
+        // Offline is a claim about the player's device list, so it needs a
+        // login and a list that arrived. Logged out, nothing is known.
+        Row::PlaybackDevice if v.spotify.configured => {
+            if v.spotify.login != SpotifyLogin::LoggedIn {
+                Some("unknown while logged out")
+            } else if v.spotify.devices_known
+                && !spotify_rows::device_online(&v.spotify, &v.spotify.device)
+            {
+                Some("offline")
+            } else {
+                None
+            }
+        }
+        Row::ClientId if v.spotify.player_differs => Some(spotify_rows::PLAYER_DIFFERS_HINT),
         _ => None,
+    }
+}
+
+/// Rows that cannot be used until a client ID is set: the strip points at
+/// Client ID and their Enter does nothing.
+pub fn dimmed(row: &Row, v: &Values) -> bool {
+    matches!(row, Row::Account | Row::PlaybackDevice) && !v.spotify.configured
+}
+
+/// The range a typed value must be in, for the prompt's label and error. `None`
+/// for rows that do not take typed values.
+pub fn prompt_range(row: &Row) -> Option<String> {
+    match row {
+        Row::RedirectPort => Some("1024–65535".into()),
+        Row::ClientId => Some("32 hex characters, or empty".into()),
+        _ => slider(row).map(slider_range_text),
     }
 }
 
@@ -528,8 +624,8 @@ const ICON_SETS: [IconSet; 3] = [IconSet::Unicode, IconSet::Emoji, IconSet::Nerd
 
 /// The value one step from `current` in `all`. At an end it wraps when `wrap`
 /// is set and otherwise stays put.
-fn step<T: Copy + PartialEq>(all: &[T], current: T, forward: bool, wrap: bool) -> T {
-    let i = all.iter().position(|v| *v == current).unwrap_or(0);
+pub(crate) fn step<T: Clone + PartialEq>(all: &[T], current: &T, forward: bool, wrap: bool) -> T {
+    let i = all.iter().position(|v| v == current).unwrap_or(0);
     let last = all.len() - 1;
     let j = match (forward, wrap) {
         (true, _) if i < last => i + 1,
@@ -539,7 +635,7 @@ fn step<T: Copy + PartialEq>(all: &[T], current: T, forward: bool, wrap: bool) -
         (false, true) => last,
         (false, false) => i,
     };
-    all[j]
+    all[j].clone()
 }
 
 /// A cover row whose value the Stage behind the modal does not show yet.
@@ -590,7 +686,7 @@ pub fn step_protocol(
     forward: bool,
     wrap: bool,
 ) -> bool {
-    let new = step(choices, tui.cover_protocol, forward, wrap);
+    let new = step(choices, &tui.cover_protocol, forward, wrap);
     replace(&mut tui.cover_protocol, new)
 }
 
@@ -599,19 +695,19 @@ pub fn step_protocol(
 pub fn step_choice(row: &Row, tui: &mut TuiConfig, forward: bool, wrap: bool) -> bool {
     match row {
         Row::CoverSize => {
-            let new = step(&CoverSize::ALL, tui.cover_size, forward, wrap);
+            let new = step(&CoverSize::ALL, &tui.cover_size, forward, wrap);
             replace(&mut tui.cover_size, new)
         }
         Row::CoverProtocol => {
-            let new = step(&PROTOCOLS, tui.cover_protocol, forward, wrap);
+            let new = step(&PROTOCOLS, &tui.cover_protocol, forward, wrap);
             replace(&mut tui.cover_protocol, new)
         }
         Row::LibraryLayout => {
-            let new = step(&LAYOUTS, tui.library_layout, forward, wrap);
+            let new = step(&LAYOUTS, &tui.library_layout, forward, wrap);
             replace(&mut tui.library_layout, new)
         }
         Row::Icons => {
-            let new = step(&ICON_SETS, tui.icons, forward, wrap);
+            let new = step(&ICON_SETS, &tui.icons, forward, wrap);
             replace(&mut tui.icons, new)
         }
         _ => false,
@@ -634,6 +730,11 @@ pub struct SettingsValues {
     pub default_device: Option<String>,
     /// `[audio.fade]`.
     pub fades: FadeTimes,
+    /// Mirrors the `[spotify]` section of `config.toml`. It is re-read from the
+    /// file after each Spotify save, so it is what the file says, not this run's copy.
+    pub spotify: SpotifyConfig,
+    /// `[spotify] open_browser`.
+    pub open_browser: OpenBrowser,
 }
 
 impl Default for SettingsValues {
@@ -643,6 +744,8 @@ impl Default for SettingsValues {
             update_check: true,
             default_device: None,
             fades: FadeTimes::default(),
+            spotify: SpotifyConfig::default(),
+            open_browser: OpenBrowser::default(),
         }
     }
 }
@@ -650,6 +753,7 @@ impl Default for SettingsValues {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use znicz_core::{SpotifyDevice, SpotifyLogin};
 
     fn folder(name: &str) -> PathBuf {
         PathBuf::from(format!("/music/{name}"))
@@ -666,7 +770,170 @@ mod tests {
             protocol_unsupported: false,
             stage_shows: None,
             fades: FadeTimes::default(),
+            spotify: SpotifyView::default(),
         }
+    }
+
+    #[test]
+    fn the_spotify_tab_has_five_rows_in_spec_order() {
+        assert_eq!(
+            rows(Tab::Spotify, &[]),
+            vec![
+                Row::ClientId,
+                Row::RedirectPort,
+                Row::OpenBrowser,
+                Row::Account,
+                Row::PlaybackDevice,
+            ]
+        );
+        for row in rows(Tab::Spotify, &[]) {
+            assert_eq!(row.tab(), Tab::Spotify);
+        }
+    }
+
+    #[test]
+    fn the_spotify_kinds_match_the_spec_table() {
+        assert_eq!(Row::ClientId.kind(), Kind::Text);
+        assert_eq!(Row::RedirectPort.kind(), Kind::Number);
+        assert_eq!(Row::OpenBrowser.kind(), Kind::Choice);
+        assert_eq!(Row::Account.kind(), Kind::Action);
+        assert_eq!(Row::PlaybackDevice.kind(), Kind::Choice);
+    }
+
+    #[test]
+    fn the_spotify_config_keys_match_the_config_file() {
+        assert_eq!(Row::ClientId.config_key(), Some(("spotify", "client_id")));
+        assert_eq!(
+            Row::RedirectPort.config_key(),
+            Some(("spotify", "redirect_port"))
+        );
+        assert_eq!(
+            Row::OpenBrowser.config_key(),
+            Some(("spotify", "open_browser"))
+        );
+        assert_eq!(
+            Row::PlaybackDevice.config_key(),
+            Some(("spotify", "device"))
+        );
+        assert_eq!(Row::Account.config_key(), None);
+    }
+
+    #[test]
+    fn the_redirect_row_shows_the_uri_and_the_account_row_its_state() {
+        let tui = TuiConfig::default();
+        let mut v = values(&tui);
+        v.spotify = SpotifyView {
+            configured: true,
+            redirect_port: 9001,
+            login: SpotifyLogin::NotLoggedIn,
+            ..SpotifyView::default()
+        };
+        assert_eq!(
+            value_text(&Row::RedirectPort, &v),
+            "http://127.0.0.1:9001/callback"
+        );
+        assert_eq!(value_text(&Row::Account, &v), "Not logged in");
+        assert_eq!(value_text(&Row::OpenBrowser, &v), "auto");
+    }
+
+    #[test]
+    fn the_client_id_row_says_only_whether_an_id_is_set() {
+        let tui = TuiConfig::default();
+        let mut v = values(&tui);
+        assert_eq!(value_text(&Row::ClientId, &v), "not set");
+        v.spotify.configured = true;
+        v.spotify.client_id_head = "0123abcd".into();
+        assert_eq!(value_text(&Row::ClientId, &v), "0123abcd…");
+    }
+
+    #[test]
+    fn the_playback_device_row_names_the_active_device_and_marks_an_offline_one() {
+        let tui = TuiConfig::default();
+        let mut v = values(&tui);
+        v.spotify.configured = true;
+        v.spotify.login = SpotifyLogin::LoggedIn;
+        assert_eq!(value_text(&Row::PlaybackDevice, &v), "Active device");
+        assert_eq!(hint_text(&Row::PlaybackDevice, &v), None);
+        v.spotify.device = "Garage".into();
+        assert_eq!(value_text(&Row::PlaybackDevice, &v), "Garage");
+        v.spotify.devices_known = true;
+        assert_eq!(hint_text(&Row::PlaybackDevice, &v), Some("offline"));
+    }
+
+    #[test]
+    fn a_device_is_offline_only_when_logged_in_and_the_list_has_arrived() {
+        let tui = TuiConfig::default();
+        let mut v = values(&tui);
+        v.spotify.configured = true;
+        v.spotify.device = "Garage".into();
+        v.spotify.login = SpotifyLogin::LoggedIn;
+        // Logged in, but no device list yet: nothing is known to be offline.
+        assert_eq!(hint_text(&Row::PlaybackDevice, &v), None);
+        // The list arrived and does not name the device.
+        v.spotify.devices_known = true;
+        assert_eq!(hint_text(&Row::PlaybackDevice, &v), Some("offline"));
+        // The list names it.
+        v.spotify.devices = vec![SpotifyDevice {
+            id: "g".into(),
+            name: "Garage".into(),
+            kind: "Speaker".into(),
+            is_active: false,
+            volume_percent: None,
+        }];
+        assert_eq!(hint_text(&Row::PlaybackDevice, &v), None);
+    }
+
+    #[test]
+    fn a_device_is_never_offline_while_logged_out() {
+        let tui = TuiConfig::default();
+        let mut v = values(&tui);
+        v.spotify.configured = true;
+        v.spotify.device = "EugeniusThink".into();
+        v.spotify.login = SpotifyLogin::NotLoggedIn;
+        v.spotify.devices_known = true;
+        assert_eq!(
+            hint_text(&Row::PlaybackDevice, &v),
+            Some("unknown while logged out")
+        );
+        v.spotify.login = SpotifyLogin::Failed("expired".into());
+        assert_eq!(
+            hint_text(&Row::PlaybackDevice, &v),
+            Some("unknown while logged out")
+        );
+    }
+
+    #[test]
+    fn account_and_device_are_dimmed_until_a_client_id_is_set() {
+        let tui = TuiConfig::default();
+        let mut v = values(&tui);
+        assert!(dimmed(&Row::Account, &v));
+        assert!(dimmed(&Row::PlaybackDevice, &v));
+        assert!(!dimmed(&Row::ClientId, &v));
+        assert!(!dimmed(&Row::RedirectPort, &v));
+        assert!(!dimmed(&Row::OpenBrowser, &v));
+        v.spotify.configured = true;
+        assert!(!dimmed(&Row::Account, &v));
+    }
+
+    #[test]
+    fn prompt_ranges_for_the_text_rows() {
+        assert_eq!(prompt_range(&Row::RedirectPort), Some("1024–65535".into()));
+        assert_eq!(
+            prompt_range(&Row::ClientId),
+            Some("32 hex characters, or empty".into())
+        );
+        assert_eq!(prompt_range(&Row::Account), None);
+    }
+
+    #[test]
+    fn step_works_on_owned_values() {
+        let all = ["".to_string(), "A".to_string(), "B".to_string()];
+        assert_eq!(step(&all, &"A".to_string(), true, false), "B");
+        assert_eq!(step(&all, &"B".to_string(), true, false), "B");
+        assert_eq!(step(&all, &"B".to_string(), true, true), "");
+        assert_eq!(step(&all, &"".to_string(), false, true), "B");
+        // A value that is not listed steps from the first one.
+        assert_eq!(step(&all, &"Z".to_string(), true, false), "A");
     }
 
     #[test]
@@ -699,12 +966,17 @@ mod tests {
     fn tabs_have_labels_and_number_keys() {
         assert_eq!(
             Tab::ALL.map(Tab::label),
-            ["Display", "Audio", "Playback", "Library", "General"]
+            [
+                "Display", "Audio", "Playback", "Library", "General", "Spotify"
+            ]
         );
+        assert_eq!(Tab::from_key('1'), Some(Tab::Display));
         assert_eq!(Tab::from_key('3'), Some(Tab::Playback));
-        assert_eq!(Tab::from_key('6'), None);
-        assert_eq!(Tab::General.next(), Tab::Display);
-        assert_eq!(Tab::Display.previous(), Tab::General);
+        assert_eq!(Tab::from_key('6'), Some(Tab::Spotify));
+        assert_eq!(Tab::from_key('7'), None);
+        assert_eq!(Tab::from_key('0'), None);
+        assert_eq!(Tab::Spotify.next(), Tab::Display);
+        assert_eq!(Tab::Display.previous(), Tab::Spotify);
     }
 
     #[test]
@@ -801,6 +1073,7 @@ mod tests {
             protocol_unsupported: false,
             stage_shows: Some(&shown),
             fades: FadeTimes::default(),
+            spotify: SpotifyView::default(),
         };
         assert_eq!(hint_text(&Row::CoverSize, &values), Some("on close"));
         assert_eq!(hint_text(&Row::ShowCover, &values), None);

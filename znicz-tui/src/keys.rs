@@ -30,6 +30,8 @@ pub enum Context {
     SettingsTabs,
     /// Settings with a slider's typed value open: keys type, Enter saves.
     SettingsPrompt,
+    /// Settings with the Spotify login panel open: `c`, Enter and Esc are the panel's.
+    SettingsLogin,
     Stage,
     Playlists,
     Radio,
@@ -40,6 +42,16 @@ pub enum Context {
     Help,
     /// Help with its filter row taking keys.
     HelpFilter,
+    /// Spotify mode, the browser column.
+    SpotifyBrowse,
+    /// Spotify mode, the search prompt.
+    SpotifySearch,
+    /// Spotify mode, the Stage.
+    SpotifyStage,
+    /// Spotify mode, the queue drawer.
+    SpotifyQueue,
+    /// Spotify mode, the Connect device list.
+    SpotifyDevices,
 }
 
 /// One clickable footer hint: what it says and the key a click sends.
@@ -91,10 +103,15 @@ pub const MESSAGES_OPEN: Hint = hint("M messages", KeyCode::Char('M'));
 const ENTER_SEARCH: Hint = hint("Enter search", KeyCode::Enter);
 const ENTER_SAVE: Hint = hint("Enter save", KeyCode::Enter);
 const CANCEL: Hint = hint("Esc cancel", KeyCode::Esc);
+const COPY_URL: Hint = hint("c copy URL", KeyCode::Char('c'));
+const PASTE_ADDRESS: Hint = hint("Enter paste", KeyCode::Enter);
 const NEXT_FIELD: Hint = hint("Tab next field", KeyCode::Tab);
 const FILTER: Hint = hint("/ filter", KeyCode::Char('/'));
 const ENTER_KEEP: Hint = hint("Enter keep", KeyCode::Enter);
 const ESC_CLEAR: Hint = hint("Esc clear", KeyCode::Esc);
+
+// Spotify mode: `O` leaves it, and is always the last hint.
+const SPOTIFY_LEAVE: Hint = hint("O znicz", KeyCode::Char('O'));
 
 /// Drawn at the right end of the footer in every context except help.
 pub const MORE: Hint = hint("? more", KeyCode::Char('?'));
@@ -129,6 +146,7 @@ pub fn context_hints(context: Context) -> &'static [Hint] {
         Context::Settings => &[ENTER_CHANGE, CHOOSE, NEXT_TAB, CLOSE],
         Context::SettingsTabs => &[TAB_SWITCH, ROWS, CLOSE],
         Context::SettingsPrompt => &[ENTER_SAVE, CANCEL],
+        Context::SettingsLogin => &[COPY_URL, PASTE_ADDRESS, CANCEL],
         Context::Stage => &[SPACE_PAUSE, NEXT, BROWSE, QUEUE_OPEN],
         Context::Playlists | Context::Radio => &[ENTER_PLAY, ADD, NEW, EDIT, DELETE, CLOSE],
         Context::Messages => &[CLEAR, CLOSE],
@@ -137,6 +155,18 @@ pub fn context_hints(context: Context) -> &'static [Hint] {
         Context::StationPrompt => &[ENTER_SAVE, CANCEL, NEXT_FIELD],
         Context::Help => &[FILTER, CLOSE],
         Context::HelpFilter => &[ENTER_KEEP, ESC_CLEAR],
+        Context::SpotifyBrowse => &[
+            SPACE_PAUSE,
+            SEARCH,
+            ENTER_PLAY,
+            ADD,
+            QUEUE_OPEN,
+            SPOTIFY_LEAVE,
+        ],
+        Context::SpotifyStage => &[SPACE_PAUSE, NEXT, BROWSE, SPOTIFY_LEAVE],
+        Context::SpotifySearch => &[ENTER_SEARCH, CANCEL],
+        Context::SpotifyQueue => &[QUEUE_CLOSE, SPOTIFY_LEAVE],
+        Context::SpotifyDevices => &[SELECT, CLOSE],
     }
 }
 
@@ -152,6 +182,7 @@ pub fn more_hint(context: Context) -> Option<Hint> {
             | Context::Help
             | Context::HelpFilter
             | Context::Update
+            | Context::SpotifySearch
     );
     (!typed_or_help).then_some(MORE)
 }
@@ -246,12 +277,41 @@ pub const SETTINGS: &[Binding] = &[
     b("h / l", "choose"),
     b("d", "remove folder"),
     b("Tab / Shift-Tab", "next / previous tab"),
-    b("1–5", "go to a tab"),
+    b("1–6", "go to a tab"),
+    b("Login: c", "copy the login URL"),
+    b("Login: Enter", "paste the redirect address"),
+    b("Login: Esc", "cancel the login"),
     b("↑ on the first row", "tab bar"),
     b("Esc", "close"),
 ];
 
 pub const STAGE: &[Binding] = &[b("v / i / Esc", "back to browse")];
+
+/// Spotify mode: the browser's keys, then the transport keys, then the library-only
+/// keys that refuse, then the mode's own.
+pub const SPOTIFY: &[Binding] = &[
+    b("Enter", "play the highlighted item"),
+    b("l", "open the highlighted item"),
+    b("h / Esc", "back one browser level"),
+    b("r", "reload the list"),
+    b("/", "search Spotify"),
+    b("a", "add the track to Spotify's queue"),
+    b("]", "Spotify's queue: open / close"),
+    b("PgDn / PgUp", "page down / up"),
+    b("Space", "pause / resume"),
+    b("n / p", "next / previous track"),
+    b("← / →", "seek 5s back / forward"),
+    b("Shift-← / Shift-→", "seek 30s back / forward"),
+    b("+ / -", "volume up / down 1%"),
+    b("m", "mute / restore (50% if none was saved)"),
+    b("e", "repeat: off, all, one"),
+    b("z", "shuffle"),
+    b(",", "Spotify Connect devices"),
+    b("s", "no stop in Spotify: a toast; Space pauses"),
+    b("A / L / F / U / J", "not in Spotify mode: a toast"),
+    b("v / i", "now playing (stage) / browse"),
+    b("O", "leave Spotify mode"),
+];
 
 pub const MESSAGES: &[Binding] = &[b("C", "clear the history"), b("Esc / M", "close")];
 
@@ -278,6 +338,7 @@ const CONTEXT_SECTIONS: &[(&str, &[Binding])] = &[
     ("Stage", STAGE),
     ("Messages", MESSAGES),
     ("Help", HELP),
+    ("Spotify", SPOTIFY),
 ];
 
 /// Title of the section holding this context's own keys, if it has a table.
@@ -287,12 +348,20 @@ pub fn context_title(context: Context) -> Option<&'static str> {
         Context::FolderPrompt => None,
         Context::Queue => Some("Queue"),
         Context::Devices => Some("Devices"),
-        Context::Settings | Context::SettingsTabs | Context::SettingsPrompt => Some("Settings"),
+        Context::Settings
+        | Context::SettingsTabs
+        | Context::SettingsPrompt
+        | Context::SettingsLogin => Some("Settings"),
         Context::Stage => Some("Stage"),
         Context::Playlists => Some("Playlists"),
         Context::Radio => Some("Radio"),
         Context::Messages => Some("Messages"),
         Context::Help => Some("Help"),
+        Context::SpotifyBrowse
+        | Context::SpotifySearch
+        | Context::SpotifyStage
+        | Context::SpotifyQueue
+        | Context::SpotifyDevices => Some("Spotify"),
         Context::Update | Context::Prompt | Context::StationPrompt | Context::HelpFilter => None,
     }
 }
@@ -381,7 +450,7 @@ mod tests {
         }
     }
 
-    const ALL_CONTEXTS: [Context; 18] = [
+    const ALL_CONTEXTS: [Context; 24] = [
         Context::Library,
         Context::LibraryTree,
         Context::Search,
@@ -391,6 +460,7 @@ mod tests {
         Context::Settings,
         Context::SettingsTabs,
         Context::SettingsPrompt,
+        Context::SettingsLogin,
         Context::Stage,
         Context::Playlists,
         Context::Radio,
@@ -400,6 +470,11 @@ mod tests {
         Context::StationPrompt,
         Context::Help,
         Context::HelpFilter,
+        Context::SpotifyBrowse,
+        Context::SpotifySearch,
+        Context::SpotifyStage,
+        Context::SpotifyQueue,
+        Context::SpotifyDevices,
     ];
 
     /// Columns a hint row needs: labels plus ` · ` between them.
@@ -431,7 +506,8 @@ mod tests {
                 | Context::SettingsPrompt
                 | Context::Update
                 | Context::Help
-                | Context::HelpFilter => {
+                | Context::HelpFilter
+                | Context::SpotifySearch => {
                     assert_eq!(more_hint(context), None, "{context:?}")
                 }
                 _ => assert_eq!(more_hint(context), Some(MORE), "{context:?}"),
@@ -511,14 +587,15 @@ mod tests {
                 "Settings",
                 "Stage",
                 "Messages",
-                "Help"
+                "Help",
+                "Spotify"
             ]
         );
         let dims: Vec<bool> = sections.iter().map(|s| s.dim).collect();
         assert_eq!(
             dims,
             [
-                false, false, false, true, true, true, true, true, true, true, true
+                false, false, false, true, true, true, true, true, true, true, true, true
             ]
         );
     }
@@ -542,7 +619,7 @@ mod tests {
         for context in [Context::Prompt, Context::StationPrompt] {
             let sections = help_sections(context);
             assert_eq!(sections[0].title, "Playback", "{context:?}");
-            assert_eq!(sections.len(), 11, "every table still listed once");
+            assert_eq!(sections.len(), 12, "every table still listed once");
             assert_eq!(context_title(context), None);
         }
     }
@@ -550,11 +627,12 @@ mod tests {
     #[test]
     fn the_filter_matches_actions_ignoring_case() {
         let sections = filter_sections(help_sections(Context::Library), "VOL");
-        assert_eq!(titles(&sections), ["Playback"]);
+        // The dim Spotify table has a volume row too.
+        assert_eq!(titles(&sections), ["Playback", "Spotify"]);
         assert!(
-            sections[0]
-                .bindings
+            sections
                 .iter()
+                .flat_map(|s| s.bindings.iter())
                 .all(|b| b.action.contains("volume"))
         );
     }
@@ -634,5 +712,68 @@ mod tests {
                 .iter()
                 .any(|b| b.keys == "r" && b.action.contains("rescan"))
         );
+    }
+
+    #[test]
+    fn spotify_table_lists_the_mode_keys() {
+        let mode_keys = [
+            "O",
+            "v",
+            "i",
+            "Esc",
+            "h",
+            "l",
+            "Enter",
+            "r",
+            "/",
+            "a",
+            "]",
+            ",",
+            "Space",
+            "n",
+            "p",
+            "←",
+            "→",
+            "Shift-←",
+            "Shift-→",
+            "+",
+            "-",
+            "m",
+            "e",
+            "z",
+            "s",
+            "A",
+            "L",
+            "F",
+            "U",
+            "J",
+            "PgDn",
+            "PgUp",
+        ];
+        for context in [
+            Context::SpotifyBrowse,
+            Context::SpotifySearch,
+            Context::SpotifyStage,
+            Context::SpotifyQueue,
+            Context::SpotifyDevices,
+        ] {
+            let sections = help_sections(context);
+            let spotify = sections
+                .iter()
+                .find(|s| s.title == "Spotify")
+                .unwrap_or_else(|| panic!("{context:?}: no Spotify section"));
+            assert!(!spotify.dim, "{context:?}: the Spotify section is dim");
+            let documented: Vec<&str> = spotify
+                .bindings
+                .iter()
+                .flat_map(|b| b.keys.split(" / "))
+                .collect();
+            for key in mode_keys {
+                assert!(
+                    documented.contains(&key),
+                    "{context:?}: the Spotify help has no {key:?}"
+                );
+            }
+        }
     }
 }

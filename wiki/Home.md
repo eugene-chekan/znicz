@@ -35,7 +35,7 @@ Goals:
 | `znicz-library` | The index: scan folders, store tags in SQLite, search |
 | `znicz-tui` | The screen: library home, queue drawer, transport, overlays |
 | `znicz-mcp` | The AI interface: tools, resources, prompts, skills |
-| `znicz` | The program you run (`znicz`, `znicz player`, `znicz mcp`, `znicz station`) |
+| `znicz` | The program you run (`znicz`, `znicz player`, `znicz mcp`, `znicz station`, `znicz spotify`) |
 | `wiki/` | This documentation |
 
 ## Wiki index
@@ -56,6 +56,7 @@ Goals:
 - [TUI](Architecture/TUI.md)
 - [MCP server](Architecture/MCP.md)
 - [Music library](Architecture/Library.md)
+- [Spotify](Architecture/Spotify.md)
 - [Stream covers](Architecture/Cover-Sources.md)
 
 ### Plans

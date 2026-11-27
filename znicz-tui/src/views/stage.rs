@@ -4,44 +4,67 @@ use std::sync::Arc;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui_image::picker::Picker;
 use ratatui_image::{Resize, StatefulImage};
-use znicz_core::{OutputInfo, PlaybackStatus, PlayerState, QueueItem, RepeatMode, TrackInfo};
+use znicz_core::{PlaybackStatus, PlayerState, RepeatMode, TrackInfo};
 
 use crate::app::{App, repeat_label};
 use crate::cover::{CoverKey, CoverReady};
 use crate::format;
+use crate::stage_model::{SeekModel, StageModel, Tone, VolumeModel};
 use crate::theme;
 use crate::tui_config::{CoverProtocol, IconSet};
 
 /// Column where signal values start (`  file    …`).
 const LABEL: usize = 10;
 
-pub fn render(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState) {
+pub fn render(frame: &mut Frame, area: Rect, app: &mut App, model: &StageModel) {
     if area.width == 0 || area.height == 0 {
         return;
     }
     let layout = stage_layout_for(area, app, app.shown_tui());
     if let Some(cover) = layout.cover {
-        render_cover(frame, cover, app, state);
+        render_cover(frame, cover, app, model.cover.as_ref());
     }
     let width = usize::from(layout.details.width);
-    let full = title_text(state);
     let scroll = app
         .tui
         .marquee
         .then(|| (&mut app.stage_marquee, std::time::Instant::now()));
-    let title = stage_title(&full, width, scroll);
+    let title = stage_title(&model.title, width, scroll);
     let lines = detail_lines(
-        state,
+        model,
         app.tui.icons,
         title,
         width,
         usize::from(layout.details.height),
     );
     frame.render_widget(Paragraph::new(lines), layout.details);
+}
+
+/// The Stage's model for the app's settings and the player's state.
+pub(crate) fn model_for(app: &App, state: &PlayerState) -> StageModel {
+    let shown = app.shown_tui();
+    if app.in_spotify_mode() {
+        let mut model = StageModel::from_spotify(
+            &app.spotify_state,
+            crate::spotify_mode::now_unix_ms(),
+            app.spotify_mute_restore.is_some(),
+        );
+        if shown.cover_protocol == CoverProtocol::Off {
+            model.cover = None;
+        }
+        return model;
+    }
+    StageModel::from_player(
+        state,
+        &app.stations,
+        shown.cover_search,
+        shown.cover_protocol != CoverProtocol::Off,
+    )
 }
 
 /// The title fitted to `width`: scrolled when a marquee is given and the
@@ -60,13 +83,16 @@ pub(crate) fn stage_title(
     }
 }
 
-/// What the title line says: the track (or ICY) title, or `Nothing playing`.
-pub(crate) fn title_text(state: &PlayerState) -> String {
-    state
-        .current_track
-        .as_ref()
-        .map(|t| t.title.clone())
-        .unwrap_or_else(|| "Nothing playing".to_string())
+/// The style for a model tone.
+pub(crate) fn tone_style(tone: Tone) -> Style {
+    match tone {
+        Tone::Plain => theme::text(),
+        Tone::Strong => theme::strong(),
+        Tone::Dim => theme::dim(),
+        Tone::Subtitle => theme::subtitle(),
+        Tone::Good => theme::good(),
+        Tone::Warn => theme::warn(),
+    }
 }
 
 /// Every detail line for `rows` rows, `title` already fitted to `width`.
@@ -74,34 +100,46 @@ pub(crate) fn title_text(state: &PlayerState) -> String {
 /// When rows run short, drops the path explanation, then the signal panel,
 /// then the volume line; title, artist, and seek always stay.
 pub(crate) fn detail_lines(
-    state: &PlayerState,
+    model: &StageModel,
     icons: IconSet,
     title: String,
     width: usize,
     rows: usize,
 ) -> Vec<Line<'static>> {
-    let Some(track) = state.current_track.as_ref() else {
-        return vec![
-            Line::from(Span::styled(title, theme::strong())),
-            Line::from(""),
-            Line::from(Span::styled(
-                "Enter a track in Browse (v) to start",
-                theme::dim(),
-            )),
-        ];
+    let Some(empty) = model.empty.as_ref() else {
+        return playing_lines(model, icons, title, width, rows);
     };
+    vec![
+        Line::from(Span::styled(title, theme::strong())),
+        Line::from(""),
+        Line::from(Span::styled(empty.hint.clone(), theme::dim())),
+    ]
+}
 
+fn playing_lines(
+    model: &StageModel,
+    icons: IconSet,
+    title: String,
+    width: usize,
+    rows: usize,
+) -> Vec<Line<'static>> {
     let mut head = vec![Line::from(Span::styled(title, theme::strong()))];
-    if track.url.is_some() {
-        head.extend(stream_lines(state, track, width));
-    } else {
-        head.extend(file_lines(track, width));
-    }
+    head.extend(model.head.iter().map(|line| {
+        Line::from(Span::styled(
+            format::truncate(&line.text, width),
+            tone_style(line.tone),
+        ))
+    }));
     head.push(Line::from(""));
-    head.push(seek_line(state, width));
+    if let Some(seek) = model.seek.as_ref() {
+        head.push(seek_line(seek, model.status, width));
+    }
 
-    let volume = volume_line(state, icons);
-    let (mut signal, mut explanation) = signal_lines(state, width);
+    let mut volume = model
+        .volume
+        .as_ref()
+        .map(|v| volume_line(v, model.repeat, model.shuffle, icons));
+    let (mut signal, mut explanation) = signal_lines(model, width);
 
     let needed = |signal: &[Line], explanation: &Option<Line>, volume: bool| {
         head.len()
@@ -112,21 +150,18 @@ pub(crate) fn detail_lines(
                 1 + signal.len() + usize::from(explanation.is_some())
             }
     };
-    let mut with_volume = true;
-    if needed(&signal, &explanation, with_volume) > rows {
+    if needed(&signal, &explanation, volume.is_some()) > rows {
         explanation = None;
     }
-    if needed(&signal, &explanation, with_volume) > rows {
+    if needed(&signal, &explanation, volume.is_some()) > rows {
         signal.clear();
     }
-    if needed(&signal, &explanation, with_volume) > rows {
-        with_volume = false;
+    if needed(&signal, &explanation, volume.is_some()) > rows {
+        volume = None;
     }
 
     let mut out = head;
-    if with_volume {
-        out.push(volume);
-    }
+    out.extend(volume);
     if !signal.is_empty() {
         out.push(Line::from(""));
         out.extend(signal);
@@ -135,99 +170,30 @@ pub(crate) fn detail_lines(
     out
 }
 
-fn file_lines(track: &TrackInfo, width: usize) -> Vec<Line<'static>> {
-    let mut out = Vec::new();
-    let artist = track
-        .tags
-        .artist
-        .clone()
-        .or_else(|| track.tags.album_artist.clone());
-    if let Some(artist) = artist.filter(|a| !a.is_empty()) {
-        out.push(Line::from(Span::styled(
-            format::truncate(&artist, width),
-            theme::subtitle(),
-        )));
-    }
-    let mut parts = Vec::new();
-    if let Some(album) = track.tags.album.clone().filter(|a| !a.is_empty()) {
-        parts.push(album);
-    }
-    if let Some(year) = track.tags.year {
-        parts.push(year.to_string());
-    }
-    if let Some(n) = track.tags.track_number {
-        parts.push(format!("track {n}"));
-    }
-    if !parts.is_empty() {
-        out.push(Line::from(Span::styled(
-            format::truncate(&parts.join(" · "), width),
-            theme::dim(),
-        )));
-    }
-    out
-}
-
-/// Station name (from the queue row) and the stream URL, dim.
-fn stream_lines(state: &PlayerState, track: &TrackInfo, width: usize) -> Vec<Line<'static>> {
-    let mut out = Vec::new();
-    let station = state
-        .queue
-        .get(state.queue_position)
-        .and_then(|item| match item {
-            QueueItem::Stream { name, .. } => Some(name.clone()),
-            QueueItem::File { .. } => None,
-        });
-    if let Some(name) = station.filter(|n| *n != track.title) {
-        out.push(Line::from(Span::styled(
-            format::truncate(&name, width),
-            theme::subtitle(),
-        )));
-    }
-    if let Some(url) = track.url.as_deref() {
-        out.push(Line::from(Span::styled(
-            format::truncate(url, width),
-            theme::dim(),
-        )));
-    }
-    out
-}
-
 /// `▶ ━━━━●──── 3:32 / 11:04`, or `● live  3:32` for a stream.
-fn seek_line(state: &PlayerState, width: usize) -> Line<'static> {
-    let marker = crate::views::now_playing::status_marker(state.status);
-    let marker_style = match state.status {
+fn seek_line(seek: &SeekModel, status: PlaybackStatus, width: usize) -> Line<'static> {
+    let marker = crate::views::now_playing::status_marker(status);
+    let marker_style = match status {
         PlaybackStatus::Playing => theme::good(),
         PlaybackStatus::Paused => theme::warn(),
         PlaybackStatus::Stopped => theme::dim(),
     };
-    let is_stream = state
-        .current_track
-        .as_ref()
-        .is_some_and(|t| t.url.is_some());
-    if is_stream {
+    if let SeekModel::Live { position } = seek {
         return Line::from(vec![
             Span::styled(marker, marker_style),
             Span::styled("● live", theme::bad()),
-            Span::styled(
-                format!("  {}", format::duration(state.position)),
-                theme::text(),
-            ),
+            Span::styled(format!("  {}", format::duration(*position)), theme::text()),
         ]);
     }
-    let total = state.current_track.as_ref().and_then(|t| t.duration);
     let times = format!(
         " {} / {}",
-        format::duration(state.position),
-        format::duration_opt(total)
+        format::duration(seek.position()),
+        format::duration_opt(seek.total())
     );
     let bar_w = width
         .saturating_sub(marker.chars().count() + times.chars().count())
         .min(60);
-    let ratio = match total {
-        Some(total) if !total.is_zero() => state.position.as_secs_f64() / total.as_secs_f64(),
-        _ => 0.0,
-    };
-    let (done, todo) = format::progress_bar(ratio, bar_w);
+    let (done, todo) = format::progress_bar(seek.ratio(), bar_w);
     Line::from(vec![
         Span::styled(marker, marker_style),
         Span::styled(done, theme::progress()),
@@ -238,10 +204,15 @@ fn seek_line(state: &PlayerState, width: usize) -> Line<'static> {
 
 /// `◢ ███████▁▁▁  70%   repeat all   shuffle` (a 10-cell volume bar). Muted:
 /// `× ███████▁▁▁ muted`, with the bar dimmed.
-fn volume_line(state: &PlayerState, icons: IconSet) -> Line<'static> {
-    let icon = format::volume_icon(icons, state.volume, state.muted);
-    let bar = format::volume_bar(state.volume, 10);
-    let mut spans = if state.muted {
+fn volume_line(
+    volume: &VolumeModel,
+    repeat: RepeatMode,
+    shuffle: bool,
+    icons: IconSet,
+) -> Line<'static> {
+    let icon = format::volume_icon(icons, volume.volume, volume.muted);
+    let bar = format::volume_bar(volume.volume, 10);
+    let mut spans = if volume.muted {
         vec![
             Span::styled(format!("{icon} "), theme::warn()),
             Span::styled(bar, theme::dim()),
@@ -249,17 +220,17 @@ fn volume_line(state: &PlayerState, icons: IconSet) -> Line<'static> {
         ]
     } else {
         vec![Span::styled(
-            format!("{icon} {bar} {:>3.0}%", state.volume * 100.0),
+            format!("{icon} {bar} {:>3.0}%", volume.volume * 100.0),
             theme::text(),
         )]
     };
-    if state.repeat != RepeatMode::Off {
+    if repeat != RepeatMode::Off {
         spans.push(Span::styled(
-            format!("   {}", repeat_label(state.repeat)),
+            format!("   {}", repeat_label(repeat)),
             theme::toggle_on(),
         ));
     }
-    if state.shuffle {
+    if shuffle {
         spans.push(Span::styled("   shuffle", theme::toggle_on()));
     }
     Line::from(spans)
@@ -267,81 +238,32 @@ fn volume_line(state: &PlayerState, icons: IconSet) -> Line<'static> {
 
 /// The signal panel and, separately, the path explanation (dropped first).
 pub(crate) fn signal_lines(
-    state: &PlayerState,
+    model: &StageModel,
     width: usize,
 ) -> (Vec<Line<'static>>, Option<Line<'static>>) {
-    let Some(track) = state.current_track.as_ref() else {
+    if model.signal.is_empty() {
         return (Vec::new(), None);
-    };
+    }
     let mut lines = vec![Line::from(Span::styled("Signal", theme::strong()))];
-    let source_label = if track.url.is_some() {
-        "stream"
-    } else {
-        "file"
-    };
-    lines.push(labelled(
-        width,
-        source_label,
-        track.format_description(),
-        theme::text(),
-    ));
-    let device = state
-        .device_name
-        .clone()
-        .unwrap_or_else(|| "default device".to_string());
-    let device = match state.output.as_ref() {
-        Some(output) => format!("{device} · {}", device_stream(output)),
-        None => format!("{device} · no stream open"),
-    };
-    lines.push(labelled(width, "device", device, theme::text()));
-    let Some(output) = state.output.as_ref() else {
-        lines.push(labelled(
-            width,
-            "path",
-            "nothing to compare until a stream opens".to_string(),
-            theme::dim(),
-        ));
-        return (lines, None);
-    };
-    let explanation = if output.bit_perfect {
-        lines.push(labelled(
-            width,
-            "path",
-            "● bit perfect".to_string(),
-            theme::good(),
-        ));
-        "the device took the file's own rate and channels".to_string()
-    } else {
-        lines.push(labelled(
-            width,
-            "path",
-            "▲ resampled".to_string(),
-            theme::warn(),
-        ));
-        format!(
-            "file {} {} → device {} {}",
-            format::khz(track.sample_rate),
-            format::channel_name(track.channels),
-            format::khz(output.sample_rate),
-            format::channel_name(output.channels),
-        )
-    };
-    let explanation = Line::from(vec![
-        Span::raw(" ".repeat(LABEL)),
-        Span::styled(
-            format::truncate(&explanation, width.saturating_sub(LABEL)),
-            theme::dim(),
-        ),
-    ]);
-    (lines, Some(explanation))
+    lines.extend(
+        model
+            .signal
+            .iter()
+            .map(|row| labelled(width, row.label, row.value.clone(), tone_style(row.tone))),
+    );
+    let explanation = model.explanation.as_ref().map(|text| {
+        Line::from(vec![
+            Span::raw(" ".repeat(LABEL)),
+            Span::styled(
+                format::truncate(text, width.saturating_sub(LABEL)),
+                theme::dim(),
+            ),
+        ])
+    });
+    (lines, explanation)
 }
 
-fn labelled(
-    width: usize,
-    label: &str,
-    value: String,
-    style: ratatui::style::Style,
-) -> Line<'static> {
+fn labelled(width: usize, label: &str, value: String, style: Style) -> Line<'static> {
     Line::from(vec![
         Span::styled(
             format!("  {label:<width$}", width = LABEL - 2),
@@ -349,23 +271,6 @@ fn labelled(
         ),
         Span::styled(format::truncate(&value, width.saturating_sub(LABEL)), style),
     ])
-}
-
-fn device_stream(output: &OutputInfo) -> String {
-    format!(
-        "{} {} {}",
-        format::khz(output.sample_rate),
-        format::channel_name(output.channels),
-        sample_format_label(&output.sample_format),
-    )
-}
-
-fn sample_format_label(fmt: &str) -> &str {
-    if fmt.is_empty() || fmt == "?" {
-        "--"
-    } else {
-        fmt
-    }
 }
 
 fn cover_draw_label(ready: &CoverReady) -> String {
@@ -385,7 +290,7 @@ pub(crate) fn stream_query(
 ) -> znicz_core::StreamQuery {
     let stream_url = track.url.clone().unwrap_or_default();
     let station_name = match state.queue.get(state.queue_position) {
-        Some(QueueItem::Stream { name, .. }) => name.clone(),
+        Some(znicz_core::QueueItem::Stream { name, .. }) => name.clone(),
         _ => String::new(),
     };
     let station = stations.iter().find(|s| s.url == stream_url);
@@ -423,6 +328,17 @@ pub(crate) fn keep_previous(
     }
 }
 
+/// The key the Spotify cover keeps its previous image under. One slot for
+/// every Spotify track, so the last album art stays while the next one loads.
+pub(crate) const SPOTIFY_COVER_SLOT: &str = "spotify:cover";
+
+/// The Spotify album art for `url`, keeping the previous art while this one is
+/// Pending.
+pub(crate) fn spotify_cover_ready(app: &mut App, url: &str) -> CoverReady {
+    let ready = app.covers.get(CoverKey::Url(url.to_string()));
+    keep_previous(&mut app.last_stream_cover, SPOTIFY_COVER_SLOT, ready)
+}
+
 /// The Stage layout for the given cover settings.
 pub(crate) fn stage_layout_for(
     area: Rect,
@@ -442,28 +358,24 @@ pub(crate) fn stage_layout_for(
     )
 }
 
-pub(crate) fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, state: &PlayerState) {
+pub(crate) fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, cover: Option<&CoverKey>) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let shown = app.shown_tui();
-
-    let use_logo_only = shown.cover_protocol == CoverProtocol::Off;
-    let ready = match (use_logo_only, state.current_track.as_ref()) {
-        (true, _) | (_, None) => {
+    let ready = match cover {
+        None => {
             app.last_stream_cover = None;
             CoverReady::Logo
         }
-        (false, Some(track)) => {
-            if let Some(p) = track.path.as_deref() {
-                app.last_stream_cover = None;
-                app.covers.get(CoverKey::File(p.to_path_buf()))
-            } else {
-                let query = stream_query(state, track, &app.stations, shown.cover_search);
-                let stream_url = query.stream_url.clone();
-                let ready = app.covers.get(CoverKey::Stream(query));
-                keep_previous(&mut app.last_stream_cover, &stream_url, ready)
-            }
+        Some(CoverKey::File(path)) => {
+            app.last_stream_cover = None;
+            app.covers.get(CoverKey::File(path.clone()))
+        }
+        Some(CoverKey::Url(url)) => spotify_cover_ready(app, url),
+        Some(CoverKey::Stream(query)) => {
+            let stream_url = query.stream_url.clone();
+            let ready = app.covers.get(CoverKey::Stream(query.clone()));
+            keep_previous(&mut app.last_stream_cover, &stream_url, ready)
         }
     };
 
@@ -502,11 +414,11 @@ pub(crate) fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, state: 
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::path::PathBuf;
     use std::time::Duration;
-    use znicz_core::TrackTags;
+    use znicz_core::{OutputInfo, QueueItem, TrackTags};
 
     fn text(lines: &[Line]) -> String {
         lines
@@ -521,7 +433,23 @@ mod tests {
             .join("\n")
     }
 
-    fn playing(bit_perfect: bool) -> PlayerState {
+    /// The Stage model of a player state, with covers on.
+    fn model(state: &PlayerState) -> StageModel {
+        StageModel::from_player(state, &[], true, true)
+    }
+
+    /// The Stage's detail lines for a player state.
+    fn detail_of(
+        state: &PlayerState,
+        icons: IconSet,
+        title: String,
+        width: usize,
+        rows: usize,
+    ) -> Vec<Line<'static>> {
+        detail_lines(&model(state), icons, title, width, rows)
+    }
+
+    pub(crate) fn playing(bit_perfect: bool) -> PlayerState {
         PlayerState {
             status: PlaybackStatus::Playing,
             current_track: Some(TrackInfo {
@@ -555,7 +483,7 @@ mod tests {
         }
     }
 
-    fn stream() -> PlayerState {
+    pub(crate) fn stream() -> PlayerState {
         PlayerState {
             status: PlaybackStatus::Playing,
             current_track: Some(TrackInfo {
@@ -600,7 +528,7 @@ mod tests {
     #[test]
     fn narrow_signal_values_are_cut_to_the_width() {
         let width = 24;
-        let (lines, explanation) = signal_lines(&playing(false), width);
+        let (lines, explanation) = signal_lines(&model(&playing(false)), width);
         for line in lines.iter().chain(explanation.iter()) {
             let w: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
             assert!(
@@ -616,7 +544,7 @@ mod tests {
 
     #[test]
     fn a_file_shows_artist_album_seek_and_signal() {
-        let t = text(&detail_lines(
+        let t = text(&detail_of(
             &playing(true),
             IconSet::Unicode,
             "Sour Times".into(),
@@ -641,7 +569,7 @@ mod tests {
     fn resampled_explains_both_rates_and_a_missing_format_is_a_dash() {
         let mut state = playing(false);
         state.output.as_mut().unwrap().sample_format = "?".into();
-        let t = text(&detail_lines(&state, IconSet::Unicode, "x".into(), 70, 30));
+        let t = text(&detail_of(&state, IconSet::Unicode, "x".into(), 70, 30));
         assert!(
             t.contains("resampled") && t.contains("48 kHz") && t.contains("96 kHz"),
             "{t}"
@@ -651,7 +579,7 @@ mod tests {
 
     #[test]
     fn a_stream_shows_station_url_and_live() {
-        let t = text(&detail_lines(
+        let t = text(&detail_of(
             &stream(),
             IconSet::Unicode,
             "Artist - Song".into(),
@@ -734,7 +662,7 @@ mod tests {
 
     #[test]
     fn nothing_playing_says_so_without_a_signal_panel() {
-        let t = text(&detail_lines(
+        let t = text(&detail_of(
             &PlayerState::default(),
             IconSet::Unicode,
             "Nothing playing".into(),
@@ -751,8 +679,8 @@ mod tests {
     #[test]
     fn short_rows_drop_explanation_then_signal_then_volume() {
         let state = playing(true);
-        let all = detail_lines(&state, IconSet::Unicode, "x".into(), 70, 30).len();
-        let t = text(&detail_lines(
+        let all = detail_of(&state, IconSet::Unicode, "x".into(), 70, 30).len();
+        let t = text(&detail_of(
             &state,
             IconSet::Unicode,
             "x".into(),
@@ -760,9 +688,9 @@ mod tests {
             all - 1,
         ));
         assert!(!t.contains("own rate") && t.contains("Signal"), "{t}");
-        let t = text(&detail_lines(&state, IconSet::Unicode, "x".into(), 70, 7));
+        let t = text(&detail_of(&state, IconSet::Unicode, "x".into(), 70, 7));
         assert!(!t.contains("Signal") && t.contains('%'), "{t}");
-        let t = text(&detail_lines(&state, IconSet::Unicode, "x".into(), 70, 4));
+        let t = text(&detail_of(&state, IconSet::Unicode, "x".into(), 70, 4));
         assert!(!t.contains('%'), "{t}");
         assert!(
             t.contains("x") && t.contains("Portishead") && t.contains("/ "),
@@ -772,20 +700,434 @@ mod tests {
 
     #[test]
     fn the_volume_line_leads_with_the_icon_then_the_bar() {
-        let mut state = playing(true);
-        state.volume = 0.5;
-        let t = text(&[volume_line(&state, IconSet::Unicode)]);
+        let volume = VolumeModel {
+            volume: 0.5,
+            muted: false,
+        };
+        let t = text(&[volume_line(
+            &volume,
+            RepeatMode::Off,
+            false,
+            IconSet::Unicode,
+        )]);
         assert!(t.starts_with("◢ █████▁▁▁▁▁ "), "{t:?}");
         assert!(t.trim_end().ends_with(" 50%"), "{t:?}");
     }
 
     #[test]
     fn a_muted_volume_line_keeps_the_bar_and_says_muted() {
-        let mut state = playing(true);
-        state.volume = 0.5;
-        state.muted = true;
-        let t = text(&[volume_line(&state, IconSet::Unicode)]);
+        let volume = VolumeModel {
+            volume: 0.5,
+            muted: true,
+        };
+        let t = text(&[volume_line(
+            &volume,
+            RepeatMode::Off,
+            false,
+            IconSet::Unicode,
+        )]);
         assert!(t.starts_with("× █████▁▁▁▁▁ muted"), "{t:?}");
         assert!(!t.contains('%'), "{t:?}");
+    }
+
+    /// The playback position and volume the goldens draw at, so the seek bar
+    /// and the volume line are fixed.
+    pub(crate) fn at_fixed_time(mut state: PlayerState) -> PlayerState {
+        state.position = Duration::from_secs(83);
+        state.volume = 0.7;
+        state
+    }
+
+    /// Draws the Stage into a `TestBackend` and returns each row's symbols.
+    fn stage_rows(state: &PlayerState, width: u16, height: u16, show_cover: bool) -> Vec<String> {
+        let mut app = crate::app::test_app();
+        app.tui.show_cover = show_cover;
+        app.tui.cover_protocol = if show_cover {
+            CoverProtocol::Auto
+        } else {
+            CoverProtocol::Off
+        };
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        let model = model_for(&app, state);
+        terminal
+            .draw(|frame| render(frame, frame.area(), &mut app, &model))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(usize::from(width))
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+            .collect()
+    }
+
+    const GOLDEN_WIDE_FILE: &[&str] = &[
+        "                                                  Sour Times                                        ",
+        "                      ▄▄▄                         Portishead                                        ",
+        "                      ▄▄▄▄▄                       Dummy · 1994 · track 3                            ",
+        "                      ▄▄ ▄▄▄▄                                                                       ",
+        "                    ▄▄▄    ▄▄▄                    ▶ ━━━━━━━━━━━━──────────────────────── 1:23 / 4:11",
+        "                   ▄▄▄      ▄▄▄                   ◢ ███████▁▁▁  70%                                 ",
+        "                  ▄▄▄ ▀▀▀▀▀  ▄▄                                                                     ",
+        "                 ▄▄▄  ▄  ▀▀▀▀ ▄▄                  Signal                                            ",
+        "            ▄▄▄▄▄▄▀     ▄▄▄▄▄ ▀▄▄▄▄▄▄               file    FLAC 96 kHz 24-bit 2882 kbps stereo     ",
+        "           ▄▄▀▀▀▀▀▀▀  ▄▄▄▄   ▀▀▀▀▀▀▀▄▄              device  Topping E30 II · 48 kHz stereo f32      ",
+        "           ▀▀▀▄▄▄▄▄▄▀▀▀▀▀▀▀▀▀▄▄▄▄▄▄▀▀▀              path    ▲ resampled                             ",
+        "           ▀▀▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄▀▀                      file 96 kHz stereo → device 48 kHz ster…",
+        "           ▀▀▄ ▄▄▄▄▄▄▄▄▄▀▄▄▄▄▄▄▄▄▄ ▄▀▀                                                              ",
+        "            ▀▄▄▄▄▄     ▄▄▄     ▄▄▄▄▄▀                                                               ",
+        "            ▀▄▀▀                 ▀▀▄▀                                                               ",
+        "            ▀▀▄▀                 ▀▄▀▀                                                               ",
+        "             ▀▄▀▀               ▀▀▄▀▀                                                               ",
+        "             ▀▄▀▀               ▀▀▄▀                                                                ",
+        "             ▀▀▄▀▀             ▀▀▄▀▀                                                                ",
+        "             ▀▀▄▄▄▀▀▀▀▀▀▀▀▀▀▀▀▀▄▄▄▀▀                                                                ",
+        "              ▀▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄▀                                                                 ",
+        "              ▀▀▀▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▀▀▀                                                                 ",
+        "                ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                                   ",
+        "                                                                                                    ",
+    ];
+    const GOLDEN_WIDE_BIT_PERFECT: &[&str] = &[
+        "                                                  Sour Times                                        ",
+        "                      ▄▄▄                         Portishead                                        ",
+        "                      ▄▄▄▄▄                       Dummy · 1994 · track 3                            ",
+        "                      ▄▄ ▄▄▄▄                                                                       ",
+        "                    ▄▄▄    ▄▄▄                    ▶ ━━━━━━━━━━━━──────────────────────── 1:23 / 4:11",
+        "                   ▄▄▄      ▄▄▄                   ◢ ███████▁▁▁  70%                                 ",
+        "                  ▄▄▄ ▀▀▀▀▀  ▄▄                                                                     ",
+        "                 ▄▄▄  ▄  ▀▀▀▀ ▄▄                  Signal                                            ",
+        "            ▄▄▄▄▄▄▀     ▄▄▄▄▄ ▀▄▄▄▄▄▄               file    FLAC 96 kHz 24-bit 2882 kbps stereo     ",
+        "           ▄▄▀▀▀▀▀▀▀  ▄▄▄▄   ▀▀▀▀▀▀▀▄▄              device  Topping E30 II · 96 kHz stereo f32      ",
+        "           ▀▀▀▄▄▄▄▄▄▀▀▀▀▀▀▀▀▀▄▄▄▄▄▄▀▀▀              path    ● bit perfect                           ",
+        "           ▀▀▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄▀▀                      the device took the file's own rate and…",
+        "           ▀▀▄ ▄▄▄▄▄▄▄▄▄▀▄▄▄▄▄▄▄▄▄ ▄▀▀                                                              ",
+        "            ▀▄▄▄▄▄     ▄▄▄     ▄▄▄▄▄▀                                                               ",
+        "            ▀▄▀▀                 ▀▀▄▀                                                               ",
+        "            ▀▀▄▀                 ▀▄▀▀                                                               ",
+        "             ▀▄▀▀               ▀▀▄▀▀                                                               ",
+        "             ▀▄▀▀               ▀▀▄▀                                                                ",
+        "             ▀▀▄▀▀             ▀▀▄▀▀                                                                ",
+        "             ▀▀▄▄▄▀▀▀▀▀▀▀▀▀▀▀▀▀▄▄▄▀▀                                                                ",
+        "              ▀▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄▀                                                                 ",
+        "              ▀▀▀▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▀▀▀                                                                 ",
+        "                ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                                   ",
+        "                                                                                                    ",
+    ];
+    const GOLDEN_NARROW_FILE: &[&str] = &[
+        "           ▄▄                                   ",
+        "           ▄▄▄▄                                 ",
+        "         ▄▄▄▀▄▄▄                                ",
+        "        ▄▄▄▀▀▀▀▄▄                               ",
+        "     ▄▄▄▀▀▀▄▄▄▄▀▀▄▄▄                            ",
+        "     ▀▀▀▀▀▀▄▄▄▀▀▀▀▀▀                            ",
+        "      ▀▄▄▄▄▄▄▄▄▄▄▄▀▀                            ",
+        "      ▀▀▀   ▄   ▀▀▀                             ",
+        "      ▀▀▀       ▀▀▀                             ",
+        "      ▀▄▀▀▀▀▀▀▀▀▀▄▀                             ",
+        "       ▀▄▄▀▀▀▀▀▄▄▀                              ",
+        "        ▀▀▀▀▀▀▀▀▀                               ",
+        "                                                ",
+        " Sour Times                                     ",
+        " Portishead                                     ",
+        " Dummy · 1994 · track 3                         ",
+        "                                                ",
+        " ▶ ━━━━━━━━━━╾───────────────────── 1:23 / 4:11 ",
+        " ◢ ███████▁▁▁  70%                              ",
+        "                                                ",
+        " Signal                                         ",
+        "   file    FLAC 96 kHz 24-bit 2882 kbps stereo  ",
+        "   device  Topping E30 II · 48 kHz stereo f32   ",
+        "   path    ▲ resampled                          ",
+    ];
+    const GOLDEN_NO_COVER: &[&str] = &[
+        "                                                                                                    ",
+        "          Sour Times                                                                                ",
+        "          Portishead                                                                                ",
+        "          Dummy · 1994 · track 3                                                                    ",
+        "                                                                                                    ",
+        "          ▶ ━━━━━━━━━━━━━━━━━━━━──────────────────────────────────────── 1:23 / 4:11                ",
+        "          ◢ ███████▁▁▁  70%                                                                         ",
+        "                                                                                                    ",
+        "          Signal                                                                                    ",
+        "            file    FLAC 96 kHz 24-bit 2882 kbps stereo                                             ",
+        "            device  Topping E30 II · 48 kHz stereo f32                                              ",
+        "            path    ▲ resampled                                                                     ",
+        "                    file 96 kHz stereo → device 48 kHz stereo                                       ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+    ];
+    const GOLDEN_STREAM: &[&str] = &[
+        "                                                                                                    ",
+        "          Artist - Song                                                                             ",
+        "          Jazz Radio                                                                                ",
+        "          https://example.com/stream                                                                ",
+        "                                                                                                    ",
+        "          ▶ ● live  1:23                                                                            ",
+        "          ◢ ███████▁▁▁  70%                                                                         ",
+        "                                                                                                    ",
+        "          Signal                                                                                    ",
+        "            stream  MP3 44.1 kHz 128 kbps stereo                                                    ",
+        "            device  default device · no stream open                                                 ",
+        "            path    nothing to compare until a stream opens                                         ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+    ];
+    const GOLDEN_NOTHING_PLAYING: &[&str] = &[
+        "                                                                                                    ",
+        "          Nothing playing                                                                           ",
+        "                                                                                                    ",
+        "          Enter a track in Browse (v) to start                                                      ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+    ];
+
+    #[test]
+    fn golden_wide_file_stage() {
+        let state = at_fixed_time(playing(false));
+        assert_eq!(stage_rows(&state, 100, 24, true), GOLDEN_WIDE_FILE);
+    }
+
+    #[test]
+    fn golden_wide_bit_perfect_stage() {
+        let state = at_fixed_time(playing(true));
+        assert_eq!(stage_rows(&state, 100, 24, true), GOLDEN_WIDE_BIT_PERFECT);
+    }
+
+    #[test]
+    fn golden_narrow_file_stage() {
+        let state = at_fixed_time(playing(false));
+        assert_eq!(stage_rows(&state, 48, 24, true), GOLDEN_NARROW_FILE);
+    }
+
+    #[test]
+    fn golden_no_cover_stage() {
+        let state = at_fixed_time(playing(false));
+        assert_eq!(stage_rows(&state, 100, 24, false), GOLDEN_NO_COVER);
+    }
+
+    #[test]
+    fn golden_stream_stage() {
+        let state = at_fixed_time(stream());
+        assert_eq!(stage_rows(&state, 100, 24, false), GOLDEN_STREAM);
+    }
+
+    #[test]
+    fn golden_nothing_playing_stage() {
+        let state = PlayerState::default();
+        assert_eq!(stage_rows(&state, 100, 24, false), GOLDEN_NOTHING_PLAYING);
+    }
+
+    /// Draws the Stage in Spotify mode. Covers are off, so nothing is fetched.
+    fn spotify_stage_rows(state: znicz_core::SpotifyState, width: u16, height: u16) -> Vec<String> {
+        let mut app = crate::app::test_app();
+        app.tui.show_cover = false;
+        app.tui.cover_protocol = CoverProtocol::Off;
+        app.spotify_mode = true;
+        app.spotify_state = state;
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        let model = model_for(&app, &PlayerState::default());
+        terminal
+            .draw(|frame| render(frame, frame.area(), &mut app, &model))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(usize::from(width))
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+            .collect()
+    }
+
+    /// A paused track, so the rows do not depend on the clock.
+    fn paused_spotify() -> znicz_core::SpotifyState {
+        use znicz_core::{
+            SpotifyDevice, SpotifyLogin, SpotifyPlayback, SpotifyRepeat, SpotifyTrack,
+        };
+        znicz_core::SpotifyState {
+            login: SpotifyLogin::LoggedIn,
+            playback: Some(SpotifyPlayback {
+                item: Some(SpotifyTrack {
+                    uri: "spotify:track:1".into(),
+                    title: "So What".into(),
+                    artists: vec!["Miles Davis".into()],
+                    album: "Kind of Blue".into(),
+                    album_uri: "spotify:album:1".into(),
+                    year: Some(1959),
+                    track_number: Some(1),
+                    duration_ms: 562_000,
+                    image_url: None,
+                }),
+                unsupported: false,
+                is_playing: false,
+                progress_ms: 83_000,
+                read_at_ms: 0,
+                repeat: SpotifyRepeat::Off,
+                shuffle: false,
+                device: Some(SpotifyDevice {
+                    id: "d1".into(),
+                    name: "Kitchen".into(),
+                    kind: "Speaker".into(),
+                    is_active: true,
+                    volume_percent: Some(60),
+                }),
+                context_uri: None,
+            }),
+            ..Default::default()
+        }
+    }
+
+    const GOLDEN_SPOTIFY_WIDE: &[&str] = &[
+        "                                                                                                    ",
+        "          So What                                                                                   ",
+        "          Miles Davis                                                                               ",
+        "          Kind of Blue · 1959 · track 1                                                             ",
+        "                                                                                                    ",
+        "          ❚❚━━━━━━━━━─────────────────────────────────────────────────── 1:23 / 9:22                ",
+        "          ◢ ██████▁▁▁▁  60%                                                                         ",
+        "                                                                                                    ",
+        "          Signal                                                                                    ",
+        "            source  spotify                                                                         ",
+        "            device  Kitchen (Speaker)                                                               ",
+        "            path    Spotify Connect                                                                 ",
+        "                    decoded and played by the Spotify app on that device; Znicz does not …          ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+    ];
+    const GOLDEN_SPOTIFY_NARROW: &[&str] = &[
+        "                                                ",
+        " So What                                        ",
+        " Miles Davis                                    ",
+        " Kind of Blue · 1959 · track 1                  ",
+        "                                                ",
+        " ❚❚━━━━╾─────────────────────────── 1:23 / 9:22 ",
+        " ◢ ██████▁▁▁▁  60%                              ",
+        "                                                ",
+        " Signal                                         ",
+        "   source  spotify                              ",
+        "   device  Kitchen (Speaker)                    ",
+        "   path    Spotify Connect                      ",
+        "           decoded and played by the Spotify a… ",
+        "                                                ",
+        "                                                ",
+        "                                                ",
+        "                                                ",
+        "                                                ",
+        "                                                ",
+        "                                                ",
+        "                                                ",
+        "                                                ",
+        "                                                ",
+        "                                                ",
+    ];
+    const GOLDEN_SPOTIFY_NOTHING: &[&str] = &[
+        "                                                                                                    ",
+        "          Nothing playing on Spotify                                                                ",
+        "                                                                                                    ",
+        "          / search · O znicz                                                                        ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+    ];
+
+    #[test]
+    fn golden_spotify_wide_stage() {
+        assert_eq!(
+            spotify_stage_rows(paused_spotify(), 100, 24),
+            GOLDEN_SPOTIFY_WIDE
+        );
+    }
+
+    #[test]
+    fn golden_spotify_narrow_stage() {
+        assert_eq!(
+            spotify_stage_rows(paused_spotify(), 48, 24),
+            GOLDEN_SPOTIFY_NARROW
+        );
+    }
+
+    #[test]
+    fn golden_spotify_nothing_playing() {
+        assert_eq!(
+            spotify_stage_rows(znicz_core::SpotifyState::default(), 100, 24),
+            GOLDEN_SPOTIFY_NOTHING
+        );
+    }
+
+    #[test]
+    fn the_previous_spotify_cover_shows_while_the_next_is_pending() {
+        let mut app = crate::app::test_app();
+        let image = Arc::new(image::DynamicImage::new_rgba8(2, 2));
+        app.last_stream_cover = Some((
+            SPOTIFY_COVER_SLOT.to_string(),
+            CoverReady::Embedded(image.clone()),
+        ));
+        // A URL nobody has fetched yet: its first answer is Pending.
+        let ready = spotify_cover_ready(&mut app, "http://127.0.0.1:1/never-fetched.png");
+        assert!(matches!(ready, CoverReady::Embedded(img) if Arc::ptr_eq(&img, &image)));
     }
 }

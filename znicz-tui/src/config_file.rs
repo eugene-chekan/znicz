@@ -2,7 +2,7 @@
 //! comments, order and other keys.
 
 use std::path::{Path, PathBuf};
-use toml_edit::{DocumentMut, Item, Table, Value};
+use toml_edit::{Decor, DocumentMut, Item, RawString, Table, Value};
 
 #[derive(Debug, Clone)]
 pub struct ConfigFile {
@@ -30,6 +30,19 @@ impl ConfigFile {
         self.set(section, key, Value::from(v))
     }
 
+    /// The value of `key` in `[section]` as the file has it now. `None` when the
+    /// file, the section or the key is missing.
+    pub fn get(&self, section: &str, key: &str) -> Result<Option<Value>, String> {
+        let Some(mut doc) = self.read_doc()? else {
+            return Ok(None);
+        };
+        let parts: Vec<&str> = section.split('.').collect();
+        Ok(existing_table(doc.as_table_mut(), &parts)
+            .and_then(|table| table.get(key))
+            .and_then(Item::as_value)
+            .cloned())
+    }
+
     /// Drop `key` from `[section]`. A missing file, section or key is a no-op:
     /// nothing is created and nothing is written.
     pub fn remove(&self, section: &str, key: &str) -> Result<(), String> {
@@ -40,8 +53,26 @@ impl ConfigFile {
         let Some(table) = existing_table(doc.as_table_mut(), &parts) else {
             return Ok(());
         };
-        if table.remove(key).is_none() {
+        let keys: Vec<String> = table.iter().map(|(k, _)| k.to_string()).collect();
+        let Some(at) = keys.iter().position(|k| k == key) else {
             return Ok(());
+        };
+        let next = keys.get(at + 1).cloned();
+        let Some((removed, _)) = table.remove_entry(key) else {
+            return Ok(());
+        };
+        // The comment lines above the key are its leading decor. Keep them by
+        // moving them onto whatever follows the key.
+        let leading = raw_text(removed.leaf_decor().prefix());
+        if !leading.is_empty() {
+            let placed = match next {
+                Some(next) => place_before_entry(table, &next, &leading),
+                None => false,
+            };
+            if !placed {
+                let position = table.position();
+                place_before_following_table(&mut doc, position, &leading);
+            }
         }
         write_atomically(&self.path, &doc.to_string())
     }
@@ -81,6 +112,91 @@ impl ConfigFile {
         change(table);
         write_atomically(&self.path, &doc.to_string())
     }
+}
+
+/// The text of a decor prefix or suffix, empty when there is none.
+fn raw_text(raw: Option<&RawString>) -> String {
+    raw.and_then(RawString::as_str).unwrap_or("").to_string()
+}
+
+/// Put `lead` in front of the entry `next` of `table`. A key gets it in its
+/// leading decor, a sub-table in its header prefix. Returns `false` when the
+/// entry cannot take it (an array of tables, or no such entry).
+fn place_before_entry(table: &mut Table, next: &str, lead: &str) -> bool {
+    match table.get(next) {
+        Some(Item::Value(_)) => {
+            let Some(mut key) = table.key_mut(next) else {
+                return false;
+            };
+            prepend_prefix(key.leaf_decor_mut(), lead);
+            true
+        }
+        Some(Item::Table(_)) => {
+            let Some(Item::Table(sub)) = table.get_mut(next) else {
+                return false;
+            };
+            prepend_prefix(sub.decor_mut(), lead);
+            true
+        }
+        _ => false,
+    }
+}
+
+fn prepend_prefix(decor: &mut Decor, lead: &str) {
+    let existing = raw_text(decor.prefix());
+    decor.set_prefix(format!("{lead}{existing}"));
+}
+
+/// Put `lead` above the table that follows the table at `position` in the
+/// file, or at the end of the file when no table follows it.
+fn place_before_following_table(doc: &mut DocumentMut, position: Option<usize>, lead: &str) {
+    let Some(position) = position else {
+        return append_to_document_end(doc, lead);
+    };
+    let mut best: Option<(usize, Vec<String>)> = None;
+    find_following_table(doc.as_table(), position, &mut Vec::new(), &mut best);
+    match best {
+        Some((_, path)) => {
+            let mut table = doc.as_table_mut();
+            for name in &path {
+                let Some(next) = table.get_mut(name).and_then(Item::as_table_mut) else {
+                    return;
+                };
+                table = next;
+            }
+            prepend_prefix(table.decor_mut(), lead);
+        }
+        None => append_to_document_end(doc, lead),
+    }
+}
+
+/// Records the path of the table with the smallest position after `after`.
+fn find_following_table(
+    table: &Table,
+    after: usize,
+    path: &mut Vec<String>,
+    best: &mut Option<(usize, Vec<String>)>,
+) {
+    for (name, item) in table.iter() {
+        let Item::Table(sub) = item else {
+            continue;
+        };
+        if let Some(pos) = sub.position().filter(|p| *p > after) {
+            if best.as_ref().is_none_or(|(b, _)| pos < *b) {
+                let mut found = path.clone();
+                found.push(name.to_string());
+                *best = Some((pos, found));
+            }
+        }
+        path.push(name.to_string());
+        find_following_table(sub, after, path, best);
+        path.pop();
+    }
+}
+
+fn append_to_document_end(doc: &mut DocumentMut, lead: &str) {
+    let existing = raw_text(Some(doc.trailing()));
+    doc.set_trailing(format!("{lead}{existing}"));
 }
 
 /// The table at the dotted path `parts` (`["audio", "fade"]` for
@@ -362,6 +478,87 @@ mod tests {
         let text = read(&config);
         assert!(!text.contains("play_ms"));
         assert!(text.contains("stop_ms = 300"));
+    }
+
+    /// The `[spotify]` block from a real config where comments sit next to values.
+    const SPOTIFY_BLOCK: &str = "[spotify]\n\
+client_id = \"889562359a9049ed8970bd1565425e56\"\n\
+# redirect_port = 8898        # redirect URI http://127.0.0.1:8898/callback\n\
+device = \"EugeniusThink\"     # preferred device when none is active\n\
+# open_browser = \"auto\"       # auto | always | never\n";
+
+    #[test]
+    fn set_keeps_the_trailing_comment_and_every_comment_line() {
+        let dir = TempDir::new().unwrap();
+        let config = file_in(&dir, "config.toml", SPOTIFY_BLOCK);
+
+        config.set_str("spotify", "device", "Other").unwrap();
+
+        let text = read(&config);
+        assert!(text.contains("device = \"Other\""), "{text}");
+        assert!(
+            text.contains("# preferred device when none is active"),
+            "{text}"
+        );
+        assert!(
+            text.contains("# redirect_port = 8898        # redirect URI"),
+            "{text}"
+        );
+        assert!(text.contains("# open_browser = \"auto\""), "{text}");
+        assert!(!text.contains("EugeniusThink"), "{text}");
+    }
+
+    #[test]
+    fn remove_keeps_the_comment_lines_above_the_key() {
+        let dir = TempDir::new().unwrap();
+        let config = file_in(&dir, "config.toml", SPOTIFY_BLOCK);
+
+        config.remove("spotify", "device").unwrap();
+
+        let text = read(&config);
+        assert!(!text.contains("device"), "{text}");
+        assert!(
+            text.contains("# redirect_port = 8898        # redirect URI"),
+            "{text}"
+        );
+        assert!(text.contains("# open_browser = \"auto\""), "{text}");
+        assert!(text.contains("client_id = "), "{text}");
+    }
+
+    #[test]
+    fn removing_the_last_key_of_a_table_keeps_its_leading_comments() {
+        let dir = TempDir::new().unwrap();
+        let config = file_in(
+            &dir,
+            "config.toml",
+            "[tui]\nmarquee = true\n# show_cover = false\nicons = \"emoji\"\n[audio]\nvolume = 1.0\n",
+        );
+
+        config.remove("tui", "icons").unwrap();
+
+        let text = read(&config);
+        assert!(!text.contains("icons"), "{text}");
+        assert!(text.contains("# show_cover = false"), "{text}");
+        assert!(text.contains("marquee = true"), "{text}");
+        let parsed: toml::Table = text.parse().unwrap();
+        assert_eq!(parsed["audio"]["volume"].as_float(), Some(1.0));
+    }
+
+    #[test]
+    fn set_adds_a_missing_key_to_a_commented_table() {
+        let dir = TempDir::new().unwrap();
+        let config = file_in(&dir, "config.toml", SPOTIFY_BLOCK);
+
+        config.set_str("spotify", "playlist", "Mix").unwrap();
+
+        let text = read(&config);
+        assert!(text.contains("playlist = \"Mix\""), "{text}");
+        assert!(
+            text.contains("# preferred device when none is active"),
+            "{text}"
+        );
+        let parsed: toml::Table = text.parse().unwrap();
+        assert_eq!(parsed["spotify"]["playlist"].as_str(), Some("Mix"));
     }
 
     #[test]

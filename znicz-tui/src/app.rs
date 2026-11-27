@@ -15,10 +15,11 @@ use ratatui_image::picker::ProtocolType;
 use znicz_core::{
     AudioDeviceInfo, AudioOutput, Command, FadeTimes, IpcClient, LibraryHost, LibraryOp,
     LibraryStatus, PlaybackStatus, PlayerEvent, PlayerHandle, PlayerOps, PlayerState, QueueItem,
-    RepeatMode, apply_to_player, list_saved, load_path, sanitize_stem, saved_path, skipped_notice,
-    write_path,
+    RepeatMode, SpotifyConfig, SpotifyHost, SpotifyState, apply_to_player, list_saved, load_path,
+    sanitize_stem, saved_path, skipped_notice, write_path,
 };
 use znicz_library::{Library, Track};
+use znicz_spotify::browser::OpenBrowser;
 
 use crate::config_file::{ConfigFile, ConfigProblem};
 use crate::cover::CoverCache;
@@ -35,8 +36,14 @@ use crate::toast::Toasts;
 use crate::tui_config::{CoverProtocol, TuiConfig};
 
 mod settings_ui;
+mod spotify_browse_ui;
+mod spotify_mode;
+mod spotify_ui;
+use crate::spotify_browse::SpotifyBrowser;
+use crate::spotify_worker::{SpotifyAsk, SpotifyWorker};
 use crate::update::{Release, Updates};
 use crate::views;
+pub(crate) use spotify_ui::{LoginPanel, SpotifyConfirm, SpotifyPaste};
 
 /// GitHub Windows runners expose WASAPI, but enumerating devices from tests
 /// crashes the process. Production (no `CI`) still lists devices at start.
@@ -176,6 +183,9 @@ pub enum DevicesMode {
     Default,
 }
 
+/// An action that takes a string from the app: the clipboard writer or the browser opener.
+pub(crate) type TextAction = Box<dyn Fn(&str) -> std::io::Result<()> + Send>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Modal {
     None,
@@ -186,6 +196,8 @@ pub enum Modal {
     Messages,
     Update,
     Settings,
+    /// The Spotify Connect device list (Spotify mode's `,`).
+    SpotifyDevices,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -298,6 +310,7 @@ impl Modal {
                 | Self::Messages
                 | Self::Update
                 | Self::Settings
+                | Self::SpotifyDevices
         )
     }
 }
@@ -377,6 +390,8 @@ pub struct App {
     pub config_file: Option<ConfigFile>,
     /// Why the config file was not used (it is broken or unreadable), reported at start.
     pub config_problem: Option<ConfigProblem>,
+    /// The notice that a broken config file now parses was shown this run.
+    pub(crate) config_fixed_told: bool,
     /// The Settings tab shown. Its rows are rebuilt when the modal opens (folders come from the library status).
     pub(crate) settings_tab: Tab,
     pub(crate) settings_rows: Vec<Row>,
@@ -410,6 +425,67 @@ pub struct App {
     pub(crate) settings_prompt: Option<settings_ui::SliderPrompt>,
     /// The folder prompt was opened from Settings, so closing it returns there.
     folder_prompt_from_settings: bool,
+    /// `[spotify]` as the TUI has it. The player's copy is sent with `Configure`.
+    pub(crate) spotify: SpotifyConfig,
+    /// `[spotify] open_browser`; the TUI reads it, the player does not.
+    pub(crate) open_browser: OpenBrowser,
+    /// The status host: the main connection, which answers at once.
+    pub(crate) spotify_main: Option<Arc<dyn SpotifyHost>>,
+    /// The browse lane: a second connection, for Settings' slow calls and the
+    /// browser's lists. Never on the UI thread.
+    pub(crate) spotify_worker: Option<SpotifyWorker<SpotifyAsk>>,
+    /// The transport lane: a third connection, so Pause is answered while a
+    /// browse call is still blocked.
+    pub(crate) spotify_transport: Option<SpotifyWorker<SpotifyAsk>>,
+    /// The last status poll.
+    pub(crate) spotify_state: SpotifyState,
+    /// A device list has arrived for the current client ID. The list itself is `spotify_state.devices`.
+    pub(crate) spotify_devices_known: bool,
+    /// The player does not answer Spotify requests; polling has stopped.
+    pub(crate) spotify_unavailable: Option<String>,
+    /// When the status was last polled.
+    pub(crate) spotify_polled_at: Option<Instant>,
+    /// Spotify mode: `O` made the keys, the footer and the status poll Spotify's.
+    pub(crate) spotify_mode: bool,
+    /// The percent `m` took the device to 0 from; `m` again restores it. None when nothing is muted.
+    pub(crate) spotify_mute_restore: Option<u8>,
+    /// Spotify's queue for the drawer: the playing track and the ones after it.
+    pub(crate) spotify_queue: Option<(
+        Option<znicz_core::SpotifyTrack>,
+        Vec<znicz_core::SpotifyTrack>,
+    )>,
+    /// Why the last queue read failed, shown in the drawer in place of the rows.
+    /// Cleared by the next successful read.
+    pub(crate) spotify_queue_error: Option<String>,
+    /// A `Queue` request is with the worker; its reply clears this.
+    pub(crate) spotify_queue_requested: bool,
+    /// When the last `Queue` request was sent, for the 3 s refresh while the drawer is open.
+    pub(crate) spotify_queue_asked_at: Option<Instant>,
+    /// The browser's levels, cursors and request ids. Reset when the mode ends.
+    pub(crate) spotify_browser: SpotifyBrowser,
+    /// The search prompt, while it is open.
+    pub(crate) spotify_search: Option<LineEdit>,
+    /// The login panel, while a login runs.
+    pub(crate) spotify_login: Option<LoginPanel>,
+    /// A question in the Settings strip that waits for Enter.
+    pub(crate) spotify_confirm: Option<SpotifyConfirm>,
+    /// The player refused the file's client ID as another one and keeps its
+    /// own. Set by that refusal; cleared by any successful `Configure`.
+    pub(crate) spotify_player_differs: bool,
+    /// A `BeginLogin` is with the worker; its reply (or error) clears this.
+    pub(crate) spotify_login_requested: bool,
+    /// A `Devices` request is with the worker; its reply (or error) clears this.
+    pub(crate) spotify_devices_requested: bool,
+    /// The cursor of the Spotify Connect device list (`,` in Spotify mode).
+    pub(crate) spotify_devices_cursor: Cursor,
+    /// The first browser row on screen. Kept by the drawing, so the window scrolls with the cursor.
+    pub(crate) spotify_row_offset: usize,
+    /// The client ID when the pending `Devices` request was sent.
+    pub(crate) spotify_devices_client_id: String,
+    /// Writes the clipboard sequence to the terminal. Tests replace it.
+    pub(crate) clipboard: TextAction,
+    /// Opens the login page in a browser. Tests replace it.
+    pub(crate) browser: TextAction,
     pub covers: CoverCache,
     pub picker: Option<ratatui_image::picker::Picker>,
     pub(crate) cover_image: Option<ratatui_image::protocol::StatefulProtocol>,
@@ -658,9 +734,24 @@ impl App {
 
     pub fn with_remote(player: IpcClient, library: Option<Library>) -> Self {
         let host: Arc<dyn LibraryHost> = Arc::new(player.clone());
+        let status: Arc<dyn SpotifyHost> = Arc::new(player.clone());
         let mut app = Self::with_engine(Engine::Remote(player), library);
         app.library_host = Some(host);
+        app.spotify_main = Some(status);
         app
+    }
+
+    /// Start the browse lane's worker. Spotify requests that can be slow run
+    /// there, never on the UI thread.
+    pub fn with_spotify_worker(mut self, host: Arc<dyn SpotifyHost>) -> std::io::Result<Self> {
+        self.spotify_worker = Some(SpotifyWorker::spawn(host)?);
+        Ok(self)
+    }
+
+    /// Start the transport lane's worker, on its own connection.
+    pub fn with_spotify_transport(mut self, host: Arc<dyn SpotifyHost>) -> std::io::Result<Self> {
+        self.spotify_transport = Some(SpotifyWorker::spawn(host)?);
+        Ok(self)
     }
 
     /// Check for a newer release when the TUI runs, and let the user update.
@@ -688,6 +779,8 @@ impl App {
         self.check_for_updates = values.update_check;
         self.default_device = values.default_device;
         self.fades = values.fades;
+        self.spotify = values.spotify;
+        self.open_browser = values.open_browser;
         self
     }
 
@@ -737,6 +830,7 @@ impl App {
             tui: TuiConfig::default(),
             config_file: None,
             config_problem: None,
+            config_fixed_told: false,
             settings_tab: Tab::Display,
             settings_rows: Vec::new(),
             settings_cursor: 0,
@@ -754,6 +848,33 @@ impl App {
             settings_confirm: None,
             settings_prompt: None,
             folder_prompt_from_settings: false,
+            spotify: SpotifyConfig::default(),
+            open_browser: OpenBrowser::default(),
+            spotify_main: None,
+            spotify_worker: None,
+            spotify_transport: None,
+            spotify_state: SpotifyState::default(),
+            spotify_devices_known: false,
+            spotify_unavailable: None,
+            spotify_polled_at: None,
+            spotify_mode: false,
+            spotify_mute_restore: None,
+            spotify_queue: None,
+            spotify_queue_error: None,
+            spotify_queue_requested: false,
+            spotify_queue_asked_at: None,
+            spotify_browser: SpotifyBrowser::new(),
+            spotify_search: None,
+            spotify_login: None,
+            spotify_confirm: None,
+            spotify_player_differs: false,
+            spotify_login_requested: false,
+            spotify_devices_requested: false,
+            spotify_devices_cursor: Cursor::new(),
+            spotify_row_offset: 0,
+            spotify_devices_client_id: String::new(),
+            clipboard: Box::new(crate::osc52::copy),
+            browser: Box::new(znicz_spotify::browser::open),
             covers: CoverCache::new(),
             picker: Some(ratatui_image::picker::Picker::halfblocks()),
             cover_image: None,
@@ -1017,6 +1138,8 @@ impl App {
             self.poll_updates();
             self.poll_manual_check();
             self.poll_install();
+            self.poll_spotify();
+            self.request_more_rows();
             self.toasts.tick();
 
             let state = self.player.state();
@@ -1135,6 +1258,13 @@ impl App {
             Modal::Update => {
                 self.update_scroll = self.update_scroll.saturating_add_signed(delta);
             }
+            Modal::SpotifyDevices => {
+                let len = self.spotify_state.devices.len();
+                self.spotify_devices_cursor.step(delta, len);
+            }
+            // The open Spotify drawer is read-only: the wheel moves nothing.
+            Modal::None if self.spotify_drawer_blocks_moves() => {}
+            Modal::None if self.in_spotify_browser() => self.spotify_browser.step(delta),
             Modal::None => match self.focus {
                 Focus::Library if self.view == View::Browse => {
                     self.library.step(delta, self.library_strip())
@@ -1196,6 +1326,12 @@ impl App {
         }
         if self.modal != Modal::None {
             self.on_overlay_click(column, row);
+            return;
+        }
+
+        // The browser's rows select; Enter or `l` plays or opens. With the drawer
+        // open, the drawer is on top and takes no click.
+        if self.in_spotify_browser() && !self.queue_open && self.spotify_row_clicked(column, row) {
             return;
         }
 
@@ -1283,6 +1419,10 @@ impl App {
                         self.settings_on_tab_bar = false;
                         self.set_settings_cursor(index);
                     }
+                    Modal::SpotifyDevices => {
+                        let len = self.spotify_state.devices.len();
+                        self.spotify_devices_cursor.set(index, len);
+                    }
                     _ => {}
                 }
             }
@@ -1332,6 +1472,12 @@ impl App {
             return;
         }
 
+        // The Spotify search prompt is typed text too: it takes every key.
+        if self.in_spotify_mode() && self.spotify_search.is_some() {
+            self.on_spotify_search_key(key);
+            return;
+        }
+
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             self.on_control_key(key.code);
             return;
@@ -1339,6 +1485,29 @@ impl App {
 
         if key.code == KeyCode::Esc {
             self.on_esc();
+            return;
+        }
+
+        // In Spotify mode's browser the browser takes its keys. Of the rest, only
+        // the global keys (`q`, `S`, `P`, ...) keep their meaning; Znicz's playback
+        // and library keys stay out until the transport keys take their Spotify meanings.
+        if self.in_spotify_browser() && self.spotify_browser_key(key) {
+            return;
+        }
+        // Spotify's transport keys take Space, the arrows, `m` and the rest before the
+        // Znicz keys see them, in the browser and in the Stage alike.
+        if self.in_spotify_mode() && self.modal == Modal::None {
+            if let Some(action) = crate::spotify_mode::key_action(key) {
+                self.spotify_transport_key(action);
+                return;
+            }
+        }
+        // In Spotify mode, with or without the browser, no other key reaches the
+        // Znicz queue or engine: the Spotify queue drawer is read-only.
+        if self.in_spotify_mode()
+            && self.modal == Modal::None
+            && !crate::spotify_mode::keeps_global(key)
+        {
             return;
         }
 
@@ -1356,6 +1525,12 @@ impl App {
         }
 
         if self.modal == Modal::Messages && self.on_messages_key(key) {
+            return;
+        }
+
+        // The Spotify device list owns its keys before the global map, so `,` closes it
+        // rather than opening Znicz's output list.
+        if self.modal == Modal::SpotifyDevices && self.on_spotify_devices_key(key) {
             return;
         }
 
@@ -1397,6 +1572,24 @@ impl App {
     }
 
     fn on_esc(&mut self) {
+        // The login panel's Esc: a paste prompt closes back to the panel,
+        // otherwise the login is cancelled. Settings stays open.
+        if self.modal == Modal::Settings && self.spotify_login.is_some() {
+            self.esc_spotify_panel();
+            return;
+        }
+        // In Spotify mode's browser, Esc closes the search prompt, then the queue
+        // drawer, else goes back one level. At the top level it does nothing.
+        if self.spotify_mode && self.modal == Modal::None && self.view == View::Browse {
+            if self.spotify_search.is_some() {
+                self.spotify_search = None;
+            } else if self.queue_open {
+                self.close_queue();
+            } else {
+                self.spotify_browser.back();
+            }
+            return;
+        }
         // Esc cancels the typed value and leaves Settings open.
         if self.modal == Modal::Settings && self.settings_prompt.is_some() {
             self.settings_prompt = None;
@@ -1404,6 +1597,10 @@ impl App {
         }
         if self.modal == Modal::Settings && self.settings_confirm.is_some() {
             self.settings_confirm = None;
+            return;
+        }
+        if self.modal == Modal::Settings && self.spotify_confirm.is_some() {
+            self.spotify_confirm = None;
             return;
         }
         if matches!(
@@ -1414,6 +1611,7 @@ impl App {
                 | Modal::Messages
                 | Modal::Update
                 | Modal::Settings
+                | Modal::SpotifyDevices
         ) {
             self.close_modal();
         } else if self.queue_open && (self.focus == Focus::Queue || self.view == View::Stage) {
@@ -1589,6 +1787,7 @@ impl App {
             KeyCode::Char('P') => self.toggle_playlists_modal(),
             KeyCode::Char('R') => self.toggle_radio_modal(),
             KeyCode::Char('S') => self.toggle_settings_modal(),
+            KeyCode::Char('O') if self.modal == Modal::None => self.toggle_spotify_mode(),
             KeyCode::Char('M') => self.toggle_messages_modal(),
 
             KeyCode::Char(']') if self.modal.blocks_list_focus() => {}
@@ -1730,6 +1929,16 @@ impl App {
             Modal::Help if self.help.editing => Context::HelpFilter,
             Modal::Help => Context::Help,
             Modal::Devices => Context::Devices,
+            Modal::SpotifyDevices => Context::SpotifyDevices,
+            Modal::Settings
+                if self
+                    .spotify_login
+                    .as_ref()
+                    .is_some_and(|p| p.paste.is_some()) =>
+            {
+                Context::SettingsPrompt
+            }
+            Modal::Settings if self.spotify_login.is_some() => Context::SettingsLogin,
             Modal::Settings if self.settings_prompt.is_some() => Context::SettingsPrompt,
             Modal::Settings if self.settings_on_tab_bar => Context::SettingsTabs,
             Modal::Settings => Context::Settings,
@@ -1737,6 +1946,12 @@ impl App {
             Modal::Radio => Context::Radio,
             Modal::Messages => Context::Messages,
             Modal::Update => Context::Update,
+            Modal::None if self.spotify_mode && self.view == View::Stage => Context::SpotifyStage,
+            Modal::None if self.spotify_mode && self.spotify_search.is_some() => {
+                Context::SpotifySearch
+            }
+            Modal::None if self.spotify_mode && self.queue_open => Context::SpotifyQueue,
+            Modal::None if self.spotify_mode => Context::SpotifyBrowse,
             Modal::None
                 if self.view == View::Stage && !(self.queue_open && self.focus == Focus::Queue) =>
             {
@@ -1825,6 +2040,7 @@ impl App {
     /// Close whatever modal is open, tidying what it leaves behind.
     fn close_modal(&mut self) {
         self.settings_confirm = None;
+        self.spotify_confirm = None;
         if self.modal == Modal::Help {
             self.modal = self.help.return_to;
             return;
@@ -2473,6 +2689,12 @@ impl App {
 
     // --- list movement, applied to whichever list has focus ---
 
+    /// With the Spotify queue drawer open in Spotify mode, no list moves: the
+    /// drawer is read-only and the Znicz lists sit behind it.
+    fn spotify_drawer_blocks_moves(&self) -> bool {
+        self.spotify_mode && self.modal == Modal::None && self.queue_open
+    }
+
     fn list_len(&self) -> usize {
         if self.modal == Modal::Messages {
             self.toasts.history_len()
@@ -2490,6 +2712,9 @@ impl App {
     }
 
     fn step(&mut self, delta: isize) {
+        if self.spotify_drawer_blocks_moves() {
+            return;
+        }
         if self.modal == Modal::Settings {
             self.settings_move(delta);
             return;
@@ -2507,12 +2732,17 @@ impl App {
         } else if self.focus == Focus::Queue && self.queue_open {
             self.queue_cursor.step(delta, len);
             self.queue_h_offset = 0;
+        } else if self.in_spotify_browser() {
+            self.spotify_browser.step(delta);
         } else if self.view == View::Browse {
             self.library.step(delta, self.library_strip());
         }
     }
 
     fn page(&mut self, delta: isize) {
+        if self.spotify_drawer_blocks_moves() {
+            return;
+        }
         if self.modal == Modal::Settings {
             self.settings_move(delta);
             return;
@@ -2530,12 +2760,17 @@ impl App {
         } else if self.focus == Focus::Queue && self.queue_open {
             self.queue_cursor.page(delta, len);
             self.queue_h_offset = 0;
+        } else if self.in_spotify_browser() {
+            self.spotify_browser.step(delta);
         } else if self.view == View::Browse {
             self.library.page(delta, self.library_strip());
         }
     }
 
     fn go_first(&mut self) {
+        if self.spotify_drawer_blocks_moves() {
+            return;
+        }
         if self.modal == Modal::Settings {
             if !self.settings_on_tab_bar {
                 self.set_settings_cursor(0);
@@ -2554,12 +2789,17 @@ impl App {
         } else if self.focus == Focus::Queue && self.queue_open {
             self.queue_cursor.first();
             self.queue_h_offset = 0;
+        } else if self.in_spotify_browser() {
+            self.spotify_browser.first();
         } else if self.view == View::Browse {
             self.library.first(self.library_strip());
         }
     }
 
     fn go_last(&mut self) {
+        if self.spotify_drawer_blocks_moves() {
+            return;
+        }
         if self.modal == Modal::Settings {
             if !self.settings_on_tab_bar {
                 self.set_settings_cursor(self.settings_rows.len().saturating_sub(1));
@@ -2579,6 +2819,8 @@ impl App {
         } else if self.focus == Focus::Queue && self.queue_open {
             self.queue_cursor.last(len);
             self.queue_h_offset = 0;
+        } else if self.in_spotify_browser() {
+            self.spotify_browser.last();
         } else if self.view == View::Browse {
             self.library.last(self.library_strip());
         }
@@ -2878,6 +3120,14 @@ fn temp_fallback(name: &str) -> PathBuf {
     let path = std::env::temp_dir().join(name);
     tracing::warn!(path = %path.display(), "no user data directory; using a temporary path");
     path
+}
+
+/// An `App` with no library and a silent player, for view tests that draw a
+/// frame. The player thread opens no output until something plays.
+#[cfg(test)]
+pub(crate) fn test_app() -> App {
+    let (player, _thread) = znicz_core::spawn_player(znicz_core::AudioConfig::default());
+    App::with_library(player, None)
 }
 
 #[cfg(test)]
