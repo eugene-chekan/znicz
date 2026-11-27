@@ -2,7 +2,7 @@
 //! which devices the choice offers, what a typed value must be, and the text of
 //! the login panel. No IO, no App.
 
-use znicz_core::{SpotifyAccount, SpotifyDevice, SpotifyLogin, valid_client_id};
+use znicz_core::{LOGIN_EXPIRED, SpotifyAccount, SpotifyDevice, SpotifyLogin, valid_client_id};
 use znicz_spotify::browser::OpenBrowser;
 
 use crate::settings::Row;
@@ -49,6 +49,15 @@ pub struct SpotifyView {
     pub player_differs: bool,
 }
 
+/// A failed login's reason, with the TUI's hint when the login expired.
+fn failure_text(reason: &str) -> String {
+    if reason == LOGIN_EXPIRED {
+        format!("{LOGIN_EXPIRED}, press Enter to start again")
+    } else {
+        reason.to_string()
+    }
+}
+
 /// The account row's text.
 pub fn account_text(view: &SpotifyView) -> String {
     if let Some(reason) = &view.unavailable {
@@ -58,7 +67,7 @@ pub fn account_text(view: &SpotifyView) -> String {
         SpotifyLogin::NotConfigured => "Not configured".into(),
         SpotifyLogin::NotLoggedIn => "Not logged in".into(),
         SpotifyLogin::LoggingIn => "Logging in…".into(),
-        SpotifyLogin::Failed(reason) => format!("Failed: {reason}"),
+        SpotifyLogin::Failed(reason) => format!("Failed: {}", failure_text(reason)),
         SpotifyLogin::LoggedIn => match &view.account {
             None => "Logged in".into(),
             Some(account) => {
@@ -173,7 +182,8 @@ pub fn login_outcome(
             Some(LoginOutcome::Success(text))
         }
         SpotifyLogin::Failed(reason) => Some(LoginOutcome::Failure(format!(
-            "Spotify login failed: {reason}"
+            "Spotify login failed: {}",
+            failure_text(reason)
         ))),
         _ => None,
     }
@@ -232,6 +242,21 @@ mod tests {
         assert_eq!(
             account_text(&view(SpotifyLogin::Failed("bad redirect".into()))),
             "Failed: bad redirect"
+        );
+    }
+
+    #[test]
+    fn an_expired_login_says_to_press_enter_to_start_again() {
+        let expired = SpotifyLogin::Failed(LOGIN_EXPIRED.into());
+        assert_eq!(
+            account_text(&view(expired.clone())),
+            "Failed: login expired, press Enter to start again"
+        );
+        assert_eq!(
+            login_outcome(&expired, None),
+            Some(LoginOutcome::Failure(
+                "Spotify login failed: login expired, press Enter to start again".into()
+            ))
         );
     }
 

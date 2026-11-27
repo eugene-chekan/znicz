@@ -170,7 +170,9 @@ A login keeps a PKCE session for 10 minutes and starts a listener on
 `127.0.0.1:<port>`. The listener binds only that address and answers one
 finished login. The redirect or a pasted address finishes it, whichever comes
 first (see [Logging in over SSH](#logging-in-over-ssh)). A login nobody finishes
-expires after the 10 minutes, and its listener lets go of the port.
+expires after the 10 minutes, and its listener lets go of the port. The
+service reports the expiry as `login expired`; the TUI adds "press Enter to
+start again" and the CLI adds "run `znicz spotify login` again".
 
 Logging in again replaces a pending login. The old listener lets go of the
 port first, so the new one can bind it.

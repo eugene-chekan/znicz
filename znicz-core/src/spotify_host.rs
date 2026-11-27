@@ -6,6 +6,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 
+/// The reason of a `SpotifyLogin::Failed` when the login ran out of time. The
+/// front ends add their own hint for what to do next; compare with this exact
+/// text, not a part of it.
+pub const LOGIN_EXPIRED: &str = "login expired";
+
 /// Where the login stands.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", content = "reason", rename_all = "snake_case")]

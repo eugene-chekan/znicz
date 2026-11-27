@@ -11,8 +11,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use clap::Subcommand;
 use color_eyre::eyre::{bail, eyre};
 use znicz_core::{
-    IpcClient, SpotifyConfig, SpotifyErrorKind, SpotifyHost, SpotifyLogin, SpotifyOp, SpotifyReply,
-    SpotifyState, ZniczError, valid_client_id,
+    IpcClient, LOGIN_EXPIRED, SpotifyConfig, SpotifyErrorKind, SpotifyHost, SpotifyLogin,
+    SpotifyOp, SpotifyReply, SpotifyState, ZniczError, valid_client_id,
 };
 use znicz_spotify::browser::{self, OpenBrowser};
 use znicz_tui::ConfigProblem;
@@ -63,7 +63,21 @@ pub fn run(
     }
     let host = connect()?;
     if configure_before(&command) {
-        configure_login(&host, config)?;
+        let outcome = configure_login(
+            |replace_client_id| {
+                host.apply(SpotifyOp::Configure {
+                    config: config.clone(),
+                    replace_client_id,
+                })
+                .map(|_| ())
+            },
+            std::io::stdin().lock(),
+            std::io::stdout(),
+        )?;
+        if outcome == ConfigureOutcome::Declined {
+            println!("Not changed.");
+            std::process::exit(1);
+        }
     }
     match command {
         SpotifyCmd::Login => login(&host, open),
@@ -91,35 +105,41 @@ pub fn replace_answer(line: &str) -> bool {
     matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
 }
 
-/// Send the `[spotify]` settings for a login. A different client ID the player
-/// already has is refused first; the user is asked, and only a yes replaces it.
-fn configure_login(host: &IpcClient, config: SpotifyConfig) -> color_eyre::Result<()> {
-    let refused = host.apply(SpotifyOp::Configure {
-        config: config.clone(),
-        replace_client_id: false,
-    });
-    match refused {
-        Ok(_) => return Ok(()),
+/// What `configure_login` did with the `[spotify]` settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigureOutcome {
+    /// The player has the settings; a login can start.
+    Configured,
+    /// The player keeps its own client ID, and the user said no.
+    Declined,
+}
+
+/// Send the `[spotify]` settings for a login. `apply` sends them, and its
+/// argument says whether to replace a different client ID the player already
+/// has. Such an ID is refused first; the user is asked on `question`, and only
+/// a yes in `answer` replaces it. End of input counts as no.
+fn configure_login(
+    mut apply: impl FnMut(bool) -> Result<(), ZniczError>,
+    mut answer: impl BufRead,
+    mut question: impl Write,
+) -> color_eyre::Result<ConfigureOutcome> {
+    match apply(false) {
+        Ok(()) => return Ok(ConfigureOutcome::Configured),
         Err(ZniczError::Spotify {
             kind: SpotifyErrorKind::ClientIdDiffers,
             ..
         }) => {}
         Err(error) => return Err(host_error(error)),
     }
-    print!("{REPLACE_QUESTION}");
-    std::io::stdout().flush()?;
+    write!(question, "{REPLACE_QUESTION}")?;
+    question.flush()?;
     let mut line = String::new();
-    std::io::stdin().lock().read_line(&mut line)?;
+    answer.read_line(&mut line)?;
     if !replace_answer(&line) {
-        println!("Not changed.");
-        std::process::exit(1);
+        return Ok(ConfigureOutcome::Declined);
     }
-    host.apply(SpotifyOp::Configure {
-        config,
-        replace_client_id: true,
-    })
-    .map_err(host_error)?;
-    Ok(())
+    apply(true).map_err(host_error)?;
+    Ok(ConfigureOutcome::Configured)
 }
 
 fn login(host: &IpcClient, open: OpenBrowser) -> color_eyre::Result<()> {
@@ -241,13 +261,20 @@ pub fn login_wait(state: &SpotifyState, account_wait: Duration) -> LoginWait {
             None if account_wait < ACCOUNT_WAIT => LoginWait::Pending,
             None => LoginWait::LoggedIn { user: None },
         },
-        SpotifyLogin::Failed(reason) => LoginWait::Failed(reason.replace(
-            "press Enter to start again",
-            "run `znicz spotify login` again",
-        )),
+        SpotifyLogin::Failed(reason) => LoginWait::Failed(failure_reason(reason)),
         SpotifyLogin::NotLoggedIn | SpotifyLogin::NotConfigured => {
             LoginWait::Failed("the login was cancelled".into())
         }
+    }
+}
+
+/// The reason of a failed login, with the CLI's hint when the login expired.
+/// Any other reason is shown as the service worded it.
+pub fn failure_reason(reason: &str) -> String {
+    if reason == LOGIN_EXPIRED {
+        format!("{LOGIN_EXPIRED}, run `znicz spotify login` again")
+    } else {
+        reason.to_string()
     }
 }
 
@@ -347,7 +374,7 @@ fn login_text(login: &SpotifyLogin) -> String {
         SpotifyLogin::NotLoggedIn => "not logged in".into(),
         SpotifyLogin::LoggingIn => "logging in".into(),
         SpotifyLogin::LoggedIn => "logged in".into(),
-        SpotifyLogin::Failed(reason) => format!("failed: {reason}"),
+        SpotifyLogin::Failed(reason) => format!("failed: {}", failure_reason(reason)),
     }
 }
 
@@ -391,8 +418,11 @@ fn playing_text(state: &SpotifyState, now_ms: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+
     use super::*;
-    use znicz_core::NO_SPOTIFY;
+    use znicz_core::{LOGIN_EXPIRED, NO_SPOTIFY};
     use znicz_core::{
         SpotifyAccount, SpotifyDevice, SpotifyLogin, SpotifyPlayback, SpotifyState, SpotifyTrack,
     };
@@ -471,13 +501,21 @@ mod tests {
     #[test]
     fn a_failed_or_cancelled_login_ends_with_a_reason() {
         let failed = SpotifyState {
-            login: SpotifyLogin::Failed("login expired, press Enter to start again".into()),
+            login: SpotifyLogin::Failed(LOGIN_EXPIRED.into()),
             ..SpotifyState::default()
         };
-        // The service's wording is for the TUI (Enter); the CLI says what to run.
+        // The service's reason is front-end neutral; the CLI says what to run.
         assert_eq!(
             login_wait(&failed, Duration::ZERO),
             LoginWait::Failed("login expired, run `znicz spotify login` again".into())
+        );
+        let other = SpotifyState {
+            login: SpotifyLogin::Failed("needs Spotify Premium".into()),
+            ..SpotifyState::default()
+        };
+        assert_eq!(
+            login_wait(&other, Duration::ZERO),
+            LoginWait::Failed("needs Spotify Premium".into())
         );
         let cancelled = SpotifyState {
             login: SpotifyLogin::NotLoggedIn,
@@ -685,6 +723,81 @@ mod tests {
         for no in ["", "\n", "n", "N", "no", "yep", "maybe"] {
             assert!(!replace_answer(no), "{no:?}");
         }
+    }
+
+    fn client_id_differs() -> ZniczError {
+        ZniczError::Spotify {
+            kind: SpotifyErrorKind::ClientIdDiffers,
+            message: "the player uses a different Spotify client ID".into(),
+        }
+    }
+
+    /// Run the question with scripted `apply` replies and a scripted answer.
+    /// Returns the outcome, the `replace` flags sent, and the question text.
+    fn ask_to_configure(
+        replies: Vec<Result<(), ZniczError>>,
+        answer: &str,
+    ) -> (color_eyre::Result<ConfigureOutcome>, Vec<bool>, String) {
+        let sent = RefCell::new(Vec::new());
+        let mut replies = VecDeque::from(replies);
+        let mut question = Vec::new();
+        let outcome = configure_login(
+            |replace| {
+                sent.borrow_mut().push(replace);
+                replies.pop_front().expect("apply was called too often")
+            },
+            answer.as_bytes(),
+            &mut question,
+        );
+        (
+            outcome,
+            sent.into_inner(),
+            String::from_utf8(question).unwrap(),
+        )
+    }
+
+    #[test]
+    fn a_client_id_the_player_accepts_is_sent_once_without_asking() {
+        let (outcome, sent, question) = ask_to_configure(vec![Ok(())], "");
+        assert_eq!(outcome.unwrap(), ConfigureOutcome::Configured);
+        assert_eq!(sent, [false]);
+        assert!(question.is_empty(), "{question:?}");
+    }
+
+    #[test]
+    fn an_unrelated_error_is_returned_without_asking() {
+        let other = ZniczError::Spotify {
+            kind: SpotifyErrorKind::NotConfigured,
+            message: "Spotify is not configured".into(),
+        };
+        let (outcome, sent, question) = ask_to_configure(vec![Err(other)], "y\n");
+        assert!(outcome.is_err());
+        assert_eq!(sent, [false]);
+        assert!(question.is_empty(), "{question:?}");
+    }
+
+    #[test]
+    fn a_yes_replaces_the_client_id_after_the_question() {
+        let (outcome, sent, question) =
+            ask_to_configure(vec![Err(client_id_differs()), Ok(())], "y\n");
+        assert_eq!(outcome.unwrap(), ConfigureOutcome::Configured);
+        assert_eq!(sent, [false, true]);
+        assert_eq!(question, REPLACE_QUESTION);
+    }
+
+    #[test]
+    fn a_no_keeps_the_client_id() {
+        let (outcome, sent, question) = ask_to_configure(vec![Err(client_id_differs())], "n\n");
+        assert_eq!(outcome.unwrap(), ConfigureOutcome::Declined);
+        assert_eq!(sent, [false]);
+        assert_eq!(question, REPLACE_QUESTION);
+    }
+
+    #[test]
+    fn the_end_of_input_keeps_the_client_id() {
+        let (outcome, sent, _question) = ask_to_configure(vec![Err(client_id_differs())], "");
+        assert_eq!(outcome.unwrap(), ConfigureOutcome::Declined);
+        assert_eq!(sent, [false]);
     }
 
     #[test]

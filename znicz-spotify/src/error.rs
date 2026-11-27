@@ -10,7 +10,7 @@ pub enum SpotifyError {
     NotLoggedIn,
     #[error("no Spotify login is in progress")]
     NoLogin,
-    #[error("login expired, press Enter to start again")]
+    #[error("{}", znicz_core::LOGIN_EXPIRED)]
     LoginExpired,
     #[error("that address is not from this login")]
     WrongAddress,
@@ -103,6 +103,16 @@ mod tests {
             "Spotify refused the client ID or redirect URI: register exactly \
              http://127.0.0.1:8898/callback in your Spotify app"
         );
+    }
+
+    #[test]
+    fn a_login_expiry_is_worded_for_every_front_end() {
+        // The front ends add their own hint after this exact text.
+        assert_eq!(
+            SpotifyError::LoginExpired.to_string(),
+            znicz_core::LOGIN_EXPIRED
+        );
+        assert_eq!(znicz_core::LOGIN_EXPIRED, "login expired");
     }
 
     #[test]
