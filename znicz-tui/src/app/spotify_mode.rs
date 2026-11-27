@@ -274,6 +274,10 @@ impl App {
     /// rows until a read succeeds, and a stop from the player stops the reads.
     pub(crate) fn queue_read_failed(&mut self, error: ZniczError) {
         tracing::debug!("spotify queue: {error}");
+        // A read that was sent in the mode and answered after leaving it is stale.
+        if !self.in_spotify_mode() {
+            return;
+        }
         let plan = spotify_mode::error_plan_for(&error);
         if plan.stops_polling {
             self.spotify_unavailable = Some(plan.text.clone());
@@ -296,11 +300,13 @@ impl App {
         // A stop from an old player is forgotten, and the next tick reads the status at once.
         self.spotify_unavailable = None;
         self.spotify_polled_at = None;
+        self.spotify_queue_error = None;
     }
 
     /// Leave Spotify mode. Nothing is sent: Spotify keeps playing where it is.
     pub(crate) fn leave_spotify_mode(&mut self) {
         self.spotify_mode = false;
+        self.spotify_queue_error = None;
         self.spotify_browser.reset();
         self.spotify_search = None;
         if self.modal == Modal::SpotifyDevices {
@@ -1188,6 +1194,51 @@ mod tests {
             }),
         });
         assert!(app.spotify_queue_error.is_none(), "a good read clears it");
+    }
+
+    #[test]
+    fn entering_or_leaving_the_mode_resets_the_queue_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = logged_in(&dir);
+        press(&mut app, KeyCode::Char('O'));
+        assert!(app.in_spotify_mode());
+        app.spotify_queue_error = Some("old read failure".into());
+        press(&mut app, KeyCode::Char('O'));
+        assert!(!app.in_spotify_mode());
+        assert!(app.spotify_queue_error.is_none(), "leaving clears it");
+        app.spotify_queue_error = Some("another".into());
+        press(&mut app, KeyCode::Char('O'));
+        assert!(app.in_spotify_mode());
+        assert!(app.spotify_queue_error.is_none(), "entering clears it");
+    }
+
+    #[test]
+    fn a_queue_reply_or_failure_after_leaving_the_mode_is_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let mut app = mode_app(&dir, &host);
+        press(&mut app, KeyCode::Char('O'));
+        assert!(!app.in_spotify_mode());
+        app.on_spotify_done(Done {
+            tag: SpotifyAsk::Queue,
+            result: Err(ZniczError::Spotify {
+                kind: SpotifyErrorKind::NoService,
+                message: "the player has no Spotify service".into(),
+            }),
+        });
+        assert!(
+            app.spotify_queue_error.is_none(),
+            "a late failure is dropped"
+        );
+        assert!(app.spotify_unavailable.is_none(), "a late stop is dropped");
+        app.on_spotify_done(Done {
+            tag: SpotifyAsk::Queue,
+            result: Ok(SpotifyReply::Queue {
+                current: None,
+                next: Vec::new(),
+            }),
+        });
+        assert!(app.spotify_queue.is_none(), "a late reply is dropped");
     }
 
     #[test]

@@ -28,8 +28,9 @@ pub struct ServiceOptions {
     pub token_path: PathBuf,
     /// Called inside `SpotifyHost::apply`, on the caller's thread, once Spotify
     /// has accepted a playback op that starts playback (the service was logged
-    /// in when the op began), so the player can pause its own engine. A refused
-    /// command does not call it, so Znicz keeps playing.
+    /// in when the op began), so the player can pause its own engine. A transfer
+    /// must also pass its check (the device is playing) before the call is made.
+    /// A refused command does not call it, so Znicz keeps playing.
     ///
     /// It must not wait for a lock the caller of `apply` holds: the IPC server
     /// holds one per change request. Capture a cheap handle to the player (a

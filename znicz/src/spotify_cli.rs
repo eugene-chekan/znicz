@@ -422,7 +422,7 @@ mod tests {
     use std::collections::VecDeque;
 
     use super::*;
-    use znicz_core::{LOGIN_EXPIRED, NO_SPOTIFY};
+    use znicz_core::NO_SPOTIFY;
     use znicz_core::{
         SpotifyAccount, SpotifyDevice, SpotifyLogin, SpotifyPlayback, SpotifyState, SpotifyTrack,
     };

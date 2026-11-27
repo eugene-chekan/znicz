@@ -139,7 +139,8 @@ fn spawn_pause_worker(
         .spawn(move || {
             run_pause_worker(
                 rx,
-                move || status(&player) == PlaybackStatus::Playing,
+                move || status(&player),
+                || thread::sleep(SAMPLE),
                 move || spotify.pause_if_playing(),
             );
         })
@@ -147,10 +148,26 @@ fn spawn_pause_worker(
 
 /// Handle each queued request in turn. A request can wait behind a slow call,
 /// and Spotify may have started and paused Znicz in the meantime, so a request
-/// pauses Spotify only while `still_playing` says the engine plays.
-fn run_pause_worker(rx: Receiver<()>, still_playing: impl Fn() -> bool, pause: impl Fn()) {
+/// pauses Spotify only while the engine plays.
+///
+/// `Stopped` is also the short gap between two tracks, so it is read again
+/// after one `wait` before the request is dropped. `Paused` is dropped at once.
+fn run_pause_worker(
+    rx: Receiver<()>,
+    status: impl Fn() -> PlaybackStatus,
+    wait: impl Fn(),
+    pause: impl Fn(),
+) {
     for () in rx.iter() {
-        if still_playing() {
+        let playing = match status() {
+            PlaybackStatus::Playing => true,
+            PlaybackStatus::Paused => false,
+            PlaybackStatus::Stopped => {
+                wait();
+                status() == PlaybackStatus::Playing
+            }
+        };
+        if playing {
             pause();
         }
     }
@@ -159,6 +176,7 @@ fn run_pause_worker(rx: Receiver<()>, still_playing: impl Fn() -> bool, pause: i
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
     use std::sync::atomic::AtomicUsize;
     use znicz_core::PlaybackStatus::{Paused, Playing, Stopped};
 
@@ -197,36 +215,50 @@ mod tests {
         assert_eq!(observe_all(Playing, &[Playing, Paused]), [false, false]);
     }
 
-    #[test]
-    fn a_queued_pause_is_skipped_once_znicz_no_longer_plays() {
+    /// Run one queued request against a fake sequence of engine samples and
+    /// return how many Spotify pauses it made. Each `status` read pops the next
+    /// sample; the wait between samples is counted, not slept.
+    fn pauses_for(samples: &[PlaybackStatus]) -> usize {
         let (tx, rx) = crossbeam_channel::bounded::<()>(1);
         request_pause(&tx);
         drop(tx);
+        let samples = std::cell::RefCell::new(samples.iter().copied().collect::<VecDeque<_>>());
         let pauses = AtomicUsize::new(0);
         run_pause_worker(
             rx,
-            || false,
+            || {
+                samples
+                    .borrow_mut()
+                    .pop_front()
+                    .expect("a sample for each read")
+            },
+            || {},
             || {
                 pauses.fetch_add(1, Ordering::SeqCst);
             },
         );
-        assert_eq!(pauses.load(Ordering::SeqCst), 0);
+        pauses.load(Ordering::SeqCst)
     }
 
     #[test]
-    fn a_queued_pause_runs_while_znicz_still_plays() {
-        let (tx, rx) = crossbeam_channel::bounded::<()>(1);
-        request_pause(&tx);
-        drop(tx);
-        let pauses = AtomicUsize::new(0);
-        run_pause_worker(
-            rx,
-            || true,
-            || {
-                pauses.fetch_add(1, Ordering::SeqCst);
-            },
-        );
-        assert_eq!(pauses.load(Ordering::SeqCst), 1);
+    fn a_queued_pause_is_skipped_at_once_when_the_engine_is_paused() {
+        assert_eq!(pauses_for(&[Paused]), 0);
+    }
+
+    #[test]
+    fn a_queued_pause_runs_at_once_while_znicz_plays() {
+        assert_eq!(pauses_for(&[Playing]), 1);
+    }
+
+    #[test]
+    fn a_queued_pause_survives_a_stopped_gap_between_tracks() {
+        // The gap reads Stopped; one sample later the next track plays.
+        assert_eq!(pauses_for(&[Stopped, Playing]), 1);
+    }
+
+    #[test]
+    fn a_queued_pause_is_skipped_once_znicz_has_stopped() {
+        assert_eq!(pauses_for(&[Stopped, Stopped]), 0);
     }
 
     #[test]

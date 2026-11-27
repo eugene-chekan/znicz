@@ -1200,7 +1200,6 @@ impl ServerHandler for ZniczMcpServer {
     ) -> impl std::future::Future<Output = Result<ReadResourceResult, McpError>> + Send + '_ {
         let uri = request.uri.clone();
         let state = self.live_state();
-        let this = self;
         let skills = self.skills.clone();
         let stations_path = self.stations_path.clone();
 
@@ -1216,7 +1215,7 @@ impl ServerHandler for ZniczMcpServer {
             }
 
             if uri == "znicz://spotify/now-playing" {
-                let text = this.spotify_now_playing_text().await?;
+                let text = self.spotify_now_playing_text().await?;
                 return Ok(ReadResourceResult {
                     contents: vec![ResourceContents::TextResourceContents {
                         uri,

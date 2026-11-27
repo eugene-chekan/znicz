@@ -1033,7 +1033,8 @@ fn rpc_on(live: &mut Live, request: &IpcRequest) -> std::result::Result<IpcRespo
         return Err(RpcError::Closed(ZniczError::Player("ipc empty".into())));
     }
     if !line.ends_with('\n') {
-        return Err(RpcError::Closed(ZniczError::Player(
+        // The player began its reply, so it handled the request; this is not an old player.
+        return Err(RpcError::Io(ZniczError::Player(
             "ipc read: the player closed the connection mid-reply".into(),
         )));
     }
@@ -1420,13 +1421,16 @@ mod tests {
     }
 
     #[test]
-    fn a_reply_cut_off_before_its_newline_is_a_closed_connection() {
+    fn a_reply_cut_off_before_its_newline_is_an_io_error_not_an_outdated_player() {
         let (mut live, mut peer) = live_with_peer();
         peer.write_all(b"{\"Ok\":").unwrap();
         drop(peer);
         let error = rpc_on(&mut live, &spotify_status_request())
             .expect_err("a truncated reply is an error");
-        assert!(matches!(error, RpcError::Closed(_)), "not a closed error");
+        assert!(matches!(error, RpcError::Io(_)), "not an io error");
+        let (kind, message) = spotify_kind_and_message(RpcFailure::sent(error));
+        assert_eq!(kind, SpotifyErrorKind::Other);
+        assert!(!message.contains("older version"), "{message}");
     }
 
     #[test]

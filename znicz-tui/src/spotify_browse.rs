@@ -436,6 +436,7 @@ impl SpotifyBrowser {
             return false;
         };
         let level = &mut self.levels[index];
+        level.notice = None;
         match list {
             BrowseList::Search { kind, .. } => {
                 if let Some(group) = search_group(*kind) {
@@ -538,10 +539,10 @@ impl SpotifyBrowser {
             return true;
         }
         let level = self.current();
-        level.stalled = false;
         if !level.selectable(row) {
             return false;
         }
+        level.stalled = false;
         level.cursor = row;
         true
     }
@@ -1090,6 +1091,44 @@ mod tests {
         assert_eq!(b.level().cursor, 1);
         assert!(b.select_row(2));
         assert_eq!(b.level().cursor, 2);
+    }
+
+    #[test]
+    fn a_good_page_after_a_failed_one_clears_the_failure_notice() {
+        let mut b = SpotifyBrowser::new();
+        let requests = b.start_search("so what");
+        let (failed, _, _) = requests[0].clone();
+        let (fine, fine_list, _) = requests[1].clone();
+        assert!(b.apply_error(failed, "rate limited".into()));
+        assert_eq!(b.level().notice.as_deref(), Some("rate limited"));
+        b.step(1);
+        assert!(b.apply_page(
+            fine,
+            &fine_list,
+            0,
+            &page_of(vec![item(SpotifyKind::Album, 1)], 0, 1)
+        ));
+        assert_eq!(
+            b.level().notice,
+            None,
+            "a page that loaded clears the old notice"
+        );
+    }
+
+    #[test]
+    fn clicking_a_header_on_a_stalled_level_leaves_it_stalled() {
+        let mut b = SpotifyBrowser::new();
+        let requests = b.start_search("so what");
+        let (tracks, tracks_list, _) = requests[0].clone();
+        let (albums, _, _) = requests[1].clone();
+        b.apply_page(tracks, &tracks_list, 0, &page_of(vec![track(1)], 0, 1));
+        assert!(b.apply_failure(albums));
+        assert!(b.level().stalled);
+        assert!(!b.select_row(0), "a header cannot take the cursor");
+        assert!(
+            b.level().stalled,
+            "a refused click must not clear the stall"
+        );
     }
 
     #[test]

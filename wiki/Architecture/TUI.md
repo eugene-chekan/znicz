@@ -306,7 +306,7 @@ while the tab bar has focus, how to use it.
 | `←` / `→` (`h` / `l`) on the tab bar | Previous / next tab; stops at the first and last tab |
 | `↓` (`j`) or `Enter` on the tab bar | Move focus into the rows of the shown tab |
 | Click a tab label | Show that tab; focus stays where it was |
-| With the login panel open, `Tab` / `Shift-Tab` do not switch tabs | The panel keeps `c`, `Enter` and `Esc`, and the other keys fall through; a click on a tab closes the panel and cancels its login, as leaving the Spotify tab does |
+| `Tab` / `Shift-Tab` (login panel open) | Do not switch tabs. The panel keeps `c`, `Enter` and `Esc`, and the other keys fall through; a click on a tab closes the panel and cancels its login, as leaving the Spotify tab does |
 | `↑` / `↓` (`j` / `k`), `g` / `G`, `Ctrl-d` / `Ctrl-u` | Move between rows; `↓` stops at the last row, and `↑` on the first row goes to the tab bar |
 | `Enter` / `Space` | Change the highlighted row: a switch flips, a choice steps forward and wraps; a slider opens its typed-value prompt |
 | `←` / `→` (`h` / `l`) | Step a choice or a slider back or forward and stop at the ends; turn a switch off or on |

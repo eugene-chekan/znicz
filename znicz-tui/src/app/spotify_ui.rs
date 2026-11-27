@@ -253,7 +253,9 @@ impl App {
         }
         match (done.tag, done.result) {
             (SpotifyAsk::BeginLogin, Ok(SpotifyReply::AuthorizeUrl { url, listening, .. })) => {
-                if self.modal == Modal::Settings {
+                // The panel shows only in Settings on the Spotify tab; elsewhere
+                // nothing would show it, so the player must not keep it pending.
+                if self.modal == Modal::Settings && self.settings_tab == Tab::Spotify {
                     self.open_login_panel(url, listening);
                 } else {
                     // Settings closed while the player was starting the login:
@@ -274,9 +276,12 @@ impl App {
             }
             // The panel closes when the status shows the login finished.
             (SpotifyAsk::CompleteLogin, Ok(_)) | (SpotifyAsk::CancelLogin, _) => {}
+            // A reply that comes back after leaving the mode is stale and ignored.
             (SpotifyAsk::Queue, Ok(SpotifyReply::Queue { current, next })) => {
-                self.spotify_queue = Some((current, next));
-                self.spotify_queue_error = None;
+                if self.in_spotify_mode() {
+                    self.spotify_queue = Some((current, next));
+                    self.spotify_queue_error = None;
+                }
             }
             // The drawer is re-read every 3 s, so a failed read is shown in the drawer, not toasted.
             (SpotifyAsk::Queue, Err(e)) => self.queue_read_failed(e),
@@ -1199,6 +1204,28 @@ pub(crate) mod tests {
         app.modal = Modal::Help;
         app.drop_removal_outside_settings();
         assert!(app.spotify_login.is_none());
+    }
+
+    #[test]
+    fn a_login_that_arrives_after_leaving_the_spotify_tab_is_cancelled_not_opened() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let (mut app, recorded) = panel_app(&dir, host.clone());
+        // Settings stays open, but the user has moved on to another tab.
+        app.set_settings_tab(crate::settings::Tab::Display);
+        app.on_spotify_done(Done {
+            tag: SpotifyAsk::BeginLogin,
+            result: Ok(SpotifyReply::AuthorizeUrl {
+                url: "u".into(),
+                redirect_uri: "http://127.0.0.1:8898/callback".into(),
+                listening: true,
+            }),
+        });
+        assert!(app.spotify_login.is_none(), "no panel off the Spotify tab");
+        assert!(recorded.opened.lock().unwrap().is_empty());
+        wait_until(&mut app, |_| {
+            host.ops.lock().unwrap().contains(&SpotifyOp::CancelLogin)
+        });
     }
 
     #[test]

@@ -1263,7 +1263,7 @@ impl App {
                 self.spotify_devices_cursor.step(delta, len);
             }
             // The open Spotify drawer is read-only: the wheel moves nothing.
-            Modal::None if self.spotify_mode && self.queue_open => {}
+            Modal::None if self.spotify_drawer_blocks_moves() => {}
             Modal::None if self.in_spotify_browser() => self.spotify_browser.step(delta),
             Modal::None => match self.focus {
                 Focus::Library if self.view == View::Browse => {

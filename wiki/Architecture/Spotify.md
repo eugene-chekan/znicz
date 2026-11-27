@@ -192,7 +192,9 @@ and the token file records that ID. A token saved before the ID was recorded
 has none and matches any ID. The token file is deleted only by:
 
 - `znicz spotify logout`, or the TUI's Logout;
-- a confirmed client-ID replacement (`Configure` with `replace_client_id`);
+- a confirmed client-ID replacement (`Configure` with `replace_client_id`), unless
+  the file holds the token of the ID being switched back to: that token is kept
+  and loaded, so the app is logged in with it again;
 - a refresh that Spotify reports as revoked, under the rule below.
 
 A configuration change on its own never deletes it. A token for another ID
@@ -204,8 +206,10 @@ player does not log in with another ID's token either.
 answer is dropped from memory at once. The file is deleted only when the token
 belongs to the current app (its client ID is the configured one, not a legacy
 token without one) and the file still holds that same refresh token. If another
-player rotated the token in the meantime, or the file is missing or unreadable,
-the file is left alone. A pending login is kept.
+player rotated the token in the meantime, the file is left alone, and the
+player loads the rotated token from it (when it is a token for the configured
+ID) so the next call can use it without a new login. If the file is missing or
+unreadable, nothing is loaded and the file is left alone. A pending login is kept.
 
 **The CLI asks.** `znicz spotify login` first sends `Configure` without
 replacing. When the player refuses a different ID (`client_id_differs`), it asks
@@ -287,8 +291,9 @@ act on the kind and show the message. The kinds are `not_configured`,
 - A connection the player closes mid-request (end of stream, a reset, or a broken
   pipe) is `outdated_player`: the player is an older version that does not know
   Spotify requests. The text says to run `znicz player stop` and try again.
-- A reply that is not valid JSON, or another I/O failure on an open connection,
-  is `other`. The text keeps the underlying error (for example `ipc json: …`),
+- A reply that is not valid JSON, a reply cut off before its newline (the player
+  had started answering, so it is current), or another I/O failure on an open
+  connection, is `other`. The text keeps the underlying error (for example `ipc json: …`),
   so a crashing or current player is not reported as an older version.
 - `no_service` is a player without a Spotify service: one started without a data
   folder for the token. It is not an older version.
