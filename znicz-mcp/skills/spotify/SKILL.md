@@ -1,6 +1,6 @@
 ---
 name: spotify
-description: Control Spotify from znicz: log in, search, browse, play, pause, seek, set volume and move playback between devices. Use for any request that names Spotify, and for login or Premium questions. Requests that do not name Spotify are for the local library.
+description: "Control Spotify from znicz: log in, search, browse, play, pause, seek, set volume and move playback between devices. Use for any request that names Spotify, and for login or Premium questions. Requests that do not name Spotify are for the local library."
 ---
 
 # Spotify
@@ -59,7 +59,7 @@ A request that does not say "Spotify" is for the local library: use `search_libr
 
 ## The now-playing resource
 
-`znicz://spotify/now-playing` is the same snapshot as `spotify_status`, as JSON. Reading it does not speed up the player's polling, so when nobody is watching it can be up to about 15 s old. Prefer `spotify_status` when freshness matters.
+`znicz://spotify/now-playing` is the same underlying data as `spotify_status`, in its raw shape: the player's Spotify snapshot as JSON, with the keys `login`, `account`, `playback`, `devices` and `last_error`. Playback progress is as the player last read it; `spotify_status` moves it on to the present. Reading the resource does not speed up the player's polling, so when nobody is watching it can be up to about 15 s old. Prefer `spotify_status` when freshness matters.
 
 ## Errors
 

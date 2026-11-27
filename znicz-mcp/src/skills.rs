@@ -112,6 +112,15 @@ impl SkillRegistry {
     }
 }
 
+/// A YAML value may be quoted, as one that contains `": "` must be.
+fn unquote(value: &str) -> &str {
+    value
+        .strip_prefix('"')
+        .and_then(|v| v.strip_suffix('"'))
+        .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
+        .unwrap_or(value)
+}
+
 fn parse_skill_frontmatter(path: &Path) -> Option<(String, String)> {
     let content = std::fs::read_to_string(path).ok()?;
     if !content.starts_with("---") {
@@ -125,8 +134,8 @@ fn parse_skill_frontmatter(path: &Path) -> Option<(String, String)> {
     for line in frontmatter.lines() {
         if let Some((key, value)) = line.split_once(':') {
             match key.trim() {
-                "name" => name = Some(value.trim().to_string()),
-                "description" => description = Some(value.trim().to_string()),
+                "name" => name = Some(unquote(value.trim()).to_string()),
+                "description" => description = Some(unquote(value.trim()).to_string()),
                 _ => {}
             }
         }
@@ -161,6 +170,18 @@ mod tests {
         assert!(
             registry.entries().iter().any(|e| e.name == "spotify"),
             "the spotify skill is bundled"
+        );
+        let spotify = registry
+            .entries()
+            .iter()
+            .find(|e| e.name == "spotify")
+            .expect("the spotify skill is bundled");
+        assert!(
+            spotify
+                .description
+                .starts_with("Control Spotify from znicz: log in"),
+            "the description is read without its YAML quotes: {}",
+            spotify.description
         );
     }
 

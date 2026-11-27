@@ -170,6 +170,19 @@ impl ZniczMcpServer {
         .map_err(spotify_json::error_of)
     }
 
+    /// The now-playing resource: the player's Spotify snapshot as JSON. It
+    /// reads without `Touch`, so reading it does not speed up the player's
+    /// polling. Progress is as the player last read it.
+    async fn spotify_now_playing_text(&self) -> Result<String, McpError> {
+        let player = self.player.clone();
+        let snapshot = tokio::task::spawn_blocking(move || SpotifyHost::try_state(&player))
+            .await
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?
+            .map_err(spotify_json::error_of)?;
+        serde_json::to_string_pretty(&snapshot)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))
+    }
+
     fn spotify_status_result(
         state: &SpotifyState,
     ) -> Result<rmcp::model::CallToolResult, McpError> {
@@ -1187,7 +1200,7 @@ impl ServerHandler for ZniczMcpServer {
     ) -> impl std::future::Future<Output = Result<ReadResourceResult, McpError>> + Send + '_ {
         let uri = request.uri.clone();
         let state = self.live_state();
-        let player = self.player.clone();
+        let this = self;
         let skills = self.skills.clone();
         let stations_path = self.stations_path.clone();
 
@@ -1203,12 +1216,7 @@ impl ServerHandler for ZniczMcpServer {
             }
 
             if uri == "znicz://spotify/now-playing" {
-                let snapshot = tokio::task::spawn_blocking(move || SpotifyHost::try_state(&player))
-                    .await
-                    .map_err(|e| McpError::internal_error(e.to_string(), None))?
-                    .map_err(spotify_json::error_of)?;
-                let text = serde_json::to_string_pretty(&snapshot)
-                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                let text = this.spotify_now_playing_text().await?;
                 return Ok(ReadResourceResult {
                     contents: vec![ResourceContents::TextResourceContents {
                         uri,
@@ -1476,6 +1484,8 @@ mod tests {
         ops: Mutex<Vec<SpotifyOp>>,
         /// How long `Next` takes, as a slow Spotify call does.
         next_delay: Duration,
+        /// When set, `try_state` fails with this kind.
+        state_error: Option<SpotifyErrorKind>,
     }
 
     impl SpotifyHost for FakeSpotify {
@@ -1507,6 +1517,12 @@ mod tests {
         }
 
         fn try_state(&self) -> znicz_core::Result<SpotifyState> {
+            if let Some(kind) = self.state_error {
+                return Err(ZniczError::Spotify {
+                    kind,
+                    message: "the snapshot failed".into(),
+                });
+            }
             Ok(SpotifyState {
                 login: SpotifyLogin::LoggedIn,
                 account: Some(SpotifyAccount {
@@ -1607,6 +1623,41 @@ mod tests {
             fake.ops.lock().unwrap().contains(&SpotifyOp::Touch),
             "a status call marks Spotify use"
         );
+    }
+
+    #[tokio::test]
+    async fn now_playing_resource_has_the_snapshot_and_sends_no_touch() {
+        let (_dir, _ipc, server, fake) = spotify_server();
+        let text = server
+            .spotify_now_playing_text()
+            .await
+            .expect("the resource reads");
+        let json: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+        for key in ["login", "account", "playback", "devices", "last_error"] {
+            assert!(json.get(key).is_some(), "missing {key}: {json}");
+        }
+        assert_eq!(json["login"]["state"], "logged_in");
+        assert_eq!(json["account"]["user"], "eve");
+        assert!(
+            fake.ops.lock().unwrap().is_empty(),
+            "reading the resource marks no Spotify use: {:?}",
+            fake.ops.lock().unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn now_playing_resource_keeps_the_kind_of_a_failed_read() {
+        let fake = FakeSpotify {
+            state_error: Some(SpotifyErrorKind::RateLimited),
+            ..FakeSpotify::default()
+        };
+        let (_dir, _ipc, server, _fake) = spotify_server_with(fake);
+        let error = server
+            .spotify_now_playing_text()
+            .await
+            .expect_err("the read fails");
+        let data = error.data.expect("the error carries data");
+        assert_eq!(data["kind"], "rate_limited", "{data}");
     }
 
     #[tokio::test]
