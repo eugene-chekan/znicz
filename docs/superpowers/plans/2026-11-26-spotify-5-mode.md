@@ -1823,11 +1823,11 @@ Claude-Session: https://claude.ai/code/session_012jyZm3UyFwgZfBtgburioV"
 
 - [ ] **Step 2: Run to see it fail** — `cargo test -p znicz-tui -- keys`.
 
-- [ ] **Step 3: Write the docs.** Follow `.cursor/rules/wiki-sync.mdc`: the wiki says what the code does, nothing invented. The Spotify mode section lists the keys from the `SPOTIFY` table, the browser's levels, the 50-row pages, the search (10 per group, one request per kind), the unavailable notice, and the polling rates (500 ms in the mode, 3 s otherwise). `TUI.md` Stage: the shared `StageModel`/`TransportModel`.
+- [x] **Step 3: Write the docs.** Follow `.cursor/rules/wiki-sync.mdc`: the wiki says what the code does, nothing invented. The Spotify mode section lists the keys from the `SPOTIFY` table, the browser's levels, the 50-row pages, the search (10 per group, one request per kind), the unavailable notice, and the polling rates (500 ms in the mode, 3 s otherwise). `TUI.md` Stage: the shared `StageModel`/`TransportModel`.
 
 - [ ] **Step 4: Run** — `cargo test -p znicz-tui -- keys` — pass. Also `grep -n "O znicz\|Spotify mode" wiki/Architecture/TUI.md` shows the new section.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add wiki/Architecture/TUI.md wiki/Architecture/Spotify.md znicz-tui/src/keys.rs README.md
@@ -1845,17 +1845,17 @@ No code change expected. If a step fails, fix it in the task that owns the code 
 
 **Files:** none unless a fix is needed.
 
-- [ ] **Step 1: Format** — `cargo fmt --all -- --check`. Expected: no output. If not, `cargo fmt --all` and commit `style(tui): format the Spotify mode code`.
+- [x] **Step 1: Format** — `cargo fmt --all -- --check`. Expected: no output. If not, `cargo fmt --all` and commit `style(tui): format the Spotify mode code`.
 
-- [ ] **Step 2: Clippy with warnings denied** — `cargo clippy --workspace --all-targets -- -D warnings`. Expected: no errors. Likely findings: `too_many_arguments` on `push_tail`-style helpers, `needless_borrow` on `&*host`, `manual_let_else`. Fix each in place.
+- [x] **Step 2: Clippy with warnings denied** — `cargo clippy --workspace --all-targets -- -D warnings`. Expected: no errors. Likely findings: `too_many_arguments` on `push_tail`-style helpers, `needless_borrow` on `&*host`, `manual_let_else`. Fix each in place.
 
-- [ ] **Step 3: Tests** — `cargo test --workspace`. Expected: all pass.
+- [x] **Step 3: Tests** — `cargo test --workspace`. Expected: all pass.
 
-- [ ] **Step 4: Release build of the binary** — `cargo build --workspace --release` (the `main.rs` three-connection wiring is only compiled in the binary).
+- [x] **Step 4: Release build of the binary** — `cargo build --workspace --release` (the `main.rs` three-connection wiring is only compiled in the binary).
 
 - [ ] **Step 5: Clean the build output** — `cargo clean` (the project rule in `MEMORY.md`: target/ filled the disk).
 
-- [ ] **Step 6: Commit the ticked plan**
+- [x] **Step 6: Commit the ticked plan**
 
 Tick each step in this file and commit only the plan:
 
