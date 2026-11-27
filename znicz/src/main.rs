@@ -897,6 +897,7 @@ fn run_tui(
 ) -> color_eyre::Result<()> {
     let player = connect_ui(device, config)?;
     let spotify = connect_ui(device, config)?;
+    let transport = connect_ui(device, config)?;
 
     if !files.is_empty() {
         let items: Vec<znicz_core::QueueItem> = files
@@ -923,7 +924,7 @@ fn run_tui(
         }
     }
 
-    run_tui_with_client(player, spotify, library_path, None, tui, extras)
+    run_tui_with_client(player, spotify, transport, library_path, None, tui, extras)
 }
 
 fn playlists_dir() -> color_eyre::Result<PathBuf> {
@@ -960,9 +961,10 @@ fn play_station_and_run(
         .clone();
     let player = connect_ui(device, config)?;
     let spotify = connect_ui(device, config)?;
+    let transport = connect_ui(device, config)?;
     znicz_core::play_station(&player, &station, append)
         .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-    run_tui_with_client(player, spotify, library_path, None, tui, extras)
+    run_tui_with_client(player, spotify, transport, library_path, None, tui, extras)
 }
 
 fn list_stations() -> color_eyre::Result<()> {
@@ -1003,10 +1005,12 @@ fn load_playlist_and_run(
     let result = load_path(&path)?;
     let player = connect_ui(device, config)?;
     let spotify = connect_ui(device, config)?;
+    let transport = connect_ui(device, config)?;
     apply_to_player(&player, &result, append).map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
     run_tui_with_client(
         player,
         spotify,
+        transport,
         library_path,
         skipped_notice(&result),
         tui,
@@ -1034,6 +1038,7 @@ struct TuiExtras {
 fn run_tui_with_client(
     player: IpcClient,
     spotify: IpcClient,
+    transport: IpcClient,
     library_path: Option<PathBuf>,
     skip_notice: Option<String>,
     tui: TuiConfig,
@@ -1052,9 +1057,12 @@ fn run_tui_with_client(
     // full-screen interface means drawing over it. Send stderr to a file for as
     // long as the TUI owns the terminal; nothing is lost, it just moves.
     let log = stderr::redirect_to_log();
-    // The Spotify worker has its own connection: a call can take about 40 s.
+    // The Spotify lanes have their own connections: a browse call can take
+    // about 40 s, and playback must not wait behind it.
     let mut app = App::with_remote(player, library)
         .with_spotify_worker(Arc::new(spotify))
+        .map_err(|e| color_eyre::eyre::eyre!("{e}"))?
+        .with_spotify_transport(Arc::new(transport))
         .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
     app.tui = tui;
     app.library.set_preferred_layout(app.tui.library_layout);

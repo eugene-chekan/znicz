@@ -12,6 +12,7 @@ use znicz_core::{
 use super::{App, Modal};
 use crate::line_edit::LineEdit;
 use crate::settings::Tab;
+use crate::spotify_mode;
 use crate::spotify_rows::{self, LoginOutcome, SpotifyView};
 use crate::spotify_worker::{Done, SpotifyAsk};
 
@@ -75,11 +76,14 @@ impl App {
         }
     }
 
-    /// Send a request to the worker. False when there is none.
+    /// Send a request to its lane: transport ops to the transport lane, the
+    /// rest to the browse lane. False when that lane is not running.
     pub(crate) fn ask_spotify(&self, tag: SpotifyAsk, op: SpotifyOp) -> bool {
-        self.spotify_worker
-            .as_ref()
-            .is_some_and(|worker| worker.send(tag, op))
+        let lane = match spotify_mode::lane(&op) {
+            spotify_mode::Lane::Transport => &self.spotify_transport,
+            spotify_mode::Lane::Browse => &self.spotify_worker,
+        };
+        lane.as_ref().is_some_and(|worker| worker.send(tag, op))
     }
 
     /// The status is worth reading: Settings shows the Spotify tab, or a login
@@ -148,7 +152,13 @@ impl App {
 
     /// Each tick: take the worker's replies, then read the status when it is due.
     pub(crate) fn poll_spotify(&mut self) {
-        while let Some(done) = self.spotify_worker.as_ref().and_then(|w| w.try_recv()) {
+        let mut replies = Vec::new();
+        for lane in [&self.spotify_worker, &self.spotify_transport] {
+            while let Some(done) = lane.as_ref().and_then(|w| w.try_recv()) {
+                replies.push(done);
+            }
+        }
+        for done in replies {
             self.on_spotify_done(done);
         }
         if !self.spotify_tab_open() || self.spotify_unavailable.is_some() {
@@ -232,6 +242,8 @@ impl App {
             }
             // The panel closes when the status shows the login finished.
             (SpotifyAsk::CompleteLogin, Ok(_)) | (SpotifyAsk::CancelLogin, _) => {}
+            // The browser and the queue drawer take their replies in later steps.
+            (SpotifyAsk::Browse { .. } | SpotifyAsk::Queue, _) => {}
             (SpotifyAsk::Logout, Ok(_)) => self.toasts.success("Logged out of Spotify"),
             // The player took the file's settings, so it has the file's client ID.
             (SpotifyAsk::Configure, Ok(_)) => self.spotify_player_differs = false,
@@ -398,7 +410,9 @@ pub(crate) mod tests {
     use crate::app::App;
     use crate::app::settings_ui::tests as settings_tests;
     use crate::app::settings_ui::tests::press;
+    use crate::spotify_browse::BrowseList;
     use crate::spotify_worker::{Done, SpotifyAsk, SpotifyWorker};
+    use znicz_core::SpotifyKind;
     use znicz_spotify::browser::OpenBrowser;
 
     /// A host with a scripted status and a log of the ops it was given.
@@ -1117,5 +1131,132 @@ pub(crate) mod tests {
             app.spotify_state.login == SpotifyLogin::NotLoggedIn
         });
         assert_eq!(app.spotify_login_shown(), SpotifyLogin::NotLoggedIn);
+    }
+
+    /// A browse-lane host: `Search` announces itself on `entered` and waits for
+    /// a release before it runs. Every op is recorded by `inner`.
+    struct GatedHost {
+        inner: Arc<FakeHost>,
+        entered: Mutex<std::sync::mpsc::Sender<()>>,
+        gate: Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+
+    impl SpotifyHost for GatedHost {
+        fn apply(&self, op: SpotifyOp) -> znicz_core::Result<SpotifyReply> {
+            if matches!(op, SpotifyOp::Search { .. }) {
+                let _ = self.entered.lock().unwrap().send(());
+                self.gate.lock().unwrap().recv().unwrap();
+            }
+            self.inner.apply(op)
+        }
+        fn state(&self) -> SpotifyState {
+            self.inner.state()
+        }
+    }
+
+    /// The next reply from one lane, waiting up to 3 s.
+    fn next_done(worker: &SpotifyWorker<SpotifyAsk>) -> Done<SpotifyAsk> {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            if let Some(done) = worker.try_recv() {
+                return done;
+            }
+            assert!(Instant::now() < deadline, "no reply from the lane");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn search_op() -> SpotifyOp {
+        SpotifyOp::Search {
+            query: "so what".into(),
+            kinds: vec![SpotifyKind::Track],
+            offset: 0,
+            limit: 10,
+        }
+    }
+
+    #[test]
+    fn a_transport_op_is_answered_while_a_browse_call_is_blocked() {
+        let dir = tempfile::tempdir().unwrap();
+        let browse_inner = Arc::new(FakeHost::default());
+        let (entered_tx, entered) = std::sync::mpsc::channel();
+        let (release, gate) = std::sync::mpsc::channel();
+        let browse = Arc::new(GatedHost {
+            inner: browse_inner.clone(),
+            entered: Mutex::new(entered_tx),
+            gate: Mutex::new(gate),
+        });
+        let transport = Arc::new(FakeHost::default());
+        let app = settings_tests::settings_app(&dir)
+            .with_spotify_worker(browse)
+            .unwrap()
+            .with_spotify_transport(transport.clone())
+            .unwrap();
+
+        let tag = SpotifyAsk::Browse {
+            generation: 1,
+            list: BrowseList::Search {
+                query: "so what".into(),
+                kind: SpotifyKind::Track,
+            },
+            offset: 0,
+        };
+        assert!(app.ask_spotify(tag.clone(), search_op()));
+        entered
+            .recv_timeout(Duration::from_secs(3))
+            .expect("the search started on the browse lane");
+
+        assert!(app.ask_spotify(SpotifyAsk::Transport, SpotifyOp::Pause));
+        assert!(
+            wait_for_op(&transport, |op| *op == SpotifyOp::Pause),
+            "the pause was not answered while the search is blocked"
+        );
+        let browse_worker = app.spotify_worker.as_ref().unwrap();
+        assert!(
+            browse_worker.try_recv().is_none(),
+            "the search is still blocked"
+        );
+
+        release.send(()).unwrap();
+        let done = next_done(browse_worker);
+        assert_eq!(done.tag, tag, "the reply keeps its generation and offset");
+        assert!(done.result.is_ok());
+    }
+
+    #[test]
+    fn settings_ops_stay_on_the_browse_lane() {
+        let dir = tempfile::tempdir().unwrap();
+        let browse = Arc::new(FakeHost::default());
+        let transport = Arc::new(FakeHost::default());
+        let app = settings_tests::settings_app(&dir)
+            .with_spotify_worker(browse.clone())
+            .unwrap()
+            .with_spotify_transport(transport.clone())
+            .unwrap();
+        assert!(app.ask_spotify(SpotifyAsk::Devices, SpotifyOp::Devices));
+        assert!(wait_for_op(&browse, |op| *op == SpotifyOp::Devices));
+        assert!(sent_ops(&transport).is_empty());
+    }
+
+    #[test]
+    fn dropping_the_app_ends_the_transport_thread() {
+        let dir = tempfile::tempdir().unwrap();
+        let transport = Arc::new(FakeHost::default());
+        let app = settings_tests::settings_app(&dir)
+            .with_spotify_transport(transport.clone())
+            .unwrap();
+        assert!(
+            Arc::strong_count(&transport) >= 2,
+            "the thread holds the host"
+        );
+        drop(app);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Arc::strong_count(&transport) > 1 {
+            assert!(
+                Instant::now() < deadline,
+                "the transport thread did not end"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 }

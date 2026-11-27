@@ -425,8 +425,12 @@ pub struct App {
     pub(crate) open_browser: OpenBrowser,
     /// The status host: the main connection, which answers at once.
     pub(crate) spotify_main: Option<Arc<dyn SpotifyHost>>,
-    /// The second connection, for every Spotify call that can be slow.
+    /// The browse lane: a second connection, for Settings' slow calls and the
+    /// browser's lists. Never on the UI thread.
     pub(crate) spotify_worker: Option<SpotifyWorker<SpotifyAsk>>,
+    /// The transport lane: a third connection, so Pause is answered while a
+    /// browse call is still blocked.
+    pub(crate) spotify_transport: Option<SpotifyWorker<SpotifyAsk>>,
     /// The last status poll.
     pub(crate) spotify_state: SpotifyState,
     /// Devices from the last `SpotifyOp::Devices` reply.
@@ -709,10 +713,16 @@ impl App {
         app
     }
 
-    /// Start the second connection's worker. Spotify requests that can be slow
-    /// run there, never on the UI thread.
+    /// Start the browse lane's worker. Spotify requests that can be slow run
+    /// there, never on the UI thread.
     pub fn with_spotify_worker(mut self, host: Arc<dyn SpotifyHost>) -> std::io::Result<Self> {
         self.spotify_worker = Some(SpotifyWorker::spawn(host)?);
+        Ok(self)
+    }
+
+    /// Start the transport lane's worker, on its own connection.
+    pub fn with_spotify_transport(mut self, host: Arc<dyn SpotifyHost>) -> std::io::Result<Self> {
+        self.spotify_transport = Some(SpotifyWorker::spawn(host)?);
         Ok(self)
     }
 
@@ -814,6 +824,7 @@ impl App {
             open_browser: OpenBrowser::default(),
             spotify_main: None,
             spotify_worker: None,
+            spotify_transport: None,
             spotify_state: SpotifyState::default(),
             spotify_devices: Vec::new(),
             spotify_devices_known: false,

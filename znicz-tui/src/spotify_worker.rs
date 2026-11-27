@@ -5,10 +5,12 @@
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
+use crate::spotify_browse::BrowseList;
 use znicz_core::{Result, SpotifyHost, SpotifyOp, SpotifyReply};
 
-/// What the Settings tab asked for. Part 5 adds its own tags for browsing and playback.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What asked for a request. Settings' rows and the browser's lists go to the
+/// browse lane; playback goes to the transport lane (`spotify_mode::lane`).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpotifyAsk {
     Configure,
     BeginLogin,
@@ -16,6 +18,16 @@ pub enum SpotifyAsk {
     CancelLogin,
     Logout,
     Devices,
+    /// Spotify mode's browse request. `generation` is the browser's; a reply with an old one is dropped.
+    Browse {
+        generation: u64,
+        list: BrowseList,
+        offset: u32,
+    },
+    /// The queue, for the drawer.
+    Queue,
+    /// Any transport op: play, pause, next, previous, seek, volume, repeat, shuffle, queue add, transfer.
+    Transport,
 }
 
 /// The answer to one request, with the tag that asked for it.
