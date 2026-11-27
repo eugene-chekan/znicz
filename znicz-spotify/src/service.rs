@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use znicz_core::{SpotifyConfig, SpotifyHost, SpotifyLogin, SpotifyOp, SpotifyReply, SpotifyState};
 
@@ -27,9 +27,9 @@ const DEVICES_EVERY_MS: u64 = 15_000;
 const LOGIN_CHECK: Duration = Duration::from_secs(1);
 /// A user action waits for a 429 at most this long before retrying once.
 const MAX_RETRY_WAIT_SECS: u64 = 10;
-/// After a transfer, Spotify is read this many times to see the device take over...
-const TRANSFER_CHECKS: u32 = 10;
-/// ...this far apart: about 5 s in all.
+/// After a transfer, Spotify is read for up to this long to see the device take over...
+const TRANSFER_BUDGET: Duration = Duration::from_secs(5);
+/// ...this far apart.
 const TRANSFER_CHECK_EVERY: Duration = Duration::from_millis(500);
 
 /// How long to wait before the next poll. `None`: not logged in, wait for a wake.
@@ -77,8 +77,8 @@ struct Shared {
     wake: (Mutex<bool>, Condvar),
     stop: AtomicBool,
     on_start_playback: Box<dyn Fn() + Send + Sync>,
-    /// How many times, and how far apart, a transfer reads playback for its device.
-    transfer_check: (u32, Duration),
+    /// How long, and how far apart, a transfer reads playback for its device.
+    transfer_check: (Duration, Duration),
 }
 
 pub struct SpotifyService {
@@ -93,7 +93,7 @@ impl SpotifyService {
             options,
             Endpoints::default(),
             system_clock(),
-            (TRANSFER_CHECKS, TRANSFER_CHECK_EVERY),
+            (TRANSFER_BUDGET, TRANSFER_CHECK_EVERY),
         )
     }
 
@@ -102,7 +102,7 @@ impl SpotifyService {
         options: ServiceOptions,
         endpoints: Endpoints,
         clock: Clock,
-        transfer_check: (u32, Duration),
+        transfer_check: (Duration, Duration),
     ) -> Self {
         let client = Client::new(config, options.token_path, endpoints, clock.clone());
         let state = SpotifyState {
@@ -501,19 +501,31 @@ impl Shared {
         result
     }
 
-    /// Read playback until `device_id` is the playing device, up to the
-    /// transfer check's budget. No lock is held while waiting.
+    /// Read playback until `device_id` is the playing device, within the
+    /// transfer check's time budget. A failed read is retried; a rate limit or
+    /// a revoked login ends the check at once. If no read succeeded, the last
+    /// read error is returned, since nothing was learned about the device.
+    /// No lock is held while waiting.
     fn verify_transfer(&self, device_id: &str) -> Result<()> {
-        let (attempts, every) = self.transfer_check;
-        for attempt in 0..attempts {
+        let (budget, every) = self.transfer_check;
+        let started = Instant::now();
+        let mut read_ok = false;
+        let mut last_error = None;
+        let mut attempt = 0u32;
+        loop {
             if attempt > 0 {
+                if started.elapsed() >= budget {
+                    break;
+                }
                 thread::sleep(every);
             }
+            attempt += 1;
             let now = self.now_ms();
             let epoch = self.login_epoch.load(Ordering::SeqCst);
             let read = self.client.lock().unwrap().call(|api| api.playback(now));
             match read {
                 Ok(playback) => {
+                    read_ok = true;
                     let took = playback
                         .as_ref()
                         .and_then(|p| p.device.as_ref())
@@ -526,9 +538,15 @@ impl Shared {
                         return Ok(());
                     }
                 }
-                Err(SpotifyError::Revoked) => return Err(SpotifyError::Revoked),
-                // A failed read is not an answer: try again.
-                Err(_) => {}
+                Err(e @ (SpotifyError::Revoked | SpotifyError::RateLimited { .. })) => {
+                    return Err(e);
+                }
+                Err(e) => last_error = Some(e),
+            }
+        }
+        if !read_ok {
+            if let Some(e) = last_error {
+                return Err(e);
             }
         }
         let name = self
@@ -827,7 +845,7 @@ mod tests {
             options,
             endpoints,
             clock,
-            (3, Duration::from_millis(20)),
+            (Duration::from_millis(400), Duration::from_millis(20)),
         );
         Fixture {
             service,
@@ -1517,6 +1535,95 @@ mod tests {
             }
         });
         f.service.apply(transfer("target", true)).unwrap_err();
+        assert_eq!(f.starts.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_transfer_whose_playback_cannot_be_read_says_so() {
+        let f = fixture(true, "", |request| {
+            match (request.method.as_str(), request.path()) {
+                ("PUT", "/v1/me/player") => Response::empty(204),
+                ("GET", "/v1/me/player") => Response::json(500, r#"{"error":{"status":500}}"#),
+                _ => api_default(request),
+            }
+        });
+        let error = f.service.apply(transfer("target", false)).unwrap_err();
+        assert!(!error.to_string().contains("did not take over"), "{error}");
+        assert!(error.to_string().contains("500"), "{error}");
+    }
+
+    #[test]
+    fn a_transfer_read_that_fails_once_then_shows_the_target_is_done() {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let counter = reads.clone();
+        let f = fixture(true, "", move |request| {
+            match (request.method.as_str(), request.path()) {
+                ("PUT", "/v1/me/player") => Response::empty(204),
+                ("GET", "/v1/me/player") => {
+                    if counter.fetch_add(1, Ordering::SeqCst) == 0 {
+                        Response::json(500, r#"{"error":{"status":500}}"#)
+                    } else {
+                        Response::json(200, &playback_on("target"))
+                    }
+                }
+                _ => api_default(request),
+            }
+        });
+        f.service.apply(transfer("target", false)).unwrap();
+        assert_eq!(reads.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_rate_limited_transfer_read_is_returned_at_once() {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let counter = reads.clone();
+        let f = fixture(true, "", move |request| {
+            match (request.method.as_str(), request.path()) {
+                ("PUT", "/v1/me/player") => Response::empty(204),
+                ("GET", "/v1/me/player") => {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    Response::empty(429).with_header("Retry-After", "30")
+                }
+                _ => api_default(request),
+            }
+        });
+        let error = f.service.apply(transfer("target", false)).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                ZniczError::Spotify {
+                    kind: SpotifyErrorKind::RateLimited,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_played_transfer_counts_one_start() {
+        let f = fixture(true, "", |request| {
+            match (request.method.as_str(), request.path()) {
+                ("PUT", "/v1/me/player") => Response::empty(204),
+                ("GET", "/v1/me/player") => Response::json(200, &playback_on("target")),
+                _ => api_default(request),
+            }
+        });
+        f.service.apply(transfer("target", true)).unwrap();
+        assert_eq!(f.starts.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_transfer_without_play_does_not_count_a_start() {
+        let f = fixture(true, "", |request| {
+            match (request.method.as_str(), request.path()) {
+                ("PUT", "/v1/me/player") => Response::empty(204),
+                ("GET", "/v1/me/player") => Response::json(200, &playback_on("target")),
+                _ => api_default(request),
+            }
+        });
+        f.service.apply(transfer("target", false)).unwrap();
         assert_eq!(f.starts.load(Ordering::SeqCst), 0);
     }
 }
