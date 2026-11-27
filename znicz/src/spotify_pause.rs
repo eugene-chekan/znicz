@@ -26,19 +26,43 @@ use znicz_spotify::{ServiceOptions, SpotifyService, default_token_path};
 /// How often the watcher samples the engine.
 const SAMPLE: Duration = Duration::from_millis(250);
 
-/// Whether the engine has just started playing. `before` and `prev` are the
-/// two samples before `now`. A start is a move into `Playing` from a status
-/// that was not `Playing` on either sample, so a one-sample `Stopped` gap
-/// between two `Playing` samples (a track change) does not count, and neither
-/// does a start that the previous sample already counted.
-pub(crate) fn started_playing(
+/// The engine's status right now.
+fn status(player: &PlayerHandle) -> PlaybackStatus {
+    player
+        .state_arc()
+        .read()
+        .map(|s| s.status)
+        .unwrap_or_else(|e| e.into_inner().status)
+}
+
+/// The watcher's sample history. It reports whether the newest sample is a
+/// start: a move into `Playing` from a status that was not `Playing` on either
+/// of the two samples before it. So a one-sample `Stopped` gap between two
+/// `Playing` samples (a track change) does not count, and a start that the
+/// previous sample already counted is not counted again.
+pub(crate) struct StartDetector {
     before: PlaybackStatus,
     prev: PlaybackStatus,
-    now: PlaybackStatus,
-) -> bool {
-    now == PlaybackStatus::Playing
-        && prev != PlaybackStatus::Playing
-        && before != PlaybackStatus::Playing
+}
+
+impl StartDetector {
+    /// `initial` is the first sample, taken when the watcher starts.
+    pub(crate) fn new(initial: PlaybackStatus) -> Self {
+        Self {
+            before: initial,
+            prev: initial,
+        }
+    }
+
+    /// Record the next sample and say whether it is a start.
+    pub(crate) fn observe(&mut self, now: PlaybackStatus) -> bool {
+        let start = now == PlaybackStatus::Playing
+            && self.prev != PlaybackStatus::Playing
+            && self.before != PlaybackStatus::Playing;
+        self.before = self.prev;
+        self.prev = now;
+        start
+    }
 }
 
 /// Pause the engine, but only while it plays. `Pause` on a Stopped engine
@@ -48,7 +72,7 @@ pub(crate) fn started_playing(
 /// the IPC server holds, and it only queues the command: it does not wait for
 /// the engine. The Spotify Web call that follows is what takes the time.
 pub fn pause_engine_if_playing(player: &PlayerHandle) {
-    if player.state().status != PlaybackStatus::Playing {
+    if status(player) != PlaybackStatus::Playing {
         return;
     }
     if let Err(e) = player.send(Command::Pause) {
@@ -90,61 +114,119 @@ pub fn spawn_pause_watcher(
     stop: Arc<AtomicBool>,
 ) -> std::io::Result<JoinHandle<()>> {
     let (tx, rx) = crossbeam_channel::bounded::<()>(1);
-    spawn_pause_worker(spotify, rx)?;
+    spawn_pause_worker(player.clone(), spotify, rx)?;
     thread::Builder::new()
         .name("znicz-spotify-pause".into())
         .spawn(move || {
-            let mut before = player
-                .state_arc()
-                .read()
-                .map(|s| s.status)
-                .unwrap_or_else(|e| e.into_inner().status);
-            let mut prev = before;
+            let mut detector = StartDetector::new(status(&player));
             while !stop.load(Ordering::SeqCst) {
                 thread::sleep(SAMPLE);
-                let now = player
-                    .state_arc()
-                    .read()
-                    .map(|s| s.status)
-                    .unwrap_or_else(|e| e.into_inner().status);
-                if started_playing(before, prev, now) {
+                if detector.observe(status(&player)) {
                     request_pause(&tx);
                 }
-                before = prev;
-                prev = now;
             }
         })
 }
 
 /// The one thread that makes Spotify pause calls, one at a time.
 fn spawn_pause_worker(
+    player: PlayerHandle,
     spotify: Arc<SpotifyService>,
     rx: Receiver<()>,
 ) -> std::io::Result<JoinHandle<()>> {
     thread::Builder::new()
         .name("spotify-pause".into())
         .spawn(move || {
-            for () in rx.iter() {
-                spotify.pause_if_playing();
-            }
+            run_pause_worker(
+                rx,
+                move || status(&player) == PlaybackStatus::Playing,
+                move || spotify.pause_if_playing(),
+            );
         })
+}
+
+/// Handle each queued request in turn. A request can wait behind a slow call,
+/// and Spotify may have started and paused Znicz in the meantime, so a request
+/// pauses Spotify only while `still_playing` says the engine plays.
+fn run_pause_worker(rx: Receiver<()>, still_playing: impl Fn() -> bool, pause: impl Fn()) {
+    for () in rx.iter() {
+        if still_playing() {
+            pause();
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
     use znicz_core::PlaybackStatus::{Paused, Playing, Stopped};
 
+    /// Feed `samples` after `initial` (the watcher's first sample) and collect
+    /// what each one reports.
+    fn observe_all(initial: PlaybackStatus, samples: &[PlaybackStatus]) -> Vec<bool> {
+        let mut detector = StartDetector::new(initial);
+        samples.iter().map(|&now| detector.observe(now)).collect()
+    }
+
     #[test]
-    fn a_start_needs_two_samples_that_were_not_playing() {
-        assert!(started_playing(Stopped, Stopped, Playing));
-        assert!(started_playing(Paused, Paused, Playing));
-        // A one-sample Stopped gap between two Playing samples is a track change.
-        assert!(!started_playing(Playing, Stopped, Playing));
-        assert!(!started_playing(Playing, Playing, Playing));
-        // The start was already counted on the previous sample.
-        assert!(!started_playing(Stopped, Playing, Playing));
-        assert!(!started_playing(Playing, Playing, Paused));
+    fn an_engine_that_starts_out_playing_does_not_trigger() {
+        assert_eq!(observe_all(Playing, &[Playing, Playing]), [false, false]);
+    }
+
+    #[test]
+    fn stopped_stopped_playing_triggers_on_the_playing_sample() {
+        assert_eq!(observe_all(Stopped, &[Stopped, Playing]), [false, true]);
+        assert_eq!(observe_all(Paused, &[Paused, Playing]), [false, true]);
+    }
+
+    #[test]
+    fn a_track_change_gap_does_not_trigger() {
+        // Playing, Stopped (the one-sample gap), Playing.
+        assert_eq!(observe_all(Playing, &[Stopped, Playing]), [false, false]);
+    }
+
+    #[test]
+    fn a_start_is_counted_once() {
+        // Stopped, then Playing twice: only the first Playing is a start.
+        assert_eq!(observe_all(Stopped, &[Playing, Playing]), [true, false]);
+    }
+
+    #[test]
+    fn a_pause_by_the_engine_is_not_a_start() {
+        assert_eq!(observe_all(Playing, &[Playing, Paused]), [false, false]);
+    }
+
+    #[test]
+    fn a_queued_pause_is_skipped_once_znicz_no_longer_plays() {
+        let (tx, rx) = crossbeam_channel::bounded::<()>(1);
+        request_pause(&tx);
+        drop(tx);
+        let pauses = AtomicUsize::new(0);
+        run_pause_worker(
+            rx,
+            || false,
+            || {
+                pauses.fetch_add(1, Ordering::SeqCst);
+            },
+        );
+        assert_eq!(pauses.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_queued_pause_runs_while_znicz_still_plays() {
+        let (tx, rx) = crossbeam_channel::bounded::<()>(1);
+        request_pause(&tx);
+        drop(tx);
+        let pauses = AtomicUsize::new(0);
+        run_pause_worker(
+            rx,
+            || true,
+            || {
+                pauses.fetch_add(1, Ordering::SeqCst);
+            },
+        );
+        assert_eq!(pauses.load(Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -163,12 +245,5 @@ mod tests {
         // answer means the engine has processed everything sent before it.
         let _ = player.send_blocking(znicz_core::Command::SetMuted(false));
         assert_eq!(player.state().status, Stopped);
-    }
-
-    #[test]
-    fn the_engine_pausing_for_spotify_is_not_a_start() {
-        // (a) moves the engine from Playing to Paused; the watcher only reacts
-        // to a move into Playing, so (a) cannot trigger (b).
-        assert!(!started_playing(Playing, Playing, Paused));
     }
 }

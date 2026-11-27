@@ -151,10 +151,13 @@ CLI and MCP behave the same.
 - **Znicz starts:** the player samples the engine every 250 ms. A start is a
   move into `Playing` from a status that was not `Playing` on either of the two
   previous samples. A track change (a one-sample gap) does not count. Each start
-  queues one pause request for a single worker thread, which asks Spotify to
-  pause if it is playing. Requests coalesce while one is queued, so none is lost
-  and a flapping engine cannot pile up calls. A call can take about 40 s, so it
-  never runs on the watcher's thread.
+  queues one pause request for a single worker thread. When the worker reaches
+  a request, it skips it unless the engine still plays, and otherwise asks
+  Spotify to pause if Spotify is playing. So a request that waited behind a slow
+  call does not pause Spotify after the user has switched to it. Requests
+  coalesce while one is queued, so none is lost and a flapping engine cannot
+  pile up calls. A call can take about 40 s, so it never runs on the watcher's
+  thread.
 - If Znicz is already playing when the player starts, Spotify is not paused.
 
 The two directions cannot loop. Spotify starting only moves the engine out of
