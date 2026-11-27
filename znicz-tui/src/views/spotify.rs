@@ -292,6 +292,7 @@ mod tests {
 
     fn track(title: &str) -> SpotifyItem {
         SpotifyItem {
+            position: None,
             kind: SpotifyKind::Track,
             uri: format!("spotify:track:{title}"),
             name: title.into(),
@@ -309,6 +310,7 @@ mod tests {
     fn page(items: Vec<SpotifyItem>) -> SpotifyPage {
         let total = items.len() as u32;
         SpotifyPage {
+            next_offset: None,
             items,
             offset: 0,
             total,

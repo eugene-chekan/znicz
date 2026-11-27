@@ -67,6 +67,8 @@ pub struct Level {
     pub cursor: usize,
     /// Shown under the list (a playlist the user may not list, an error).
     pub notice: Option<String>,
+    /// The offset the next page asks for, as the last page said. None: the loaded count.
+    pub next_offset: Option<u32>,
 }
 
 /// A selectable row: its search group (`None` for a list), its index in that
@@ -84,6 +86,7 @@ impl Level {
             pending: 0,
             cursor: 0,
             notice: None,
+            next_offset: None,
         }
     }
 
@@ -317,21 +320,24 @@ impl SpotifyBrowser {
                 },
                 item.name,
             ),
-            SpotifyKind::Track => {
-                let offset = Some(index as u32);
-                BrowseAction::Play(match context {
-                    Some(uri) => SpotifyOp::Play {
-                        context_uri: Some(uri),
-                        uris: Vec::new(),
-                        offset,
-                    },
-                    None => SpotifyOp::Play {
+            SpotifyKind::Track => BrowseAction::Play(match context {
+                // A context's offset counts every row Spotify has, skipped ones too.
+                Some(uri) => SpotifyOp::Play {
+                    context_uri: Some(uri),
+                    uris: Vec::new(),
+                    offset: Some(item.position.unwrap_or(index as u32)),
+                },
+                // The loaded URIs are a list of their own: the index is into them.
+                None => {
+                    let uris: Vec<String> = siblings.into_iter().map(|track| track.uri).collect();
+                    let (uris, offset) = uri_window(&uris, index);
+                    SpotifyOp::Play {
                         context_uri: None,
-                        uris: siblings.into_iter().map(|track| track.uri).collect(),
-                        offset,
-                    },
-                })
-            }
+                        uris,
+                        offset: Some(offset),
+                    }
+                }
+            }),
         }
     }
 
@@ -411,7 +417,10 @@ impl SpotifyBrowser {
                     level.groups[group].extend(page.items.iter().cloned());
                 }
             }
-            _ => level.items.extend(page.items.iter().cloned()),
+            _ => {
+                level.items.extend(page.items.iter().cloned());
+                level.next_offset = page.next_offset;
+            }
         }
         level.total = page.total;
         level.pending = level.pending.saturating_sub(1);
@@ -452,6 +461,7 @@ impl SpotifyBrowser {
         let level = self.current();
         level.items.clear();
         level.total = 0;
+        level.next_offset = None;
         level.notice = None;
         level.cursor = 0;
         level.pending = 1;
@@ -470,12 +480,13 @@ impl SpotifyBrowser {
             return None;
         }
         let list = level.list.clone()?;
-        let loaded = level.items.len();
-        if loaded >= level.total as usize || level.cursor + NEAR_END < level.rows().len() {
+        // Spotify's rows, skipped ones included, are what the next offset counts.
+        let next = level.next_offset.unwrap_or(level.items.len() as u32);
+        if next >= level.total || level.cursor + NEAR_END < level.rows().len() {
             return None;
         }
         level.pending = 1;
-        Some((generation, list.clone(), op_for(&list, loaded as u32)))
+        Some((generation, list.clone(), op_for(&list, next)))
     }
 
     /// Put the cursor on `row` (an index into `rows()`, or into `TOP` at the top)
@@ -528,6 +539,19 @@ pub fn offset_of(op: &SpotifyOp) -> u32 {
     }
 }
 
+/// Most URIs one play request may carry (Spotify's limit).
+pub const PLAY_URIS: usize = 100;
+/// How many URIs before the cursor a play window starts.
+const WINDOW_BEFORE: usize = 50;
+
+/// The URIs one play request sends, and the offset of the cursor within them:
+/// at most `PLAY_URIS`, starting `WINDOW_BEFORE` before the cursor.
+pub fn uri_window(uris: &[String], cursor: usize) -> (Vec<String>, u32) {
+    let start = cursor.saturating_sub(WINDOW_BEFORE).min(uris.len());
+    let end = (start + PLAY_URIS).min(uris.len());
+    (uris[start..end].to_vec(), (cursor - start) as u32)
+}
+
 fn search_group(kind: SpotifyKind) -> Option<usize> {
     SEARCH_GROUPS.iter().position(|(group, _)| *group == kind)
 }
@@ -578,6 +602,7 @@ mod tests {
             subtitle: "Artist".into(),
             image_url: None,
             track: None,
+            position: None,
         }
     }
 
@@ -597,6 +622,7 @@ mod tests {
             subtitle: "Artist".into(),
             image_url: None,
             track: None,
+            position: None,
         }
     }
 
@@ -605,6 +631,40 @@ mod tests {
             items,
             offset,
             total,
+            next_offset: None,
+        }
+    }
+
+    /// A playlist's tracks page: `rows` raw rows from `offset`, `skipped` of them local
+    /// files that did not make it into `items`. Each kept track's position is its row.
+    fn playlist_page(offset: u32, rows: u32, skipped: &[u32], total: u32) -> SpotifyPage {
+        let items = (0..rows)
+            .filter(|row| !skipped.contains(row))
+            .map(|row| SpotifyItem {
+                position: Some(offset + row),
+                ..track(offset + row)
+            })
+            .collect();
+        SpotifyPage {
+            items,
+            offset,
+            total,
+            next_offset: Some(offset + rows),
+        }
+    }
+
+    /// Opens the first playlist on the Playlists list and returns its tracks' level request.
+    fn open_playlist(b: &mut SpotifyBrowser) -> (u64, BrowseList, String) {
+        let (generation, list) = enter_top(b, 1);
+        let playlist = item(SpotifyKind::Playlist, 1);
+        let uri = playlist.uri.clone();
+        assert!(b.apply_page(generation, &list, 0, &page_of(vec![playlist], 0, 1)));
+        b.first();
+        match b.open() {
+            BrowseAction::Load {
+                generation, list, ..
+            } => (generation, list, uri),
+            other => panic!("expected a load, got {other:?}"),
         }
     }
 
@@ -980,6 +1040,96 @@ mod tests {
         assert_eq!(b.level().cursor, 1);
         assert!(b.select_row(2));
         assert_eq!(b.level().cursor, 2);
+    }
+
+    #[test]
+    fn a_track_after_a_skipped_row_in_a_playlist_plays_at_its_real_position() {
+        let mut b = SpotifyBrowser::new();
+        let (generation, tracks, uri) = open_playlist(&mut b);
+        // Spotify's rows: 0 a track, 1 a local file (skipped), 2 a track.
+        assert!(b.apply_page(generation, &tracks, 0, &playlist_page(0, 3, &[1], 3)));
+        b.last();
+        assert_eq!(
+            b.level().cursor,
+            1,
+            "on the second kept track, the list's row 1"
+        );
+        assert_eq!(
+            b.enter(),
+            BrowseAction::Play(SpotifyOp::Play {
+                context_uri: Some(uri),
+                uris: vec![],
+                offset: Some(2),
+            }),
+            "offset 2 is Spotify's row, not the index 1"
+        );
+    }
+
+    #[test]
+    fn paging_after_a_skipped_row_asks_for_the_raw_offset_without_repeats() {
+        let mut b = SpotifyBrowser::new();
+        let (generation, tracks, uri) = open_playlist(&mut b);
+        // 50 raw rows came back, one of them a local file: 49 kept, the next row is 50.
+        let page = playlist_page(0, 50, &[7], 120);
+        assert_eq!(page.items.len(), 49);
+        assert!(b.apply_page(generation, &tracks, 0, &page));
+        b.last();
+        let (_, _, op) = b.next_page().expect("near the end");
+        assert_eq!(
+            op,
+            SpotifyOp::Tracks {
+                uri,
+                offset: 50,
+                limit: PAGE,
+            },
+            "49 loaded items would re-read row 49"
+        );
+    }
+
+    #[test]
+    fn paging_stops_at_the_total_even_with_a_skipped_row() {
+        let mut b = SpotifyBrowser::new();
+        let (generation, tracks, _) = open_playlist(&mut b);
+        let page = playlist_page(0, 50, &[7], 50);
+        assert!(b.apply_page(generation, &tracks, 0, &page));
+        b.last();
+        assert!(b.next_page().is_none(), "the next row is 50 of 50");
+    }
+
+    #[test]
+    fn a_liked_songs_play_sends_a_window_of_at_most_100_uris_around_the_cursor() {
+        let mut b = SpotifyBrowser::new();
+        let (generation, list) = enter_top(&mut b, 2);
+        let items: Vec<_> = (0..250).map(track).collect();
+        assert!(b.apply_page(generation, &list, 0, &page_of(items, 0, 250)));
+        b.first();
+        b.step(200);
+        let BrowseAction::Play(SpotifyOp::Play {
+            context_uri,
+            uris,
+            offset,
+        }) = b.enter()
+        else {
+            panic!("a track plays")
+        };
+        assert_eq!(context_uri, None);
+        assert_eq!(uris.len(), 100);
+        assert_eq!(uris.first().map(String::as_str), Some("spotify:track:150"));
+        assert_eq!(uris.last().map(String::as_str), Some("spotify:track:249"));
+        assert_eq!(offset, Some(50), "the cursor's place in the window");
+    }
+
+    #[test]
+    fn the_uri_window_starts_fifty_before_the_cursor_and_keeps_short_lists_whole() {
+        let uris: Vec<String> = (0..250).map(|n| format!("spotify:track:{n}")).collect();
+        let (window, offset) = uri_window(&uris, 200);
+        assert_eq!(window, uris[150..250].to_vec());
+        assert_eq!(offset, 50);
+        let (window, offset) = uri_window(&uris, 10);
+        assert_eq!(window, uris[..100].to_vec(), "from the start");
+        assert_eq!(offset, 10);
+        let short: Vec<String> = uris[..3].to_vec();
+        assert_eq!(uri_window(&short, 1), (short.clone(), 1));
     }
 
     #[test]

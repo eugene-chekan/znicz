@@ -635,6 +635,7 @@ mod tests {
 
     fn track_item(uri: &str, title: &str) -> SpotifyItem {
         SpotifyItem {
+            position: None,
             kind: SpotifyKind::Track,
             uri: uri.into(),
             name: title.into(),
@@ -651,6 +652,7 @@ mod tests {
 
     fn album_item() -> SpotifyItem {
         SpotifyItem {
+            position: None,
             kind: SpotifyKind::Album,
             uri: "spotify:album:kob".into(),
             name: "Kind of Blue".into(),
@@ -664,6 +666,7 @@ mod tests {
         let total = items.len() as u32;
         SpotifyReply::Page {
             page: SpotifyPage {
+                next_offset: None,
                 items,
                 offset: 0,
                 total,

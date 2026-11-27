@@ -648,13 +648,19 @@ through search. The title reads `Spotify · <user> · <device>`.
 
 - A playlist or album plays from its first track, as Spotify's context.
 - A track in a playlist or album list plays from that track, in that context.
+  The offset is the track's row in Spotify's list, so a local file skipped in
+  the list still counts.
 - A track from liked songs or from a search group plays the loaded tracks of
-  that list as URIs, starting at the cursor. Liked songs have no context.
+  that list as URIs, starting at the cursor. Liked songs have no context. Spotify
+  takes at most 100 URIs per request, so only a window of up to 100 is sent: it
+  starts 50 rows before the cursor, and the cursor's place in it is the offset.
 - An artist opens its albums (as `l` does).
 
 **Lists and paging.** A list is fetched 50 rows at a time. The tick asks for
 the next page when the cursor is within 5 rows of the last loaded row and more
-rows exist. Search does not page. A list shows `Loading…` while a request is
+rows exist. The next page starts at the row after the last raw row Spotify
+returned, so a skipped local file does not make a row appear twice. Search does
+not page. A list shows `Loading…` while a request is
 out, and a page that arrives after the user has left that list is dropped.
 
 **Unavailable playlists.** Spotify only lists the tracks of playlists the user

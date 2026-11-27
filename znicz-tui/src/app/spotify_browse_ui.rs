@@ -252,6 +252,7 @@ mod tests {
 
     fn playlist(n: u32) -> SpotifyItem {
         SpotifyItem {
+            position: None,
             kind: SpotifyKind::Playlist,
             uri: format!("spotify:playlist:{n}"),
             name: format!("Playlist {n}"),
@@ -264,6 +265,7 @@ mod tests {
     fn page(items: Vec<SpotifyItem>, total: u32) -> SpotifyReply {
         SpotifyReply::Page {
             page: SpotifyPage {
+                next_offset: None,
                 items,
                 offset: 0,
                 total,
@@ -537,6 +539,7 @@ mod tests {
                 let kind = kinds[0];
                 self.inner.ops.lock().unwrap().push(op.clone());
                 let item = SpotifyItem {
+                    position: None,
                     kind,
                     uri: format!("spotify:{}:found", kind.as_api()),
                     name: format!("{} found", kind.as_api()),

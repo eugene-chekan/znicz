@@ -210,6 +210,10 @@ pub struct SpotifyItem {
     pub image_url: Option<String>,
     /// Full details when `kind` is `Track`.
     pub track: Option<SpotifyTrack>,
+    /// The row's position in the whole list, skipped rows included. What a
+    /// context play sends as its offset. None when the list gave no position.
+    #[serde(default)]
+    pub position: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -217,12 +221,19 @@ pub struct SpotifyPage {
     pub items: Vec<SpotifyItem>,
     pub offset: u32,
     pub total: u32,
+    /// The offset to ask for next: this page's offset plus the raw rows Spotify
+    /// returned, skipped rows included. None: count the loaded items instead.
+    #[serde(default)]
+    pub next_offset: Option<u32>,
 }
 
 impl SpotifyPage {
     /// Not meaningful for a search over several kinds; page one kind at a time (see `SpotifyOp::Search`).
     pub fn has_more(&self) -> bool {
-        (self.offset as usize + self.items.len()) < self.total as usize
+        match self.next_offset {
+            Some(next) => next < self.total,
+            None => (self.offset as usize + self.items.len()) < self.total as usize,
+        }
     }
 }
 
@@ -575,15 +586,38 @@ mod tests {
             subtitle: String::new(),
             image_url: None,
             track: None,
+            position: None,
         };
         let page = SpotifyPage {
             items: vec![item.clone(), item],
             offset: 0,
             total: 3,
+            next_offset: None,
         };
         assert!(page.has_more());
         let last = SpotifyPage { offset: 1, ..page };
         assert!(!last.has_more());
+    }
+
+    #[test]
+    fn a_page_with_a_skipped_row_has_no_more_once_its_next_offset_reaches_the_total() {
+        let item = SpotifyItem {
+            kind: SpotifyKind::Track,
+            uri: "spotify:track:1".into(),
+            name: "x".into(),
+            subtitle: String::new(),
+            image_url: None,
+            track: None,
+            position: None,
+        };
+        // 50 raw rows came back, one of them a local file: 49 items, next offset 50 of 50.
+        let page = SpotifyPage {
+            items: vec![item; 49],
+            offset: 0,
+            total: 50,
+            next_offset: Some(50),
+        };
+        assert!(!page.has_more(), "counting the loaded items would say more");
     }
 
     #[test]

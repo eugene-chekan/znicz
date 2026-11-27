@@ -87,6 +87,7 @@ pub(crate) fn item(value: &Value) -> Option<SpotifyItem> {
                 subtitle: track.artist_line(),
                 image_url: track.image_url.clone(),
                 track: Some(track),
+                position: None,
             }
         }
         SpotifyKind::Album => SpotifyItem {
@@ -96,6 +97,7 @@ pub(crate) fn item(value: &Value) -> Option<SpotifyItem> {
             subtitle: names(&value["artists"]).join(", "),
             image_url: image(&value["images"]),
             track: None,
+            position: None,
         },
         SpotifyKind::Artist => SpotifyItem {
             kind,
@@ -104,6 +106,7 @@ pub(crate) fn item(value: &Value) -> Option<SpotifyItem> {
             subtitle: String::new(),
             image_url: image(&value["images"]),
             track: None,
+            position: None,
         },
         SpotifyKind::Playlist => SpotifyItem {
             kind,
@@ -112,6 +115,7 @@ pub(crate) fn item(value: &Value) -> Option<SpotifyItem> {
             subtitle: text(&value["owner"]["display_name"]),
             image_url: image(&value["images"]),
             track: None,
+            position: None,
         },
     })
 }
@@ -119,27 +123,37 @@ pub(crate) fn item(value: &Value) -> Option<SpotifyItem> {
 /// A paging object. Saved tracks and albums wrap each row as
 /// `{"track": …}` / `{"album": …}`; playlists as `{"track": …}` or `{"item": …}`.
 pub(crate) fn page(value: &Value) -> SpotifyPage {
-    let items = value["items"]
-        .as_array()
+    let offset = value["offset"].as_u64().unwrap_or(0) as u32;
+    let rows = value["items"].as_array();
+    // A row's position counts every raw row, the skipped ones too: Spotify's
+    // context offsets count them, and so does the next page's offset.
+    let items = rows
         .map(|rows| {
             rows.iter()
-                .filter_map(|row| {
+                .enumerate()
+                .filter_map(|(index, row)| {
                     // Wrapper rows (`{"added_at": …, "track": …}`) have no `type`;
                     // a track object has an `album` key, so check `type` first.
-                    if row.get("type").is_some() {
-                        return item(row);
-                    }
-                    ["track", "album", "item"]
-                        .iter()
-                        .find_map(|key| item(&row[*key]))
+                    let found = if row.get("type").is_some() {
+                        item(row)
+                    } else {
+                        ["track", "album", "item"]
+                            .iter()
+                            .find_map(|key| item(&row[*key]))
+                    };
+                    found.map(|found| SpotifyItem {
+                        position: Some(offset + index as u32),
+                        ..found
+                    })
                 })
                 .collect()
         })
         .unwrap_or_default();
     SpotifyPage {
         items,
-        offset: value["offset"].as_u64().unwrap_or(0) as u32,
+        offset,
         total: value["total"].as_u64().unwrap_or(0) as u32,
+        next_offset: rows.map(|rows| offset + rows.len() as u32),
     }
 }
 
@@ -155,6 +169,7 @@ pub(crate) fn search(value: &Value, kinds: &[SpotifyKind], offset: u32) -> Spoti
         items: pages.into_iter().flat_map(|p| p.items).collect(),
         offset,
         total,
+        next_offset: None,
     }
 }
 
@@ -368,6 +383,28 @@ mod tests {
         );
         let page = page(&json(&text));
         assert_eq!(page.items.len(), 1);
+    }
+
+    #[test]
+    fn a_playlist_page_numbers_rows_by_their_full_position_and_points_past_them() {
+        let local = r#"{"type": "track", "uri": "spotify:local:a:b:c:1", "name": "Mine", "is_local": true, "duration_ms": 1, "artists": [], "album": {"name": "", "images": []}}"#;
+        let text = format!(
+            r#"{{"offset": 100, "total": 200, "items": [
+                {{"added_at": "x", "track": {TRACK}}},
+                {{"added_at": "y", "is_local": true, "track": {local}}},
+                {{"added_at": "z", "track": {TRACK}}}
+            ]}}"#
+        );
+        let page = page(&json(&text));
+        assert_eq!(page.items.len(), 2, "the local row is skipped");
+        assert_eq!(page.items[0].position, Some(100));
+        assert_eq!(
+            page.items[1].position,
+            Some(102),
+            "the skipped row still counts"
+        );
+        assert_eq!(page.next_offset, Some(103), "three raw rows were returned");
+        assert!(page.has_more());
     }
 
     #[test]
