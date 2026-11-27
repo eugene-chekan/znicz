@@ -108,7 +108,16 @@ znicz mcp
 # Shared player process (usually autostarted)
 znicz player
 znicz player stop
+
+# Spotify: log in, log out, show the login and what plays
+znicz spotify login
+znicz spotify logout
+znicz spotify status
 ```
+
+### Spotify
+
+Spotify does not let open-source apps share one client ID, so you use your own app. Register a free app at developer.spotify.com/dashboard, add the redirect URI `http://127.0.0.1:8898/callback`, and add yourself under User Management. Set `client_id` in `[spotify]` (or in Settings → Spotify, tab 6), then run `znicz spotify login`. Over SSH, paste the address you were sent to, or forward the port first with `ssh -L 8898:127.0.0.1:8898`. Playback control needs Spotify Premium. In the TUI, `O` switches to Spotify mode.
 
 ### Music library
 
@@ -284,6 +293,15 @@ icons = "unicode"          # unicode | emoji | nerd (needs a Nerd Font: see READ
 
 [covers]
 search = true              # look radio covers up by artist / title (Deezer, iTunes, MusicBrainz)
+
+[spotify]
+# Control the Spotify app from Znicz. Needs your own Spotify developer app: register
+# a free one at https://developer.spotify.com/dashboard, add the redirect URI below,
+# then set client_id. Playback control needs a Premium account. Log in: znicz spotify login.
+# client_id = "0123456789abcdef0123456789abcdef"  # the app's client ID (32 hex characters)
+# redirect_port = 8898       # login listener on 127.0.0.1; redirect URI http://127.0.0.1:8898/callback
+# device = "Kitchen speaker" # preferred Spotify device, used when none is active; unset = none
+# open_browser = "auto"      # auto | always | never: open the login page in a browser
 
 [updates]
 check = true               # ask GitHub for a new release once a day

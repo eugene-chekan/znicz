@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.20.0 - 2026-11-27
+
+- Spotify control through the Web API. You bring your own Spotify developer
+  app and its client ID (Development Mode is enough). Playback control needs
+  Spotify Premium. Browsing and search work without it.
+- `znicz spotify login`, `logout` and `status`. Login over SSH works by pasting
+  the address you were sent to, or by forwarding the port with `ssh -L`.
+- Settings → Spotify (tab 6) sets the client ID, the redirect port, when a
+  browser opens and the playback device, and has a login panel.
+- Spotify mode on `O`: browse playlists, liked songs and albums, search, play
+  in context, use the transport keys, queue tracks, and pick a Spotify Connect
+  device with `,`. `O` again or `O znicz` returns.
+- The Stage and the transport show what Spotify plays, with its cover and the
+  signal rows (source, device, Spotify Connect path).
+- Znicz and Spotify pause each other. Starting Spotify pauses Znicz, and
+  starting a local track in Znicz pauses Spotify.
+- MCP: `spotify_*` tools, a `znicz://spotify/now-playing` resource and a bundled
+  skill.
+- Spotify's 2026 Development Mode limits apply. Tracks of a playlist are listed
+  only for playlists you own or collaborate on, artist top tracks are not
+  available, and search returns at most 10 results per type.
+- Settings keeps the comments in `config.toml` when it saves.
+
 ## 0.19.0 - 2026-11-22
 
 - Crossfade: when one track follows another on its own, the two overlap for
