@@ -58,6 +58,11 @@ Two views, toggled with `v` or `i`. The TUI always starts on **Browse**.
 - **Browse**: the library, the queue drawer (`]`), and the text transport.
 - **Stage**: full-screen now playing (see [Stage](#stage)).
 
+`O` switches to Spotify mode (a flag beside the view, not a third view). It
+needs a Spotify login; without one it toasts the login line. In the mode the
+keys and footer are Spotify's, and `O znicz` returns. The browser and the
+device list are built up in later steps.
+
 On Stage, `Esc` closes an open modal or the queue drawer first, then returns to
 Browse. Playback keys, `?`, `,`, `P`, `R`, `M`, `]`, and `q` work there. Library
 keys (`/`, `a`, `A`, `J`, `F`, `U`, `h` / `l`, `Tab` column cycling, list

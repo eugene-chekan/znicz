@@ -42,6 +42,16 @@ pub enum Context {
     Help,
     /// Help with its filter row taking keys.
     HelpFilter,
+    /// Spotify mode, the browser column.
+    SpotifyBrowse,
+    /// Spotify mode, the search prompt.
+    SpotifySearch,
+    /// Spotify mode, the Stage.
+    SpotifyStage,
+    /// Spotify mode, the queue drawer.
+    SpotifyQueue,
+    /// Spotify mode, the Connect device list.
+    SpotifyDevices,
 }
 
 /// One clickable footer hint: what it says and the key a click sends.
@@ -100,6 +110,9 @@ const FILTER: Hint = hint("/ filter", KeyCode::Char('/'));
 const ENTER_KEEP: Hint = hint("Enter keep", KeyCode::Enter);
 const ESC_CLEAR: Hint = hint("Esc clear", KeyCode::Esc);
 
+// Spotify mode: `O` leaves it, and is always the last hint.
+const SPOTIFY_LEAVE: Hint = hint("O znicz", KeyCode::Char('O'));
+
 /// Drawn at the right end of the footer in every context except help.
 pub const MORE: Hint = hint("? more", KeyCode::Char('?'));
 
@@ -142,6 +155,18 @@ pub fn context_hints(context: Context) -> &'static [Hint] {
         Context::StationPrompt => &[ENTER_SAVE, CANCEL, NEXT_FIELD],
         Context::Help => &[FILTER, CLOSE],
         Context::HelpFilter => &[ENTER_KEEP, ESC_CLEAR],
+        Context::SpotifyBrowse => &[
+            SPACE_PAUSE,
+            SEARCH,
+            ENTER_PLAY,
+            ADD,
+            QUEUE_OPEN,
+            SPOTIFY_LEAVE,
+        ],
+        Context::SpotifyStage => &[SPACE_PAUSE, NEXT, BROWSE, SPOTIFY_LEAVE],
+        Context::SpotifySearch => &[ENTER_SEARCH, CANCEL],
+        Context::SpotifyQueue => &[QUEUE_CLOSE, SPOTIFY_LEAVE],
+        Context::SpotifyDevices => &[SELECT, CLOSE],
     }
 }
 
@@ -157,6 +182,7 @@ pub fn more_hint(context: Context) -> Option<Hint> {
             | Context::Help
             | Context::HelpFilter
             | Context::Update
+            | Context::SpotifySearch
     );
     (!typed_or_help).then_some(MORE)
 }
@@ -261,6 +287,13 @@ pub const SETTINGS: &[Binding] = &[
 
 pub const STAGE: &[Binding] = &[b("v / i / Esc", "back to browse")];
 
+/// Spotify mode. Later steps add the browser, search, transport and queue keys.
+pub const SPOTIFY: &[Binding] = &[
+    b("O", "leave Spotify mode"),
+    b("v / i", "now playing (stage)"),
+    b("Esc", "back one browser level"),
+];
+
 pub const MESSAGES: &[Binding] = &[b("C", "clear the history"), b("Esc / M", "close")];
 
 /// Only in the help overlay: opens a known update, or checks for one right away.
@@ -286,6 +319,7 @@ const CONTEXT_SECTIONS: &[(&str, &[Binding])] = &[
     ("Stage", STAGE),
     ("Messages", MESSAGES),
     ("Help", HELP),
+    ("Spotify", SPOTIFY),
 ];
 
 /// Title of the section holding this context's own keys, if it has a table.
@@ -304,6 +338,11 @@ pub fn context_title(context: Context) -> Option<&'static str> {
         Context::Radio => Some("Radio"),
         Context::Messages => Some("Messages"),
         Context::Help => Some("Help"),
+        Context::SpotifyBrowse
+        | Context::SpotifySearch
+        | Context::SpotifyStage
+        | Context::SpotifyQueue
+        | Context::SpotifyDevices => Some("Spotify"),
         Context::Update | Context::Prompt | Context::StationPrompt | Context::HelpFilter => None,
     }
 }
@@ -392,7 +431,7 @@ mod tests {
         }
     }
 
-    const ALL_CONTEXTS: [Context; 19] = [
+    const ALL_CONTEXTS: [Context; 24] = [
         Context::Library,
         Context::LibraryTree,
         Context::Search,
@@ -412,6 +451,11 @@ mod tests {
         Context::StationPrompt,
         Context::Help,
         Context::HelpFilter,
+        Context::SpotifyBrowse,
+        Context::SpotifySearch,
+        Context::SpotifyStage,
+        Context::SpotifyQueue,
+        Context::SpotifyDevices,
     ];
 
     /// Columns a hint row needs: labels plus ` · ` between them.
@@ -443,7 +487,8 @@ mod tests {
                 | Context::SettingsPrompt
                 | Context::Update
                 | Context::Help
-                | Context::HelpFilter => {
+                | Context::HelpFilter
+                | Context::SpotifySearch => {
                     assert_eq!(more_hint(context), None, "{context:?}")
                 }
                 _ => assert_eq!(more_hint(context), Some(MORE), "{context:?}"),
@@ -523,14 +568,15 @@ mod tests {
                 "Settings",
                 "Stage",
                 "Messages",
-                "Help"
+                "Help",
+                "Spotify"
             ]
         );
         let dims: Vec<bool> = sections.iter().map(|s| s.dim).collect();
         assert_eq!(
             dims,
             [
-                false, false, false, true, true, true, true, true, true, true, true
+                false, false, false, true, true, true, true, true, true, true, true, true
             ]
         );
     }
@@ -554,7 +600,7 @@ mod tests {
         for context in [Context::Prompt, Context::StationPrompt] {
             let sections = help_sections(context);
             assert_eq!(sections[0].title, "Playback", "{context:?}");
-            assert_eq!(sections.len(), 11, "every table still listed once");
+            assert_eq!(sections.len(), 12, "every table still listed once");
             assert_eq!(context_title(context), None);
         }
     }

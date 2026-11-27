@@ -146,7 +146,9 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
         Modal::Messages => messages::render_modal(frame, list, app),
         Modal::Update => update::render_modal(frame, list, app),
         Modal::Settings => settings::render(frame, list, app),
-        Modal::None => {}
+        // Drawn with the Spotify device list in a later step; until then the
+        // modal is open with nothing on it.
+        Modal::SpotifyDevices | Modal::None => {}
     }
 }
 

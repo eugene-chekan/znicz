@@ -36,7 +36,9 @@ use crate::toast::Toasts;
 use crate::tui_config::{CoverProtocol, TuiConfig};
 
 mod settings_ui;
+mod spotify_mode;
 mod spotify_ui;
+use crate::spotify_browse::SpotifyBrowser;
 use crate::spotify_worker::{SpotifyAsk, SpotifyWorker};
 use crate::update::{Release, Updates};
 use crate::views;
@@ -193,6 +195,8 @@ pub enum Modal {
     Messages,
     Update,
     Settings,
+    /// The Spotify Connect device list (Spotify mode's `,`).
+    SpotifyDevices,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -305,6 +309,7 @@ impl Modal {
                 | Self::Messages
                 | Self::Update
                 | Self::Settings
+                | Self::SpotifyDevices
         )
     }
 }
@@ -441,6 +446,12 @@ pub struct App {
     pub(crate) spotify_unavailable: Option<String>,
     /// When the status was last polled.
     pub(crate) spotify_polled_at: Option<Instant>,
+    /// Spotify mode: `O` made the keys, the footer and the status poll Spotify's.
+    pub(crate) spotify_mode: bool,
+    /// The browser's levels, cursors and generation. Reset when the mode ends.
+    pub(crate) spotify_browser: SpotifyBrowser,
+    /// The search prompt, while it is open.
+    pub(crate) spotify_search: Option<LineEdit>,
     /// The login panel, while a login runs.
     pub(crate) spotify_login: Option<LoginPanel>,
     /// A question in the Settings strip that waits for Enter.
@@ -830,6 +841,9 @@ impl App {
             spotify_devices_known: false,
             spotify_unavailable: None,
             spotify_polled_at: None,
+            spotify_mode: false,
+            spotify_browser: SpotifyBrowser::new(),
+            spotify_search: None,
             spotify_login: None,
             spotify_confirm: None,
             spotify_player_differs: false,
@@ -1220,6 +1234,8 @@ impl App {
             Modal::Update => {
                 self.update_scroll = self.update_scroll.saturating_add_signed(delta);
             }
+            // The Spotify device list has no wheel scrolling yet.
+            Modal::SpotifyDevices => {}
             Modal::None => match self.focus {
                 Focus::Library if self.view == View::Browse => {
                     self.library.step(delta, self.library_strip())
@@ -1488,6 +1504,16 @@ impl App {
             self.esc_spotify_panel();
             return;
         }
+        // In Spotify mode's browser, Esc closes the search prompt, else goes
+        // back one level. At the top level it does nothing.
+        if self.spotify_mode && self.modal == Modal::None && self.view == View::Browse {
+            if self.spotify_search.is_some() {
+                self.spotify_search = None;
+            } else {
+                self.spotify_browser.back();
+            }
+            return;
+        }
         // Esc cancels the typed value and leaves Settings open.
         if self.modal == Modal::Settings && self.settings_prompt.is_some() {
             self.settings_prompt = None;
@@ -1509,6 +1535,7 @@ impl App {
                 | Modal::Messages
                 | Modal::Update
                 | Modal::Settings
+                | Modal::SpotifyDevices
         ) {
             self.close_modal();
         } else if self.queue_open && (self.focus == Focus::Queue || self.view == View::Stage) {
@@ -1684,6 +1711,7 @@ impl App {
             KeyCode::Char('P') => self.toggle_playlists_modal(),
             KeyCode::Char('R') => self.toggle_radio_modal(),
             KeyCode::Char('S') => self.toggle_settings_modal(),
+            KeyCode::Char('O') if self.modal == Modal::None => self.toggle_spotify_mode(),
             KeyCode::Char('M') => self.toggle_messages_modal(),
 
             KeyCode::Char(']') if self.modal.blocks_list_focus() => {}
@@ -1825,6 +1853,7 @@ impl App {
             Modal::Help if self.help.editing => Context::HelpFilter,
             Modal::Help => Context::Help,
             Modal::Devices => Context::Devices,
+            Modal::SpotifyDevices => Context::SpotifyDevices,
             Modal::Settings
                 if self
                     .spotify_login
@@ -1841,6 +1870,12 @@ impl App {
             Modal::Radio => Context::Radio,
             Modal::Messages => Context::Messages,
             Modal::Update => Context::Update,
+            Modal::None if self.spotify_mode && self.view == View::Stage => Context::SpotifyStage,
+            Modal::None if self.spotify_mode && self.spotify_search.is_some() => {
+                Context::SpotifySearch
+            }
+            Modal::None if self.spotify_mode && self.queue_open => Context::SpotifyQueue,
+            Modal::None if self.spotify_mode => Context::SpotifyBrowse,
             Modal::None
                 if self.view == View::Stage && !(self.queue_open && self.focus == Focus::Queue) =>
             {
