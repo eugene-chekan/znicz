@@ -11,7 +11,7 @@
   browser opens and the playback device, and has a login panel.
 - Spotify mode on `O`: browse playlists, liked songs and albums, search, play
   in context, use the transport keys, queue tracks, and pick a Spotify Connect
-  device with `,`. `O` again or `O znicz` returns.
+  device with `,`. `O` again returns.
 - The Stage and the transport show what Spotify plays, with its cover and the
   signal rows (source, device, Spotify Connect path).
 - Znicz and Spotify pause each other. Starting Spotify pauses Znicz, and

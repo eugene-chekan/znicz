@@ -641,7 +641,7 @@ through search. The title reads `Spotify · <user> · <device>`.
 | `h` | Back one level. Never past the top |
 | `r` | Reload the list from its first page. Not in search results |
 | `/` | Open the search prompt (the Search row does the same) |
-| `Esc` | Close the search prompt first; otherwise back one level; at the top it does nothing |
+| `Esc` | Close the search prompt first; then the queue drawer, if open; otherwise back one level; at the top it does nothing |
 | `Tab`, `Shift-Tab` | Nothing: the browser is one column |
 
 **Enter** plays what the row is:
@@ -690,8 +690,8 @@ These work in Browse and in Stage.
 | `e` | Repeat: off, then the context, then one track, then off |
 | `z` | Shuffle on / off |
 | `a` | Queue the highlighted track. An album, playlist or artist gets a toast: `Spotify's queue takes one track at a time` |
-| `,` | Spotify Connect device list (a modal). `j` / `k` move, `Enter` moves playback to that device and starts it, `,` or `Esc` closes |
-| `]` | Spotify queue drawer, read-only. It is read again every 3 s while open |
+| `,` | Spotify Connect device list (a modal). `j` / `k` move, `Enter` moves playback to that device and starts it, `,` or `Esc` closes. Other keys do nothing while it is open, apart from the global ones |
+| `]` | Spotify queue drawer, read-only. It is read again every 3 s while open. Its keys (`Enter`, `d`, `C`, Alt-arrows) do nothing: the Znicz queue is never changed from here, and nothing starts |
 | `s` | A toast: `Spotify has no stop: Space pauses`. Nothing else changes |
 | `A`, `L`, `F`, `U`, `J` | A toast: `not in Spotify mode`. Library keys only |
 | `P`, `R`, `S`, `M`, `?`, `q`, `v`, `i`, `O` | Keep their global meaning |

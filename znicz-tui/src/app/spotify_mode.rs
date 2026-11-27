@@ -52,8 +52,7 @@ impl App {
             }
             SpotifyKey::Volume(delta) => match self.spotify_volume_percent() {
                 Some(percent) => {
-                    let volume = spotify_mode::volume_after(percent, delta);
-                    self.spotify_send_play(SpotifyOp::SetVolume { volume });
+                    self.spotify_send_volume_percent(spotify_mode::percent_after(percent, delta));
                 }
                 None => self.toasts.info(spotify_mode::NO_VOLUME),
             },
@@ -79,9 +78,13 @@ impl App {
                     .playback
                     .as_ref()
                     .map_or(SpotifyRepeat::Off, |p| p.repeat);
-                self.spotify_send_play(SpotifyOp::SetRepeat {
-                    mode: current.next(),
-                });
+                let mode = current.next();
+                if self.spotify_send_play(SpotifyOp::SetRepeat { mode }) {
+                    // The next press builds on this one, not on the last poll.
+                    if let Some(playback) = self.spotify_state.playback.as_mut() {
+                        playback.repeat = mode;
+                    }
+                }
             }
             SpotifyKey::Shuffle => {
                 let on = self
@@ -114,9 +117,12 @@ impl App {
             self.toasts.info(spotify_mode::ONE_TRACK_AT_A_TIME);
             return;
         }
-        self.spotify_send_play(SpotifyOp::QueueAdd {
+        let op = SpotifyOp::QueueAdd {
             uri: item.uri.clone(),
-        });
+        };
+        if !self.ask_spotify(SpotifyAsk::QueueAdd, op) {
+            self.toasts.error(spotify_mode::NO_LANE);
+        }
     }
 
     /// `,` in the mode: open or close the Spotify Connect device list. The list
@@ -140,8 +146,9 @@ impl App {
     }
 
     /// Keys of the Spotify device list: `j`/`k` and the arrows move, `Enter`
-    /// moves playback to the chosen device, `,` closes. True when the key was
-    /// the list's; `Esc` and the global keys go through their own paths.
+    /// moves playback to the chosen device, `,` closes. The list swallows every
+    /// other key except the global ones (`q`, `S`, `?`, ...), so no Znicz key
+    /// reaches the engine while it is open. `Esc` goes through its own path.
     pub(crate) fn on_spotify_devices_key(&mut self, key: KeyEvent) -> bool {
         let len = self.spotify_state.devices.len();
         match key.code {
@@ -149,7 +156,8 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => self.spotify_devices_cursor.step(-1, len),
             KeyCode::Enter => self.transfer_to_selected_device(),
             KeyCode::Char(',') => self.toggle_spotify_devices(),
-            _ => return false,
+            _ if spotify_mode::keeps_global(key) => return false,
+            _ => {}
         }
         true
     }
@@ -191,9 +199,10 @@ impl App {
         if self.spotify_queue_requested {
             return;
         }
+        // Stamped before the ask, so a missing lane is retried at the 3 s pace too.
+        self.spotify_queue_asked_at = Some(Instant::now());
         if self.ask_spotify(SpotifyAsk::Queue, SpotifyOp::Queue) {
             self.spotify_queue_requested = true;
-            self.spotify_queue_asked_at = Some(Instant::now());
         } else {
             self.toasts.error(spotify_mode::NO_LANE);
         }
@@ -222,10 +231,22 @@ impl App {
     }
 
     /// Set the device to `percent`. False (with the lane's toast) when the request was not sent.
+    /// Once the transport lane takes it, the device's volume is `percent` in the
+    /// state too, so the next press builds on it; the next status read overwrites it.
     fn spotify_send_volume_percent(&mut self, percent: u8) -> bool {
-        self.spotify_send_play(SpotifyOp::SetVolume {
+        let sent = self.spotify_send_play(SpotifyOp::SetVolume {
             volume: f32::from(percent) / 100.0,
-        })
+        });
+        if sent
+            && let Some(device) = self
+                .spotify_state
+                .playback
+                .as_mut()
+                .and_then(|p| p.device.as_mut())
+        {
+            device.volume_percent = Some(percent);
+        }
+        sent
     }
 
     /// Whether the keys, the footer and the status poll are Spotify's.
@@ -286,8 +307,8 @@ impl App {
 mod tests {
     use std::time::Instant;
 
-    use crossterm::event::KeyCode;
-    use znicz_core::{SpotifyLogin, SpotifyState};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use znicz_core::{Command, QueueItem, SpotifyLogin, SpotifyState};
 
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -435,8 +456,9 @@ mod tests {
         app.spotify_state.playback = Some(playing(Some(40), true));
         press(&mut app, KeyCode::Char('+'));
         assert!(wait_for_op(&host, |op| *op == SpotifyOp::SetVolume { volume: 0.41 }));
+        // The minus builds on the 41 just sent, not on the 40 of the last read.
         press(&mut app, KeyCode::Char('-'));
-        assert!(wait_for_op(&host, |op| *op == SpotifyOp::SetVolume { volume: 0.39 }));
+        assert!(wait_for_op(&host, |op| *op == SpotifyOp::SetVolume { volume: 0.40 }));
     }
 
     #[test]
@@ -898,6 +920,159 @@ mod tests {
         }
         assert!(app.in_spotify_mode());
         assert!(sent_ops(&host).is_empty());
+    }
+
+    /// Two files in the Znicz queue, which no Spotify key may touch.
+    fn seed_znicz_queue(app: &App) {
+        app.player
+            .send_blocking(Command::QueueAdd(vec![
+                QueueItem::file("/music/a.flac"),
+                QueueItem::file("/music/b.flac"),
+            ]))
+            .unwrap();
+    }
+
+    fn key_with(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, modifiers)
+    }
+
+    #[test]
+    fn the_stage_queue_drawer_keys_never_reach_the_znicz_queue() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let mut app = mode_app(&dir, &host);
+        seed_znicz_queue(&app);
+        press(&mut app, KeyCode::Char('v'));
+        press(&mut app, KeyCode::Char(']'));
+        assert_eq!(app.view, View::Stage);
+        assert!(app.queue_open);
+        let queue = app.player.state().queue;
+        let status = app.player.state().status;
+        let toasts = settings_tests::toast_texts(&app);
+        for key in [
+            key_with(KeyCode::Enter, KeyModifiers::NONE),
+            key_with(KeyCode::Char('d'), KeyModifiers::NONE),
+            key_with(KeyCode::Char('C'), KeyModifiers::NONE),
+            key_with(KeyCode::Down, KeyModifiers::ALT),
+            key_with(KeyCode::Up, KeyModifiers::ALT),
+        ] {
+            app.on_key(key);
+        }
+        assert_eq!(
+            app.player.state().queue,
+            queue,
+            "the Znicz queue is unchanged"
+        );
+        assert_eq!(app.player.state().status, status, "nothing started");
+        assert_eq!(settings_tests::toast_texts(&app), toasts, "no Znicz toast");
+    }
+
+    #[test]
+    fn the_spotify_device_list_keeps_space_and_n_away_from_znicz() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let mut app = mode_app(&dir, &host);
+        seed_znicz_queue(&app);
+        press(&mut app, KeyCode::Char(','));
+        assert_eq!(app.modal, Modal::SpotifyDevices);
+        let queue = app.player.state().queue;
+        let status = app.player.state().status;
+        let toasts = settings_tests::toast_texts(&app);
+        press(&mut app, KeyCode::Char(' '));
+        press(&mut app, KeyCode::Char('n'));
+        assert_eq!(app.modal, Modal::SpotifyDevices, "the list stays open");
+        assert_eq!(app.player.state().queue, queue);
+        assert_eq!(app.player.state().status, status, "nothing started");
+        assert_eq!(settings_tests::toast_texts(&app), toasts, "no Znicz toast");
+    }
+
+    #[test]
+    fn esc_with_the_spotify_drawer_open_closes_the_drawer_before_going_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let mut app = mode_app(&dir, &host);
+        // Playlists: one level down.
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char('l'));
+        assert_eq!(app.spotify_browser.depth(), 2);
+        press(&mut app, KeyCode::Char(']'));
+        assert!(app.queue_open);
+        press(&mut app, KeyCode::Esc);
+        assert!(!app.queue_open, "the first Esc closes the drawer");
+        assert_eq!(app.spotify_browser.depth(), 2, "and keeps the level");
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.spotify_browser.depth(), 1, "the next Esc goes back");
+    }
+
+    #[test]
+    fn quick_volume_presses_build_on_the_last_sent_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let mut app = mode_app(&dir, &host);
+        app.spotify_state.playback = Some(playing(Some(40), true));
+        for _ in 0..3 {
+            press(&mut app, KeyCode::Char('+'));
+        }
+        let volumes: Vec<f32> = sent_ops(&host)
+            .iter()
+            .filter_map(|op| match op {
+                SpotifyOp::SetVolume { volume } => Some(*volume),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(volumes, vec![0.41, 0.42, 0.43]);
+    }
+
+    #[test]
+    fn quick_repeat_presses_build_on_the_last_sent_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let mut app = mode_app(&dir, &host);
+        app.spotify_state.playback = Some(playing(Some(40), true));
+        press(&mut app, KeyCode::Char('e'));
+        press(&mut app, KeyCode::Char('e'));
+        let modes: Vec<SpotifyRepeat> = sent_ops(&host)
+            .iter()
+            .filter_map(|op| match op {
+                SpotifyOp::SetRepeat { mode } => Some(*mode),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(modes, vec![SpotifyRepeat::Context, SpotifyRepeat::Track]);
+    }
+
+    #[test]
+    fn with_no_browse_lane_the_open_drawer_retries_at_most_every_3s() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = logged_in(&dir);
+        press(&mut app, KeyCode::Char('O'));
+        press(&mut app, KeyCode::Char(']'));
+        let no_lane = |app: &App| {
+            settings_tests::toast_texts(app)
+                .iter()
+                .filter(|t| *t == spotify_mode::NO_LANE)
+                .count()
+        };
+        assert_eq!(no_lane(&app), 1);
+        app.refresh_spotify_queue();
+        app.refresh_spotify_queue();
+        assert_eq!(no_lane(&app), 1, "a tick does not ask again at once");
+    }
+
+    #[test]
+    fn a_queue_add_that_succeeds_makes_the_drawer_read_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let mut app = mode_app(&dir, &host);
+        app.spotify_queue_asked_at = Some(Instant::now());
+        app.on_spotify_done(Done {
+            tag: SpotifyAsk::QueueAdd,
+            result: Ok(SpotifyReply::Done),
+        });
+        assert!(
+            app.spotify_queue_asked_at.is_none(),
+            "the next tick reads the queue"
+        );
     }
 
     fn change_fails(app: &mut App, kind: SpotifyErrorKind, message: &str) {

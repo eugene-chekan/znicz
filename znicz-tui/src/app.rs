@@ -1496,7 +1496,12 @@ impl App {
                 return;
             }
         }
-        if self.in_spotify_browser() && !crate::spotify_mode::keeps_global(key) {
+        // In Spotify mode, with or without the browser, no other key reaches the
+        // Znicz queue or engine: the Spotify queue drawer is read-only.
+        if self.in_spotify_mode()
+            && self.modal == Modal::None
+            && !crate::spotify_mode::keeps_global(key)
+        {
             return;
         }
 
@@ -1567,11 +1572,13 @@ impl App {
             self.esc_spotify_panel();
             return;
         }
-        // In Spotify mode's browser, Esc closes the search prompt, else goes
-        // back one level. At the top level it does nothing.
+        // In Spotify mode's browser, Esc closes the search prompt, then the queue
+        // drawer, else goes back one level. At the top level it does nothing.
         if self.spotify_mode && self.modal == Modal::None && self.view == View::Browse {
             if self.spotify_search.is_some() {
                 self.spotify_search = None;
+            } else if self.queue_open {
+                self.close_queue();
             } else {
                 self.spotify_browser.back();
             }

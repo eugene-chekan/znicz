@@ -280,10 +280,15 @@ impl App {
             // The drawer is re-read every 3 s, so a failed read is logged, not toasted each time.
             (SpotifyAsk::Queue, Err(e)) => tracing::debug!("spotify queue: {e}"),
             // A playback error is the message itself, not the Settings catch-all.
-            (SpotifyAsk::Transport | SpotifyAsk::Transfer { .. }, Err(error)) => {
+            (
+                SpotifyAsk::Transport | SpotifyAsk::QueueAdd | SpotifyAsk::Transfer { .. },
+                Err(error),
+            ) => {
                 self.spotify_change_failed(error);
             }
             (SpotifyAsk::Transport, Ok(_)) => {}
+            // The track is in Spotify's queue now: the drawer reads it at once.
+            (SpotifyAsk::QueueAdd, Ok(_)) => self.spotify_queue_asked_at = None,
             // A device that took over says so; one that did not comes back as the error above.
             (SpotifyAsk::Transfer { name }, Ok(_)) => {
                 self.toasts.success(format!("Moved to {name}"));

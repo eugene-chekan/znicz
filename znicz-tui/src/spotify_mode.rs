@@ -102,9 +102,9 @@ pub fn seek_target(progress_ms: u64, delta_secs: i64, duration_ms: u64) -> u64 {
     target.clamp(0, duration_ms as i64) as u64
 }
 
-/// A volume in 0.0..=1.0 for `percent + delta`, clamped to 0..=100.
-pub fn volume_after(percent: u8, delta: i16) -> f32 {
-    (i16::from(percent) + delta).clamp(0, 100) as f32 / 100.0
+/// `percent + delta`, clamped to 0..=100.
+pub fn percent_after(percent: u8, delta: i16) -> u8 {
+    (i16::from(percent) + delta).clamp(0, 100) as u8
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -303,9 +303,9 @@ mod tests {
 
     #[test]
     fn volume_steps_one_percent_and_clamps() {
-        assert_eq!(volume_after(100, 1), 1.0);
-        assert_eq!(volume_after(0, -1), 0.0);
-        assert!((volume_after(40, 1) - 0.41).abs() < 1e-6);
+        assert_eq!(percent_after(100, 1), 100);
+        assert_eq!(percent_after(0, -1), 0);
+        assert_eq!(percent_after(40, 1), 41);
     }
 
     #[test]
