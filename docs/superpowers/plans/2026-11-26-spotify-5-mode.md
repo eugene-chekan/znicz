@@ -399,7 +399,7 @@ Claude-Session: https://claude.ai/code/session_012jyZm3UyFwgZfBtgburioV"
 - Consumes: `znicz_core::fetch_cover(url: &str) -> Option<CoverArt>`, `CoverReady`, `decode_capped`.
 - Produces: `CoverKey::Url(String)`. A URL resolves to `CoverReady::Embedded` when the bytes decode, `CoverReady::Logo` otherwise (including a failed fetch). It never retries.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 In `cover.rs` tests, serve one PNG from a local listener and resolve the key:
 
@@ -433,9 +433,9 @@ fn a_url_key_fetches_and_decodes_its_image() {
 
 Also `a_url_that_does_not_answer_is_the_logo` with a URL to a port nobody listens on: `http://127.0.0.1:1/x.png` → `CoverReady::Logo`. (Port 1 is refused locally; no external network.)
 
-- [ ] **Step 2: Run to see it fail** — `cargo test -p znicz-tui -- url_key` (FAIL: no variant).
+- [x] **Step 2: Run to see it fail** — `cargo test -p znicz-tui -- url_key` (FAIL: no variant).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add `Url(String)` to `CoverKey` with its doc comment ("A Spotify album image, fetched by URL."). In `resolve_cover`:
 
@@ -447,9 +447,9 @@ CoverKey::Url(url) => ResolveResult::Update {
 
 `CoverKey` already derives `Hash`, `Eq` and `Clone`. The `match` in `CoverCache::get` on `CoverKey` needs no change, because only `Stream` has the untitled-refresh rule.
 
-- [ ] **Step 4: Run** — `cargo test -p znicz-tui -- cover` — all pass.
+- [x] **Step 4: Run** — `cargo test -p znicz-tui -- cover` — all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/cover.rs
@@ -589,7 +589,7 @@ pub fn op_for(list: &BrowseList, offset: u32) -> SpotifyOp;
   - `next_page`: `Some` when the top level's list is not Search, `items.len() < total`, `pending == 0`, and `cursor + NEAR_END >= rows().len()`. It increments `pending` to 1 and returns `op_for(list, items.len() as u32)`.
   - `start_search` pushes a `Search` level with `title = format!("Search: {query}")`, `groups = vec![vec![]; 4]`, `pending = 4`, and one `(generation, BrowseList::Search { query, kind }, SpotifyOp::Search { query, kinds: vec![kind], offset: 0, limit: SEARCH_LIMIT })` per group.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `spotify_browse.rs` tests. A helper builds items and pages:
 
@@ -730,13 +730,13 @@ fn seek_and_step_clamp_to_the_list() {
 
 Write the full bodies for the tests with a comment placeholder above (the first three in full, the rest with the assertions named in the comments). Each comment line states the assertion; the implementer writes the setup from it.
 
-- [ ] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- spotify_browse` (FAIL: missing module).
+- [x] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- spotify_browse` (FAIL: missing module).
 
-- [ ] **Step 3: Implement** the module to the interfaces above. Use `Vec` indexes; no `unsafe`. Keep `SpotifyBrowser` free of IO.
+- [x] **Step 3: Implement** the module to the interfaces above. Use `Vec` indexes; no `unsafe`. Keep `SpotifyBrowser` free of IO.
 
-- [ ] **Step 4: Run** — `cargo test -p znicz-tui -- spotify_browse` — all pass.
+- [x] **Step 4: Run** — `cargo test -p znicz-tui -- spotify_browse` — all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/spotify_browse.rs znicz-tui/src/lib.rs
@@ -837,7 +837,7 @@ pub fn lane(op: &SpotifyOp) -> Lane;
 
 `now_playing_line`: `Some(format!("♫ Spotify: {title} — {artist} · O to switch"))` when `playback.is_playing` and the item is present; `artist` is `artist_line()`; an empty artist gives `♫ Spotify: {title} · O to switch`. Otherwise `None`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 #[test]
@@ -927,13 +927,13 @@ fn transport_ops_are_on_the_transport_lane() {
 
 `key`, `shift`, `alt` helpers: `KeyEvent::new(code, KeyModifiers::...)`.
 
-- [ ] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- spotify_mode`.
+- [x] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- spotify_mode`.
 
-- [ ] **Step 3: Implement** to the interfaces. `volume_after` returns `f32` as `(percent + delta).clamp(0, 100) as f32 / 100.0`, so `volume_after(40, 1)` is `0.41`.
+- [x] **Step 3: Implement** to the interfaces. `volume_after` returns `f32` as `(percent + delta).clamp(0, 100) as f32 / 100.0`, so `volume_after(40, 1)` is `0.41`.
 
-- [ ] **Step 4: Run** — `cargo test -p znicz-tui -- spotify_mode` — all pass.
+- [x] **Step 4: Run** — `cargo test -p znicz-tui -- spotify_mode` — all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/spotify_mode.rs znicz-tui/src/lib.rs
