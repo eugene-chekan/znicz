@@ -24,6 +24,7 @@ pub mod osc52;
 pub mod playing;
 pub mod scan_status;
 pub mod settings;
+pub mod spotify_browse;
 pub mod spotify_rows;
 pub mod spotify_worker;
 pub mod stage_model;
