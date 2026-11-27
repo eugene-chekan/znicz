@@ -279,9 +279,12 @@ act on the kind and show the message. The kinds are `not_configured`,
 - A player that does not answer within the 30 s read timeout is `network`, with
   the text "the player did not answer in time". The client reconnects and resends
   a change once first. A player that is not reachable at all is `network` too.
-- A connection lost mid-request is `outdated_player`: the player is an older
-  version that does not know Spotify requests. The text says to run
-  `znicz player stop` and try again.
+- A connection the player closes mid-request (end of stream, a reset, or a broken
+  pipe) is `outdated_player`: the player is an older version that does not know
+  Spotify requests. The text says to run `znicz player stop` and try again.
+- A reply that is not valid JSON, or another I/O failure on an open connection,
+  is `other`. The text keeps the underlying error (for example `ipc json: …`),
+  so a crashing or current player is not reported as an older version.
 - `no_service` is a player without a Spotify service: one started without a data
   folder for the token. It is not an older version.
 - A resent change keeps its kind, because the player stores the failure with it.

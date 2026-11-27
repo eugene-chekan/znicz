@@ -731,6 +731,8 @@ struct RpcFailure {
     mid_request: bool,
     /// The reply did not come within the read timeout.
     timed_out: bool,
+    /// The peer closed the connection on a sent request.
+    peer_closed: bool,
 }
 
 impl RpcFailure {
@@ -739,22 +741,22 @@ impl RpcFailure {
             error,
             mid_request: false,
             timed_out: false,
+            peer_closed: false,
         }
     }
 
     /// A request that was sent on an open connection and failed there.
     fn sent(error: RpcError) -> Self {
-        match error {
-            RpcError::TimedOut => Self {
-                error: ZniczError::Player(TIMED_OUT.into()),
-                mid_request: true,
-                timed_out: true,
-            },
-            RpcError::Other(error) => Self {
-                error,
-                mid_request: true,
-                timed_out: false,
-            },
+        let (error, timed_out, peer_closed) = match error {
+            RpcError::TimedOut => (ZniczError::Player(TIMED_OUT.into()), true, false),
+            RpcError::Closed(error) => (error, false, true),
+            RpcError::Decode(error) | RpcError::Io(error) => (error, false, false),
+        };
+        Self {
+            error,
+            mid_request: true,
+            timed_out,
+            peer_closed,
         }
     }
 
@@ -770,8 +772,9 @@ impl RpcFailure {
     }
 
     /// A Spotify request that failed. A timeout or a player that is not
-    /// reachable is a network error. A connection lost mid-request means an
-    /// older player, which does not know Spotify requests.
+    /// reachable is a network error. A connection the peer closed mid-request
+    /// means an older player, which does not know Spotify requests. A reply
+    /// that cannot be read, or another I/O failure, keeps its own error text.
     fn into_spotify_error(self) -> ZniczError {
         if self.timed_out {
             return ZniczError::Spotify {
@@ -779,10 +782,16 @@ impl RpcFailure {
                 message: TIMED_OUT.to_string(),
             };
         }
-        if self.mid_request {
+        if self.peer_closed {
             return ZniczError::Spotify {
                 kind: SpotifyErrorKind::OutdatedPlayer,
                 message: "the player is an older version without Spotify support; run `znicz player stop`, then try again".to_string(),
+            };
+        }
+        if self.mid_request {
+            return ZniczError::Spotify {
+                kind: SpotifyErrorKind::Other,
+                message: self.error.to_string(),
             };
         }
         ZniczError::Spotify {
@@ -883,6 +892,14 @@ struct Live {
     queue_cache: Option<Queue>,
 }
 
+impl Live {
+    /// Shut the socket both ways. A reply still in flight on it is then never
+    /// read, and any later write fails, so the next request reconnects.
+    fn close(&mut self) {
+        let _ = self.writer.shutdown(std::net::Shutdown::Both);
+    }
+}
+
 type EnsureFn = Arc<dyn Fn() -> Result<()> + Send + Sync>;
 
 struct IpcInner {
@@ -951,13 +968,14 @@ fn open_live(advertise_path: &Path, role: ClientRole, ensure: Option<&EnsureFn>)
 enum RpcError {
     /// No reply within the read timeout.
     TimedOut,
-    Other(ZniczError),
-}
-
-impl From<ZniczError> for RpcError {
-    fn from(error: ZniczError) -> Self {
-        Self::Other(error)
-    }
+    /// The peer closed the connection (end of stream, reset, or a broken
+    /// pipe). An older player drops the connection on a request it does not
+    /// know, so this is the one case that may mean an older player.
+    Closed(ZniczError),
+    /// A reply that is not a valid message.
+    Decode(ZniczError),
+    /// Any other I/O failure.
+    Io(ZniczError),
 }
 
 impl RpcError {
@@ -965,8 +983,26 @@ impl RpcError {
     fn into_player_error(self) -> ZniczError {
         match self {
             Self::TimedOut => ZniczError::Player(TIMED_OUT.into()),
-            Self::Other(error) => error,
+            Self::Closed(error) | Self::Decode(error) | Self::Io(error) => error,
         }
+    }
+}
+
+/// Classify an I/O failure on an open connection by its kind.
+fn transport_error(what: &str, e: std::io::Error) -> RpcError {
+    use std::io::ErrorKind;
+    if is_timeout(e.kind()) {
+        return RpcError::TimedOut;
+    }
+    let error = ZniczError::Player(format!("{what}: {e}"));
+    match e.kind() {
+        ErrorKind::UnexpectedEof
+        | ErrorKind::ConnectionReset
+        | ErrorKind::ConnectionAborted
+        | ErrorKind::BrokenPipe => RpcError::Closed(error),
+        // Read errors on a reply that is not UTF-8 are a decode failure.
+        ErrorKind::InvalidData => RpcError::Decode(error),
+        _ => RpcError::Io(error),
     }
 }
 
@@ -982,18 +1018,27 @@ fn is_timeout(kind: std::io::ErrorKind) -> bool {
 }
 
 fn rpc_on(live: &mut Live, request: &IpcRequest) -> std::result::Result<IpcResponse, RpcError> {
-    write_json_line(&mut live.writer, request)?;
+    let mut out = serde_json::to_string(request)
+        .map_err(|e| RpcError::Io(ZniczError::Player(format!("ipc json: {e}"))))?;
+    out.push('\n');
+    live.writer
+        .write_all(out.as_bytes())
+        .and_then(|()| live.writer.flush())
+        .map_err(|e| transport_error("ipc write", e))?;
     let mut line = String::new();
-    match live.reader.read_line(&mut line) {
-        Ok(_) => {}
-        Err(e) if is_timeout(e.kind()) => return Err(RpcError::TimedOut),
-        Err(e) => return Err(ZniczError::Player(format!("ipc read: {e}")).into()),
-    }
+    live.reader
+        .read_line(&mut line)
+        .map_err(|e| transport_error("ipc read", e))?;
     if line.is_empty() {
-        return Err(ZniczError::Player("ipc empty".into()).into());
+        return Err(RpcError::Closed(ZniczError::Player("ipc empty".into())));
+    }
+    if !line.ends_with('\n') {
+        return Err(RpcError::Closed(ZniczError::Player(
+            "ipc read: the player closed the connection mid-reply".into(),
+        )));
     }
     serde_json::from_str(line.trim())
-        .map_err(|e| ZniczError::Player(format!("ipc json: {e}")).into())
+        .map_err(|e| RpcError::Decode(ZniczError::Player(format!("ipc json: {e}"))))
 }
 
 impl IpcClient {
@@ -1074,6 +1119,10 @@ impl IpcClient {
         let response = match rpc_on(&mut live, &request) {
             Ok(response) => response,
             Err(_) => {
+                // The failed connection may still hold a late reply. Close it
+                // before reconnecting, so that reply is never read as the
+                // answer to a later request.
+                live.close();
                 *live = open_live(
                     &self.inner.advertise,
                     self.inner.role,
@@ -1084,7 +1133,13 @@ impl IpcClient {
                     *version = live.version.clone();
                 }
                 let request = make(&live);
-                rpc_on(&mut live, &request).map_err(RpcFailure::sent)?
+                match rpc_on(&mut live, &request) {
+                    Ok(response) => response,
+                    Err(error) => {
+                        live.close();
+                        return Err(RpcFailure::sent(error));
+                    }
+                }
             }
         };
         Ok(finish(&mut live, response))
@@ -1099,9 +1154,11 @@ impl IpcClient {
     pub fn shutdown(&self) -> Result<()> {
         let mut live = self.lock_live()?;
         let token = live.token.clone();
-        match rpc_on(&mut live, &IpcRequest::Shutdown { token })
-            .map_err(RpcError::into_player_error)?
-        {
+        let reply = rpc_on(&mut live, &IpcRequest::Shutdown { token }).map_err(|error| {
+            live.close();
+            error.into_player_error()
+        })?;
+        match reply {
             IpcResponse::Ok { .. } => Ok(()),
             IpcResponse::Err { message, .. } => Err(ZniczError::Player(message)),
             IpcResponse::Spotify { .. } | IpcResponse::SpotifyStatus { .. } => {
@@ -1248,6 +1305,7 @@ mod tests {
             error: ZniczError::Player("broken pipe".into()),
             mid_request: true,
             timed_out: false,
+            peer_closed: true,
         }))
         .unwrap_err()
         .to_string();
@@ -1258,6 +1316,7 @@ mod tests {
             error: ZniczError::Player("ipc connect: connection refused".into()),
             mid_request: false,
             timed_out: false,
+            peer_closed: false,
         }))
         .unwrap_err()
         .to_string();
@@ -1296,7 +1355,7 @@ mod tests {
 
     #[test]
     fn a_dropped_connection_is_an_outdated_player() {
-        let failure = RpcFailure::sent(RpcError::Other(ZniczError::Player("ipc empty".into())));
+        let failure = RpcFailure::sent(RpcError::Closed(ZniczError::Player("ipc empty".into())));
         match failure.into_spotify_error() {
             ZniczError::Spotify { kind, message } => {
                 assert_eq!(kind, SpotifyErrorKind::OutdatedPlayer);
@@ -1305,6 +1364,87 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    /// A client over a real socket, and the peer end the test answers on.
+    fn live_with_peer() -> (Live, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (peer, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
+        let live = Live {
+            writer: stream.try_clone().unwrap(),
+            reader: BufReader::new(stream),
+            token: "t".into(),
+            version: None,
+            queue_cache: None,
+        };
+        (live, peer)
+    }
+
+    fn spotify_status_request() -> IpcRequest {
+        IpcRequest::SpotifyStatus { token: "t".into() }
+    }
+
+    fn spotify_kind_and_message(failure: RpcFailure) -> (SpotifyErrorKind, String) {
+        match failure.into_spotify_error() {
+            ZniczError::Spotify { kind, message } => (kind, message),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_garbled_reply_to_a_spotify_request_is_other_with_the_decode_text() {
+        let (mut live, mut peer) = live_with_peer();
+        peer.write_all(b"this is not json\n").unwrap();
+        let error = rpc_on(&mut live, &spotify_status_request())
+            .expect_err("a reply that is not JSON is an error");
+        assert!(matches!(error, RpcError::Decode(_)), "not a decode error");
+        let (kind, message) = spotify_kind_and_message(RpcFailure::sent(error));
+        assert_eq!(kind, SpotifyErrorKind::Other);
+        assert!(message.contains("ipc json"), "{message}");
+        assert!(!message.contains("older version"), "{message}");
+    }
+
+    #[test]
+    fn an_eof_on_a_real_connection_is_closed_and_an_outdated_player() {
+        let (mut live, peer) = live_with_peer();
+        drop(peer);
+        let error =
+            rpc_on(&mut live, &spotify_status_request()).expect_err("a closed peer is an error");
+        assert!(matches!(error, RpcError::Closed(_)), "not a closed error");
+        let (kind, _) = spotify_kind_and_message(RpcFailure::sent(error));
+        assert_eq!(kind, SpotifyErrorKind::OutdatedPlayer);
+    }
+
+    #[test]
+    fn a_reply_cut_off_before_its_newline_is_a_closed_connection() {
+        let (mut live, mut peer) = live_with_peer();
+        peer.write_all(b"{\"Ok\":").unwrap();
+        drop(peer);
+        let error = rpc_on(&mut live, &spotify_status_request())
+            .expect_err("a truncated reply is an error");
+        assert!(matches!(error, RpcError::Closed(_)), "not a closed error");
+    }
+
+    #[test]
+    fn a_closed_connection_never_reads_a_late_reply() {
+        let (mut live, mut peer) = live_with_peer();
+        peer.write_all(b"{\"Ok\":{}}\n").unwrap();
+        live.close();
+        assert!(rpc_on(&mut live, &spotify_status_request()).is_err());
+    }
+
+    #[test]
+    fn a_timeout_on_a_real_connection_is_a_network_error() {
+        let (mut live, _peer) = live_with_peer();
+        let error =
+            rpc_on(&mut live, &spotify_status_request()).expect_err("a silent peer times out");
+        let (kind, message) = spotify_kind_and_message(RpcFailure::sent(error));
+        assert_eq!(kind, SpotifyErrorKind::Network);
+        assert_eq!(message, TIMED_OUT);
     }
 
     #[test]
