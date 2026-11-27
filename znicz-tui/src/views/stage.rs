@@ -48,6 +48,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, model: &StageModel) 
 /// The Stage's model for the app's settings and the player's state.
 pub(crate) fn model_for(app: &App, state: &PlayerState) -> StageModel {
     let shown = app.shown_tui();
+    if app.in_spotify_mode() {
+        let mut model = StageModel::from_spotify(
+            &app.spotify_state,
+            crate::spotify_mode::now_unix_ms(),
+            app.spotify_mute_restore.is_some(),
+        );
+        if shown.cover_protocol == CoverProtocol::Off {
+            model.cover = None;
+        }
+        return model;
+    }
     StageModel::from_player(
         state,
         &app.stations,
@@ -317,6 +328,17 @@ pub(crate) fn keep_previous(
     }
 }
 
+/// The key the Spotify cover keeps its previous image under. One slot for
+/// every Spotify track, so the last album art stays while the next one loads.
+pub(crate) const SPOTIFY_COVER_SLOT: &str = "spotify:cover";
+
+/// The Spotify album art for `url`, keeping the previous art while this one is
+/// Pending.
+pub(crate) fn spotify_cover_ready(app: &mut App, url: &str) -> CoverReady {
+    let ready = app.covers.get(CoverKey::Url(url.to_string()));
+    keep_previous(&mut app.last_stream_cover, SPOTIFY_COVER_SLOT, ready)
+}
+
 /// The Stage layout for the given cover settings.
 pub(crate) fn stage_layout_for(
     area: Rect,
@@ -349,10 +371,7 @@ pub(crate) fn render_cover(frame: &mut Frame, area: Rect, app: &mut App, cover: 
             app.last_stream_cover = None;
             app.covers.get(CoverKey::File(path.clone()))
         }
-        Some(CoverKey::Url(url)) => {
-            app.last_stream_cover = None;
-            app.covers.get(CoverKey::Url(url.clone()))
-        }
+        Some(CoverKey::Url(url)) => spotify_cover_ready(app, url),
         Some(CoverKey::Stream(query)) => {
             let stream_url = query.stream_url.clone();
             let ready = app.covers.get(CoverKey::Stream(query.clone()));
@@ -934,5 +953,181 @@ pub(crate) mod tests {
     fn golden_nothing_playing_stage() {
         let state = PlayerState::default();
         assert_eq!(stage_rows(&state, 100, 24, false), GOLDEN_NOTHING_PLAYING);
+    }
+
+    /// Draws the Stage in Spotify mode. Covers are off, so nothing is fetched.
+    fn spotify_stage_rows(state: znicz_core::SpotifyState, width: u16, height: u16) -> Vec<String> {
+        let mut app = crate::app::test_app();
+        app.tui.show_cover = false;
+        app.tui.cover_protocol = CoverProtocol::Off;
+        app.spotify_mode = true;
+        app.spotify_state = state;
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        let model = model_for(&app, &PlayerState::default());
+        terminal
+            .draw(|frame| render(frame, frame.area(), &mut app, &model))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(usize::from(width))
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+            .collect()
+    }
+
+    /// A paused track, so the rows do not depend on the clock.
+    fn paused_spotify() -> znicz_core::SpotifyState {
+        use znicz_core::{
+            SpotifyDevice, SpotifyLogin, SpotifyPlayback, SpotifyRepeat, SpotifyTrack,
+        };
+        znicz_core::SpotifyState {
+            login: SpotifyLogin::LoggedIn,
+            playback: Some(SpotifyPlayback {
+                item: Some(SpotifyTrack {
+                    uri: "spotify:track:1".into(),
+                    title: "So What".into(),
+                    artists: vec!["Miles Davis".into()],
+                    album: "Kind of Blue".into(),
+                    album_uri: "spotify:album:1".into(),
+                    year: Some(1959),
+                    track_number: Some(1),
+                    duration_ms: 562_000,
+                    image_url: None,
+                }),
+                unsupported: false,
+                is_playing: false,
+                progress_ms: 83_000,
+                read_at_ms: 0,
+                repeat: SpotifyRepeat::Off,
+                shuffle: false,
+                device: Some(SpotifyDevice {
+                    id: "d1".into(),
+                    name: "Kitchen".into(),
+                    kind: "Speaker".into(),
+                    is_active: true,
+                    volume_percent: Some(60),
+                }),
+                context_uri: None,
+            }),
+            ..Default::default()
+        }
+    }
+
+    const GOLDEN_SPOTIFY_WIDE: &[&str] = &[
+        "                                                                                                    ",
+        "          So What                                                                                   ",
+        "          Miles Davis                                                                               ",
+        "          Kind of Blue · 1959 · track 1                                                             ",
+        "                                                                                                    ",
+        "          ❚❚━━━━━━━━━─────────────────────────────────────────────────── 1:23 / 9:22                ",
+        "          ◢ ██████▁▁▁▁  60%                                                                         ",
+        "                                                                                                    ",
+        "          Signal                                                                                    ",
+        "            source  spotify                                                                         ",
+        "            device  Kitchen (Speaker)                                                               ",
+        "            path    Spotify Connect                                                                 ",
+        "                    decoded and played by the Spotify app on that device; Znicz does not …          ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+    ];
+    const GOLDEN_SPOTIFY_NARROW: &[&str] = &[
+        "                                                ",
+        " So What                                        ",
+        " Miles Davis                                    ",
+        " Kind of Blue · 1959 · track 1                  ",
+        "                                                ",
+        " ❚❚━━━━╾─────────────────────────── 1:23 / 9:22 ",
+        " ◢ ██████▁▁▁▁  60%                              ",
+        "                                                ",
+        " Signal                                         ",
+        "   source  spotify                              ",
+        "   device  Kitchen (Speaker)                    ",
+        "   path    Spotify Connect                      ",
+        "           decoded and played by the Spotify a… ",
+        "                                                ",
+        "                                                ",
+        "                                                ",
+        "                                                ",
+        "                                                ",
+        "                                                ",
+        "                                                ",
+        "                                                ",
+        "                                                ",
+        "                                                ",
+        "                                                ",
+    ];
+    const GOLDEN_SPOTIFY_NOTHING: &[&str] = &[
+        "                                                                                                    ",
+        "          Nothing playing on Spotify                                                                ",
+        "                                                                                                    ",
+        "          / search · O znicz                                                                        ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+    ];
+
+    #[test]
+    fn golden_spotify_wide_stage() {
+        assert_eq!(
+            spotify_stage_rows(paused_spotify(), 100, 24),
+            GOLDEN_SPOTIFY_WIDE
+        );
+    }
+
+    #[test]
+    fn golden_spotify_narrow_stage() {
+        assert_eq!(
+            spotify_stage_rows(paused_spotify(), 48, 24),
+            GOLDEN_SPOTIFY_NARROW
+        );
+    }
+
+    #[test]
+    fn golden_spotify_nothing_playing() {
+        assert_eq!(
+            spotify_stage_rows(znicz_core::SpotifyState::default(), 100, 24),
+            GOLDEN_SPOTIFY_NOTHING
+        );
+    }
+
+    #[test]
+    fn the_previous_spotify_cover_shows_while_the_next_is_pending() {
+        let mut app = crate::app::test_app();
+        let image = Arc::new(image::DynamicImage::new_rgba8(2, 2));
+        app.last_stream_cover = Some((
+            SPOTIFY_COVER_SLOT.to_string(),
+            CoverReady::Embedded(image.clone()),
+        ));
+        // A URL nobody has fetched yet: its first answer is Pending.
+        let ready = spotify_cover_ready(&mut app, "http://127.0.0.1:1/never-fetched.png");
+        assert!(matches!(ready, CoverReady::Embedded(img) if Arc::ptr_eq(&img, &image)));
     }
 }

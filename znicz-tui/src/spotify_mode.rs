@@ -121,6 +121,13 @@ pub fn mute_action(volume: Option<u8>, restore: Option<u8>) -> MuteAction {
     }
 }
 
+/// Unix time in milliseconds: the clock the seek reads, to place the playhead.
+pub fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
 pub fn repeat_mode(repeat: SpotifyRepeat) -> RepeatMode {
     match repeat {
         SpotifyRepeat::Off => RepeatMode::Off,

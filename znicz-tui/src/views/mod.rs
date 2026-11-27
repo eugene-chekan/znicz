@@ -126,7 +126,15 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
         } else {
             library::render(frame, list, app);
         }
-        let transport = crate::stage_model::TransportModel::from_player(state);
+        let transport = if app.in_spotify_mode() {
+            crate::stage_model::TransportModel::from_spotify(
+                &app.spotify_state,
+                crate::spotify_mode::now_unix_ms(),
+                app.spotify_mute_restore.is_some(),
+            )
+        } else {
+            crate::stage_model::TransportModel::from_player(state)
+        };
         now_playing::render_transport(frame, chunks[1], app, &transport, !compact);
     }
 

@@ -5,10 +5,14 @@
 
 use std::time::Duration;
 
-use znicz_core::{PlaybackStatus, PlayerState, QueueItem, RepeatMode, Station, TrackInfo};
+use znicz_core::{
+    PlaybackStatus, PlayerState, QueueItem, RepeatMode, SpotifyPlayback, SpotifyState,
+    SpotifyTrack, Station, TrackInfo,
+};
 
 use crate::cover::CoverKey;
 use crate::format;
+use crate::spotify_mode::repeat_mode;
 use crate::views::stage::stream_query;
 
 /// How a piece of text is styled. The renderer maps each tone to a theme style.
@@ -166,6 +170,129 @@ impl StageModel {
             empty: None,
         }
     }
+
+    /// The Spotify Stage. `now_ms` is Unix milliseconds (for `progress_at`);
+    /// `muted` is whether Spotify mode has `m` on.
+    pub fn from_spotify(state: &SpotifyState, now_ms: u64, muted: bool) -> Self {
+        let playback = state.playback.as_ref();
+        let status = spotify_status(playback);
+        let repeat = playback.map_or(RepeatMode::Off, |p| repeat_mode(p.repeat));
+        let shuffle = playback.is_some_and(|p| p.shuffle);
+        let item = playback.and_then(|p| p.item.as_ref());
+        let (Some(playback), Some(item)) = (playback, item) else {
+            return Self {
+                title: SPOTIFY_NOTHING_TEXT.into(),
+                head: Vec::new(),
+                seek: None,
+                status,
+                volume: None,
+                repeat,
+                shuffle,
+                signal: Vec::new(),
+                explanation: None,
+                cover: None,
+                empty: Some(EmptyState {
+                    hint: SPOTIFY_HINT_TEXT.into(),
+                }),
+            };
+        };
+        Self {
+            title: item.title.clone(),
+            head: spotify_head(item),
+            seek: Some(SeekModel::Bar {
+                position: Duration::from_millis(playback.progress_at(now_ms)),
+                total: Some(Duration::from_millis(item.duration_ms)),
+            }),
+            status,
+            volume: spotify_volume(playback, muted),
+            repeat,
+            shuffle,
+            signal: spotify_signal(playback),
+            explanation: Some(SPOTIFY_EXPLANATION.into()),
+            cover: item.image_url.clone().map(CoverKey::Url),
+            empty: None,
+        }
+    }
+}
+
+/// The title when nothing plays on Spotify.
+pub const SPOTIFY_NOTHING_TEXT: &str = "Nothing playing on Spotify";
+/// The hint under the title when nothing plays on Spotify.
+pub const SPOTIFY_HINT_TEXT: &str = "/ search · O znicz";
+/// The path explanation for Spotify Connect.
+pub const SPOTIFY_EXPLANATION: &str =
+    "decoded and played by the Spotify app on that device; Znicz does not touch the audio";
+
+fn spotify_status(playback: Option<&SpotifyPlayback>) -> PlaybackStatus {
+    match playback {
+        Some(p) if p.is_playing => PlaybackStatus::Playing,
+        Some(_) => PlaybackStatus::Paused,
+        None => PlaybackStatus::Stopped,
+    }
+}
+
+fn spotify_head(item: &SpotifyTrack) -> Vec<StyledText> {
+    let mut out = Vec::new();
+    let artist = item.artist_line();
+    if !artist.is_empty() {
+        out.push(StyledText {
+            text: artist,
+            tone: Tone::Subtitle,
+        });
+    }
+    let mut parts = Vec::new();
+    if !item.album.is_empty() {
+        parts.push(item.album.clone());
+    }
+    if let Some(year) = item.year {
+        parts.push(year.to_string());
+    }
+    if let Some(n) = item.track_number {
+        parts.push(format!("track {n}"));
+    }
+    if !parts.is_empty() {
+        out.push(StyledText {
+            text: parts.join(" · "),
+            tone: Tone::Dim,
+        });
+    }
+    out
+}
+
+fn spotify_volume(playback: &SpotifyPlayback, muted: bool) -> Option<VolumeModel> {
+    let percent = playback.device.as_ref()?.volume_percent?;
+    Some(VolumeModel {
+        volume: f32::from(percent) / 100.0,
+        muted,
+    })
+}
+
+/// The device the track plays on, as `<name> (<kind>)`.
+fn spotify_device(playback: &SpotifyPlayback) -> String {
+    match playback.device.as_ref() {
+        Some(device) => format!("{} ({})", device.name, device.kind),
+        None => "unknown device".into(),
+    }
+}
+
+fn spotify_signal(playback: &SpotifyPlayback) -> Vec<SignalRow> {
+    vec![
+        SignalRow {
+            label: "source",
+            value: "spotify".into(),
+            tone: Tone::Plain,
+        },
+        SignalRow {
+            label: "device",
+            value: spotify_device(playback),
+            tone: Tone::Plain,
+        },
+        SignalRow {
+            label: "path",
+            value: "Spotify Connect".into(),
+            tone: Tone::Good,
+        },
+    ]
 }
 
 /// The transport row: title, subtitle, seek, volume, toggles, and the signal
@@ -240,6 +367,53 @@ impl TransportModel {
             }),
             repeat: state.repeat,
             shuffle: state.shuffle,
+            signal,
+            path_badge,
+        }
+    }
+}
+
+impl TransportModel {
+    /// The Spotify transport row. `muted` is whether Spotify mode has `m` on.
+    pub fn from_spotify(state: &SpotifyState, now_ms: u64, muted: bool) -> Self {
+        let playback = state.playback.as_ref();
+        let item = playback.and_then(|p| p.item.as_ref());
+        let (title, subtitle, seek) = match (playback, item) {
+            (Some(playback), Some(item)) => {
+                let artist = item.artist_line();
+                let subtitle = [artist.as_str(), item.album.as_str()]
+                    .into_iter()
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" · ");
+                (
+                    item.title.clone(),
+                    Some(subtitle).filter(|s| !s.is_empty()),
+                    Some(SeekModel::Bar {
+                        position: Duration::from_millis(playback.progress_at(now_ms)),
+                        total: Some(Duration::from_millis(item.duration_ms)),
+                    }),
+                )
+            }
+            _ => (
+                SPOTIFY_NOTHING_TEXT.to_string(),
+                None,
+                Some(SeekModel::Bar {
+                    position: Duration::ZERO,
+                    total: None,
+                }),
+            ),
+        };
+        let signal = playback.map(|p| ("spotify".to_string(), spotify_device(p)));
+        let path_badge = playback.map(|_| ("Spotify Connect".to_string(), Tone::Good));
+        Self {
+            status: spotify_status(playback),
+            title,
+            subtitle,
+            seek,
+            volume: playback.and_then(|p| spotify_volume(p, muted)),
+            repeat: playback.map_or(RepeatMode::Off, |p| repeat_mode(p.repeat)),
+            shuffle: playback.is_some_and(|p| p.shuffle),
             signal,
             path_badge,
         }
@@ -435,5 +609,171 @@ mod tests {
         let mut state = playing(true);
         state.status = PlaybackStatus::Stopped;
         assert!(TransportModel::from_player(&state).path_badge.is_none());
+    }
+
+    use znicz_core::{
+        SpotifyDevice, SpotifyLogin, SpotifyPlayback, SpotifyRepeat, SpotifyState, SpotifyTrack,
+    };
+
+    /// `So What` by Miles Davis, on Kitchen (Speaker), read at 1 000 000 ms
+    /// with 83 s in; 562 s long.
+    fn spotify(is_playing: bool) -> SpotifyState {
+        SpotifyState {
+            login: SpotifyLogin::LoggedIn,
+            playback: Some(SpotifyPlayback {
+                item: Some(SpotifyTrack {
+                    uri: "spotify:track:1".into(),
+                    title: "So What".into(),
+                    artists: vec!["Miles Davis".into()],
+                    album: "Kind of Blue".into(),
+                    album_uri: "spotify:album:1".into(),
+                    year: Some(1959),
+                    track_number: Some(1),
+                    duration_ms: 562_000,
+                    image_url: Some("https://i.scdn.co/image/a".into()),
+                }),
+                unsupported: false,
+                is_playing,
+                progress_ms: 83_000,
+                read_at_ms: 1_000_000,
+                repeat: SpotifyRepeat::Off,
+                shuffle: false,
+                device: Some(SpotifyDevice {
+                    id: "d1".into(),
+                    name: "Kitchen".into(),
+                    kind: "Speaker".into(),
+                    is_active: true,
+                    volume_percent: Some(60),
+                }),
+                context_uri: None,
+            }),
+            ..SpotifyState::default()
+        }
+    }
+
+    #[test]
+    fn a_spotify_model_has_the_path_signal_rows_and_the_explanation() {
+        let model = StageModel::from_spotify(&spotify(true), 1_000_000, false);
+        let labels: Vec<_> = model.signal.iter().map(|r| r.label).collect();
+        let values: Vec<_> = model.signal.iter().map(|r| r.value.as_str()).collect();
+        assert_eq!(labels, ["source", "device", "path"]);
+        assert_eq!(values, ["spotify", "Kitchen (Speaker)", "Spotify Connect"]);
+        assert_eq!(model.signal[2].tone, Tone::Good);
+        assert_eq!(
+            model.explanation.as_deref(),
+            Some(
+                "decoded and played by the Spotify app on that device; Znicz does not touch the audio"
+            )
+        );
+    }
+
+    #[test]
+    fn nothing_playing_on_spotify_has_the_logo_text_and_hint() {
+        let model = StageModel::from_spotify(&SpotifyState::default(), 0, false);
+        assert_eq!(model.title, "Nothing playing on Spotify");
+        assert_eq!(model.empty.unwrap().hint, "/ search · O znicz");
+        assert!(model.cover.is_none());
+        assert!(model.seek.is_none() && model.volume.is_none());
+    }
+
+    #[test]
+    fn the_cover_is_the_track_image_url() {
+        let model = StageModel::from_spotify(&spotify(true), 1_000_000, false);
+        assert_eq!(
+            model.cover,
+            Some(CoverKey::Url("https://i.scdn.co/image/a".into()))
+        );
+    }
+
+    #[test]
+    fn a_paused_track_has_a_paused_status_and_a_path_badge() {
+        let model = StageModel::from_spotify(&spotify(false), 1_000_000, false);
+        assert_eq!(model.status, PlaybackStatus::Paused);
+        let transport = TransportModel::from_spotify(&spotify(false), 1_000_000, false);
+        assert_eq!(
+            transport.path_badge,
+            Some(("Spotify Connect".to_string(), Tone::Good))
+        );
+    }
+
+    #[test]
+    fn nothing_playing_on_spotify_has_no_path_badge_and_is_stopped() {
+        let state = SpotifyState::default();
+        let transport = TransportModel::from_spotify(&state, 0, false);
+        assert_eq!(transport.status, PlaybackStatus::Stopped);
+        assert!(transport.path_badge.is_none());
+        assert!(transport.signal.is_none());
+    }
+
+    #[test]
+    fn the_seek_is_progress_at_now_out_of_the_track_length() {
+        // Read 83 s in at 1 000 000 ms; two seconds later it is 85 s in.
+        let model = StageModel::from_spotify(&spotify(true), 1_002_000, false);
+        assert_eq!(
+            model.seek,
+            Some(SeekModel::Bar {
+                position: Duration::from_secs(85),
+                total: Some(Duration::from_secs(562)),
+            })
+        );
+    }
+
+    #[test]
+    fn the_head_is_the_artist_then_the_album_line() {
+        let model = StageModel::from_spotify(&spotify(true), 1_000_000, false);
+        assert_eq!(
+            model.head,
+            vec![
+                StyledText {
+                    text: "Miles Davis".into(),
+                    tone: Tone::Subtitle,
+                },
+                StyledText {
+                    text: "Kind of Blue · 1959 · track 1".into(),
+                    tone: Tone::Dim,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn the_volume_is_the_device_percent_and_shows_muted() {
+        let model = StageModel::from_spotify(&spotify(true), 1_000_000, true);
+        assert_eq!(
+            model.volume,
+            Some(VolumeModel {
+                volume: 0.6,
+                muted: true,
+            })
+        );
+        let mut state = spotify(true);
+        state
+            .playback
+            .as_mut()
+            .unwrap()
+            .device
+            .as_mut()
+            .unwrap()
+            .volume_percent = None;
+        assert!(
+            StageModel::from_spotify(&state, 1_000_000, false)
+                .volume
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn the_spotify_transport_has_the_title_subtitle_and_device_signal() {
+        let model = TransportModel::from_spotify(&spotify(true), 1_000_000, false);
+        assert_eq!(model.title, "So What");
+        assert_eq!(
+            model.subtitle.as_deref(),
+            Some("Miles Davis · Kind of Blue")
+        );
+        assert_eq!(
+            model.signal,
+            Some(("spotify".into(), "Kitchen (Speaker)".into()))
+        );
+        assert_eq!(model.status, PlaybackStatus::Playing);
     }
 }

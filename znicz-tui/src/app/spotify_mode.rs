@@ -1,7 +1,7 @@
 //! Spotify mode: `O` switches the keys, the footer and the status poll to
 //! Spotify. A second `impl App` beside `spotify_ui.rs`.
 
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use znicz_core::{SpotifyKind, SpotifyLogin, SpotifyOp, SpotifyRepeat};
 
@@ -10,18 +10,11 @@ use crossterm::event::{KeyCode, KeyEvent};
 use super::{App, Modal};
 use crate::cursor::Cursor;
 use crate::spotify_browse::Row;
-use crate::spotify_mode::{self, MuteAction, SpotifyKey};
+use crate::spotify_mode::{self, MuteAction, SpotifyKey, now_unix_ms};
 use crate::spotify_worker::SpotifyAsk;
 
 /// How often the queue is read again while the drawer is open.
 const SPOTIFY_QUEUE_EVERY: Duration = Duration::from_secs(3);
-
-/// Unix time in milliseconds: the clock the seek reads, to place the playhead.
-fn now_unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
-}
 
 impl App {
     /// A transport key of Spotify mode. Playback ops go to the transport lane, so
