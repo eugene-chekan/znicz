@@ -1040,7 +1040,7 @@ pub(crate) fn toggle_spotify_mode(&mut self);   // O
 pub(crate) fn in_spotify_mode(&self) -> bool { self.spotify_mode }
 ```
 
-- [ ] **Step 1: Write the failing tests** (in `app/spotify_mode.rs` tests, using `spotify_ui::tests::{FakeHost, sent_ops, wait_for_op}` and an `app_with`-style helper that sets `spotify_state.login = LoggedIn` for the logged-in case)
+- [x] **Step 1: Write the failing tests** (in `app/spotify_mode.rs` tests, using `spotify_ui::tests::{FakeHost, sent_ops, wait_for_op}` and an `app_with`-style helper that sets `spotify_state.login = LoggedIn` for the logged-in case)
 
 ```rust
 #[test]
@@ -1081,9 +1081,9 @@ fn the_footer_ends_in_o_znicz_in_the_mode() {
 }
 ```
 
-- [ ] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- spotify_mode` (note: `app::spotify_mode` tests live under the same name as the pure module; run with `cargo test -p znicz-tui -- app::spotify_mode`).
+- [x] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- spotify_mode` (note: `app::spotify_mode` tests live under the same name as the pure module; run with `cargo test -p znicz-tui -- app::spotify_mode`).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 - `handle_key`: before `on_global_key`, when `self.spotify_search.is_some()`, call `self.on_spotify_search_key(key)` (Task 12; here a stub that returns without doing anything) and return. Put the `O` key in `on_global_key` as `KeyCode::Char('O') if self.modal == Modal::None => self.toggle_spotify_mode()`.
 - `toggle_spotify_mode`:
@@ -1112,9 +1112,9 @@ pub const SPOTIFY: &[Binding] = &[
   Every `match` on `Context` must cover the new variants (the compiler lists them).
 - Test in `keys.rs`: the existing check that every footer hint names a documented key still passes (`O` is in `SPOTIFY`).
 
-- [ ] **Step 4: Run** — `cargo test -p znicz-tui` — all pass.
+- [x] **Step 4: Run** — `cargo test -p znicz-tui` — all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/app.rs znicz-tui/src/app/spotify_mode.rs znicz-tui/src/keys.rs
@@ -1144,7 +1144,7 @@ pub(crate) fn spotify_poll_every(&self) -> Option<Duration>;
 pub(crate) fn spotify_fast_poll(&self) -> bool;   // mode, Spotify tab or login panel
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 #[test]
@@ -1175,9 +1175,9 @@ fn settings_shows_the_players_device_list() {
 
 Also update the existing test `a_device_list_arrives_from_the_worker` (spotify_ui.rs): it now asserts `app.spotify_devices_known` and that the state's list is read after one poll (the `FakeHost.state` carries `devices`).
 
-- [ ] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- spotify_ui poll`.
+- [x] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- spotify_ui poll`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 - `poll_spotify`: drains replies as today; then `let Some(every) = self.spotify_poll_every() else { return };` and checks `spotify_polled_at` against it. `Touch` is sent only when `spotify_fast_poll()` is true. Errors: `NoService`/`OutdatedPlayer` set `spotify_unavailable`, as today.
 - `spotify_poll_every`: `None` when not configured or `spotify_unavailable.is_some()`; `Some(500 ms)` when `spotify_fast_poll()`; else `Some(3 s)`.
@@ -1187,9 +1187,9 @@ Also update the existing test `a_device_list_arrives_from_the_worker` (spotify_u
 - `spotify_view()`: `devices: self.spotify_state.devices.clone()`.
 - Remove `spotify_devices` from `App` and its defaults.
 
-- [ ] **Step 4: Run** — `cargo test -p znicz-tui` — all pass.
+- [x] **Step 4: Run** — `cargo test -p znicz-tui` — all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/app.rs znicz-tui/src/app/spotify_ui.rs znicz-tui/src/app/settings_ui.rs
@@ -1211,7 +1211,7 @@ Claude-Session: https://claude.ai/code/session_012jyZm3UyFwgZfBtgburioV"
 - Consumes: `spotify_mode::now_playing_line`.
 - Produces: `message_line(toasts, scanning, spotify: Option<&str>, width)`. Order: newest toast, then scan progress, then the Spotify line, then unread alerts, then blank. The Spotify line is drawn in the style `theme::good()` for the note mark and `theme::text()` for the text, cut with `format::truncate`.
 
-- [ ] **Step 1: Write the failing tests** (in `now_playing.rs` tests)
+- [x] **Step 1: Write the failing tests** (in `now_playing.rs` tests)
 
 ```rust
 #[test]
@@ -1231,13 +1231,13 @@ fn unread_alerts_come_after_the_spotify_line() {
 }
 ```
 
-- [ ] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- message_row`.
+- [x] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- message_row`.
 
-- [ ] **Step 3: Implement** the parameter and the branch. Update the existing `message_line` tests to pass `None`.
+- [x] **Step 3: Implement** the parameter and the branch. Update the existing `message_line` tests to pass `None`.
 
-- [ ] **Step 4: Run** — `cargo test -p znicz-tui -- now_playing` and the Task 1 goldens (`golden_`) — all pass (the goldens pass `None` in their path, so the rows are unchanged).
+- [x] **Step 4: Run** — `cargo test -p znicz-tui -- now_playing` and the Task 1 goldens (`golden_`) — all pass (the goldens pass `None` in their path, so the rows are unchanged).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/views/now_playing.rs znicz-tui/src/views/mod.rs
