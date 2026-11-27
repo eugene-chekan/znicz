@@ -16,8 +16,12 @@ use crate::spotify_mode;
 use crate::spotify_rows::{self, LoginOutcome, SpotifyView};
 use crate::spotify_worker::{Done, SpotifyAsk};
 
-/// How often the status is read while the Spotify tab is open.
+/// How often the status is read while the Spotify tab, a login panel or
+/// Spotify mode shows it.
 const SPOTIFY_POLL_EVERY: Duration = Duration::from_millis(500);
+/// How often the status is read otherwise, when a client ID is set: enough for
+/// `O` to know the login state soon after launch.
+const SPOTIFY_SLOW_EVERY: Duration = Duration::from_secs(3);
 
 /// The paste prompt inside the login panel.
 pub(crate) struct SpotifyPaste {
@@ -69,7 +73,7 @@ impl App {
             open_browser: self.open_browser,
             login: self.spotify_login_shown(),
             account: self.spotify_state.account.clone(),
-            devices: self.spotify_devices.clone(),
+            devices: self.spotify_state.devices.clone(),
             devices_known: self.spotify_devices_known,
             unavailable: self.spotify_unavailable.clone(),
             player_differs: self.spotify_player_differs,
@@ -86,11 +90,26 @@ impl App {
         lane.as_ref().is_some_and(|worker| worker.send(tag, op))
     }
 
-    /// The status is worth reading: Settings shows the Spotify tab, or a login
-    /// panel waits for the login to finish (the user may have changed tab).
-    pub(crate) fn spotify_tab_open(&self) -> bool {
-        self.modal == Modal::Settings
-            && (self.settings_tab == Tab::Spotify || self.spotify_login.is_some())
+    /// The status is read fast (and touched) while Spotify mode, the Spotify
+    /// tab or a login panel shows it.
+    pub(crate) fn spotify_fast_poll(&self) -> bool {
+        self.spotify_mode
+            || (self.modal == Modal::Settings
+                && (self.settings_tab == Tab::Spotify || self.spotify_login.is_some()))
+            || self.spotify_login.is_some()
+    }
+
+    /// How often the status is read. None when there is nothing to read: no
+    /// client ID, or the player does not answer Spotify.
+    pub(crate) fn spotify_poll_every(&self) -> Option<Duration> {
+        if !self.spotify.is_configured() || self.spotify_unavailable.is_some() {
+            return None;
+        }
+        Some(if self.spotify_fast_poll() {
+            SPOTIFY_POLL_EVERY
+        } else {
+            SPOTIFY_SLOW_EVERY
+        })
     }
 
     /// The Spotify tab was shown: try the player again and refresh the device list.
@@ -161,12 +180,12 @@ impl App {
         for done in replies {
             self.on_spotify_done(done);
         }
-        if !self.spotify_tab_open() || self.spotify_unavailable.is_some() {
+        let Some(every) = self.spotify_poll_every() else {
             return;
-        }
+        };
         let due = self
             .spotify_polled_at
-            .is_none_or(|at| at.elapsed() >= SPOTIFY_POLL_EVERY);
+            .is_none_or(|at| at.elapsed() >= every);
         if !due {
             return;
         }
@@ -180,8 +199,10 @@ impl App {
         match host.try_state() {
             Ok(state) => {
                 self.on_spotify_state(state);
-                // Touch keeps the player's fast poll going.
-                let _ = host.apply(SpotifyOp::Touch);
+                // Touch keeps the player's fast poll going; the slow poll does not need it.
+                if self.spotify_fast_poll() {
+                    let _ = host.apply(SpotifyOp::Touch);
+                }
             }
             Err(ZniczError::Spotify {
                 kind: SpotifyErrorKind::NoService | SpotifyErrorKind::OutdatedPlayer,
@@ -258,10 +279,11 @@ impl App {
                 self.toasts.error(spotify_rows::PLAYER_DIFFERS_TOAST);
             }
             // A list for a client ID that was changed while it was pending is stale.
-            (SpotifyAsk::Devices, Ok(SpotifyReply::Devices { devices }))
+            // The player stored the list it read, so the status carries it; this
+            // reply only says that one has arrived.
+            (SpotifyAsk::Devices, Ok(SpotifyReply::Devices { .. }))
                 if self.spotify.client_id == self.spotify_devices_client_id =>
             {
-                self.spotify_devices = devices;
                 self.spotify_devices_known = true;
             }
             (SpotifyAsk::Devices, Ok(SpotifyReply::Devices { .. })) => {}
@@ -545,17 +567,76 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_status_poll_runs_only_while_the_spotify_tab_is_open() {
+    fn touch_is_sent_only_while_the_spotify_tab_is_open() {
         let dir = tempfile::tempdir().unwrap();
         let host = Arc::new(FakeHost::default());
         *host.state.lock().unwrap() = Some(logged_in_state());
         let mut app = app_with(&dir, host.clone());
         app.poll_spotify();
-        assert!(app.spotify_polled_at.is_none());
+        assert_eq!(app.spotify_state.login, SpotifyLogin::LoggedIn);
+        assert!(sent_ops(&host).iter().all(|op| *op != SpotifyOp::Touch));
         open_spotify_tab(&mut app);
         app.poll_spotify();
         assert_eq!(app.spotify_state.login, SpotifyLogin::LoggedIn);
         assert!(wait_for_op(&host, |op| *op == SpotifyOp::Touch));
+    }
+
+    #[test]
+    fn the_poll_runs_every_3s_in_znicz_mode_when_configured() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app_with(&dir, Arc::new(FakeHost::default()));
+        assert_eq!(app.spotify_poll_every(), Some(Duration::from_secs(3)));
+    }
+
+    #[test]
+    fn the_poll_is_500ms_in_spotify_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with(&dir, Arc::new(FakeHost::default()));
+        app.spotify_mode = true;
+        assert_eq!(app.spotify_poll_every(), Some(Duration::from_millis(500)));
+    }
+
+    #[test]
+    fn no_poll_without_a_client_id_and_none_once_the_player_is_outdated() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut unconfigured = settings_tests::settings_app(&dir);
+        unconfigured.spotify_mode = true;
+        assert_eq!(unconfigured.spotify_poll_every(), None);
+        let mut app = app_with(&dir, Arc::new(FakeHost::default()));
+        app.spotify_unavailable = Some("the player has no Spotify service".into());
+        assert_eq!(app.spotify_poll_every(), None);
+    }
+
+    #[test]
+    fn the_slow_poll_reads_the_status_but_sends_no_touch() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        *host.state.lock().unwrap() = Some(logged_in_state());
+        let mut app = app_with(&dir, host.clone());
+        app.poll_spotify();
+        assert_eq!(app.spotify_state.login, SpotifyLogin::LoggedIn);
+        // Make the next read due: three seconds have passed.
+        let overdue = Instant::now()
+            .checked_sub(Duration::from_secs(4))
+            .expect("the clock is past four seconds");
+        app.spotify_polled_at = Some(overdue);
+        app.poll_spotify();
+        assert_ne!(app.spotify_polled_at, Some(overdue), "the status was read");
+        assert!(sent_ops(&host).iter().all(|op| *op != SpotifyOp::Touch));
+    }
+
+    #[test]
+    fn settings_shows_the_players_device_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with(&dir, Arc::new(FakeHost::default()));
+        app.spotify_state.devices = vec![SpotifyDevice {
+            id: "d1".into(),
+            name: "Kitchen".into(),
+            kind: "Speaker".into(),
+            is_active: false,
+            volume_percent: None,
+        }];
+        assert_eq!(app.spotify_view().devices[0].name, "Kitchen");
     }
 
     #[test]
@@ -656,10 +737,21 @@ pub(crate) mod tests {
                 volume_percent: None,
             }],
         });
+        // The player keeps the list it read, so the status carries it too.
+        *host.state.lock().unwrap() = Some(SpotifyState {
+            devices: vec![SpotifyDevice {
+                id: "d1".into(),
+                name: "Kitchen".into(),
+                kind: "Speaker".into(),
+                is_active: false,
+                volume_percent: None,
+            }],
+            ..SpotifyState::default()
+        });
         let mut app = app_with(&dir, host);
         open_spotify_tab(&mut app);
-        wait_until(&mut app, |app| !app.spotify_devices.is_empty());
-        assert_eq!(app.spotify_devices[0].name, "Kitchen");
+        wait_until(&mut app, |app| app.spotify_devices_known);
+        assert_eq!(app.spotify_state.devices[0].name, "Kitchen");
     }
 
     #[test]
@@ -1034,6 +1126,8 @@ pub(crate) mod tests {
     fn a_login_that_finishes_asks_the_player_for_the_device_list_once() {
         let dir = tempfile::tempdir().unwrap();
         let host = Arc::new(FakeHost::default());
+        // The slow poll runs in every mode now, so the host must agree with the login.
+        *host.state.lock().unwrap() = Some(logged_in_state());
         let mut app = app_with(&dir, host.clone());
         app.spotify_state.login = SpotifyLogin::LoggingIn;
         app.on_spotify_state(logged_in_state());
@@ -1099,7 +1193,7 @@ pub(crate) mod tests {
                 }],
             }),
         });
-        assert!(app.spotify_devices.is_empty());
+        assert!(!app.spotify_devices_known);
         assert!(!app.spotify_devices_requested);
     }
 

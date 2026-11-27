@@ -2200,7 +2200,7 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
         let mut app = spotify_app(&dir, host.clone());
-        app.spotify_devices = one_device("Kitchen");
+        app.spotify_state.devices = one_device("Kitchen");
         press(&mut app, KeyCode::Char('S'));
         press(&mut app, KeyCode::Char('6'));
         select(&mut app, Row::PlaybackDevice);
@@ -2234,7 +2234,7 @@ pub(crate) mod tests {
             ..SettingsValues::default()
         });
         app.spotify_worker = Some(SpotifyWorker::spawn(host.clone()).unwrap());
-        app.spotify_devices = one_device("Kitchen");
+        app.spotify_state.devices = one_device("Kitchen");
         press(&mut app, KeyCode::Char('S'));
         press(&mut app, KeyCode::Char('6'));
         select(&mut app, Row::PlaybackDevice);
@@ -2488,7 +2488,7 @@ pub(crate) mod tests {
         let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
         let mut app = spotify_app(&dir, host.clone());
         app.config_file = None;
-        app.spotify_devices = one_device("Kitchen");
+        app.spotify_state.devices = one_device("Kitchen");
         press(&mut app, KeyCode::Char('S'));
         press(&mut app, KeyCode::Char('6'));
         select(&mut app, Row::PlaybackDevice);
@@ -2551,7 +2551,7 @@ pub(crate) mod tests {
                 line: 1,
                 column: 1,
             });
-        app.spotify_devices = kitchen();
+        app.spotify_state.devices = kitchen();
         change_every_spotify_row(&mut app);
         assert!(
             !sent_ops(&host)
@@ -2580,7 +2580,7 @@ pub(crate) mod tests {
         .unwrap();
         let host = Arc::new(crate::app::spotify_ui::tests::FakeHost::default());
         let mut app = spotify_app(&dir, host.clone());
-        app.spotify_devices = kitchen();
+        app.spotify_state.devices = kitchen();
         change_every_spotify_row(&mut app);
         assert!(
             wait_for_op(&host, |op| matches!(
