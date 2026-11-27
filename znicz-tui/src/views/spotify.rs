@@ -37,7 +37,7 @@ pub fn render_browser(frame: &mut Frame, area: Rect, app: &mut App) {
     let rows: Vec<Row> = if at_top { Vec::new() } else { level.rows() };
     let len = if at_top { TOP.len() } else { rows.len() };
     let cursor = level.cursor;
-    let pending = level.pending > 0;
+    let pending = level.pending() > 0;
 
     let mut tail: Vec<Line<'static>> = Vec::new();
     if let Some(notice) = &level.notice {
@@ -151,10 +151,11 @@ pub fn render_queue(frame: &mut Frame, area: Rect, app: &mut App) {
     app.hits.close = views::close_button_rect(area);
     let block = views::pane_block("Spotify queue", false, None).title(views::close_title());
     let width = views::inner_width(area);
-    let lines: Vec<Line<'static>> = match &app.spotify_queue {
-        None => vec![views::placeholder(LOADING)],
-        Some((None, next)) if next.is_empty() => vec![views::placeholder(QUEUE_EMPTY)],
-        Some((current, next)) => {
+    let lines: Vec<Line<'static>> = match (&app.spotify_queue_error, &app.spotify_queue) {
+        (Some(error), _) => vec![views::placeholder(error)],
+        (None, None) => vec![views::placeholder(LOADING)],
+        (None, Some((None, next))) if next.is_empty() => vec![views::placeholder(QUEUE_EMPTY)],
+        (None, Some((current, next))) => {
             let mut lines = Vec::new();
             if let Some(track) = current {
                 lines.push(queue_line("Now", track, width, theme::playing()));
@@ -242,7 +243,7 @@ mod tests {
 
     use crate::app::{App, Modal};
     use crate::line_edit::LineEdit;
-    use crate::spotify_browse::BrowseList;
+    use crate::spotify_browse::BrowseAction;
 
     /// The screen as one string per row, at 80 x 24.
     fn screen(app: &mut App) -> Vec<String> {
@@ -338,6 +339,23 @@ mod tests {
     }
 
     #[test]
+    fn a_queue_read_error_is_drawn_in_place_of_the_rows() {
+        let mut app = mode();
+        app.queue_open = true;
+        app.spotify_queue = Some((
+            Some(SpotifyTrack {
+                title: "So What".into(),
+                ..SpotifyTrack::default()
+            }),
+            Vec::new(),
+        ));
+        app.spotify_queue_error = Some("Spotify did not answer: the queue may be stale".into());
+        let rows = screen(&mut app);
+        assert!(shows(&rows, "Spotify did not answer"));
+        assert!(!shows(&rows, "So What"), "the rows give way to the error");
+    }
+
+    #[test]
     fn an_empty_list_while_loading_says_loading() {
         let mut app = mode();
         // Playlists: one step down, then enter. The request is pending.
@@ -350,10 +368,11 @@ mod tests {
     fn an_empty_list_with_nothing_pending_says_nothing_here() {
         let mut app = mode();
         app.spotify_browser.step(1);
-        app.spotify_browser.enter();
-        let generation = app.spotify_browser.generation();
+        let BrowseAction::Load { request, list, .. } = app.spotify_browser.enter() else {
+            panic!("Playlists loads");
+        };
         app.spotify_browser
-            .apply_page(generation, &BrowseList::Playlists, 0, &page(Vec::new()));
+            .apply_page(request, &list, 0, &page(Vec::new()));
         assert!(shows(&screen(&mut app), "Nothing here"));
     }
 
@@ -361,11 +380,11 @@ mod tests {
     fn an_unavailable_playlist_notice_is_drawn_under_the_rows() {
         let mut app = mode();
         app.spotify_browser.step(1);
-        app.spotify_browser.enter();
-        let generation = app.spotify_browser.generation();
+        let BrowseAction::Load { request, .. } = app.spotify_browser.enter() else {
+            panic!("Playlists loads");
+        };
         app.spotify_browser.apply_error(
-            generation,
-            &BrowseList::Playlists,
+            request,
             "This playlist's tracks are not available to you".into(),
         );
         assert!(shows(

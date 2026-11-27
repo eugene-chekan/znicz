@@ -11,9 +11,14 @@ use crate::spotify_mode;
 use crate::spotify_worker::{Done, SpotifyAsk};
 
 impl App {
-    /// Whether the browser owns the keys: Spotify mode, the Browse view, no modal.
+    /// Whether the browser owns the keys: Spotify mode, the Browse view, no modal,
+    /// and no queue drawer open. The open drawer is read-only, so none of these
+    /// keys reach the browser or the Znicz queue until it closes.
     pub(crate) fn in_spotify_browser(&self) -> bool {
-        self.spotify_mode && self.modal == Modal::None && self.view == View::Browse
+        self.spotify_mode
+            && self.modal == Modal::None
+            && self.view == View::Browse
+            && !self.queue_open
     }
 
     /// The browser's keys. True when the key was the browser's.
@@ -51,11 +56,8 @@ impl App {
                 self.spotify_send_play(op);
             }
             BrowseAction::Load {
-                generation,
-                list,
-                op,
-                ..
-            } => self.spotify_load(generation, list, op),
+                request, list, op, ..
+            } => self.spotify_load(request, list, op),
             // The Search row opens the prompt, as `/` does.
             BrowseAction::OpenSearch => self.spotify_search = Some(LineEdit::new()),
             BrowseAction::Nothing => {}
@@ -91,15 +93,15 @@ impl App {
             return;
         }
         self.spotify_search = None;
-        for (generation, list, op) in self.spotify_browser.start_search(&query) {
-            self.spotify_load(generation, list, op);
+        for (request, list, op) in self.spotify_browser.start_search(&query) {
+            self.spotify_load(request, list, op);
         }
     }
 
     /// `r`: the current list again from its first page.
     fn spotify_reload(&mut self) {
-        if let Some((generation, list, op)) = self.spotify_browser.reload() {
-            self.spotify_load(generation, list, op);
+        if let Some((request, list, op)) = self.spotify_browser.reload() {
+            self.spotify_load(request, list, op);
         }
     }
 
@@ -117,13 +119,12 @@ impl App {
         true
     }
 
-    /// Send a browse request for `list` at `generation`. The offset is the op's.
-    pub(crate) fn spotify_load(&mut self, generation: u64, list: BrowseList, op: SpotifyOp) {
+    /// Send a browse request for `list` at `request`. The offset is the op's.
+    pub(crate) fn spotify_load(&mut self, request: u64, list: BrowseList, op: SpotifyOp) {
         let offset = offset_of(&op);
-        let settle = list.clone();
         if !self.ask_spotify(
             SpotifyAsk::Browse {
-                generation,
+                request,
                 list,
                 offset,
             },
@@ -131,7 +132,7 @@ impl App {
         ) {
             // The request never left, so no reply will settle the level: it is
             // not loading, and a reload can send again once a lane exists.
-            self.spotify_browser.apply_failure(generation, &settle);
+            self.spotify_browser.apply_failure(request);
             self.toasts.error(spotify_mode::NO_LANE);
         }
     }
@@ -145,12 +146,12 @@ impl App {
         sent
     }
 
-    /// A browse reply, routed to the browser by its generation. An error that
+    /// A browse reply, routed to the browser by its request. An error that
     /// names the list (`unavailable`) becomes the level's notice; any other
     /// error is a toast. A reply for a list the user has left changes nothing.
     pub(crate) fn on_browse_done(&mut self, done: Done<SpotifyAsk>) {
         let SpotifyAsk::Browse {
-            generation,
+            request,
             list,
             offset,
         } = done.tag
@@ -160,13 +161,13 @@ impl App {
         match done.result {
             Ok(SpotifyReply::Page { page }) => {
                 self.spotify_browser
-                    .apply_page(generation, &list, offset, &page);
+                    .apply_page(request, &list, offset, &page);
             }
             Err(ZniczError::Spotify {
                 kind: SpotifyErrorKind::Unavailable,
                 message,
             }) => {
-                self.spotify_browser.apply_error(generation, &list, message);
+                self.spotify_browser.apply_error(request, message);
             }
             Err(e) => {
                 let text = match &e {
@@ -175,13 +176,13 @@ impl App {
                     }
                     other => other.to_string(),
                 };
-                if self.spotify_browser.apply_failure(generation, &list) {
+                if self.spotify_browser.apply_failure(request) {
                     self.toasts.error(text);
                 }
             }
             // Any other reply to a browse request is not a list: it is settled, not shown.
             Ok(_) => {
-                self.spotify_browser.apply_failure(generation, &list);
+                self.spotify_browser.apply_failure(request);
             }
         }
     }
@@ -191,8 +192,8 @@ impl App {
         if !self.in_spotify_mode() {
             return;
         }
-        if let Some((generation, list, op)) = self.spotify_browser.next_page() {
-            self.spotify_load(generation, list, op);
+        if let Some((request, list, op)) = self.spotify_browser.next_page() {
+            self.spotify_load(request, list, op);
         }
     }
 }
@@ -217,7 +218,7 @@ mod tests {
     use crate::app::spotify_ui::tests::{
         FakeHost, settle, wait_for_count, wait_for_op, wait_until,
     };
-    use crate::spotify_browse::{BrowseList, PAGE, Row, SEARCH_LIMIT};
+    use crate::spotify_browse::{BrowseAction, PAGE, Row, SEARCH_LIMIT};
     use crate::spotify_mode;
     use crate::spotify_worker::{Done, SpotifyAsk};
 
@@ -338,13 +339,16 @@ mod tests {
     fn a_late_browse_reply_after_leaving_is_dropped_in_the_app() {
         let dir = tempfile::tempdir().unwrap();
         let browse = Arc::new(FakeHost::default());
-        let mut app = playlists_open(&dir, &browse);
-        let current = app.spotify_browser.generation();
-        // A reply for the current generation lands: the positive control.
+        let mut app = browse_app(&dir, browse.clone(), Arc::new(FakeHost::default()));
+        press(&mut app, KeyCode::Char('j'));
+        let BrowseAction::Load { request, list, .. } = app.spotify_browser.enter() else {
+            panic!("Playlists loads");
+        };
+        // A reply for the level's request lands: the positive control.
         app.on_spotify_done(Done {
             tag: SpotifyAsk::Browse {
-                generation: current,
-                list: BrowseList::Playlists,
+                request,
+                list: list.clone(),
                 offset: 0,
             },
             result: Ok(page(vec![playlist(7), playlist(8)], 2)),
@@ -362,8 +366,8 @@ mod tests {
         assert!(app.in_spotify_mode());
         app.on_spotify_done(Done {
             tag: SpotifyAsk::Browse {
-                generation: current,
-                list: BrowseList::Playlists,
+                request,
+                list,
                 offset: 0,
             },
             result: Ok(page(vec![playlist(9)], 1)),
@@ -424,7 +428,7 @@ mod tests {
             }));
         wait_until(&mut app, |app| app.spotify_browser.level().notice.is_some());
         assert_eq!(app.spotify_browser.level().notice.as_deref(), Some(NOTICE));
-        assert_eq!(app.spotify_browser.level().pending, 0);
+        assert_eq!(app.spotify_browser.level().pending(), 0);
     }
 
     #[test]
@@ -462,7 +466,7 @@ mod tests {
                 .iter()
                 .any(|t| t == spotify_mode::NETWORK_TEXT)
         });
-        assert_eq!(app.spotify_browser.level().pending, 0);
+        assert_eq!(app.spotify_browser.level().pending(), 0);
         assert!(app.spotify_browser.level().notice.is_none());
     }
 
@@ -661,7 +665,7 @@ mod tests {
         press(&mut app, KeyCode::Enter);
         wait_until(&mut app, |app| {
             let level = app.spotify_browser.level();
-            level.pending == 0 && level.rows().len() == 8
+            level.pending() == 0 && level.rows().len() == 8
         });
         let rows = app.spotify_browser.level().rows();
         let headers: Vec<&str> = rows
@@ -797,7 +801,7 @@ mod tests {
                 .iter()
                 .any(|t| t == spotify_mode::NO_LANE)
         );
-        assert_eq!(app.spotify_browser.level().pending, 0, "not left loading");
+        assert_eq!(app.spotify_browser.level().pending(), 0, "not left loading");
         // The lane comes up, and the reload sends the first page again.
         let mut app = app.with_spotify_worker(browse.clone()).unwrap();
         press(&mut app, KeyCode::Char('r'));
@@ -855,5 +859,46 @@ mod tests {
         ctrl(&mut app, 'u');
         assert_eq!(app.spotify_search.as_ref().unwrap().as_str(), "ab");
         assert_eq!(app.spotify_browser.level().cursor, 0);
+    }
+
+    #[test]
+    fn enter_l_and_the_moves_do_nothing_while_the_spotify_drawer_is_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let browse = Arc::new(FakeHost::default());
+        let transport = Arc::new(FakeHost::default());
+        let mut app = playlists_open_with(&dir, &browse, transport.clone());
+        app.player
+            .send_blocking(znicz_core::Command::QueueAdd(vec![
+                znicz_core::QueueItem::file("/music/a.flac"),
+                znicz_core::QueueItem::file("/music/b.flac"),
+            ]))
+            .unwrap();
+        press(&mut app, KeyCode::Char(']'));
+        assert!(app.queue_open);
+        let before = settle(&app, &[&*browse, &*transport]);
+        let browser_cursor = app.spotify_browser.level().cursor;
+        for key in [KeyCode::Enter, KeyCode::Char('l')] {
+            press(&mut app, key);
+        }
+        for key in ['j', 'k', 'g', 'G'] {
+            press(&mut app, KeyCode::Char(key));
+        }
+        app.on_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: 0,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        });
+        assert_eq!(
+            settle(&app, &[&*browse, &*transport]),
+            before,
+            "no Play and no load after the drawer opened"
+        );
+        assert_eq!(
+            app.queue_cursor.index(),
+            0,
+            "the Znicz queue cursor did not move"
+        );
+        assert_eq!(app.spotify_browser.level().cursor, browser_cursor);
     }
 }

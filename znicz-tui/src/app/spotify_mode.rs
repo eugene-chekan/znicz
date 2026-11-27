@@ -209,8 +209,10 @@ impl App {
     }
 
     /// While the drawer is open in the mode, the queue is read again every 3 s.
+    /// Not while Spotify is unavailable: the stop says why, and asking again
+    /// would only repeat it.
     pub(crate) fn refresh_spotify_queue(&mut self) {
-        if !self.in_spotify_mode() || !self.queue_open {
+        if !self.in_spotify_mode() || !self.queue_open || self.spotify_unavailable.is_some() {
             return;
         }
         let due = self
@@ -257,14 +259,7 @@ impl App {
     /// A change (a transport op or a transfer) that Spotify refused or did not answer:
     /// its message is toasted, and what the error means for the status reads is applied.
     pub(crate) fn spotify_change_failed(&mut self, error: ZniczError) {
-        let plan = match &error {
-            ZniczError::Spotify { kind, message } => spotify_mode::error_plan(*kind, message),
-            other => spotify_mode::ErrorPlan {
-                text: other.to_string(),
-                stops_polling: false,
-                reread: false,
-            },
-        };
+        let plan = spotify_mode::error_plan_for(&error);
         self.toasts.error(plan.text.clone());
         // A change that may have happened is checked by the next read at once.
         if plan.reread {
@@ -273,6 +268,17 @@ impl App {
         if plan.stops_polling {
             self.spotify_unavailable = Some(plan.text);
         }
+    }
+
+    /// A queue read that failed: the drawer shows the reason in place of the
+    /// rows until a read succeeds, and a stop from the player stops the reads.
+    pub(crate) fn queue_read_failed(&mut self, error: ZniczError) {
+        tracing::debug!("spotify queue: {error}");
+        let plan = spotify_mode::error_plan_for(&error);
+        if plan.stops_polling {
+            self.spotify_unavailable = Some(plan.text.clone());
+        }
+        self.spotify_queue_error = Some(plan.text);
     }
 
     /// `O`: enter or leave Spotify mode. Entering needs a login; without one the
@@ -1152,5 +1158,66 @@ mod tests {
                 .any(|t| t == spotify_mode::LOGGED_OUT)
         );
         assert!(settle(&app, &[&*host]).is_empty());
+    }
+
+    #[test]
+    fn a_queue_read_error_is_kept_until_a_read_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let mut app = mode_app(&dir, &host);
+        app.on_spotify_done(Done {
+            tag: SpotifyAsk::Queue,
+            result: Err(ZniczError::Spotify {
+                kind: SpotifyErrorKind::Network,
+                message: "timed out".into(),
+            }),
+        });
+        assert_eq!(
+            app.spotify_queue_error.as_deref(),
+            Some(spotify_mode::NETWORK_TEXT)
+        );
+        assert!(
+            app.spotify_unavailable.is_none(),
+            "a network error keeps polling"
+        );
+        app.on_spotify_done(Done {
+            tag: SpotifyAsk::Queue,
+            result: Ok(SpotifyReply::Queue {
+                current: None,
+                next: Vec::new(),
+            }),
+        });
+        assert!(app.spotify_queue_error.is_none(), "a good read clears it");
+    }
+
+    #[test]
+    fn a_queue_read_that_finds_no_spotify_stops_the_drawer_asking_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let mut app = mode_app(&dir, &host);
+        app.queue_open = true;
+        app.on_spotify_done(Done {
+            tag: SpotifyAsk::Queue,
+            result: Err(ZniczError::Spotify {
+                kind: SpotifyErrorKind::NoService,
+                message: "the player has no Spotify service".into(),
+            }),
+        });
+        assert_eq!(
+            app.spotify_unavailable.as_deref(),
+            Some("the player has no Spotify service")
+        );
+        assert_eq!(
+            app.spotify_queue_error.as_deref(),
+            Some("the player has no Spotify service")
+        );
+        let asked = queue_count(&app, &host);
+        app.spotify_queue_asked_at = Some(Instant::now() - Duration::from_secs(4));
+        app.refresh_spotify_queue();
+        assert_eq!(
+            queue_count(&app, &host),
+            asked,
+            "no request while unavailable"
+        );
     }
 }

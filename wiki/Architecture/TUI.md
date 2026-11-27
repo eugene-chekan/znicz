@@ -306,6 +306,7 @@ while the tab bar has focus, how to use it.
 | `←` / `→` (`h` / `l`) on the tab bar | Previous / next tab; stops at the first and last tab |
 | `↓` (`j`) or `Enter` on the tab bar | Move focus into the rows of the shown tab |
 | Click a tab label | Show that tab; focus stays where it was |
+| With the login panel open, `Tab` / `Shift-Tab` do not switch tabs | The panel keeps `c`, `Enter` and `Esc`, and the other keys fall through; a click on a tab closes the panel and cancels its login, as leaving the Spotify tab does |
 | `↑` / `↓` (`j` / `k`), `g` / `G`, `Ctrl-d` / `Ctrl-u` | Move between rows; `↓` stops at the last row, and `↑` on the first row goes to the tab bar |
 | `Enter` / `Space` | Change the highlighted row: a switch flips, a choice steps forward and wraps; a slider opens its typed-value prompt |
 | `←` / `→` (`h` / `l`) | Step a choice or a slider back or forward and stop at the ends; turn a switch off or on |
@@ -661,7 +662,12 @@ the next page when the cursor is within 5 rows of the last loaded row and more
 rows exist. The next page starts at the row after the last raw row Spotify
 returned, so a skipped local file does not make a row appear twice. Search does
 not page. A list shows `Loading…` while a request is
-out, and a page that arrives after the user has left that list is dropped.
+out. Each list level keeps its own requests: a page that arrives for a level
+still on the stack fills that level, even after the user has gone back from it
+or started a search above it. Only a level the user has left is dropped, and
+its late pages are discarded. A page that fails stalls its list: the tick asks
+for no more pages until the cursor moves or `r` reloads it. A page with no raw
+rows from Spotify ends the list.
 
 **Unavailable playlists.** Spotify only lists the tracks of playlists the user
 owns or collaborates on. When a playlist's tracks are refused, the list shows
@@ -697,7 +703,7 @@ These work in Browse and in Stage.
 | `z` | Shuffle on / off |
 | `a` | Queue the highlighted track. An album, playlist or artist gets a toast: `Spotify's queue takes one track at a time` |
 | `,` | Spotify Connect device list (a modal). `j` / `k` move, `Enter` moves playback to that device and starts it, `,` or `Esc` closes. Other keys do nothing while it is open, apart from the global ones |
-| `]` | Spotify queue drawer, read-only. It is read again every 3 s while open. Its keys (`Enter`, `d`, `C`, Alt-arrows) do nothing: the Znicz queue is never changed from here, and nothing starts |
+| `]` | Spotify queue drawer, read-only. It is read again every 3 s while open. While it is open the browser behind it takes no keys and the wheel does nothing: `j` / `k`, `g` / `G`, `Enter`, `l` and the paging keys do nothing, so nothing plays and the Znicz queue cursor does not move. Its other keys (`d`, `C`, Alt-arrows) do nothing too: the Znicz queue is never changed from here, and nothing starts. A failed read shows its reason in the drawer in place of the rows (see Errors below) |
 | `s` | A toast: `Spotify has no stop: Space pauses`. Nothing else changes |
 | `A`, `L`, `F`, `U`, `J` | A toast: `not in Spotify mode`. Library keys only |
 | `P`, `R`, `S`, `M`, `?`, `q`, `v`, `i`, `O` | Keep their global meaning |
@@ -736,6 +742,7 @@ row.
 | No answer in time, on a change | `Spotify did not answer: the change may still happen; the next status read shows the truth`. The status is read again at once |
 | An old player, or a player without Spotify | The message as a toast. Status reads stop until the Spotify tab is shown or `O` is pressed |
 | The request could not be sent (its lane is not running) | `Spotify is not connected in this session` |
+| A queue read (the drawer's, every 3 s) fails | The reason, in place of the drawer's rows, until a read succeeds. A network error keeps reading; an old player or a player without Spotify stops the reads, as above |
 | A browse list is `unavailable` | The notice in the list (above) |
 | Any other browse error | A toast. The list keeps what it had |
 
@@ -839,7 +846,7 @@ top of the player.
 | `spotify_rows.rs` | Spotify rows: account text, device choices, value checks, login panel lines (pure) |
 | `spotify_worker.rs` | `SpotifyWorker<T>`: a thread with its own player connection that runs Spotify calls off the UI thread. Two lanes: browse and transport (`SpotifyAsk` tags both) |
 | `stage_model.rs` | `StageModel` and `TransportModel`, built from `PlayerState` (Znicz) or `SpotifyState` (Spotify). The Stage and the transport draw only these |
-| `spotify_browse.rs` | The Spotify browser as a pure state machine: levels, generations, paging, search groups (pure) |
+| `spotify_browse.rs` | The Spotify browser as a pure state machine: levels, per-level request ids, paging and stalls, search groups (pure) |
 | `spotify_mode.rs` | Spotify mode rules: keys, seek and volume arithmetic, mute plan, error plan, lanes, texts (pure) |
 | `views/spotify.rs` | Spotify mode drawing: the browser column, search prompt, queue drawer, device list |
 | `app/spotify_mode.rs` | Spotify mode in `App`: `O`, transport keys, mute, queue drawer, device list, leaving the mode |

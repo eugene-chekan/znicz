@@ -18,9 +18,9 @@ pub enum SpotifyAsk {
     CancelLogin,
     Logout,
     Devices,
-    /// Spotify mode's browse request. `generation` is the browser's; a reply with an old one is dropped.
+    /// Spotify mode's browse request. `request` is the browser's; a reply with an old one is dropped.
     Browse {
-        generation: u64,
+        request: u64,
         list: BrowseList,
         offset: u32,
     },

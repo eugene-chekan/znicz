@@ -1,8 +1,10 @@
 //! The Spotify browser as a pure drill-down state machine.
 //!
-//! No IO here. The App sends the requests this returns, tags each with the
-//! generation it was sent at, and feeds the replies back. A reply from an
-//! earlier generation is dropped, so a list the user has left never grows.
+//! No IO here. The App sends the requests this returns, each tagged with its
+//! request id, and feeds the replies back. Every level keeps the ids it is
+//! still waiting for, and a reply goes to whichever level holds its id, even
+//! one that is not on top. A reply whose level was left or reset matches
+//! nothing and is dropped, so a list the user has left never grows.
 
 use znicz_core::{SpotifyItem, SpotifyKind, SpotifyOp, SpotifyPage};
 
@@ -61,8 +63,12 @@ pub struct Level {
     /// Search only: the four groups, in `SEARCH_GROUPS` order. Empty otherwise.
     pub groups: Vec<Vec<SpotifyItem>>,
     pub total: u32,
-    /// Requests still on the way for this level.
-    pub pending: u32,
+    /// The request ids this level is still waiting for.
+    in_flight: Vec<u64>,
+    /// A page failed: no more is asked until the cursor moves or `r` reloads it.
+    pub stalled: bool,
+    /// A page came back with no raw rows: the list has no more.
+    pub at_end: bool,
     /// An index into `rows()`. Always on an item after a change (see `settle`).
     pub cursor: usize,
     /// Shown under the list (a playlist the user may not list, an error).
@@ -83,11 +89,18 @@ impl Level {
             items: Vec::new(),
             groups: Vec::new(),
             total: 0,
-            pending: 0,
+            in_flight: Vec::new(),
+            stalled: false,
+            at_end: false,
             cursor: 0,
             notice: None,
             next_offset: None,
         }
+    }
+
+    /// Requests still on the way for this level.
+    pub fn pending(&self) -> u32 {
+        self.in_flight.len() as u32
     }
 
     pub fn is_search(&self) -> bool {
@@ -154,9 +167,9 @@ impl Level {
 pub enum BrowseAction {
     /// Start playback.
     Play(SpotifyOp),
-    /// Push a level; the request is `op` at generation `generation`.
+    /// Push a level; the request is `op`, with the id `request`.
     Load {
-        generation: u64,
+        request: u64,
         list: BrowseList,
         title: String,
         op: SpotifyOp,
@@ -170,7 +183,8 @@ pub enum BrowseAction {
 #[derive(Debug, Clone)]
 pub struct SpotifyBrowser {
     levels: Vec<Level>,
-    generation: u64,
+    /// The last request id handed out. Ids only grow, so one is never reused.
+    last_request: u64,
 }
 
 impl Default for SpotifyBrowser {
@@ -184,17 +198,18 @@ impl SpotifyBrowser {
     pub fn new() -> Self {
         Self {
             levels: vec![Level::new(None, String::new())],
-            generation: 0,
+            last_request: 0,
         }
     }
 
-    pub fn generation(&self) -> u64 {
-        self.generation
+    fn next_request(&mut self) -> u64 {
+        self.last_request += 1;
+        self.last_request
     }
 
-    /// Back to the top level; bumps the generation so replies in flight are dropped.
+    /// Back to the top level. The levels left behind take their requests with
+    /// them, so their replies are dropped.
     pub fn reset(&mut self) {
-        self.generation += 1;
         self.levels = vec![Level::new(None, String::new())];
     }
 
@@ -206,6 +221,22 @@ impl SpotifyBrowser {
         self.levels
             .last()
             .expect("a browser always has its top level")
+    }
+
+    /// Where the level holding request `request` sits in the stack. The
+    /// topmost one wins, though an id is held by one level only.
+    fn index_for(&self, request: u64) -> Option<usize> {
+        self.levels
+            .iter()
+            .rposition(|level| level.in_flight.contains(&request))
+    }
+
+    /// The level that held `request` gives it up: the index, or None when no
+    /// level holds it (a level that was left, or a reset one).
+    fn take_request(&mut self, request: u64) -> Option<usize> {
+        let index = self.index_for(request)?;
+        self.levels[index].in_flight.retain(|id| *id != request);
+        Some(index)
     }
 
     fn current(&mut self) -> &mut Level {
@@ -229,6 +260,7 @@ impl SpotifyBrowser {
 
     /// Move the cursor by `delta` selectable rows, clamped to the list.
     pub fn step(&mut self, delta: isize) {
+        self.current().stalled = false;
         if self.is_top() {
             let cursor = &mut self.current().cursor;
             *cursor = (*cursor as isize + delta).clamp(0, TOP.len() as isize - 1) as usize;
@@ -256,6 +288,7 @@ impl SpotifyBrowser {
     }
 
     fn jump(&mut self, to_end: bool) {
+        self.current().stalled = false;
         if self.is_top() {
             self.current().cursor = if to_end { TOP.len() - 1 } else { 0 };
             return;
@@ -342,75 +375,67 @@ impl SpotifyBrowser {
     }
 
     fn push(&mut self, list: BrowseList, title: String) -> BrowseAction {
-        self.generation += 1;
+        let request = self.next_request();
         let op = op_for(&list, 0);
         let mut level = Level::new(Some(list.clone()), title.clone());
-        level.pending = 1;
+        level.in_flight.push(request);
         self.levels.push(level);
         BrowseAction::Load {
-            generation: self.generation,
+            request,
             list,
             title,
             op,
         }
     }
 
-    /// `h`: pop one level. False at the top.
+    /// `h`: pop one level. False at the top. The revealed level keeps the
+    /// requests it is still waiting for: their replies still land there.
     pub fn back(&mut self) -> bool {
         if self.is_top() {
             return false;
         }
         self.levels.pop();
-        self.generation += 1;
-        // The revealed level's requests were dropped with their generation.
-        self.current().pending = 0;
         self.settle();
         true
     }
 
     /// Start a search for `query` (trimmed). Pushes the Search level and returns
-    /// one `(generation, list, op)` per group. Empty query: returns nothing and changes nothing.
+    /// one `(request, list, op)` per group. Empty query: returns nothing and changes nothing.
     pub fn start_search(&mut self, query: &str) -> Vec<(u64, BrowseList, SpotifyOp)> {
         let query = query.trim();
         if query.is_empty() {
             return Vec::new();
         }
-        self.generation += 1;
         let mut level = Level::new(None, format!("Search: {query}"));
         level.groups = vec![Vec::new(); SEARCH_GROUPS.len()];
-        level.pending = SEARCH_GROUPS.len() as u32;
+        let mut requests = Vec::new();
+        for (kind, _) in SEARCH_GROUPS.iter() {
+            let request = self.next_request();
+            level.in_flight.push(request);
+            let list = BrowseList::Search {
+                query: query.to_string(),
+                kind: *kind,
+            };
+            let op = op_for(&list, 0);
+            requests.push((request, list, op));
+        }
         self.levels.push(level);
-        let generation = self.generation;
-        SEARCH_GROUPS
-            .iter()
-            .map(|(kind, _)| {
-                let list = BrowseList::Search {
-                    query: query.to_string(),
-                    kind: *kind,
-                };
-                let op = op_for(&list, 0);
-                (generation, list, op)
-            })
-            .collect()
+        requests
     }
 
-    /// Whether a reply for `list` fits the level on screen.
-    fn accepts(&self, list: &BrowseList) -> bool {
-        !self.is_top() && self.level().is_search() == matches!(list, BrowseList::Search { .. })
-    }
-
-    /// A page reply. False (and nothing changes) when the generation is not the current one.
+    /// A page reply, routed by its request id to the level that holds it. False
+    /// (and nothing changes) when no level holds the id.
     pub fn apply_page(
         &mut self,
-        generation: u64,
+        request: u64,
         list: &BrowseList,
         _offset: u32,
         page: &SpotifyPage,
     ) -> bool {
-        if generation != self.generation || !self.accepts(list) {
+        let Some(index) = self.take_request(request) else {
             return false;
-        }
-        let level = self.current();
+        };
+        let level = &mut self.levels[index];
         match list {
             BrowseList::Search { kind, .. } => {
                 if let Some(group) = search_group(*kind) {
@@ -423,60 +448,72 @@ impl SpotifyBrowser {
             }
         }
         level.total = page.total;
-        level.pending = level.pending.saturating_sub(1);
-        self.settle();
+        // Spotify's raw rows, skipped ones included, are what the next offset counts.
+        // A page with none has no more to give, whatever the total says.
+        let raw_rows = page.next_offset.map_or(page.items.len() as u32, |next| {
+            next.saturating_sub(page.offset)
+        });
+        if raw_rows == 0 {
+            level.at_end = true;
+        }
+        self.settle_at(index);
         true
     }
 
-    /// An error reply for a list, shown as the level's notice. Same generation rule.
-    pub fn apply_error(&mut self, generation: u64, list: &BrowseList, message: String) -> bool {
-        if !self.apply_failure(generation, list) {
+    /// A failed page: the message becomes the level's notice and the level stalls.
+    /// Same routing as `apply_page`.
+    pub fn apply_error(&mut self, request: u64, message: String) -> bool {
+        let Some(index) = self.take_request(request) else {
             return false;
-        }
-        self.current().notice = Some(message);
+        };
+        let level = &mut self.levels[index];
+        level.notice = Some(message);
+        level.stalled = true;
+        self.settle_at(index);
         true
     }
 
-    /// A failed reply that the caller reports itself (a toast). Same generation
-    /// rule; the level's request is no longer pending.
-    pub fn apply_failure(&mut self, generation: u64, list: &BrowseList) -> bool {
-        if generation != self.generation || !self.accepts(list) {
+    /// A failed reply that the caller reports itself (a toast), or a request
+    /// that never left. The level stalls; the request is no longer pending.
+    /// Same routing as `apply_page`.
+    pub fn apply_failure(&mut self, request: u64) -> bool {
+        let Some(index) = self.take_request(request) else {
             return false;
-        }
-        let level = self.current();
-        level.pending = level.pending.saturating_sub(1);
-        self.settle();
+        };
+        self.levels[index].stalled = true;
+        self.settle_at(index);
         true
     }
 
     /// `r`: request the current list again from its first page, clearing its
-    /// rows. None at the top and for a search (which is not reloaded).
+    /// rows. None at the top and for a search (which is not reloaded). Requests
+    /// still out for the old rows are forgotten, so their replies are dropped.
     pub fn reload(&mut self) -> Option<(u64, BrowseList, SpotifyOp)> {
         if self.is_top() || self.level().is_search() {
             return None;
         }
         let list = self.level().list.clone()?;
-        self.generation += 1;
-        let generation = self.generation;
+        let request = self.next_request();
         let level = self.current();
         level.items.clear();
         level.total = 0;
         level.next_offset = None;
         level.notice = None;
         level.cursor = 0;
-        level.pending = 1;
-        Some((generation, list.clone(), op_for(&list, 0)))
+        level.in_flight = vec![request];
+        level.stalled = false;
+        level.at_end = false;
+        Some((request, list.clone(), op_for(&list, 0)))
     }
 
     /// The next page to request when the cursor is near the end, the level is
-    /// not loading and more rows exist. Search never pages.
+    /// not loading, not stalled, not at its end and more rows exist. Search never pages.
     pub fn next_page(&mut self) -> Option<(u64, BrowseList, SpotifyOp)> {
         if self.is_top() {
             return None;
         }
-        let generation = self.generation;
         let level = self.current();
-        if level.is_search() || level.pending > 0 {
+        if level.is_search() || !level.in_flight.is_empty() || level.stalled || level.at_end {
             return None;
         }
         let list = level.list.clone()?;
@@ -485,8 +522,9 @@ impl SpotifyBrowser {
         if next >= level.total || level.cursor + NEAR_END < level.rows().len() {
             return None;
         }
-        level.pending = 1;
-        Some((generation, list.clone(), op_for(&list, next)))
+        let request = self.next_request();
+        self.current().in_flight.push(request);
+        Some((request, list.clone(), op_for(&list, next)))
     }
 
     /// Put the cursor on `row` (an index into `rows()`, or into `TOP` at the top)
@@ -500,6 +538,7 @@ impl SpotifyBrowser {
             return true;
         }
         let level = self.current();
+        level.stalled = false;
         if !level.selectable(row) {
             return false;
         }
@@ -509,12 +548,18 @@ impl SpotifyBrowser {
 
     /// Keep the cursor on a selectable row after the rows changed.
     fn settle(&mut self) {
-        let top = self.is_top();
-        let level = self.current();
-        if top {
+        let index = self.levels.len() - 1;
+        self.settle_at(index);
+    }
+
+    /// `settle` for the level at `index`. The top level's cursor is on TOP.
+    fn settle_at(&mut self, index: usize) {
+        if self.levels.len() == 1 {
+            let level = &mut self.levels[0];
             level.cursor = level.cursor.min(TOP.len() - 1);
             return;
         }
+        let level = &mut self.levels[index];
         let cursor = level.cursor;
         let selectable = level.selectable_rows();
         level.cursor = selectable
@@ -655,17 +700,24 @@ mod tests {
 
     /// Opens the first playlist on the Playlists list and returns its tracks' level request.
     fn open_playlist(b: &mut SpotifyBrowser) -> (u64, BrowseList, String) {
-        let (generation, list) = enter_top(b, 1);
+        let (request, list) = enter_top(b, 1);
         let playlist = item(SpotifyKind::Playlist, 1);
         let uri = playlist.uri.clone();
-        assert!(b.apply_page(generation, &list, 0, &page_of(vec![playlist], 0, 1)));
+        assert!(b.apply_page(request, &list, 0, &page_of(vec![playlist], 0, 1)));
         b.first();
         match b.open() {
-            BrowseAction::Load {
-                generation, list, ..
-            } => (generation, list, uri),
+            BrowseAction::Load { request, list, .. } => (request, list, uri),
             other => panic!("expected a load, got {other:?}"),
         }
+    }
+
+    /// The request id of the search group for `kind`.
+    fn request_of(requests: &[(u64, BrowseList, SpotifyOp)], kind: SpotifyKind) -> u64 {
+        requests
+            .iter()
+            .find(|(_, list, _)| matches!(list, BrowseList::Search { kind: k, .. } if *k == kind))
+            .map(|(request, _, _)| *request)
+            .expect("a request per group")
     }
 
     fn search(kind: SpotifyKind) -> BrowseList {
@@ -680,9 +732,7 @@ mod tests {
         b.first();
         b.step(row);
         match b.enter() {
-            BrowseAction::Load {
-                generation, list, ..
-            } => (generation, list),
+            BrowseAction::Load { request, list, .. } => (request, list),
             other => panic!("expected a load, got {other:?}"),
         }
     }
@@ -704,13 +754,12 @@ mod tests {
     }
 
     #[test]
-    fn entering_a_list_asks_for_page_zero_at_the_new_generation() {
+    fn entering_a_list_asks_for_page_zero_with_a_fresh_request_id() {
         let mut b = SpotifyBrowser::new();
         b.step(1); // Playlists
-        let before = b.generation();
         match b.enter() {
-            BrowseAction::Load { generation, op, .. } => {
-                assert!(generation > before);
+            BrowseAction::Load { request, op, .. } => {
+                assert!(request > 0, "ids start above zero");
                 assert_eq!(
                     op,
                     SpotifyOp::Playlists {
@@ -729,16 +778,16 @@ mod tests {
         let (old, list) = enter_top(&mut b, 1);
         b.reset();
         assert!(!b.apply_page(old, &list, 0, &page_of(vec![track(1)], 0, 1)));
-        assert!(!b.apply_error(old, &list, "late".into()));
+        assert!(!b.apply_error(old, "late".into()));
         assert_eq!(b.depth(), 1);
     }
 
     #[test]
     fn paging_is_asked_for_only_near_the_end() {
         let mut b = SpotifyBrowser::new();
-        let (generation, list) = enter_top(&mut b, 1);
+        let (request, list) = enter_top(&mut b, 1);
         let items: Vec<_> = (0..50).map(|n| item(SpotifyKind::Playlist, n)).collect();
-        assert!(b.apply_page(generation, &list, 0, &page_of(items, 0, 120)));
+        assert!(b.apply_page(request, &list, 0, &page_of(items, 0, 120)));
         b.first();
         assert!(b.next_page().is_none(), "far from the end");
         b.last(); // cursor 49, rows 50: within NEAR_END
@@ -756,36 +805,39 @@ mod tests {
     #[test]
     fn paging_stops_when_the_total_is_loaded() {
         let mut b = SpotifyBrowser::new();
-        let (generation, list) = enter_top(&mut b, 1);
+        let (request, list) = enter_top(&mut b, 1);
         let items: Vec<_> = (0..3).map(|n| item(SpotifyKind::Playlist, n)).collect();
-        assert!(b.apply_page(generation, &list, 0, &page_of(items, 0, 3)));
+        assert!(b.apply_page(request, &list, 0, &page_of(items, 0, 3)));
         b.last();
         assert!(b.next_page().is_none(), "total 3, loaded 3");
     }
 
     #[test]
-    fn a_failed_page_frees_the_level_to_page_again() {
+    fn a_failed_page_stalls_the_level_until_the_cursor_moves() {
         let mut b = SpotifyBrowser::new();
-        let (generation, list) = enter_top(&mut b, 1);
+        let (request, list) = enter_top(&mut b, 1);
         let items: Vec<_> = (0..50).map(|n| item(SpotifyKind::Playlist, n)).collect();
-        assert!(b.apply_page(generation, &list, 0, &page_of(items, 0, 120)));
+        assert!(b.apply_page(request, &list, 0, &page_of(items, 0, 120)));
         b.last();
-        assert!(b.next_page().is_some());
-        assert!(b.apply_error(generation, &list, "network".into()));
+        let (second, _, _) = b.next_page().expect("page two is on its way");
+        assert!(b.apply_error(second, "network".into()));
         assert!(
-            b.next_page().is_some(),
-            "the failed page can be asked again"
+            b.next_page().is_none(),
+            "a failed page is not asked again on the tick"
         );
+        assert!(b.next_page().is_none(), "nor on the next one");
+        b.step(-1);
+        assert!(b.next_page().is_some(), "a cursor move frees the level");
     }
 
     #[test]
     fn a_track_in_an_album_plays_with_the_album_as_context_and_its_index() {
         let mut b = SpotifyBrowser::new();
-        let (generation, list) = enter_top(&mut b, 3); // Albums
-        assert!(b.apply_page(generation, &list, 0, &page_of(vec![album_a()], 0, 1)));
+        let (request, list) = enter_top(&mut b, 3); // Albums
+        assert!(b.apply_page(request, &list, 0, &page_of(vec![album_a()], 0, 1)));
         b.first();
         let BrowseAction::Load {
-            generation: tracks_gen,
+            request: tracks_gen,
             list: tracks,
             ..
         } = b.open()
@@ -813,13 +865,8 @@ mod tests {
     #[test]
     fn a_search_track_plays_with_its_group_as_uris() {
         let mut b = SpotifyBrowser::new();
-        let (generation, list, _) = b.start_search("x").remove(0); // the Tracks group
-        assert!(b.apply_page(
-            generation,
-            &list,
-            0,
-            &page_of(vec![track(1), track(2)], 0, 2)
-        ));
+        let (request, list, _) = b.start_search("x").remove(0); // the Tracks group
+        assert!(b.apply_page(request, &list, 0, &page_of(vec![track(1), track(2)], 0, 2)));
         b.step(1); // the first track is the cursor after settle; step to the second
         assert_eq!(
             b.enter(),
@@ -834,10 +881,10 @@ mod tests {
     #[test]
     fn liked_songs_play_the_loaded_tracks_from_the_cursor() {
         let mut b = SpotifyBrowser::new();
-        let (generation, list) = enter_top(&mut b, 2);
+        let (request, list) = enter_top(&mut b, 2);
         assert_eq!(list, BrowseList::LikedSongs);
         assert!(b.apply_page(
-            generation,
+            request,
             &list,
             0,
             &page_of(vec![track(1), track(2), track(3)], 0, 3)
@@ -860,8 +907,8 @@ mod tests {
     #[test]
     fn an_album_from_the_list_plays_from_the_top_but_open_shows_its_tracks() {
         let mut b = SpotifyBrowser::new();
-        let (generation, list) = enter_top(&mut b, 3); // Albums
-        assert!(b.apply_page(generation, &list, 0, &page_of(vec![album_a()], 0, 1)));
+        let (request, list) = enter_top(&mut b, 3); // Albums
+        assert!(b.apply_page(request, &list, 0, &page_of(vec![album_a()], 0, 1)));
         b.first();
         assert_eq!(
             b.enter(),
@@ -896,24 +943,23 @@ mod tests {
     #[test]
     fn an_unavailable_playlist_shows_a_notice_and_the_level_keeps_its_rows_empty() {
         let mut b = SpotifyBrowser::new();
-        let (generation, list) = enter_top(&mut b, 1);
+        let (request, list) = enter_top(&mut b, 1);
         assert!(b.apply_page(
-            generation,
+            request,
             &list,
             0,
             &page_of(vec![item(SpotifyKind::Playlist, 1)], 0, 1)
         ));
         b.first();
         let BrowseAction::Load {
-            generation: tracks_gen,
-            list: tracks,
+            request: tracks_gen,
             ..
         } = b.open()
         else {
             panic!("open a playlist")
         };
         let message = "Spotify only lists tracks for playlists you own or collaborate on.";
-        assert!(b.apply_error(tracks_gen, &tracks, message.into()));
+        assert!(b.apply_error(tracks_gen, message.into()));
         assert_eq!(b.level().notice.as_deref(), Some(message));
         assert!(b.level().items.is_empty());
     }
@@ -921,28 +967,28 @@ mod tests {
     #[test]
     fn search_results_are_grouped_in_order_with_headers() {
         let mut b = SpotifyBrowser::new();
-        let (generation, _, _) = b.start_search("q").remove(0);
+        let requests = b.start_search("q");
         // Replies arrive out of order; the Artists group stays empty.
         assert!(b.apply_page(
-            generation,
+            request_of(&requests, SpotifyKind::Playlist),
             &search(SpotifyKind::Playlist),
             0,
             &page_of(vec![item(SpotifyKind::Playlist, 1)], 0, 1)
         ));
         assert!(b.apply_page(
-            generation,
+            request_of(&requests, SpotifyKind::Album),
             &search(SpotifyKind::Album),
             0,
             &page_of(vec![item(SpotifyKind::Album, 1)], 0, 1)
         ));
         assert!(b.apply_page(
-            generation,
+            request_of(&requests, SpotifyKind::Track),
             &search(SpotifyKind::Track),
             0,
             &page_of(vec![track(1), track(2)], 0, 2)
         ));
         assert!(b.apply_page(
-            generation,
+            request_of(&requests, SpotifyKind::Artist),
             &search(SpotifyKind::Artist),
             0,
             &page_of(vec![], 0, 0)
@@ -964,15 +1010,15 @@ mod tests {
     #[test]
     fn the_cursor_skips_headers() {
         let mut b = SpotifyBrowser::new();
-        let (generation, _, _) = b.start_search("q").remove(0);
+        let requests = b.start_search("q");
         assert!(b.apply_page(
-            generation,
+            request_of(&requests, SpotifyKind::Track),
             &search(SpotifyKind::Track),
             0,
             &page_of(vec![track(1), track(2)], 0, 2)
         ));
         assert!(b.apply_page(
-            generation,
+            request_of(&requests, SpotifyKind::Album),
             &search(SpotifyKind::Album),
             0,
             &page_of(vec![item(SpotifyKind::Album, 1)], 0, 1)
@@ -995,46 +1041,50 @@ mod tests {
     }
 
     #[test]
-    fn back_pops_one_level_and_bumps_the_generation() {
+    fn back_pops_one_level_and_drops_the_replies_of_the_level_left() {
         let mut b = SpotifyBrowser::new();
-        let (generation, _) = enter_top(&mut b, 1);
+        let (request, list) = enter_top(&mut b, 1);
         assert_eq!(b.depth(), 2);
         assert!(b.back());
         assert_eq!(b.depth(), 1);
-        assert!(b.generation() > generation);
+        assert!(
+            !b.apply_page(request, &list, 0, &page_of(vec![track(1)], 0, 1)),
+            "the level was left, so its reply matches nothing"
+        );
         assert!(!b.back(), "nothing above the top");
     }
 
     #[test]
-    fn back_reveals_a_level_whose_page_was_dropped_and_can_load_again() {
+    fn back_reveals_a_level_whose_page_is_still_on_its_way() {
         let mut b = SpotifyBrowser::new();
-        let (generation, list) = enter_top(&mut b, 1);
+        let (request, list) = enter_top(&mut b, 1);
         let items: Vec<_> = (0..50).map(|n| item(SpotifyKind::Playlist, n)).collect();
-        assert!(b.apply_page(generation, &list, 0, &page_of(items, 0, 120)));
+        assert!(b.apply_page(request, &list, 0, &page_of(items, 0, 120)));
         b.last();
-        assert!(b.next_page().is_some(), "page two is on its way");
+        let (page_two, page_two_list, _) = b.next_page().expect("page two is on its way");
         assert!(
             matches!(b.open(), BrowseAction::Load { .. }),
             "open a playlist"
         );
         assert!(b.back());
         assert!(
-            b.next_page().is_some(),
-            "page two was dropped, so ask again"
+            b.next_page().is_none(),
+            "page two is still out for the revealed level, so it is not asked again"
         );
+        let more: Vec<_> = (50..100).map(|n| item(SpotifyKind::Playlist, n)).collect();
+        assert!(
+            b.apply_page(page_two, &page_two_list, 50, &page_of(more, 50, 120)),
+            "its reply still lands on the level that asked"
+        );
+        assert_eq!(b.level().items.len(), 100);
     }
 
     #[test]
     fn select_row_moves_the_cursor_to_an_item_and_refuses_a_header() {
         let mut b = SpotifyBrowser::new();
         let requests = b.start_search("so what");
-        let (generation, list, _) = requests[0].clone();
-        b.apply_page(
-            generation,
-            &list,
-            0,
-            &page_of(vec![track(1), track(2)], 0, 2),
-        );
+        let (request, list, _) = requests[0].clone();
+        b.apply_page(request, &list, 0, &page_of(vec![track(1), track(2)], 0, 2));
         // Rows: header Tracks, then the two tracks.
         assert!(!b.select_row(0), "a header cannot take the cursor");
         assert_eq!(b.level().cursor, 1);
@@ -1045,9 +1095,9 @@ mod tests {
     #[test]
     fn a_track_after_a_skipped_row_in_a_playlist_plays_at_its_real_position() {
         let mut b = SpotifyBrowser::new();
-        let (generation, tracks, uri) = open_playlist(&mut b);
+        let (request, tracks, uri) = open_playlist(&mut b);
         // Spotify's rows: 0 a track, 1 a local file (skipped), 2 a track.
-        assert!(b.apply_page(generation, &tracks, 0, &playlist_page(0, 3, &[1], 3)));
+        assert!(b.apply_page(request, &tracks, 0, &playlist_page(0, 3, &[1], 3)));
         b.last();
         assert_eq!(
             b.level().cursor,
@@ -1068,11 +1118,11 @@ mod tests {
     #[test]
     fn paging_after_a_skipped_row_asks_for_the_raw_offset_without_repeats() {
         let mut b = SpotifyBrowser::new();
-        let (generation, tracks, uri) = open_playlist(&mut b);
+        let (request, tracks, uri) = open_playlist(&mut b);
         // 50 raw rows came back, one of them a local file: 49 kept, the next row is 50.
         let page = playlist_page(0, 50, &[7], 120);
         assert_eq!(page.items.len(), 49);
-        assert!(b.apply_page(generation, &tracks, 0, &page));
+        assert!(b.apply_page(request, &tracks, 0, &page));
         b.last();
         let (_, _, op) = b.next_page().expect("near the end");
         assert_eq!(
@@ -1089,9 +1139,9 @@ mod tests {
     #[test]
     fn paging_stops_at_the_total_even_with_a_skipped_row() {
         let mut b = SpotifyBrowser::new();
-        let (generation, tracks, _) = open_playlist(&mut b);
+        let (request, tracks, _) = open_playlist(&mut b);
         let page = playlist_page(0, 50, &[7], 50);
-        assert!(b.apply_page(generation, &tracks, 0, &page));
+        assert!(b.apply_page(request, &tracks, 0, &page));
         b.last();
         assert!(b.next_page().is_none(), "the next row is 50 of 50");
     }
@@ -1099,9 +1149,9 @@ mod tests {
     #[test]
     fn a_liked_songs_play_sends_a_window_of_at_most_100_uris_around_the_cursor() {
         let mut b = SpotifyBrowser::new();
-        let (generation, list) = enter_top(&mut b, 2);
+        let (request, list) = enter_top(&mut b, 2);
         let items: Vec<_> = (0..250).map(track).collect();
-        assert!(b.apply_page(generation, &list, 0, &page_of(items, 0, 250)));
+        assert!(b.apply_page(request, &list, 0, &page_of(items, 0, 250)));
         b.first();
         b.step(200);
         let BrowseAction::Play(SpotifyOp::Play {
@@ -1137,14 +1187,82 @@ mod tests {
         let mut b = SpotifyBrowser::new();
         b.step(-5);
         assert_eq!(b.level().cursor, 0);
-        let (generation, list) = enter_top(&mut b, 1);
+        let (request, list) = enter_top(&mut b, 1);
         let items: Vec<_> = (0..3).map(|n| item(SpotifyKind::Playlist, n)).collect();
-        assert!(b.apply_page(generation, &list, 0, &page_of(items, 0, 3)));
+        assert!(b.apply_page(request, &list, 0, &page_of(items, 0, 3)));
         b.last();
         assert_eq!(b.level().cursor, 2);
         b.step(-5);
         assert_eq!(b.level().cursor, 0);
         b.step(9);
         assert_eq!(b.level().cursor, 2);
+    }
+
+    #[test]
+    fn a_parent_page_still_fills_after_a_search_started_and_went_back() {
+        let mut b = SpotifyBrowser::new();
+        let (playlists_req, playlists) = enter_top(&mut b, 1);
+        // The search starts before the playlists' page 0 arrives, and the user goes back.
+        let _groups = b.start_search("q");
+        assert!(b.back());
+        assert!(b.apply_page(
+            playlists_req,
+            &playlists,
+            0,
+            &page_of(vec![item(SpotifyKind::Playlist, 1)], 0, 1)
+        ));
+        assert_eq!(
+            b.level().items.len(),
+            1,
+            "page 0 fills the list it was asked for"
+        );
+    }
+
+    #[test]
+    fn the_other_search_groups_still_arrive_after_opening_an_album_and_going_back() {
+        let mut b = SpotifyBrowser::new();
+        let groups = b.start_search("q");
+        let (tracks_req, tracks, _) = groups[0].clone();
+        let (albums_req, albums, _) = groups[1].clone();
+        let (artists_req, artists, _) = groups[2].clone();
+        let (playlists_req, playlists, _) = groups[3].clone();
+        assert!(b.apply_page(albums_req, &albums, 0, &page_of(vec![album_a()], 0, 1)));
+        // Open the album from the first group while the other groups are pending.
+        b.first();
+        assert!(matches!(b.open(), BrowseAction::Load { .. }));
+        assert!(b.back());
+        assert!(b.apply_page(tracks_req, &tracks, 0, &page_of(vec![track(1)], 0, 1)));
+        assert!(b.apply_page(artists_req, &artists, 0, &page_of(vec![], 0, 0)));
+        assert!(b.apply_page(
+            playlists_req,
+            &playlists,
+            0,
+            &page_of(vec![item(SpotifyKind::Playlist, 1)], 0, 1)
+        ));
+        assert_eq!(
+            b.level().rows().len(),
+            6,
+            "three headers (Tracks, Albums, Playlists) and their three items"
+        );
+    }
+
+    #[test]
+    fn a_page_with_no_raw_rows_ends_the_list() {
+        let mut b = SpotifyBrowser::new();
+        let (request, list) = enter_top(&mut b, 1);
+        let items: Vec<_> = (0..50).map(|n| item(SpotifyKind::Playlist, n)).collect();
+        assert!(b.apply_page(request, &list, 0, &page_of(items, 0, 120)));
+        // The next page comes back with no rows, though the total says more.
+        b.last();
+        let (next_req, next_list, _) = b.next_page().expect("page two is asked for");
+        let empty = SpotifyPage {
+            items: Vec::new(),
+            offset: 50,
+            total: 120,
+            next_offset: Some(50),
+        };
+        assert!(b.apply_page(next_req, &next_list, 50, &empty));
+        b.last();
+        assert!(b.next_page().is_none(), "no raw rows is the end");
     }
 }

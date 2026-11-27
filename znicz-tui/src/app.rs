@@ -454,11 +454,14 @@ pub struct App {
         Option<znicz_core::SpotifyTrack>,
         Vec<znicz_core::SpotifyTrack>,
     )>,
+    /// Why the last queue read failed, shown in the drawer in place of the rows.
+    /// Cleared by the next successful read.
+    pub(crate) spotify_queue_error: Option<String>,
     /// A `Queue` request is with the worker; its reply clears this.
     pub(crate) spotify_queue_requested: bool,
     /// When the last `Queue` request was sent, for the 3 s refresh while the drawer is open.
     pub(crate) spotify_queue_asked_at: Option<Instant>,
-    /// The browser's levels, cursors and generation. Reset when the mode ends.
+    /// The browser's levels, cursors and request ids. Reset when the mode ends.
     pub(crate) spotify_browser: SpotifyBrowser,
     /// The search prompt, while it is open.
     pub(crate) spotify_search: Option<LineEdit>,
@@ -857,6 +860,7 @@ impl App {
             spotify_mode: false,
             spotify_mute_restore: None,
             spotify_queue: None,
+            spotify_queue_error: None,
             spotify_queue_requested: false,
             spotify_queue_asked_at: None,
             spotify_browser: SpotifyBrowser::new(),
@@ -1258,6 +1262,8 @@ impl App {
                 let len = self.spotify_state.devices.len();
                 self.spotify_devices_cursor.step(delta, len);
             }
+            // The open Spotify drawer is read-only: the wheel moves nothing.
+            Modal::None if self.spotify_mode && self.queue_open => {}
             Modal::None if self.in_spotify_browser() => self.spotify_browser.step(delta),
             Modal::None => match self.focus {
                 Focus::Library if self.view == View::Browse => {
@@ -2683,6 +2689,12 @@ impl App {
 
     // --- list movement, applied to whichever list has focus ---
 
+    /// With the Spotify queue drawer open in Spotify mode, no list moves: the
+    /// drawer is read-only and the Znicz lists sit behind it.
+    fn spotify_drawer_blocks_moves(&self) -> bool {
+        self.spotify_mode && self.modal == Modal::None && self.queue_open
+    }
+
     fn list_len(&self) -> usize {
         if self.modal == Modal::Messages {
             self.toasts.history_len()
@@ -2700,6 +2712,9 @@ impl App {
     }
 
     fn step(&mut self, delta: isize) {
+        if self.spotify_drawer_blocks_moves() {
+            return;
+        }
         if self.modal == Modal::Settings {
             self.settings_move(delta);
             return;
@@ -2725,6 +2740,9 @@ impl App {
     }
 
     fn page(&mut self, delta: isize) {
+        if self.spotify_drawer_blocks_moves() {
+            return;
+        }
         if self.modal == Modal::Settings {
             self.settings_move(delta);
             return;
@@ -2750,6 +2768,9 @@ impl App {
     }
 
     fn go_first(&mut self) {
+        if self.spotify_drawer_blocks_moves() {
+            return;
+        }
         if self.modal == Modal::Settings {
             if !self.settings_on_tab_bar {
                 self.set_settings_cursor(0);
@@ -2776,6 +2797,9 @@ impl App {
     }
 
     fn go_last(&mut self) {
+        if self.spotify_drawer_blocks_moves() {
+            return;
+        }
         if self.modal == Modal::Settings {
             if !self.settings_on_tab_bar {
                 self.set_settings_cursor(self.settings_rows.len().saturating_sub(1));

@@ -131,6 +131,11 @@ impl App {
     }
 
     pub(super) fn set_settings_tab(&mut self, tab: Tab) {
+        // The login panel is the Spotify tab's: leaving the tab closes it, as
+        // closing Settings does, so it cannot take keys while hidden.
+        if tab != Tab::Spotify {
+            self.close_login_panel();
+        }
         self.settings_tab = tab;
         self.settings_rows = settings::rows(tab, &self.library_status.folders);
         self.settings_scroll = 0;
@@ -871,11 +876,16 @@ impl App {
             self.settings_confirm = None;
             self.settings_prompt = None;
             self.spotify_confirm = None;
-            // The panel is the only view of a login: cancel it in the player too,
-            // as Esc does, so the Account row does not stay on Logging in.
-            if self.spotify_login.take().is_some() {
-                self.ask_spotify(SpotifyAsk::CancelLogin, SpotifyOp::CancelLogin);
-            }
+            self.close_login_panel();
+        }
+    }
+
+    /// Close the login panel, if one is open, and cancel its login in the
+    /// player. The panel is the only view of a login, so the Account row
+    /// would otherwise stay on Logging in.
+    pub(super) fn close_login_panel(&mut self) {
+        if self.spotify_login.take().is_some() {
+            self.ask_spotify(SpotifyAsk::CancelLogin, SpotifyOp::CancelLogin);
         }
     }
 }

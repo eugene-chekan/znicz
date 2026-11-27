@@ -236,7 +236,8 @@ impl SpotifyPage {
     /// Not meaningful for a search over several kinds; page one kind at a time (see `SpotifyOp::Search`).
     pub fn has_more(&self) -> bool {
         match self.next_offset {
-            Some(next) => next < self.total,
+            // A next offset that is not past this page's offset made no progress.
+            Some(next) => next > self.offset && next < self.total,
             None => (self.offset as usize + self.items.len()) < self.total as usize,
         }
     }
@@ -623,6 +624,21 @@ mod tests {
             next_offset: Some(50),
         };
         assert!(!page.has_more(), "counting the loaded items would say more");
+    }
+
+    #[test]
+    fn a_page_with_no_raw_rows_has_no_more_even_when_the_total_says_so() {
+        // Spotify returned nothing at offset 50 of 120: the next offset is no progress.
+        let page = SpotifyPage {
+            items: Vec::new(),
+            offset: 50,
+            total: 120,
+            next_offset: Some(50),
+        };
+        assert!(
+            !page.has_more(),
+            "no raw rows: there is no next page to ask for"
+        );
     }
 
     #[test]

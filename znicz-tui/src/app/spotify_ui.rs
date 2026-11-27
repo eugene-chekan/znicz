@@ -276,9 +276,10 @@ impl App {
             (SpotifyAsk::CompleteLogin, Ok(_)) | (SpotifyAsk::CancelLogin, _) => {}
             (SpotifyAsk::Queue, Ok(SpotifyReply::Queue { current, next })) => {
                 self.spotify_queue = Some((current, next));
+                self.spotify_queue_error = None;
             }
-            // The drawer is re-read every 3 s, so a failed read is logged, not toasted each time.
-            (SpotifyAsk::Queue, Err(e)) => tracing::debug!("spotify queue: {e}"),
+            // The drawer is re-read every 3 s, so a failed read is shown in the drawer, not toasted.
+            (SpotifyAsk::Queue, Err(e)) => self.queue_read_failed(e),
             // A playback error is the message itself, not the Settings catch-all.
             (
                 SpotifyAsk::Transport | SpotifyAsk::QueueAdd | SpotifyAsk::Transfer { .. },
@@ -1398,7 +1399,7 @@ pub(crate) mod tests {
             .unwrap();
 
         let tag = SpotifyAsk::Browse {
-            generation: 1,
+            request: 1,
             list: BrowseList::Search {
                 query: "so what".into(),
                 kind: SpotifyKind::Track,
@@ -1423,7 +1424,7 @@ pub(crate) mod tests {
 
         release.send(()).unwrap();
         let done = next_done(browse_worker);
-        assert_eq!(done.tag, tag, "the reply keeps its generation and offset");
+        assert_eq!(done.tag, tag, "the reply keeps its request and offset");
         assert!(done.result.is_ok());
     }
 
@@ -1466,5 +1467,50 @@ pub(crate) mod tests {
             );
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn switching_tabs_with_a_login_panel_open_closes_it_and_cancels_the_login() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let (mut app, recorded) = panel_app(&dir, host.clone());
+        app.spotify_login = Some(LoginPanel {
+            url: "https://x/y".into(),
+            listening: true,
+            paste: None,
+            notice: None,
+        });
+        // Draw once so the tab bar is hit-tested, then click the Display tab.
+        let state = app.player.state();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+        terminal
+            .draw(|frame| crate::views::render(frame, &mut app, &state))
+            .unwrap();
+        let (rect, _) = app
+            .hits
+            .settings_tabs
+            .iter()
+            .find(|(_, tab)| *tab == crate::settings::Tab::Display)
+            .copied()
+            .expect("the Display tab is hit-tested");
+        app.on_mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: rect.x,
+            row: rect.y,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        });
+        assert_eq!(app.settings_tab, crate::settings::Tab::Display);
+        assert!(app.spotify_login.is_none(), "the panel closed with the tab");
+        assert!(
+            settle(&app, &[&*host]).contains(&SpotifyOp::CancelLogin),
+            "the login is cancelled in the player"
+        );
+        // The key that the panel used to take now reaches the Display tab, not the panel.
+        press(&mut app, KeyCode::Char('c'));
+        assert!(
+            recorded.copied.lock().unwrap().is_empty(),
+            "c is not the panel's on the Display tab"
+        );
     }
 }

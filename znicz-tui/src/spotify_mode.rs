@@ -2,7 +2,9 @@
 //! volume arithmetic, the mute plan, the labels and the error plan. No IO.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use znicz_core::{RepeatMode, SpotifyErrorKind, SpotifyOp, SpotifyRepeat, SpotifyState};
+use znicz_core::{
+    RepeatMode, SpotifyErrorKind, SpotifyOp, SpotifyRepeat, SpotifyState, ZniczError,
+};
 
 pub const SEEK_SMALL_SECS: i64 = 5;
 pub const SEEK_LARGE_SECS: i64 = 30;
@@ -182,6 +184,18 @@ pub fn error_plan(kind: SpotifyErrorKind, message: &str) -> ErrorPlan {
         },
         _ => ErrorPlan {
             text: message.to_string(),
+            stops_polling: false,
+            reread: false,
+        },
+    }
+}
+
+/// The plan for any error of a Spotify call: a Spotify error by its kind, any other by its text.
+pub fn error_plan_for(error: &ZniczError) -> ErrorPlan {
+    match error {
+        ZniczError::Spotify { kind, message } => error_plan(*kind, message),
+        other => ErrorPlan {
+            text: other.to_string(),
             stops_polling: false,
             reread: false,
         },
