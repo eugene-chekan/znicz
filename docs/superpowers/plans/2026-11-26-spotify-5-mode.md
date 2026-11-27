@@ -1424,7 +1424,7 @@ Behaviour:
 - `LibraryOnly` → toast `NOT_IN_MODE`.
 - `QueueAdd`, `QueueDrawer`, `Devices`, `Search` → Tasks 14, 15, 12 (here: `QueueAdd` on the highlighted browser track: nothing yet; stub with a comment).
 
-- [ ] **Step 1: Write the failing tests** (in `app/spotify_mode.rs` tests; logged-in state with a playback fixture)
+- [x] **Step 1: Write the failing tests** (in `app/spotify_mode.rs` tests; logged-in state with a playback fixture)
 
 ```rust
 #[test]
@@ -1466,13 +1466,13 @@ fn a_library_only_key_toasts_not_in_spotify_mode() {
 }
 ```
 
-- [ ] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- app::spotify_mode`.
+- [x] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- app::spotify_mode`.
 
-- [ ] **Step 3: Implement** the behaviour above. Use `self.ask_spotify(SpotifyAsk::Transport, op)`; if it returns false, toast `Spotify is not connected`. Read the playback from `self.spotify_state` (the poll keeps it fresh; a 500 ms lag is accepted).
+- [x] **Step 3: Implement** the behaviour above. Use `self.ask_spotify(SpotifyAsk::Transport, op)`; if it returns false, toast `Spotify is not connected`. Read the playback from `self.spotify_state` (the poll keeps it fresh; a 500 ms lag is accepted).
 
-- [ ] **Step 4: Run** — `cargo test -p znicz-tui -- app::spotify_mode` — all pass.
+- [x] **Step 4: Run** — `cargo test -p znicz-tui -- app::spotify_mode` — all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/app.rs znicz-tui/src/app/spotify_mode.rs
@@ -1495,7 +1495,7 @@ Claude-Session: https://claude.ai/code/session_012jyZm3UyFwgZfBtgburioV"
 - Consumes: `SpotifyOp::QueueAdd { uri }`, `SpotifyOp::Queue`, `SpotifyReply::Queue { current, next }`, `SpotifyAsk::Queue`.
 - Produces: `pub(crate) fn spotify_queue_add(&mut self)` (adds the highlighted track's `uri` from the browser level's `Item` of kind `Track`, or `Album`/`Playlist` uri is refused with the toast `Spotify's queue takes one track at a time`); `pub(crate) fn toggle_spotify_queue(&mut self)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 #[test]
@@ -1519,13 +1519,13 @@ fn bracket_in_the_mode_never_opens_the_znicz_queue_drawer_without_the_spotify_re
 }
 ```
 
-- [ ] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- queue`.
+- [x] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- queue`.
 
-- [ ] **Step 3: Implement.** `Queue` reply arm in `on_spotify_done`: `Ok(SpotifyReply::Queue { current, next }) => self.spotify_queue = Some((current, next))`. `Err` → toast error. The queue is re-read every time the drawer opens; while it is open, the tick re-requests it every 3 s (`spotify_queue_requested` flag, like Devices, to keep one pending).
+- [x] **Step 3: Implement.** `Queue` reply arm in `on_spotify_done`: `Ok(SpotifyReply::Queue { current, next }) => self.spotify_queue = Some((current, next))`. `Err` → toast error. The queue is re-read every time the drawer opens; while it is open, the tick re-requests it every 3 s (`spotify_queue_requested` flag, like Devices, to keep one pending).
 
-- [ ] **Step 4: Run** — `cargo test -p znicz-tui -- queue`.
+- [x] **Step 4: Run** — `cargo test -p znicz-tui -- queue`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/app.rs znicz-tui/src/app/spotify_mode.rs znicz-tui/src/app/spotify_ui.rs
