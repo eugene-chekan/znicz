@@ -13,6 +13,7 @@ pub const NOT_IN_MODE: &str = "not in Spotify mode";
 pub const NOT_LOGGED_IN: &str = "Spotify: log in under Settings → Spotify (S, 6)";
 pub const NO_STOP: &str = "Spotify has no stop: Space pauses";
 pub const NOTHING_PLAYING: &str = "Nothing is playing on Spotify";
+pub const ONE_TRACK_AT_A_TIME: &str = "Spotify's queue takes one track at a time";
 pub const NO_VOLUME: &str = "Spotify does not report this device's volume";
 /// The toast when a request has no connection to Spotify in this session.
 pub const NO_LANE: &str = "Spotify is not connected in this session";

@@ -449,6 +449,15 @@ pub struct App {
     pub(crate) spotify_mode: bool,
     /// The percent `m` took the device to 0 from; `m` again restores it. None when nothing is muted.
     pub(crate) spotify_mute_restore: Option<u8>,
+    /// Spotify's queue for the drawer: the playing track and the ones after it.
+    pub(crate) spotify_queue: Option<(
+        Option<znicz_core::SpotifyTrack>,
+        Vec<znicz_core::SpotifyTrack>,
+    )>,
+    /// A `Queue` request is with the worker; its reply clears this.
+    pub(crate) spotify_queue_requested: bool,
+    /// When the last `Queue` request was sent, for the 3 s refresh while the drawer is open.
+    pub(crate) spotify_queue_asked_at: Option<Instant>,
     /// The browser's levels, cursors and generation. Reset when the mode ends.
     pub(crate) spotify_browser: SpotifyBrowser,
     /// The search prompt, while it is open.
@@ -843,6 +852,9 @@ impl App {
             spotify_polled_at: None,
             spotify_mode: false,
             spotify_mute_restore: None,
+            spotify_queue: None,
+            spotify_queue_requested: false,
+            spotify_queue_asked_at: None,
             spotify_browser: SpotifyBrowser::new(),
             spotify_search: None,
             spotify_login: None,

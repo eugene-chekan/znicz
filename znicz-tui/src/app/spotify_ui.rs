@@ -180,6 +180,7 @@ impl App {
         for done in replies {
             self.on_spotify_done(done);
         }
+        self.refresh_spotify_queue();
         let Some(every) = self.spotify_poll_every() else {
             return;
         };
@@ -242,6 +243,7 @@ impl App {
         match done.tag {
             SpotifyAsk::BeginLogin => self.spotify_login_requested = false,
             SpotifyAsk::Devices => self.spotify_devices_requested = false,
+            SpotifyAsk::Queue => self.spotify_queue_requested = false,
             _ => {}
         }
         match (done.tag, done.result) {
@@ -267,8 +269,11 @@ impl App {
             }
             // The panel closes when the status shows the login finished.
             (SpotifyAsk::CompleteLogin, Ok(_)) | (SpotifyAsk::CancelLogin, _) => {}
-            // The queue drawer takes its replies in a later step.
-            (SpotifyAsk::Queue, _) => {}
+            (SpotifyAsk::Queue, Ok(SpotifyReply::Queue { current, next })) => {
+                self.spotify_queue = Some((current, next));
+            }
+            // The drawer is re-read every 3 s, so a failed read is logged, not toasted each time.
+            (SpotifyAsk::Queue, Err(e)) => tracing::debug!("spotify queue: {e}"),
             // A playback error is the message itself, not the Settings catch-all.
             (SpotifyAsk::Transport, Err(ZniczError::Spotify { kind, message })) => {
                 self.toasts

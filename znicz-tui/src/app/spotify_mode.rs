@@ -1,12 +1,17 @@
 //! Spotify mode: `O` switches the keys, the footer and the status poll to
 //! Spotify. A second `impl App` beside `spotify_ui.rs`.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use znicz_core::{SpotifyLogin, SpotifyOp, SpotifyRepeat};
+use znicz_core::{SpotifyKind, SpotifyLogin, SpotifyOp, SpotifyRepeat};
 
 use super::{App, Modal};
+use crate::spotify_browse::Row;
 use crate::spotify_mode::{self, MuteAction, SpotifyKey};
+use crate::spotify_worker::SpotifyAsk;
+
+/// How often the queue is read again while the drawer is open.
+const SPOTIFY_QUEUE_EVERY: Duration = Duration::from_secs(3);
 
 /// Unix time in milliseconds: the clock the seek reads, to place the playhead.
 fn now_unix_ms() -> u64 {
@@ -96,10 +101,62 @@ impl App {
             SpotifyKey::Reload => {}
             // The devices modal, the queue and the search are wired in later steps:
             // the queue add and drawer in Task 14, the devices modal in Task 15.
-            SpotifyKey::Devices
-            | SpotifyKey::QueueAdd
-            | SpotifyKey::QueueDrawer
-            | SpotifyKey::Search => {}
+            SpotifyKey::QueueAdd => self.spotify_queue_add(),
+            SpotifyKey::QueueDrawer => self.toggle_spotify_queue(),
+            // The devices modal is wired in Task 15; `/` is the browser's (Task 12).
+            SpotifyKey::Devices | SpotifyKey::Search => {}
+        }
+    }
+
+    /// `a`: queue the highlighted track. Albums, playlists and artists are refused.
+    pub(crate) fn spotify_queue_add(&mut self) {
+        let level = self.spotify_browser.level();
+        let highlighted = level.rows().get(level.cursor).cloned();
+        let Some(Row::Item(item)) = highlighted else {
+            return;
+        };
+        if item.kind != SpotifyKind::Track {
+            self.toasts.info(spotify_mode::ONE_TRACK_AT_A_TIME);
+            return;
+        }
+        self.spotify_send_play(SpotifyOp::QueueAdd {
+            uri: item.uri.clone(),
+        });
+    }
+
+    /// `]` in the mode: open or close the drawer. Opening asks Spotify for its queue.
+    pub(crate) fn toggle_spotify_queue(&mut self) {
+        if self.queue_open {
+            self.close_queue();
+        } else {
+            self.open_queue();
+            self.request_spotify_queue();
+        }
+    }
+
+    /// Ask for Spotify's queue on the browse lane, unless a request is already with the worker.
+    pub(crate) fn request_spotify_queue(&mut self) {
+        if self.spotify_queue_requested {
+            return;
+        }
+        if self.ask_spotify(SpotifyAsk::Queue, SpotifyOp::Queue) {
+            self.spotify_queue_requested = true;
+            self.spotify_queue_asked_at = Some(Instant::now());
+        } else {
+            self.toasts.error(spotify_mode::NO_LANE);
+        }
+    }
+
+    /// While the drawer is open in the mode, the queue is read again every 3 s.
+    pub(crate) fn refresh_spotify_queue(&mut self) {
+        if !self.in_spotify_mode() || !self.queue_open {
+            return;
+        }
+        let due = self
+            .spotify_queue_asked_at
+            .is_none_or(|at| at.elapsed() >= SPOTIFY_QUEUE_EVERY);
+        if due {
+            self.request_spotify_queue();
         }
     }
 
@@ -161,11 +218,16 @@ mod tests {
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use znicz_core::{SpotifyDevice, SpotifyOp, SpotifyPlayback, SpotifyRepeat, SpotifyTrack};
+    use std::time::Duration;
+
+    use znicz_core::{
+        SpotifyDevice, SpotifyItem, SpotifyKind, SpotifyOp, SpotifyPage, SpotifyPlayback,
+        SpotifyRepeat, SpotifyReply, SpotifyTrack,
+    };
 
     use crate::app::settings_ui::tests as settings_tests;
     use crate::app::settings_ui::tests::press;
-    use crate::app::spotify_ui::tests::{FakeHost, sent_ops, wait_for_op};
+    use crate::app::spotify_ui::tests::{FakeHost, sent_ops, wait_for_op, wait_until};
     use crate::app::{App, Modal, View};
     use crate::keys::{Context, context_hints};
     use crate::spotify_mode;
@@ -471,5 +533,148 @@ mod tests {
                 "{context:?}"
             );
         }
+    }
+
+    fn track_item(uri: &str, title: &str) -> SpotifyItem {
+        SpotifyItem {
+            kind: SpotifyKind::Track,
+            uri: uri.into(),
+            name: title.into(),
+            subtitle: "Miles Davis".into(),
+            image_url: None,
+            track: Some(SpotifyTrack {
+                uri: uri.into(),
+                title: title.into(),
+                duration_ms: 1_000,
+                ..SpotifyTrack::default()
+            }),
+        }
+    }
+
+    fn album_item() -> SpotifyItem {
+        SpotifyItem {
+            kind: SpotifyKind::Album,
+            uri: "spotify:album:kob".into(),
+            name: "Kind of Blue".into(),
+            subtitle: "Miles Davis".into(),
+            image_url: None,
+            track: None,
+        }
+    }
+
+    fn page_of(items: Vec<SpotifyItem>) -> SpotifyReply {
+        let total = items.len() as u32;
+        SpotifyReply::Page {
+            page: SpotifyPage {
+                items,
+                offset: 0,
+                total,
+            },
+        }
+    }
+
+    fn queue_count(host: &FakeHost) -> usize {
+        sent_ops(host)
+            .iter()
+            .filter(|op| **op == SpotifyOp::Queue)
+            .count()
+    }
+
+    #[test]
+    fn a_sends_queue_add_for_the_highlighted_track() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        *host.reply.lock().unwrap() = Some(page_of(vec![track_item(
+            "spotify:track:so-what",
+            "So What",
+        )]));
+        let mut app = mode_app(&dir, &host);
+        // Search, Playlists, Liked songs: two steps down, then open.
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char('l'));
+        wait_until(&mut app, |a| a.spotify_browser.level().items.len() == 1);
+        press(&mut app, KeyCode::Char('a'));
+        assert!(wait_for_op(&host, |op| *op
+            == SpotifyOp::QueueAdd {
+                uri: "spotify:track:so-what".into()
+            }));
+    }
+
+    #[test]
+    fn a_on_an_album_refuses_with_a_toast_and_sends_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        *host.reply.lock().unwrap() = Some(page_of(vec![album_item()]));
+        let mut app = mode_app(&dir, &host);
+        // Search, Playlists, Liked songs, Albums: three steps down, then open.
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char('l'));
+        wait_until(&mut app, |a| a.spotify_browser.level().items.len() == 1);
+        press(&mut app, KeyCode::Char('a'));
+        assert!(
+            settings_tests::toast_texts(&app)
+                .iter()
+                .any(|t| t == spotify_mode::ONE_TRACK_AT_A_TIME)
+        );
+        assert!(
+            !sent_ops(&host)
+                .iter()
+                .any(|op| matches!(op, SpotifyOp::QueueAdd { .. }))
+        );
+    }
+
+    #[test]
+    fn bracket_opens_the_spotify_queue_and_asks_for_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        *host.reply.lock().unwrap() = Some(SpotifyReply::Queue {
+            current: Some(SpotifyTrack {
+                title: "So What".into(),
+                ..SpotifyTrack::default()
+            }),
+            next: vec![SpotifyTrack {
+                title: "Blue in Green".into(),
+                ..SpotifyTrack::default()
+            }],
+        });
+        let mut app = mode_app(&dir, &host);
+        press(&mut app, KeyCode::Char(']'));
+        assert!(app.queue_open, "] should open the drawer in the mode");
+        assert!(wait_for_op(&host, |op| *op == SpotifyOp::Queue));
+        wait_until(&mut app, |a| a.spotify_queue.is_some());
+        let (current, next) = app.spotify_queue.clone().unwrap();
+        assert_eq!(current.map(|t| t.title), Some("So What".to_string()));
+        assert_eq!(next.len(), 1);
+    }
+
+    #[test]
+    fn bracket_in_the_mode_shows_the_spotify_queue_context_and_closes_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let mut app = mode_app(&dir, &host);
+        press(&mut app, KeyCode::Char(']'));
+        assert_eq!(app.context(), Context::SpotifyQueue);
+        press(&mut app, KeyCode::Char(']'));
+        assert!(!app.queue_open);
+    }
+
+    #[test]
+    fn an_open_drawer_asks_for_the_queue_again_after_3s() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        *host.reply.lock().unwrap() = Some(SpotifyReply::Queue {
+            current: None,
+            next: Vec::new(),
+        });
+        let mut app = mode_app(&dir, &host);
+        press(&mut app, KeyCode::Char(']'));
+        wait_until(&mut app, |a| a.spotify_queue.is_some());
+        assert_eq!(queue_count(&host), 1);
+        app.spotify_queue_asked_at = Some(Instant::now() - Duration::from_secs(4));
+        app.poll_spotify();
+        assert_eq!(queue_count(&host), 2);
     }
 }
