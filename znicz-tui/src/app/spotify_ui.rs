@@ -133,7 +133,7 @@ impl App {
         let Some(file) = self.config_file.clone() else {
             return;
         };
-        let Ok((config, open_browser)) = super::settings_ui::read_spotify(&file) else {
+        let Ok((config, open_browser)) = super::settings_ui::spotify::read_spotify(&file) else {
             return;
         };
         self.spotify = config;
@@ -338,17 +338,6 @@ impl App {
             self.spotify_confirm = Some(SpotifyConfirm::Logout);
         } else {
             self.request_login();
-        }
-    }
-
-    /// Enter on the strip's question: log out, or save the new client ID.
-    pub(crate) fn confirm_spotify(&mut self) {
-        match self.spotify_confirm.take() {
-            Some(SpotifyConfirm::Logout) => {
-                self.ask_spotify(SpotifyAsk::Logout, SpotifyOp::Logout);
-            }
-            Some(SpotifyConfirm::ClientId(id)) => self.replace_client_id(id),
-            None => {}
         }
     }
 

@@ -853,6 +853,7 @@ top of the player.
 | `app/spotify_browse_ui.rs` | Spotify mode in `App`: browser keys, loading, replies, search prompt, mouse rows |
 | `osc52.rs` | The OSC 52 clipboard sequence that `c` writes in the login panel |
 | `app/spotify_ui.rs` | Spotify tab and login panel: status poll, the lane each request takes, worker replies, login, logout, copy, browser |
+| `app/settings_ui/spotify.rs` | Spotify rows of Settings: the `[spotify]` section as the file holds it, client ID, port and playback device saves, what each sends to the player |
 | `help_state.rs` | help context, scroll, and filter text |
 | `footer_hits.rs` | footer hint placement and click targets |
 | `theme.rs` | every colour, in one place (16 ANSI colours, tuned for dark palettes; themes: [#68](https://github.com/eugene-chekan/znicz/issues/68)) |
