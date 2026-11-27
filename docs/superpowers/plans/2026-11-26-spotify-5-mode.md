@@ -1700,7 +1700,7 @@ Rules:
 
 `TransportModel::from_spotify` uses the same title, subtitle (`artist · album`), seek, volume, repeat, shuffle, and `signal`: `("spotify", "<device name> (<kind>)")`, with `path_badge` `("Spotify Connect", Tone::Good)` when status is not `Stopped`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 #[test]
@@ -1726,15 +1726,15 @@ fn a_paused_track_shows_a_paused_marker_and_no_path_badge_when_stopped() { /* st
 
 Plus golden tests in `views/stage.rs`, mirroring the Task 1 set: `golden_spotify_wide_stage` (100 × 24, cover off so no network), `golden_spotify_narrow_stage` (48 × 24), `golden_spotify_nothing_playing` (100 × 24). Build the golden the same way as Task 1 Step 2.
 
-- [ ] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- from_spotify golden_spotify`.
+- [x] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- from_spotify golden_spotify`.
 
-- [ ] **Step 3: Implement.** In `render`: `let model = if app.spotify_mode { StageModel::from_spotify(&app.spotify_state, now_unix_ms(), app.spotify_mute_restore.is_some()) } else { StageModel::from_player(state, &app.stations, shown.cover_search, shown.cover_protocol != CoverProtocol::Off) };`. For Spotify, `render_cover` receives `model.cover` and keys `keep_previous` by the URL. `now_unix_ms()` is defined once in `app/spotify_mode.rs` as `pub(crate) fn now_unix_ms() -> u64`.
+- [x] **Step 3: Implement.** In `render`: `let model = if app.spotify_mode { StageModel::from_spotify(&app.spotify_state, now_unix_ms(), app.spotify_mute_restore.is_some()) } else { StageModel::from_player(state, &app.stations, shown.cover_search, shown.cover_protocol != CoverProtocol::Off) };`. For Spotify, `render_cover` receives `model.cover` and keys `keep_previous` by the URL. `now_unix_ms()` is defined once in `app/spotify_mode.rs` as `pub(crate) fn now_unix_ms() -> u64`.
 
 Footer for the Stage in the mode: `Context::SpotifyStage` (Task 8).
 
-- [ ] **Step 4: Run** — `cargo test -p znicz-tui` — all pass, including the Task 1 goldens.
+- [x] **Step 4: Run** — `cargo test -p znicz-tui` — all pass, including the Task 1 goldens.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/stage_model.rs znicz-tui/src/views/stage.rs znicz-tui/src/views/now_playing.rs znicz-tui/src/views/mod.rs znicz-tui/src/app/spotify_mode.rs
@@ -1762,7 +1762,7 @@ Behaviour:
 - The errors through the Transport arm: `NoActiveDevice` toasts the core text (mentions `,`); `PremiumRequired` toasts `needs Spotify Premium`; `Unavailable` toasts the device message; `Network` toasts the "may still happen" text and forces a read; `OutdatedPlayer`/`NoService` stop polling and toast why.
 - A `Browse` error for an old generation is ignored (Task 11).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 #[test]
@@ -1791,13 +1791,13 @@ fn an_outdated_player_stops_polling_in_the_mode() {
 }
 ```
 
-- [ ] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- leaving library_only network no_active outdated`.
+- [x] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- leaving library_only network no_active outdated`.
 
-- [ ] **Step 3: Implement** as described. The `Transport` arm: `Err(ZniczError::Spotify { kind, message }) => self.spotify_change_failed(kind, message)`; other `ZniczError` values use `to_string()`.
+- [x] **Step 3: Implement** as described. The `Transport` arm: `Err(ZniczError::Spotify { kind, message }) => self.spotify_change_failed(kind, message)`; other `ZniczError` values use `to_string()`.
 
-- [ ] **Step 4: Run** — `cargo test -p znicz-tui` — all pass.
+- [x] **Step 4: Run** — `cargo test -p znicz-tui` — all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/app.rs znicz-tui/src/app/spotify_mode.rs znicz-tui/src/app/spotify_ui.rs
