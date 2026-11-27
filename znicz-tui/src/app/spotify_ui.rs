@@ -234,6 +234,10 @@ impl App {
 
     /// A worker reply, by what asked for it.
     pub(crate) fn on_spotify_done(&mut self, done: Done<SpotifyAsk>) {
+        if matches!(done.tag, SpotifyAsk::Browse { .. }) {
+            self.on_browse_done(done);
+            return;
+        }
         // Whatever the reply holds, the request is no longer pending.
         match done.tag {
             SpotifyAsk::BeginLogin => self.spotify_login_requested = false,
@@ -263,8 +267,14 @@ impl App {
             }
             // The panel closes when the status shows the login finished.
             (SpotifyAsk::CompleteLogin, Ok(_)) | (SpotifyAsk::CancelLogin, _) => {}
-            // The browser and the queue drawer take their replies in later steps.
-            (SpotifyAsk::Browse { .. } | SpotifyAsk::Queue, _) => {}
+            // The queue drawer takes its replies in a later step.
+            (SpotifyAsk::Queue, _) => {}
+            // A playback error is the message itself, not the Settings catch-all.
+            (SpotifyAsk::Transport, Err(ZniczError::Spotify { kind, message })) => {
+                self.toasts
+                    .error(spotify_mode::error_plan(kind, &message).text);
+            }
+            (SpotifyAsk::Transport, Ok(_)) => {}
             (SpotifyAsk::Logout, Ok(_)) => self.toasts.success("Logged out of Spotify"),
             // The player took the file's settings, so it has the file's client ID.
             (SpotifyAsk::Configure, Ok(_)) => self.spotify_player_differs = false,
@@ -555,7 +565,7 @@ pub(crate) mod tests {
         }
     }
 
-    fn wait_until(app: &mut App, done: impl Fn(&App) -> bool) {
+    pub(crate) fn wait_until(app: &mut App, done: impl Fn(&App) -> bool) {
         for _ in 0..500 {
             app.poll_spotify();
             if done(app) {

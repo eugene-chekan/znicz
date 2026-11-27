@@ -419,16 +419,43 @@ impl SpotifyBrowser {
         true
     }
 
-    /// An error reply for a list. Same generation rule.
+    /// An error reply for a list, shown as the level's notice. Same generation rule.
     pub fn apply_error(&mut self, generation: u64, list: &BrowseList, message: String) -> bool {
+        if !self.apply_failure(generation, list) {
+            return false;
+        }
+        self.current().notice = Some(message);
+        true
+    }
+
+    /// A failed reply that the caller reports itself (a toast). Same generation
+    /// rule; the level's request is no longer pending.
+    pub fn apply_failure(&mut self, generation: u64, list: &BrowseList) -> bool {
         if generation != self.generation || !self.accepts(list) {
             return false;
         }
         let level = self.current();
-        level.notice = Some(message);
         level.pending = level.pending.saturating_sub(1);
         self.settle();
         true
+    }
+
+    /// `r`: request the current list again from its first page, clearing its
+    /// rows. None at the top and for a search (which is not reloaded).
+    pub fn reload(&mut self) -> Option<(u64, BrowseList, SpotifyOp)> {
+        if self.is_top() || self.level().is_search() {
+            return None;
+        }
+        let list = self.level().list.clone()?;
+        self.generation += 1;
+        let generation = self.generation;
+        let level = self.current();
+        level.items.clear();
+        level.total = 0;
+        level.notice = None;
+        level.cursor = 0;
+        level.pending = 1;
+        Some((generation, list.clone(), op_for(&list, 0)))
     }
 
     /// The next page to request when the cursor is near the end, the level is
@@ -467,6 +494,19 @@ impl SpotifyBrowser {
             .find(|&index| index >= cursor)
             .or_else(|| selectable.last().copied())
             .unwrap_or(0);
+    }
+}
+
+/// The offset a list op asks for; 0 for any other op.
+pub fn offset_of(op: &SpotifyOp) -> u32 {
+    match op {
+        SpotifyOp::Playlists { offset, .. }
+        | SpotifyOp::LikedSongs { offset, .. }
+        | SpotifyOp::Albums { offset, .. }
+        | SpotifyOp::Tracks { offset, .. }
+        | SpotifyOp::ArtistAlbums { offset, .. }
+        | SpotifyOp::Search { offset, .. } => *offset,
+        _ => 0,
     }
 }
 

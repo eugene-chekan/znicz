@@ -13,9 +13,19 @@ pub const NOT_IN_MODE: &str = "not in Spotify mode";
 pub const NOT_LOGGED_IN: &str = "Spotify: log in under Settings → Spotify (S, 6)";
 pub const NO_STOP: &str = "Spotify has no stop: Space pauses";
 pub const NO_VOLUME: &str = "Spotify does not report this device's volume";
+/// The toast when a request has no connection to Spotify in this session.
+pub const NO_LANE: &str = "Spotify is not connected in this session";
 /// The message row when a change or a read did not answer in time.
 pub const NETWORK_TEXT: &str =
     "Spotify did not answer: the change may still happen; the next status read shows the truth";
+/// Whether a key keeps its global meaning in Spotify mode: `P`, `R`, `S`, `M`, `?`, `q`, `v`, `i`, `O`.
+pub fn keeps_global(key: KeyEvent) -> bool {
+    matches!(
+        key.code,
+        KeyCode::Char('q' | '?' | 'S' | 'P' | 'R' | 'M' | 'v' | 'i' | 'O')
+    )
+}
+
 /// Keys the library owns and Spotify mode refuses.
 pub const LIBRARY_ONLY_KEYS: [char; 5] = ['A', 'L', 'F', 'U', 'J'];
 

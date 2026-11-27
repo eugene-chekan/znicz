@@ -36,6 +36,7 @@ use crate::toast::Toasts;
 use crate::tui_config::{CoverProtocol, TuiConfig};
 
 mod settings_ui;
+mod spotify_browse_ui;
 mod spotify_mode;
 mod spotify_ui;
 use crate::spotify_browse::SpotifyBrowser;
@@ -1113,6 +1114,7 @@ impl App {
             self.poll_manual_check();
             self.poll_install();
             self.poll_spotify();
+            self.request_more_rows();
             self.toasts.tick();
 
             let state = self.player.state();
@@ -1438,6 +1440,18 @@ impl App {
         if key.code == KeyCode::Esc {
             self.on_esc();
             return;
+        }
+
+        // In Spotify mode's browser the browser takes its keys. Of the rest, only
+        // the global keys (`q`, `S`, `P`, ...) keep their meaning; Znicz's playback
+        // and library keys stay out until the transport keys take their Spotify meanings.
+        if self.in_spotify_browser() {
+            if self.spotify_browser_key(key) {
+                return;
+            }
+            if !crate::spotify_mode::keeps_global(key) {
+                return;
+            }
         }
 
         if self.modal == Modal::Settings && self.on_settings_key(key) {
@@ -2644,6 +2658,8 @@ impl App {
         } else if self.focus == Focus::Queue && self.queue_open {
             self.queue_cursor.step(delta, len);
             self.queue_h_offset = 0;
+        } else if self.in_spotify_browser() {
+            self.spotify_browser.step(delta);
         } else if self.view == View::Browse {
             self.library.step(delta, self.library_strip());
         }
@@ -2667,6 +2683,8 @@ impl App {
         } else if self.focus == Focus::Queue && self.queue_open {
             self.queue_cursor.page(delta, len);
             self.queue_h_offset = 0;
+        } else if self.in_spotify_browser() {
+            self.spotify_browser.step(delta);
         } else if self.view == View::Browse {
             self.library.page(delta, self.library_strip());
         }
@@ -2691,6 +2709,8 @@ impl App {
         } else if self.focus == Focus::Queue && self.queue_open {
             self.queue_cursor.first();
             self.queue_h_offset = 0;
+        } else if self.in_spotify_browser() {
+            self.spotify_browser.first();
         } else if self.view == View::Browse {
             self.library.first(self.library_strip());
         }
@@ -2716,6 +2736,8 @@ impl App {
         } else if self.focus == Focus::Queue && self.queue_open {
             self.queue_cursor.last(len);
             self.queue_h_offset = 0;
+        } else if self.in_spotify_browser() {
+            self.spotify_browser.last();
         } else if self.view == View::Browse {
             self.library.last(self.library_strip());
         }
