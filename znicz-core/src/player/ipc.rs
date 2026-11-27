@@ -1422,11 +1422,23 @@ mod tests {
 
     #[test]
     fn a_reply_cut_off_before_its_newline_is_an_io_error_not_an_outdated_player() {
-        let (mut live, mut peer) = live_with_peer();
-        peer.write_all(b"{\"Ok\":").unwrap();
-        drop(peer);
+        let (mut live, peer) = live_with_peer();
+        // Act like a player: read the whole request, then write half a reply and
+        // close. Closing with the request still unread would make Windows reset
+        // the connection instead of delivering the half reply.
+        let player = std::thread::spawn(move || {
+            let mut request = String::new();
+            BufReader::new(peer.try_clone().unwrap())
+                .read_line(&mut request)
+                .unwrap();
+            let mut peer = peer;
+            peer.write_all(b"{\"Ok\":").unwrap();
+            peer.shutdown(std::net::Shutdown::Write).unwrap();
+            peer
+        });
         let error = rpc_on(&mut live, &spotify_status_request())
             .expect_err("a truncated reply is an error");
+        drop(player.join().unwrap());
         assert!(matches!(error, RpcError::Io(_)), "not an io error");
         let (kind, message) = spotify_kind_and_message(RpcFailure::sent(error));
         assert_eq!(kind, SpotifyErrorKind::Other);
