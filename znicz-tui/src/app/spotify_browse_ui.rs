@@ -56,8 +56,9 @@ impl App {
                 op,
                 ..
             } => self.spotify_load(generation, list, op),
-            // The Search row opens the prompt (Task 12).
-            BrowseAction::OpenSearch | BrowseAction::Nothing => {}
+            // The Search row opens the prompt, as `/` does.
+            BrowseAction::OpenSearch => self.spotify_search = Some(LineEdit::new()),
+            BrowseAction::Nothing => {}
         }
     }
 
@@ -119,6 +120,7 @@ impl App {
     /// Send a browse request for `list` at `generation`. The offset is the op's.
     pub(crate) fn spotify_load(&mut self, generation: u64, list: BrowseList, op: SpotifyOp) {
         let offset = offset_of(&op);
+        let settle = list.clone();
         if !self.ask_spotify(
             SpotifyAsk::Browse {
                 generation,
@@ -127,6 +129,9 @@ impl App {
             },
             op,
         ) {
+            // The request never left, so no reply will settle the level: it is
+            // not loading, and a reload can send again once a lane exists.
+            self.spotify_browser.apply_failure(generation, &settle);
             self.toasts.error(spotify_mode::NO_LANE);
         }
     }
@@ -733,5 +738,44 @@ mod tests {
                 .iter()
                 .any(|op| matches!(op, SpotifyOp::Transfer { .. }))
         );
+    }
+
+    #[test]
+    fn enter_on_the_search_row_opens_the_prompt_like_slash() {
+        let dir = tempfile::tempdir().unwrap();
+        let browse = Arc::new(FakeHost::default());
+        let transport = Arc::new(FakeHost::default());
+        let mut app = browse_app(&dir, browse.clone(), transport);
+        assert_eq!(app.spotify_browser.level().cursor, 0);
+        press(&mut app, KeyCode::Enter);
+        assert!(app.spotify_search.is_some());
+        assert!(sent_ops(&browse).is_empty());
+    }
+
+    #[test]
+    fn a_failed_send_settles_the_level_and_a_later_reload_sends_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let browse = Arc::new(FakeHost::default());
+        *browse.reply.lock().unwrap() = Some(page(vec![playlist(1)], 1));
+        let mut app = settings_tests::settings_app(&dir);
+        app.spotify_state = logged_in();
+        press(&mut app, KeyCode::Char('O'));
+        assert!(app.in_spotify_mode());
+        // No browse lane yet: Enter on Playlists cannot send.
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Enter);
+        assert!(
+            settings_tests::toast_texts(&app)
+                .iter()
+                .any(|t| t == spotify_mode::NO_LANE)
+        );
+        assert_eq!(app.spotify_browser.level().pending, 0, "not left loading");
+        // The lane comes up, and the reload sends the first page again.
+        let mut app = app.with_spotify_worker(browse.clone()).unwrap();
+        press(&mut app, KeyCode::Char('r'));
+        assert!(wait_for_op(&browse, |op| matches!(
+            op,
+            SpotifyOp::Playlists { .. }
+        )));
     }
 }

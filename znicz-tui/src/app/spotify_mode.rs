@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use znicz_core::{SpotifyKind, SpotifyLogin, SpotifyOp, SpotifyRepeat};
+use znicz_core::{SpotifyKind, SpotifyLogin, SpotifyOp, SpotifyRepeat, ZniczError};
 
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -233,6 +233,27 @@ impl App {
         self.spotify_mode
     }
 
+    /// A change (a transport op or a transfer) that Spotify refused or did not answer:
+    /// its message is toasted, and what the error means for the status reads is applied.
+    pub(crate) fn spotify_change_failed(&mut self, error: ZniczError) {
+        let plan = match &error {
+            ZniczError::Spotify { kind, message } => spotify_mode::error_plan(*kind, message),
+            other => spotify_mode::ErrorPlan {
+                text: other.to_string(),
+                stops_polling: false,
+                reread: false,
+            },
+        };
+        self.toasts.error(plan.text.clone());
+        // A change that may have happened is checked by the next read at once.
+        if plan.reread {
+            self.spotify_polled_at = None;
+        }
+        if plan.stops_polling {
+            self.spotify_unavailable = Some(plan.text);
+        }
+    }
+
     /// `O`: enter or leave Spotify mode. Entering needs a login; without one the
     /// login line is toasted and nothing changes.
     pub(crate) fn toggle_spotify_mode(&mut self) {
@@ -250,7 +271,8 @@ impl App {
         self.spotify_polled_at = None;
     }
 
-    fn leave_spotify_mode(&mut self) {
+    /// Leave Spotify mode. Nothing is sent: Spotify keeps playing where it is.
+    pub(crate) fn leave_spotify_mode(&mut self) {
         self.spotify_mode = false;
         self.spotify_browser.reset();
         self.spotify_search = None;
@@ -283,6 +305,8 @@ mod tests {
     use crate::app::{App, Modal, View};
     use crate::keys::{Context, context_hints};
     use crate::spotify_mode;
+    use crate::spotify_worker::{Done, SpotifyAsk};
+    use znicz_core::{SpotifyErrorKind, ZniczError};
 
     fn now_ms() -> u64 {
         SystemTime::now()
@@ -846,5 +870,102 @@ mod tests {
         app.spotify_queue_asked_at = Some(Instant::now() - Duration::from_secs(4));
         app.poll_spotify();
         assert_eq!(queue_count(&host), 2);
+    }
+
+    #[test]
+    fn leaving_the_mode_sends_nothing_to_spotify() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let mut app = mode_app(&dir, &host);
+        press(&mut app, KeyCode::Char('O'));
+        assert!(!app.in_spotify_mode());
+        assert!(sent_ops(&host).is_empty());
+    }
+
+    #[test]
+    fn each_library_only_key_toasts_not_in_spotify_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let mut app = mode_app(&dir, &host);
+        for key in ['A', 'L', 'F', 'U', 'J'] {
+            press(&mut app, KeyCode::Char(key));
+            assert!(
+                settings_tests::toast_texts(&app)
+                    .iter()
+                    .any(|t| t == spotify_mode::NOT_IN_MODE),
+                "{key} should toast"
+            );
+        }
+        assert!(app.in_spotify_mode());
+        assert!(sent_ops(&host).is_empty());
+    }
+
+    fn change_fails(app: &mut App, kind: SpotifyErrorKind, message: &str) {
+        app.on_spotify_done(Done {
+            tag: SpotifyAsk::Transport,
+            result: Err(ZniczError::Spotify {
+                kind,
+                message: message.into(),
+            }),
+        });
+    }
+
+    #[test]
+    fn a_network_error_on_a_change_says_it_may_still_happen_and_rereads() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let mut app = mode_app(&dir, &host);
+        app.spotify_polled_at = Some(Instant::now());
+        change_fails(&mut app, SpotifyErrorKind::Network, "timed out");
+        assert!(
+            settings_tests::toast_texts(&app)
+                .iter()
+                .any(|t| t.contains("may still happen"))
+        );
+        assert!(app.spotify_polled_at.is_none());
+    }
+
+    #[test]
+    fn no_active_device_says_how_to_pick_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let mut app = mode_app(&dir, &host);
+        change_fails(
+            &mut app,
+            SpotifyErrorKind::NoActiveDevice,
+            "Spotify has no active device: open Spotify somewhere, or pick one with ,",
+        );
+        assert!(
+            settings_tests::toast_texts(&app)
+                .iter()
+                .any(|t| t.contains("pick one with ,"))
+        );
+    }
+
+    #[test]
+    fn an_outdated_player_stops_polling_in_the_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let mut app = mode_app(&dir, &host);
+        change_fails(&mut app, SpotifyErrorKind::OutdatedPlayer, "update Znicz");
+        assert_eq!(app.spotify_unavailable.as_deref(), Some("update Znicz"));
+    }
+
+    #[test]
+    fn losing_the_login_in_the_mode_leaves_it_and_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let mut app = mode_app(&dir, &host);
+        app.on_spotify_state(SpotifyState {
+            login: SpotifyLogin::NotLoggedIn,
+            ..SpotifyState::default()
+        });
+        assert!(!app.in_spotify_mode());
+        assert!(
+            settings_tests::toast_texts(&app)
+                .iter()
+                .any(|t| t == spotify_mode::LOGGED_OUT)
+        );
+        assert!(sent_ops(&host).is_empty());
     }
 }

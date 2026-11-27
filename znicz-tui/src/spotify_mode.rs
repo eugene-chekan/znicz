@@ -11,6 +11,8 @@ pub const VOLUME_STEP_PERCENT: i16 = 1;
 pub const UNMUTE_DEFAULT_PERCENT: u8 = 50;
 pub const NOT_IN_MODE: &str = "not in Spotify mode";
 pub const NOT_LOGGED_IN: &str = "Spotify: log in under Settings → Spotify (S, 6)";
+/// The toast when the login is lost while Spotify mode is on; the mode is left.
+pub const LOGGED_OUT: &str = "Spotify: logged out; O again after logging in";
 pub const NO_STOP: &str = "Spotify has no stop: Space pauses";
 pub const NOTHING_PLAYING: &str = "Nothing is playing on Spotify";
 pub const ONE_TRACK_AT_A_TIME: &str = "Spotify's queue takes one track at a time";
@@ -90,10 +92,14 @@ pub fn key_action(key: KeyEvent) -> Option<SpotifyKey> {
     }
 }
 
-/// The seek target, clamped to `[0, duration]`. A zero duration seeks from 0.
+/// The seek target, clamped to `[0, duration]`. A zero duration is unknown: the
+/// target is clamped at zero only.
 pub fn seek_target(progress_ms: u64, delta_secs: i64, duration_ms: u64) -> u64 {
     let target = progress_ms as i64 + delta_secs * 1_000;
-    target.clamp(0, (duration_ms as i64).max(0)) as u64
+    if duration_ms == 0 {
+        return target.max(0) as u64;
+    }
+    target.clamp(0, duration_ms as i64) as u64
 }
 
 /// A volume in 0.0..=1.0 for `percent + delta`, clamped to 0..=100.
@@ -282,7 +288,16 @@ mod tests {
     fn seek_target_clamps_to_zero_and_duration() {
         assert_eq!(seek_target(2_000, -5, 180_000), 0);
         assert_eq!(seek_target(178_000, 30, 180_000), 180_000);
-        assert_eq!(seek_target(10_000, 5, 0), 0, "no duration: seek from zero");
+        assert_eq!(
+            seek_target(10_000, 5, 0),
+            15_000,
+            "no duration: clamped only at zero"
+        );
+        assert_eq!(
+            seek_target(10_000, -30, 0),
+            0,
+            "no duration: still not below zero"
+        );
         assert_eq!(seek_target(10_000, 5, 180_000), 15_000);
     }
 

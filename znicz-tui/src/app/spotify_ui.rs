@@ -219,6 +219,11 @@ impl App {
         let was_logged_in = self.spotify_state.login == SpotifyLogin::LoggedIn;
         self.spotify_state = state;
         let login = self.spotify_state.login.clone();
+        // Logged out in Settings, or a login that expired: Spotify mode has no account to play for.
+        if self.spotify_mode && login != SpotifyLogin::LoggedIn {
+            self.leave_spotify_mode();
+            self.toasts.info(spotify_mode::LOGGED_OUT);
+        }
         // A login that just finished: the player's device list is now worth reading.
         if login == SpotifyLogin::LoggedIn && !was_logged_in {
             self.request_devices();
@@ -275,12 +280,8 @@ impl App {
             // The drawer is re-read every 3 s, so a failed read is logged, not toasted each time.
             (SpotifyAsk::Queue, Err(e)) => tracing::debug!("spotify queue: {e}"),
             // A playback error is the message itself, not the Settings catch-all.
-            (
-                SpotifyAsk::Transport | SpotifyAsk::Transfer { .. },
-                Err(ZniczError::Spotify { kind, message }),
-            ) => {
-                self.toasts
-                    .error(spotify_mode::error_plan(kind, &message).text);
+            (SpotifyAsk::Transport | SpotifyAsk::Transfer { .. }, Err(error)) => {
+                self.spotify_change_failed(error);
             }
             (SpotifyAsk::Transport, Ok(_)) => {}
             // A device that took over says so; one that did not comes back as the error above.
