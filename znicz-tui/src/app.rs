@@ -447,6 +447,8 @@ pub struct App {
     pub(crate) spotify_polled_at: Option<Instant>,
     /// Spotify mode: `O` made the keys, the footer and the status poll Spotify's.
     pub(crate) spotify_mode: bool,
+    /// The percent `m` took the device to 0 from; `m` again restores it. None when nothing is muted.
+    pub(crate) spotify_mute_restore: Option<u8>,
     /// The browser's levels, cursors and generation. Reset when the mode ends.
     pub(crate) spotify_browser: SpotifyBrowser,
     /// The search prompt, while it is open.
@@ -840,6 +842,7 @@ impl App {
             spotify_unavailable: None,
             spotify_polled_at: None,
             spotify_mode: false,
+            spotify_mute_restore: None,
             spotify_browser: SpotifyBrowser::new(),
             spotify_search: None,
             spotify_login: None,
@@ -1451,13 +1454,19 @@ impl App {
         // In Spotify mode's browser the browser takes its keys. Of the rest, only
         // the global keys (`q`, `S`, `P`, ...) keep their meaning; Znicz's playback
         // and library keys stay out until the transport keys take their Spotify meanings.
-        if self.in_spotify_browser() {
-            if self.spotify_browser_key(key) {
+        if self.in_spotify_browser() && self.spotify_browser_key(key) {
+            return;
+        }
+        // Spotify's transport keys take Space, the arrows, `m` and the rest before the
+        // Znicz keys see them, in the browser and in the Stage alike.
+        if self.in_spotify_mode() && self.modal == Modal::None {
+            if let Some(action) = crate::spotify_mode::key_action(key) {
+                self.spotify_transport_key(action);
                 return;
             }
-            if !crate::spotify_mode::keeps_global(key) {
-                return;
-            }
+        }
+        if self.in_spotify_browser() && !crate::spotify_mode::keeps_global(key) {
+            return;
         }
 
         if self.modal == Modal::Settings && self.on_settings_key(key) {

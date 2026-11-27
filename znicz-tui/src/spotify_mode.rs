@@ -12,6 +12,7 @@ pub const UNMUTE_DEFAULT_PERCENT: u8 = 50;
 pub const NOT_IN_MODE: &str = "not in Spotify mode";
 pub const NOT_LOGGED_IN: &str = "Spotify: log in under Settings → Spotify (S, 6)";
 pub const NO_STOP: &str = "Spotify has no stop: Space pauses";
+pub const NOTHING_PLAYING: &str = "Nothing is playing on Spotify";
 pub const NO_VOLUME: &str = "Spotify does not report this device's volume";
 /// The toast when a request has no connection to Spotify in this session.
 pub const NO_LANE: &str = "Spotify is not connected in this session";
@@ -105,7 +106,7 @@ pub enum MuteAction {
     Mute { remember: u8 },
     /// Set volume to this percent and forget the remembered one.
     Unmute(u8),
-    /// Nothing to do (a device with no reading, or already 0 and nothing remembered).
+    /// Nothing to do: the device reports no volume, so there is nothing to mute or restore.
     Nothing,
 }
 
@@ -114,6 +115,7 @@ pub fn mute_action(volume: Option<u8>, restore: Option<u8>) -> MuteAction {
     match (volume, restore) {
         (Some(percent), _) if percent > 0 => MuteAction::Mute { remember: percent },
         (Some(0), Some(percent)) | (None, Some(percent)) => MuteAction::Unmute(percent),
+        (Some(0), None) => MuteAction::Unmute(UNMUTE_DEFAULT_PERCENT),
         _ => MuteAction::Nothing,
     }
 }
@@ -290,7 +292,11 @@ mod tests {
             MuteAction::Mute { remember: 40 }
         );
         assert_eq!(mute_action(Some(0), Some(40)), MuteAction::Unmute(40));
-        assert_eq!(mute_action(Some(0), None), MuteAction::Nothing);
+        assert_eq!(
+            mute_action(Some(0), None),
+            MuteAction::Unmute(UNMUTE_DEFAULT_PERCENT),
+            "a silent device with nothing remembered comes back at 50 %"
+        );
         assert_eq!(mute_action(Some(0), Some(0)), MuteAction::Unmute(0));
     }
 

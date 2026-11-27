@@ -47,7 +47,9 @@ impl App {
             self.spotify_browser.enter()
         };
         match action {
-            BrowseAction::Play(op) => self.spotify_send_play(op),
+            BrowseAction::Play(op) => {
+                self.spotify_send_play(op);
+            }
             BrowseAction::Load {
                 generation,
                 list,
@@ -115,11 +117,13 @@ impl App {
         }
     }
 
-    /// Send a playback op on the transport lane.
-    pub(crate) fn spotify_send_play(&mut self, op: SpotifyOp) {
-        if !self.ask_spotify(SpotifyAsk::Transport, op) {
+    /// Send a playback op on the transport lane. False (with a toast) when that lane is not running.
+    pub(crate) fn spotify_send_play(&mut self, op: SpotifyOp) -> bool {
+        let sent = self.ask_spotify(SpotifyAsk::Transport, op);
+        if !sent {
             self.toasts.error(spotify_mode::NO_LANE);
         }
+        sent
     }
 
     /// A browse reply, routed to the browser by its generation. An error that
