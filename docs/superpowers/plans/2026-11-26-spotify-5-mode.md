@@ -1549,7 +1549,7 @@ Claude-Session: https://claude.ai/code/session_012jyZm3UyFwgZfBtgburioV"
 
 Behaviour: opening sends `SpotifyOp::Devices` (browse lane, so the player's list is refreshed) and sets the cursor to the active device. Enter sends `Transfer { device_id, play: true }` on the transport lane and closes the list. A device that does not take over comes back as `unavailable` and is shown by the `Transport` arm of `on_spotify_done` (toast). Esc closes.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 #[test]
@@ -1575,13 +1575,13 @@ fn an_empty_device_list_says_so() {
 }
 ```
 
-- [ ] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- devices`.
+- [x] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- devices`.
 
-- [ ] **Step 3: Implement.** `FakeHost` needs `reply` support for `Transfer` failing: use `configure_refusal`-style: add `pub transfer_refusal: Mutex<Option<ZniczError>>` in the test-only `FakeHost` (spotify_ui tests) — the test adds the field. `on_spotify_devices_key`: `j`/`k`/arrows move `spotify_devices_cursor` over `spotify_state.devices`; `Enter` transfers; `Esc` closes (the global Esc path closes modals in the list, so add the variant there).
+- [x] **Step 3: Implement.** `FakeHost` needs `reply` support for `Transfer` failing: use `configure_refusal`-style: add `pub transfer_refusal: Mutex<Option<ZniczError>>` in the test-only `FakeHost` (spotify_ui tests) — the test adds the field. `on_spotify_devices_key`: `j`/`k`/arrows move `spotify_devices_cursor` over `spotify_state.devices`; `Enter` transfers; `Esc` closes (the global Esc path closes modals in the list, so add the variant there).
 
-- [ ] **Step 4: Run** — `cargo test -p znicz-tui -- devices`.
+- [x] **Step 4: Run** — `cargo test -p znicz-tui -- devices`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/app.rs znicz-tui/src/app/spotify_mode.rs znicz-tui/src/app/spotify_ui.rs
@@ -1618,7 +1618,7 @@ Drawing rules:
 - Queue: `pane_block("Spotify queue", …)`; `Now` row with the current track as `title — artist` and then `Next` rows; empty: `placeholder("Spotify's queue is empty")`; no reply yet: `Loading…`. No cursor and no click.
 - Devices: `pane_block("Spotify Connect", …)` over `list_modal_rect(list)`; rows are the device names with `kind` dim after them, the active device marked `● `; empty: `placeholder("No Spotify devices: open Spotify on a device")`. `app.hits.overlay` and `app.hits.overlay_list` are set as the Znicz devices modal does.
 
-- [ ] **Step 1: Write the failing tests** (buffer tests on `TestBackend`, 80 × 24, using `screen_rows`-style helper)
+- [x] **Step 1: Write the failing tests** (buffer tests on `TestBackend`, 80 × 24, using `screen_rows`-style helper)
 
 ```rust
 #[test]
@@ -1647,13 +1647,13 @@ fn the_queue_drawer_says_empty_when_spotify_has_nothing_queued() { /* "Spotify's
 fn the_device_list_says_so_when_there_are_no_devices() { /* placeholder text */ }
 ```
 
-- [ ] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- views::spotify`.
+- [x] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- views::spotify`.
 
-- [ ] **Step 3: Implement** to the rules above. Keep the drawing functions free of state changes except `hits` and the offset.
+- [x] **Step 3: Implement** to the rules above. Keep the drawing functions free of state changes except `hits` and the offset.
 
-- [ ] **Step 4: Run** — `cargo test -p znicz-tui -- views::spotify` and `cargo test -p znicz-tui -- golden_` — pass.
+- [x] **Step 4: Run** — `cargo test -p znicz-tui -- views::spotify` and `cargo test -p znicz-tui -- golden_` — pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/views/spotify.rs znicz-tui/src/views/mod.rs znicz-tui/src/hit.rs znicz-tui/src/app/spotify_browse_ui.rs
