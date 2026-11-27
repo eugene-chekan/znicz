@@ -555,27 +555,90 @@ pub(crate) mod tests {
         app.set_settings_tab(crate::settings::Tab::Spotify);
     }
 
-    /// The ops the fake host has been given. The worker is asynchronous, so
-    /// this returns once the count has stayed put for 150 ms (3 s at most).
-    /// Use it for negative checks ("nothing was sent") and exact counts; for
-    /// anything that should arrive, use `wait_for_op`.
-    pub(crate) fn sent_ops(host: &FakeHost) -> Vec<SpotifyOp> {
-        const QUIET: Duration = Duration::from_millis(150);
-        const CAP: Duration = Duration::from_secs(3);
-        let started = Instant::now();
-        let mut last = host.ops.lock().unwrap().len();
-        let mut stable_since = started;
-        while started.elapsed() < CAP {
-            std::thread::sleep(Duration::from_millis(10));
-            let now = host.ops.lock().unwrap().len();
-            if now != last {
-                last = now;
-                stable_since = Instant::now();
-            } else if stable_since.elapsed() >= QUIET {
-                break;
+    /// Each `settle` call numbers its sentinels, so a call never mistakes an
+    /// earlier call's sentinel for its own.
+    static SENTINEL_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+    /// A browse-lane op no test sends, numbered `n`.
+    fn browse_sentinel(n: u32) -> SpotifyOp {
+        SpotifyOp::ArtistAlbums {
+            uri: "spotify:artist:settle".into(),
+            offset: n,
+            limit: 0,
+        }
+    }
+
+    /// A transport-lane op no test sends, numbered `n`.
+    fn transport_sentinel(n: u32) -> SpotifyOp {
+        SpotifyOp::Seek {
+            position_ms: u64::MAX - u64::from(n),
+        }
+    }
+
+    /// Whether `op` is one of the sentinels `settle` sends.
+    fn is_sentinel(op: &SpotifyOp) -> bool {
+        match op {
+            SpotifyOp::ArtistAlbums { uri, limit: 0, .. } => uri == "spotify:artist:settle",
+            SpotifyOp::Seek { position_ms } => *position_ms > u64::MAX - 1_000_000,
+            _ => false,
+        }
+    }
+
+    /// Sends a sentinel on each lane of `app`, waits until a host in `hosts` has
+    /// recorded it, and returns every host's ops without the sentinels. A lane
+    /// is FIFO, so once its sentinel is recorded, every op sent earlier on that
+    /// lane is in the log. `hosts` lists each fake that can record ops. Use this
+    /// for every "sends nothing" and "exactly N" check.
+    pub(crate) fn settle(app: &App, hosts: &[&FakeHost]) -> Vec<SpotifyOp> {
+        let n = SENTINEL_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let lanes = [
+            (SpotifyAsk::Devices, browse_sentinel(n)),
+            (SpotifyAsk::Transport, transport_sentinel(n)),
+        ];
+        for (tag, sentinel) in lanes {
+            // A missing lane cannot record anything, so there is nothing to wait for.
+            if app.ask_spotify(tag, sentinel.clone()) {
+                let deadline = Instant::now() + Duration::from_secs(3);
+                loop {
+                    let arrived = hosts
+                        .iter()
+                        .any(|host| host.ops.lock().unwrap().contains(&sentinel));
+                    if arrived {
+                        break;
+                    }
+                    assert!(Instant::now() < deadline, "the sentinel never arrived");
+                    std::thread::sleep(Duration::from_millis(10));
+                }
             }
         }
-        host.ops.lock().unwrap().clone()
+        hosts
+            .iter()
+            .flat_map(|host| host.ops.lock().unwrap().clone())
+            .filter(|op| !is_sentinel(op))
+            .collect()
+    }
+
+    /// The number of ops matching `pred` once `count` of them have arrived (3 s at most).
+    /// Use it for positive checks on how many were sent.
+    pub(crate) fn wait_for_count(
+        host: &FakeHost,
+        pred: impl Fn(&SpotifyOp) -> bool,
+        count: usize,
+    ) -> usize {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let n = host
+                .ops
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|op| pred(op))
+                .count();
+            if n >= count || Instant::now() >= deadline {
+                return n;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     /// Wait (polling every 10 ms, 3 s at most) until the host has been given
@@ -613,7 +676,11 @@ pub(crate) mod tests {
         let mut app = app_with(&dir, host.clone());
         app.poll_spotify();
         assert_eq!(app.spotify_state.login, SpotifyLogin::LoggedIn);
-        assert!(sent_ops(&host).iter().all(|op| *op != SpotifyOp::Touch));
+        assert!(
+            settle(&app, &[&*host])
+                .iter()
+                .all(|op| *op != SpotifyOp::Touch)
+        );
         open_spotify_tab(&mut app);
         app.poll_spotify();
         assert_eq!(app.spotify_state.login, SpotifyLogin::LoggedIn);
@@ -661,7 +728,11 @@ pub(crate) mod tests {
         app.spotify_polled_at = Some(overdue);
         app.poll_spotify();
         assert_ne!(app.spotify_polled_at, Some(overdue), "the status was read");
-        assert!(sent_ops(&host).iter().all(|op| *op != SpotifyOp::Touch));
+        assert!(
+            settle(&app, &[&*host])
+                .iter()
+                .all(|op| *op != SpotifyOp::Touch)
+        );
     }
 
     #[test]
@@ -1368,7 +1439,11 @@ pub(crate) mod tests {
             .unwrap();
         assert!(app.ask_spotify(SpotifyAsk::Devices, SpotifyOp::Devices));
         assert!(wait_for_op(&browse, |op| *op == SpotifyOp::Devices));
-        assert!(sent_ops(&transport).is_empty());
+        assert_eq!(
+            settle(&app, &[&*browse, &*transport]),
+            vec![SpotifyOp::Devices],
+            "the settings op went to the browse lane and nothing else"
+        );
     }
 
     #[test]

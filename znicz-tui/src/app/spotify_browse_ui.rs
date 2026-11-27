@@ -214,7 +214,9 @@ mod tests {
     use crate::app::App;
     use crate::app::settings_ui::tests as settings_tests;
     use crate::app::settings_ui::tests::press;
-    use crate::app::spotify_ui::tests::{FakeHost, sent_ops, wait_for_op, wait_until};
+    use crate::app::spotify_ui::tests::{
+        FakeHost, settle, wait_for_count, wait_for_op, wait_until,
+    };
     use crate::spotify_browse::{BrowseList, PAGE, Row, SEARCH_LIMIT};
     use crate::spotify_mode;
     use crate::spotify_worker::{Done, SpotifyAsk};
@@ -293,9 +295,17 @@ mod tests {
 
     /// Spotify mode with one playlist on the browse host's page, and the top's Playlists open.
     fn playlists_open(dir: &tempfile::TempDir, browse: &Arc<FakeHost>) -> App {
+        playlists_open_with(dir, browse, Arc::new(FakeHost::default()))
+    }
+
+    /// `playlists_open`, with the transport lane on a host the test keeps.
+    fn playlists_open_with(
+        dir: &tempfile::TempDir,
+        browse: &Arc<FakeHost>,
+        transport: Arc<FakeHost>,
+    ) -> App {
         *browse.reply.lock().unwrap() = Some(page(vec![playlist(1)], 1));
         *browse.state.lock().unwrap() = Some(logged_in());
-        let transport = Arc::new(FakeHost::default());
         let mut app = browse_app(dir, browse.clone(), transport);
         press(&mut app, KeyCode::Char('j'));
         press(&mut app, KeyCode::Char('l'));
@@ -313,7 +323,7 @@ mod tests {
         let browse = Arc::new(FakeHost::default());
         *browse.reply.lock().unwrap() = Some(page(vec![playlist(1), playlist(2)], 2));
         let transport = Arc::new(FakeHost::default());
-        let mut app = browse_app(&dir, browse.clone(), transport);
+        let mut app = browse_app(&dir, browse.clone(), transport.clone());
         press(&mut app, KeyCode::Char('j'));
         press(&mut app, KeyCode::Char('l'));
         assert!(wait_for_op(&browse, |op| *op
@@ -379,10 +389,13 @@ mod tests {
                 uris: Vec::new(),
                 offset: None,
             }));
-        assert!(
-            sent_ops(&browse)
+        // Only the transport lane played: exactly one Play, on the transport host.
+        assert_eq!(
+            settle(&app, &[&*browse, &*transport])
                 .iter()
-                .all(|op| !matches!(op, SpotifyOp::Play { .. }))
+                .filter(|op| matches!(op, SpotifyOp::Play { .. }))
+                .count(),
+            1
         );
     }
 
@@ -481,11 +494,15 @@ mod tests {
     fn r_reloads_the_list_from_page_zero() {
         let dir = tempfile::tempdir().unwrap();
         let browse = Arc::new(FakeHost::default());
-        let mut app = playlists_open(&dir, &browse);
+        let transport = Arc::new(FakeHost::default());
+        let mut app = playlists_open_with(&dir, &browse, transport.clone());
         press(&mut app, KeyCode::Char('r'));
-        let asks = sent_ops(&browse)
+        // The reload asks for page zero again: wait for the second request to arrive.
+        let asked = |op: &SpotifyOp| matches!(op, SpotifyOp::Playlists { offset: 0, .. });
+        assert_eq!(wait_for_count(&browse, asked, 2), 2);
+        let asks = settle(&app, &[&*browse, &*transport])
             .iter()
-            .filter(|op| matches!(op, SpotifyOp::Playlists { offset: 0, .. }))
+            .filter(|op| asked(op))
             .count();
         assert_eq!(asks, 2);
         assert_eq!(app.spotify_browser.depth(), 2);
@@ -498,7 +515,7 @@ mod tests {
         let fifty: Vec<SpotifyItem> = (1..=50).map(playlist).collect();
         *browse.reply.lock().unwrap() = Some(page(fifty, 100));
         let transport = Arc::new(FakeHost::default());
-        let mut app = browse_app(&dir, browse.clone(), transport);
+        let mut app = browse_app(&dir, browse.clone(), transport.clone());
         press(&mut app, KeyCode::Char('j'));
         press(&mut app, KeyCode::Char('l'));
         wait_until(&mut app, |app| {
@@ -575,11 +592,12 @@ mod tests {
     fn slash_opens_the_prompt_and_typing_fills_it_without_searching() {
         let dir = tempfile::tempdir().unwrap();
         let browse = Arc::new(FakeHost::default());
-        let mut app = browse_app(&dir, browse.clone(), Arc::new(FakeHost::default()));
+        let transport = Arc::new(FakeHost::default());
+        let mut app = browse_app(&dir, browse.clone(), transport.clone());
         press(&mut app, KeyCode::Char('/'));
         type_text(&mut app, "kind");
         assert_eq!(app.spotify_search.as_ref().unwrap().as_str(), "kind");
-        assert!(sent_ops(&browse).is_empty());
+        assert!(settle(&app, &[&*browse, &*transport]).is_empty());
     }
 
     #[test]
@@ -609,11 +627,12 @@ mod tests {
     fn an_empty_search_sends_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let browse = Arc::new(FakeHost::default());
-        let mut app = browse_app(&dir, browse.clone(), Arc::new(FakeHost::default()));
+        let transport = Arc::new(FakeHost::default());
+        let mut app = browse_app(&dir, browse.clone(), transport.clone());
         press(&mut app, KeyCode::Char('/'));
         type_text(&mut app, "   ");
         press(&mut app, KeyCode::Enter);
-        assert!(sent_ops(&browse).is_empty());
+        assert!(settle(&app, &[&*browse, &*transport]).is_empty());
         assert!(app.spotify_search.is_some(), "the prompt stays open");
     }
 
@@ -686,8 +705,14 @@ mod tests {
         // Liked songs is the third top entry.
         click(&mut app, hit.inner.x + 1, hit.inner.y + 2);
         assert_eq!(app.spotify_browser.level().cursor, 2);
-        assert!(sent_ops(&browse).is_empty(), "a click loads nothing");
-        assert!(sent_ops(&transport).is_empty(), "a click plays nothing");
+        assert!(
+            settle(&app, &[&*browse, &*transport]).is_empty(),
+            "a click loads nothing"
+        );
+        assert!(
+            settle(&app, &[&*browse, &*transport]).is_empty(),
+            "a click plays nothing"
+        );
     }
 
     #[test]
@@ -710,7 +735,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let browse = Arc::new(FakeHost::default());
         let transport = Arc::new(FakeHost::default());
-        let mut app = browse_app(&dir, browse, transport.clone());
+        let mut app = browse_app(&dir, browse.clone(), transport.clone());
         app.spotify_state.devices = vec![
             znicz_core::SpotifyDevice {
                 id: "k1".into(),
@@ -737,7 +762,7 @@ mod tests {
         assert_eq!(app.spotify_devices_cursor.selected(2), Some(1));
         assert_eq!(app.modal, crate::app::Modal::SpotifyDevices);
         assert!(
-            !sent_ops(&transport)
+            !settle(&app, &[&*browse, &*transport])
                 .iter()
                 .any(|op| matches!(op, SpotifyOp::Transfer { .. }))
         );
@@ -748,11 +773,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let browse = Arc::new(FakeHost::default());
         let transport = Arc::new(FakeHost::default());
-        let mut app = browse_app(&dir, browse.clone(), transport);
+        let mut app = browse_app(&dir, browse.clone(), transport.clone());
         assert_eq!(app.spotify_browser.level().cursor, 0);
         press(&mut app, KeyCode::Enter);
         assert!(app.spotify_search.is_some());
-        assert!(sent_ops(&browse).is_empty());
+        assert!(settle(&app, &[&*browse, &*transport]).is_empty());
     }
 
     #[test]

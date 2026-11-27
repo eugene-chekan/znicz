@@ -322,7 +322,9 @@ mod tests {
 
     use crate::app::settings_ui::tests as settings_tests;
     use crate::app::settings_ui::tests::press;
-    use crate::app::spotify_ui::tests::{FakeHost, sent_ops, wait_for_op, wait_until};
+    use crate::app::spotify_ui::tests::{
+        FakeHost, settle, wait_for_count, wait_for_op, wait_until,
+    };
     use crate::app::{App, Modal, View};
     use crate::keys::{Context, context_hints};
     use crate::spotify_mode;
@@ -445,7 +447,7 @@ mod tests {
                 .iter()
                 .any(|t| t == spotify_mode::NOTHING_PLAYING)
         );
-        assert!(sent_ops(&host).is_empty());
+        assert!(settle(&app, &[&*host]).is_empty());
     }
 
     #[test]
@@ -496,7 +498,7 @@ mod tests {
                 .iter()
                 .any(|t| t == spotify_mode::NO_VOLUME)
         );
-        assert!(sent_ops(&host).is_empty());
+        assert!(settle(&app, &[&*host]).is_empty());
     }
 
     #[test]
@@ -525,7 +527,7 @@ mod tests {
                 .iter()
                 .any(|t| t == spotify_mode::NO_STOP)
         );
-        assert!(sent_ops(&host).is_empty());
+        assert!(settle(&app, &[&*host]).is_empty());
     }
 
     #[test]
@@ -539,7 +541,7 @@ mod tests {
                 .iter()
                 .any(|t| t == spotify_mode::NOT_IN_MODE)
         );
-        assert!(sent_ops(&host).is_empty());
+        assert!(settle(&app, &[&*host]).is_empty());
     }
 
     fn logged_in(dir: &tempfile::TempDir) -> App {
@@ -674,8 +676,8 @@ mod tests {
         }
     }
 
-    fn queue_count(host: &FakeHost) -> usize {
-        sent_ops(host)
+    fn queue_count(app: &App, host: &FakeHost) -> usize {
+        settle(app, &[host])
             .iter()
             .filter(|op| **op == SpotifyOp::Queue)
             .count()
@@ -721,7 +723,7 @@ mod tests {
                 .any(|t| t == spotify_mode::ONE_TRACK_AT_A_TIME)
         );
         assert!(
-            !sent_ops(&host)
+            !settle(&app, &[&*host])
                 .iter()
                 .any(|op| matches!(op, SpotifyOp::QueueAdd { .. }))
         );
@@ -859,7 +861,7 @@ mod tests {
         press(&mut app, KeyCode::Esc);
         assert_eq!(app.modal, Modal::None);
         assert!(
-            !sent_ops(&host)
+            !settle(&app, &[&*host])
                 .iter()
                 .any(|op| matches!(op, SpotifyOp::Transfer { .. }))
         );
@@ -874,7 +876,7 @@ mod tests {
         press(&mut app, KeyCode::Enter);
         assert_eq!(app.modal, Modal::SpotifyDevices);
         assert!(
-            !sent_ops(&host)
+            !settle(&app, &[&*host])
                 .iter()
                 .any(|op| matches!(op, SpotifyOp::Transfer { .. }))
         );
@@ -891,10 +893,11 @@ mod tests {
         let mut app = mode_app(&dir, &host);
         press(&mut app, KeyCode::Char(']'));
         wait_until(&mut app, |a| a.spotify_queue.is_some());
-        assert_eq!(queue_count(&host), 1);
+        assert_eq!(queue_count(&app, &host), 1);
         app.spotify_queue_asked_at = Some(Instant::now() - Duration::from_secs(4));
         app.poll_spotify();
-        assert_eq!(queue_count(&host), 2);
+        assert_eq!(wait_for_count(&host, |op| *op == SpotifyOp::Queue, 2), 2);
+        assert_eq!(queue_count(&app, &host), 2);
     }
 
     #[test]
@@ -904,7 +907,7 @@ mod tests {
         let mut app = mode_app(&dir, &host);
         press(&mut app, KeyCode::Char('O'));
         assert!(!app.in_spotify_mode());
-        assert!(sent_ops(&host).is_empty());
+        assert!(settle(&app, &[&*host]).is_empty());
     }
 
     #[test]
@@ -922,7 +925,7 @@ mod tests {
             );
         }
         assert!(app.in_spotify_mode());
-        assert!(sent_ops(&host).is_empty());
+        assert!(settle(&app, &[&*host]).is_empty());
     }
 
     /// Two files in the Znicz queue, which no Spotify key may touch.
@@ -1016,7 +1019,9 @@ mod tests {
         for _ in 0..3 {
             press(&mut app, KeyCode::Char('+'));
         }
-        let volumes: Vec<f32> = sent_ops(&host)
+        let sent = wait_for_count(&host, |op| matches!(op, SpotifyOp::SetVolume { .. }), 3);
+        assert_eq!(sent, 3);
+        let volumes: Vec<f32> = settle(&app, &[&*host])
             .iter()
             .filter_map(|op| match op {
                 SpotifyOp::SetVolume { volume } => Some(*volume),
@@ -1034,7 +1039,9 @@ mod tests {
         app.spotify_state.playback = Some(playing(Some(40), true));
         press(&mut app, KeyCode::Char('e'));
         press(&mut app, KeyCode::Char('e'));
-        let modes: Vec<SpotifyRepeat> = sent_ops(&host)
+        let sent = wait_for_count(&host, |op| matches!(op, SpotifyOp::SetRepeat { .. }), 2);
+        assert_eq!(sent, 2);
+        let modes: Vec<SpotifyRepeat> = settle(&app, &[&*host])
             .iter()
             .filter_map(|op| match op {
                 SpotifyOp::SetRepeat { mode } => Some(*mode),
@@ -1144,6 +1151,6 @@ mod tests {
                 .iter()
                 .any(|t| t == spotify_mode::LOGGED_OUT)
         );
-        assert!(sent_ops(&host).is_empty());
+        assert!(settle(&app, &[&*host]).is_empty());
     }
 }
