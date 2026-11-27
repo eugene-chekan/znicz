@@ -33,6 +33,8 @@ pub struct HitMap {
     pub queue: Option<ListHit>,
     pub overlay: Option<Rect>,
     pub overlay_list: Option<ListHit>,
+    /// The Spotify browser's rows, in Spotify mode's Browse view.
+    pub spotify_rows: Option<ListHit>,
     /// Each Settings tab label on the tab bar, and the tab it switches to.
     pub settings_tabs: Vec<(Rect, crate::settings::Tab)>,
     pub queue_toggle: Option<Rect>,

@@ -9,6 +9,7 @@ mod playlists;
 mod queue;
 mod radio;
 mod settings;
+mod spotify;
 
 pub mod stage;
 mod status;
@@ -120,7 +121,11 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
             app.playing.as_ref(),
         );
 
-        library::render(frame, list, app);
+        if app.in_spotify_mode() {
+            spotify::render_browser(frame, list, app);
+        } else {
+            library::render(frame, list, app);
+        }
         let transport = crate::stage_model::TransportModel::from_player(state);
         now_playing::render_transport(frame, chunks[1], app, &transport, !compact);
     }
@@ -128,11 +133,15 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
     match crate::layout::drawer(drawer_area, app.queue_open) {
         crate::layout::Drawer::Overlay(rect) | crate::layout::Drawer::Sheet(rect) => {
             frame.render_widget(Clear, rect);
-            let stats = queue::stats(app, &state.queue);
-            app.queue_title_slot =
-                queue::title_slot(&stats, state.queue.len(), crate::views::inner_width(rect));
-            app.clamp_queue_pan(state);
-            queue::render(frame, rect, app, state, &stats);
+            if app.in_spotify_mode() {
+                spotify::render_queue(frame, rect, app);
+            } else {
+                let stats = queue::stats(app, &state.queue);
+                app.queue_title_slot =
+                    queue::title_slot(&stats, state.queue.len(), crate::views::inner_width(rect));
+                app.clamp_queue_pan(state);
+                queue::render(frame, rect, app, state, &stats);
+            }
         }
         crate::layout::Drawer::Closed => {}
     }
@@ -147,9 +156,8 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
         Modal::Messages => messages::render_modal(frame, list, app),
         Modal::Update => update::render_modal(frame, list, app),
         Modal::Settings => settings::render(frame, list, app),
-        // Drawn with the Spotify device list in a later step; until then the
-        // modal is open with nothing on it.
-        Modal::SpotifyDevices | Modal::None => {}
+        Modal::SpotifyDevices => spotify::render_devices(frame, list, app),
+        Modal::None => {}
     }
 }
 

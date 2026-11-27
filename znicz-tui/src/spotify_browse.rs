@@ -478,6 +478,24 @@ impl SpotifyBrowser {
         Some((generation, list.clone(), op_for(&list, loaded as u32)))
     }
 
+    /// Put the cursor on `row` (an index into `rows()`, or into `TOP` at the top)
+    /// when that row can take it. A header or a row past the end does not.
+    pub fn select_row(&mut self, row: usize) -> bool {
+        if self.is_top() {
+            if row >= TOP.len() {
+                return false;
+            }
+            self.current().cursor = row;
+            return true;
+        }
+        let level = self.current();
+        if !level.selectable(row) {
+            return false;
+        }
+        level.cursor = row;
+        true
+    }
+
     /// Keep the cursor on a selectable row after the rows changed.
     fn settle(&mut self) {
         let top = self.is_top();
@@ -944,6 +962,24 @@ mod tests {
             b.next_page().is_some(),
             "page two was dropped, so ask again"
         );
+    }
+
+    #[test]
+    fn select_row_moves_the_cursor_to_an_item_and_refuses_a_header() {
+        let mut b = SpotifyBrowser::new();
+        let requests = b.start_search("so what");
+        let (generation, list, _) = requests[0].clone();
+        b.apply_page(
+            generation,
+            &list,
+            0,
+            &page_of(vec![track(1), track(2)], 0, 2),
+        );
+        // Rows: header Tracks, then the two tracks.
+        assert!(!b.select_row(0), "a header cannot take the cursor");
+        assert_eq!(b.level().cursor, 1);
+        assert!(b.select_row(2));
+        assert_eq!(b.level().cursor, 2);
     }
 
     #[test]

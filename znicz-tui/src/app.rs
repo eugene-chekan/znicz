@@ -475,6 +475,8 @@ pub struct App {
     pub(crate) spotify_devices_requested: bool,
     /// The cursor of the Spotify Connect device list (`,` in Spotify mode).
     pub(crate) spotify_devices_cursor: Cursor,
+    /// The first browser row on screen. Kept by the drawing, so the window scrolls with the cursor.
+    pub(crate) spotify_row_offset: usize,
     /// The client ID when the pending `Devices` request was sent.
     pub(crate) spotify_devices_client_id: String,
     /// Writes the clipboard sequence to the terminal. Tests replace it.
@@ -865,6 +867,7 @@ impl App {
             spotify_login_requested: false,
             spotify_devices_requested: false,
             spotify_devices_cursor: Cursor::new(),
+            spotify_row_offset: 0,
             spotify_devices_client_id: String::new(),
             clipboard: Box::new(crate::osc52::copy),
             browser: Box::new(znicz_spotify::browser::open),
@@ -1251,8 +1254,11 @@ impl App {
             Modal::Update => {
                 self.update_scroll = self.update_scroll.saturating_add_signed(delta);
             }
-            // The Spotify device list has no wheel scrolling yet.
-            Modal::SpotifyDevices => {}
+            Modal::SpotifyDevices => {
+                let len = self.spotify_state.devices.len();
+                self.spotify_devices_cursor.step(delta, len);
+            }
+            Modal::None if self.in_spotify_browser() => self.spotify_browser.step(delta),
             Modal::None => match self.focus {
                 Focus::Library if self.view == View::Browse => {
                     self.library.step(delta, self.library_strip())
@@ -1314,6 +1320,12 @@ impl App {
         }
         if self.modal != Modal::None {
             self.on_overlay_click(column, row);
+            return;
+        }
+
+        // The browser's rows select; Enter or `l` plays or opens. With the drawer
+        // open, the drawer is on top and takes no click.
+        if self.in_spotify_browser() && !self.queue_open && self.spotify_row_clicked(column, row) {
             return;
         }
 
@@ -1400,6 +1412,10 @@ impl App {
                     Modal::Settings if index < self.settings_rows.len() => {
                         self.settings_on_tab_bar = false;
                         self.set_settings_cursor(index);
+                    }
+                    Modal::SpotifyDevices => {
+                        let len = self.spotify_state.devices.len();
+                        self.spotify_devices_cursor.set(index, len);
                     }
                     _ => {}
                 }

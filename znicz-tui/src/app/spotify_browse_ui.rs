@@ -102,6 +102,20 @@ impl App {
         }
     }
 
+    /// A click on a browser row: the cursor moves there. Nothing plays or loads;
+    /// Enter or `l` does that. True when the click was on the browser's rows.
+    pub(crate) fn spotify_row_clicked(&mut self, column: u16, row: u16) -> bool {
+        let Some(index) = self
+            .hits
+            .spotify_rows
+            .and_then(|hit| hit.row_at(column, row))
+        else {
+            return false;
+        };
+        self.spotify_browser.select_row(index);
+        true
+    }
+
     /// Send a browse request for `list` at `generation`. The offset is the op's.
     pub(crate) fn spotify_load(&mut self, generation: u64, list: BrowseList, op: SpotifyOp) {
         let offset = offset_of(&op);
@@ -187,6 +201,10 @@ mod tests {
         SpotifyErrorKind, SpotifyHost, SpotifyItem, SpotifyKind, SpotifyLogin, SpotifyOp,
         SpotifyPage, SpotifyReply, SpotifyState, ZniczError,
     };
+
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     use crate::app::App;
     use crate::app::settings_ui::tests as settings_tests;
@@ -628,5 +646,92 @@ mod tests {
             .collect();
         assert_eq!(headers, ["Tracks", "Albums", "Artists", "Playlists"]);
         assert!(matches!(rows[0], Row::Header("Tracks")));
+    }
+
+    /// One mouse press at a screen cell.
+    fn click(app: &mut App, column: u16, row: u16) {
+        app.on_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        });
+    }
+
+    /// Draw one frame, so the hit map is up to date.
+    fn draw(app: &mut App) {
+        let state = app.player.state();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| crate::views::render(frame, app, &state))
+            .unwrap();
+    }
+
+    #[test]
+    fn a_click_on_a_row_selects_it_and_does_not_play() {
+        let dir = tempfile::tempdir().unwrap();
+        let browse = Arc::new(FakeHost::default());
+        let transport = Arc::new(FakeHost::default());
+        let mut app = browse_app(&dir, browse.clone(), transport.clone());
+        draw(&mut app);
+        let hit = app.hits.spotify_rows.expect("the rows are hit-tested");
+        // Liked songs is the third top entry.
+        click(&mut app, hit.inner.x + 1, hit.inner.y + 2);
+        assert_eq!(app.spotify_browser.level().cursor, 2);
+        assert!(sent_ops(&browse).is_empty(), "a click loads nothing");
+        assert!(sent_ops(&transport).is_empty(), "a click plays nothing");
+    }
+
+    #[test]
+    fn the_wheel_moves_the_browser_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        let browse = Arc::new(FakeHost::default());
+        let transport = Arc::new(FakeHost::default());
+        let mut app = browse_app(&dir, browse, transport);
+        app.on_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: 0,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        });
+        assert_eq!(app.spotify_browser.level().cursor, 1);
+    }
+
+    #[test]
+    fn a_click_on_a_device_selects_it_and_does_not_transfer() {
+        let dir = tempfile::tempdir().unwrap();
+        let browse = Arc::new(FakeHost::default());
+        let transport = Arc::new(FakeHost::default());
+        let mut app = browse_app(&dir, browse, transport.clone());
+        app.spotify_state.devices = vec![
+            znicz_core::SpotifyDevice {
+                id: "k1".into(),
+                name: "Kitchen".into(),
+                kind: "Speaker".into(),
+                is_active: false,
+                volume_percent: None,
+            },
+            znicz_core::SpotifyDevice {
+                id: "d1".into(),
+                name: "Desk".into(),
+                kind: "Computer".into(),
+                is_active: false,
+                volume_percent: None,
+            },
+        ];
+        press(&mut app, KeyCode::Char(','));
+        draw(&mut app);
+        let hit = app
+            .hits
+            .overlay_list
+            .expect("the device rows are hit-tested");
+        click(&mut app, hit.inner.x + 1, hit.inner.y + 1);
+        assert_eq!(app.spotify_devices_cursor.selected(2), Some(1));
+        assert_eq!(app.modal, crate::app::Modal::SpotifyDevices);
+        assert!(
+            !sent_ops(&transport)
+                .iter()
+                .any(|op| matches!(op, SpotifyOp::Transfer { .. }))
+        );
     }
 }
