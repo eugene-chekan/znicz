@@ -1432,6 +1432,12 @@ impl App {
             return;
         }
 
+        // The Spotify search prompt is typed text too: it takes every key.
+        if self.in_spotify_mode() && self.spotify_search.is_some() {
+            self.on_spotify_search_key(key);
+            return;
+        }
+
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             self.on_control_key(key.code);
             return;

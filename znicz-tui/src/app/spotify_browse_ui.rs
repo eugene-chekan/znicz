@@ -5,6 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use znicz_core::{SpotifyErrorKind, SpotifyOp, SpotifyReply, ZniczError};
 
 use super::{App, HALF_PAGE, Modal, View};
+use crate::line_edit::LineEdit;
 use crate::spotify_browse::{BrowseAction, BrowseList, offset_of};
 use crate::spotify_mode;
 use crate::spotify_worker::{Done, SpotifyAsk};
@@ -30,6 +31,7 @@ impl App {
                 self.spotify_back();
             }
             KeyCode::Char('r') => self.spotify_reload(),
+            KeyCode::Char('/') => self.spotify_search = Some(LineEdit::new()),
             // One column: Tab has nowhere to go.
             KeyCode::Tab | KeyCode::BackTab => {}
             _ => return false,
@@ -60,6 +62,35 @@ impl App {
     /// `h`: back one level. False at the top.
     pub(crate) fn spotify_back(&mut self) -> bool {
         self.spotify_browser.back()
+    }
+
+    /// The search prompt takes every key: it is typed text. Enter searches (an
+    /// empty query sends nothing and keeps the prompt open); Esc closes it.
+    pub(crate) fn on_spotify_search_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Enter => self.submit_search(),
+            KeyCode::Esc => self.spotify_search = None,
+            _ => {
+                if let Some(prompt) = self.spotify_search.as_mut() {
+                    prompt.on_key(key);
+                }
+            }
+        }
+    }
+
+    /// Search for the prompt's text: one request per group, all at offset 0.
+    fn submit_search(&mut self) {
+        let Some(prompt) = self.spotify_search.as_ref() else {
+            return;
+        };
+        let query = prompt.as_str().trim().to_string();
+        if query.is_empty() {
+            return;
+        }
+        self.spotify_search = None;
+        for (generation, list, op) in self.spotify_browser.start_search(&query) {
+            self.spotify_load(generation, list, op);
+        }
     }
 
     /// `r`: the current list again from its first page.
@@ -157,7 +188,7 @@ mod tests {
     use crate::app::settings_ui::tests as settings_tests;
     use crate::app::settings_ui::tests::press;
     use crate::app::spotify_ui::tests::{FakeHost, sent_ops, wait_for_op, wait_until};
-    use crate::spotify_browse::{BrowseList, PAGE};
+    use crate::spotify_browse::{BrowseList, PAGE, Row, SEARCH_LIMIT};
     use crate::spotify_mode;
     use crate::spotify_worker::{Done, SpotifyAsk};
 
@@ -466,5 +497,132 @@ mod tests {
         press(&mut app, KeyCode::Esc);
         press(&mut app, KeyCode::Char('q'));
         assert!(app.should_quit);
+    }
+
+    /// Answers each search with one item of the kind it asked for.
+    struct KindsHost {
+        inner: Arc<FakeHost>,
+    }
+
+    impl SpotifyHost for KindsHost {
+        fn apply(&self, op: SpotifyOp) -> znicz_core::Result<SpotifyReply> {
+            if let SpotifyOp::Search { kinds, .. } = &op {
+                let kind = kinds[0];
+                self.inner.ops.lock().unwrap().push(op.clone());
+                let item = SpotifyItem {
+                    kind,
+                    uri: format!("spotify:{}:found", kind.as_api()),
+                    name: format!("{} found", kind.as_api()),
+                    subtitle: "Miles Davis".into(),
+                    image_url: None,
+                    track: None,
+                };
+                return Ok(page(vec![item], 1));
+            }
+            self.inner.apply(op)
+        }
+        fn state(&self) -> SpotifyState {
+            self.inner.state()
+        }
+    }
+
+    fn type_text(app: &mut App, text: &str) {
+        for c in text.chars() {
+            press(app, KeyCode::Char(c));
+        }
+    }
+
+    fn search_op(query: &str, kind: SpotifyKind) -> SpotifyOp {
+        SpotifyOp::Search {
+            query: query.into(),
+            kinds: vec![kind],
+            offset: 0,
+            limit: SEARCH_LIMIT,
+        }
+    }
+
+    #[test]
+    fn slash_opens_the_prompt_and_typing_fills_it_without_searching() {
+        let dir = tempfile::tempdir().unwrap();
+        let browse = Arc::new(FakeHost::default());
+        let mut app = browse_app(&dir, browse.clone(), Arc::new(FakeHost::default()));
+        press(&mut app, KeyCode::Char('/'));
+        type_text(&mut app, "kind");
+        assert_eq!(app.spotify_search.as_ref().unwrap().as_str(), "kind");
+        assert!(sent_ops(&browse).is_empty());
+    }
+
+    #[test]
+    fn enter_searches_four_kinds_at_ten_each() {
+        let dir = tempfile::tempdir().unwrap();
+        let browse = Arc::new(FakeHost::default());
+        let mut app = browse_app(&dir, browse.clone(), Arc::new(FakeHost::default()));
+        press(&mut app, KeyCode::Char('/'));
+        type_text(&mut app, "kind of blue");
+        press(&mut app, KeyCode::Enter);
+        for kind in [
+            SpotifyKind::Track,
+            SpotifyKind::Album,
+            SpotifyKind::Artist,
+            SpotifyKind::Playlist,
+        ] {
+            assert!(
+                wait_for_op(&browse, |op| *op == search_op("kind of blue", kind)),
+                "no search for {kind:?}"
+            );
+        }
+        assert!(app.spotify_search.is_none());
+        assert_eq!(app.spotify_browser.depth(), 2);
+    }
+
+    #[test]
+    fn an_empty_search_sends_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let browse = Arc::new(FakeHost::default());
+        let mut app = browse_app(&dir, browse.clone(), Arc::new(FakeHost::default()));
+        press(&mut app, KeyCode::Char('/'));
+        type_text(&mut app, "   ");
+        press(&mut app, KeyCode::Enter);
+        assert!(sent_ops(&browse).is_empty());
+        assert!(app.spotify_search.is_some(), "the prompt stays open");
+    }
+
+    #[test]
+    fn esc_closes_the_prompt_and_keeps_the_browser() {
+        let dir = tempfile::tempdir().unwrap();
+        let browse = Arc::new(FakeHost::default());
+        let mut app = playlists_open(&dir, &browse);
+        press(&mut app, KeyCode::Char('/'));
+        type_text(&mut app, "x");
+        press(&mut app, KeyCode::Esc);
+        assert!(app.spotify_search.is_none());
+        assert_eq!(app.spotify_browser.depth(), 2);
+    }
+
+    #[test]
+    fn search_results_arrive_grouped() {
+        let dir = tempfile::tempdir().unwrap();
+        let inner = Arc::new(FakeHost::default());
+        let browse = Arc::new(KindsHost {
+            inner: inner.clone(),
+        });
+        let mut app = browse_app(&dir, browse, Arc::new(FakeHost::default()));
+        press(&mut app, KeyCode::Char('/'));
+        type_text(&mut app, "so what");
+        press(&mut app, KeyCode::Enter);
+        wait_until(&mut app, |app| {
+            let level = app.spotify_browser.level();
+            level.pending == 0 && level.rows().len() == 8
+        });
+        let rows = app.spotify_browser.level().rows();
+        let headers: Vec<&str> = rows
+            .iter()
+            .filter_map(|row| match row {
+                Row::Header(label) => Some(*label),
+                Row::Item(_) => None,
+            })
+            .collect();
+        assert_eq!(headers, ["Tracks", "Albums", "Artists", "Playlists"]);
+        assert!(matches!(rows[0], Row::Header("Tracks")));
     }
 }
