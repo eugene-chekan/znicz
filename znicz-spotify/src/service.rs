@@ -735,8 +735,8 @@ impl Shared {
             }
             Err(SpotifyError::Revoked) => self.on_revoked(),
             Err(SpotifyError::RateLimited { retry_after_secs }) => {
-                self.backoff_until_ms
-                    .store(now + retry_after_secs * 1000, Ordering::SeqCst);
+                let until = now.saturating_add(retry_after_secs.saturating_mul(1000));
+                self.backoff_until_ms.store(until, Ordering::SeqCst);
             }
             Err(e) => {
                 let text = e.to_string();
@@ -761,12 +761,13 @@ impl Shared {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::AtomicUsize;
+    use std::sync::mpsc;
     use std::time::Instant;
 
     use super::*;
     use crate::http::test_server::{Response, Seen, serve};
     use crate::token::{self, Token};
-    use znicz_core::{SpotifyErrorKind, ZniczError};
+    use znicz_core::{SpotifyErrorKind, SpotifyPlayback, ZniczError};
 
     const CLIENT_ID: &str = "0123456789abcdef0123456789abcdef";
 
@@ -1170,10 +1171,11 @@ mod tests {
     fn logging_in_twice_does_not_report_a_busy_port() {
         let f = fixture(false, "", api_default);
         f.service.apply(SpotifyOp::BeginLogin).unwrap();
-        f.service.apply(SpotifyOp::BeginLogin).unwrap();
-        let state = f.service.state();
-        let error = state.last_error.unwrap_or_default();
-        assert!(!error.contains("busy"), "{error}");
+        match f.service.apply(SpotifyOp::BeginLogin).unwrap() {
+            SpotifyReply::AuthorizeUrl { listening, .. } => assert!(listening),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(f.service.state().last_error, None);
     }
 
     #[test]
@@ -1444,30 +1446,138 @@ mod tests {
     fn play_marks_playback_playing_at_once() {
         let played = Arc::new(AtomicBool::new(false));
         let handler_played = played.clone();
-        let f = fixture(true, "", move |request| match request.path() {
-            "/v1/me/player/play" if request.method == "PUT" => {
-                handler_played.store(true, Ordering::SeqCst);
-                Response::empty(204)
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let f = fixture(true, "", move |request| {
+            match (request.method.as_str(), request.path()) {
+                ("PUT", "/v1/me/player/play") => {
+                    handler_played.store(true, Ordering::SeqCst);
+                    Response::empty(204)
+                }
+                // The poll that the play wakes is held here, so only the
+                // command's own update can show playing until the test releases it.
+                ("GET", "/v1/me/player") if handler_played.load(Ordering::SeqCst) => {
+                    let _ = release_rx.recv();
+                    Response::json(200, PAUSED)
+                }
+                ("GET", "/v1/me/player") => Response::json(200, PAUSED),
+                _ => api_default(request),
             }
-            "/v1/me/player" if request.method == "GET" => Response::json(
-                200,
-                if handler_played.load(Ordering::SeqCst) {
-                    r#"{"is_playing":true,"progress_ms":5,"currently_playing_type":"track",
-                    "item":{"type":"track","uri":"spotify:track:t","name":"So What","duration_ms":9,
-                            "artists":[],"album":{"name":"Kind of Blue","images":[]}}}"#
-                } else {
-                    r#"{"is_playing":false,"progress_ms":5,"currently_playing_type":"track",
-                    "item":{"type":"track","uri":"spotify:track:t","name":"So What","duration_ms":9,
-                            "artists":[],"album":{"name":"Kind of Blue","images":[]}}}"#
-                },
-            ),
-            _ => api_default(request),
         });
-        f.service.apply(SpotifyOp::Touch).unwrap();
-        wait_for(&f.service, |s| s.playback.is_some());
-        assert!(!f.service.state().is_playing());
+        // No Touch, so no poll is due: Spotify is set to paused directly.
+        f.service.shared.state.lock().unwrap().playback = Some(SpotifyPlayback::default());
         f.service.apply(play()).unwrap();
         assert!(f.service.state().is_playing());
+        release_tx.send(()).unwrap();
+    }
+
+    const PAUSED: &str = r#"{"is_playing":false,"progress_ms":5,"currently_playing_type":"track","item":null}"#;
+
+    /// Poll `what` for up to 3 s.
+    fn wait_until(what: impl Fn() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !what() {
+            assert!(Instant::now() < deadline, "timed out");
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn a_429_during_a_poll_skips_polls_until_it_passes() {
+        let now = Arc::new(AtomicU64::new(1_000_000));
+        let clock_now = now.clone();
+        let clock: Clock = Arc::new(move || clock_now.load(Ordering::SeqCst));
+        let reads = Arc::new(AtomicUsize::new(0));
+        let counter = reads.clone();
+        let f = fixture_with_clock(
+            true,
+            "",
+            move |request| {
+                if request.method == "GET" && request.path() == "/v1/me/player" {
+                    let read = counter.fetch_add(1, Ordering::SeqCst);
+                    if read == 0 {
+                        return Response::empty(429).with_header("Retry-After", "10");
+                    }
+                }
+                api_default(request)
+            },
+            clock,
+        );
+        f.service.apply(SpotifyOp::Touch).unwrap();
+        wait_until(|| reads.load(Ordering::SeqCst) == 1);
+        // Backoff runs for 10 s from the 429. Watching polls are skipped until then.
+        now.fetch_add(9_000, Ordering::SeqCst);
+        f.service.apply(SpotifyOp::Touch).unwrap();
+        thread::sleep(Duration::from_millis(300));
+        assert_eq!(reads.load(Ordering::SeqCst), 1, "a poll ran during the backoff");
+        now.fetch_add(2_000, Ordering::SeqCst);
+        f.service.apply(SpotifyOp::Touch).unwrap();
+        wait_until(|| reads.load(Ordering::SeqCst) >= 2);
+    }
+
+    #[test]
+    fn a_poll_error_clears_on_a_good_poll_but_not_a_command_error() {
+        let failing = Arc::new(AtomicBool::new(true));
+        let flag = failing.clone();
+        let f = fixture(true, "", move |request| {
+            match (request.method.as_str(), request.path()) {
+                ("GET", "/v1/me/player") if flag.load(Ordering::SeqCst) => {
+                    Response::json(500, r#"{"error":{"status":500,"message":"boom"}}"#)
+                }
+                (_, "/v1/me/player/next") => {
+                    Response::json(404, r#"{"error":{"reason":"NO_ACTIVE_DEVICE"}}"#)
+                }
+                _ => api_default(request),
+            }
+        });
+        let shared = &f.service.shared;
+        f.service.apply(SpotifyOp::Touch).unwrap();
+        wait_until(|| f.service.state().last_error.is_some());
+        let error = f.service.state().last_error.unwrap_or_default();
+        assert!(error.contains("500"), "{error}");
+
+        failing.store(false, Ordering::SeqCst);
+        f.service.apply(SpotifyOp::Touch).unwrap();
+        wait_until(|| f.service.state().playback.is_some());
+        assert_eq!(f.service.state().last_error, None);
+
+        failing.store(true, Ordering::SeqCst);
+        f.service.apply(SpotifyOp::Touch).unwrap();
+        wait_until(|| shared.last_poll_error.lock().unwrap().is_some());
+        let command_error = f.service.apply(SpotifyOp::Next).unwrap_err().to_string();
+        assert_eq!(f.service.state().last_error, Some(command_error.clone()));
+
+        failing.store(false, Ordering::SeqCst);
+        f.service.apply(SpotifyOp::Touch).unwrap();
+        wait_until(|| shared.last_poll_error.lock().unwrap().is_none());
+        assert_eq!(f.service.state().last_error, Some(command_error));
+    }
+
+    #[test]
+    fn a_logout_during_a_poll_leaves_no_playback() {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let counter = reads.clone();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let f = fixture(true, "", move |request| {
+            if request.method == "GET" && request.path() == "/v1/me/player" {
+                // The second read is held until the test releases it.
+                if counter.fetch_add(1, Ordering::SeqCst) == 1 {
+                    let _ = release_rx.recv();
+                }
+            }
+            api_default(request)
+        });
+        f.service.apply(SpotifyOp::Touch).unwrap();
+        wait_until(|| f.service.state().playback.is_some());
+        f.service.apply(SpotifyOp::Touch).unwrap();
+        wait_until(|| reads.load(Ordering::SeqCst) >= 2);
+        thread::scope(|scope| {
+            let logout = scope.spawn(|| f.service.apply(SpotifyOp::Logout));
+            // Logout waits for the poll's client lock, which the held read keeps.
+            thread::sleep(Duration::from_millis(100));
+            release_tx.send(()).unwrap();
+            logout.join().unwrap().unwrap();
+        });
+        assert_eq!(f.service.state().playback, None);
     }
 
     fn transfer(device_id: &str, play: bool) -> SpotifyOp {

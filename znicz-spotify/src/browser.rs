@@ -1,7 +1,7 @@
 //! Opening the login page in a browser, and whether to try. Front ends (the
 //! CLI now, the TUI later) decide; the player never opens a browser.
 
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 
 use serde::{Deserialize, Serialize};
 
@@ -56,8 +56,10 @@ pub fn open(url: &str) -> std::io::Result<()> {
 }
 
 /// Spawn `command` with its stdio on null, and reap it on a thread. The handle
-/// finishes once the child has exited.
-fn spawn_reaped(mut command: Command) -> std::io::Result<std::thread::JoinHandle<()>> {
+/// yields the child's exit status once it has exited and been waited on.
+fn spawn_reaped(
+    mut command: Command,
+) -> std::io::Result<std::thread::JoinHandle<std::io::Result<ExitStatus>>> {
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -65,9 +67,7 @@ fn spawn_reaped(mut command: Command) -> std::io::Result<std::thread::JoinHandle
         .spawn()?;
     std::thread::Builder::new()
         .name("znicz-browser-reap".into())
-        .spawn(move || {
-            let _ = child.wait();
-        })
+        .spawn(move || child.wait())
 }
 
 #[cfg(target_os = "windows")]
@@ -163,7 +163,8 @@ mod tests {
     fn the_opener_is_waited_for_so_it_leaves_no_zombie() {
         // The reaper thread ends once the child has exited and been waited on.
         let reaper = spawn_reaped(Command::new("true")).expect("spawn");
-        reaper.join().expect("reaper thread");
+        let status = reaper.join().expect("reaper thread").expect("wait");
+        assert!(status.success(), "{status:?}");
     }
 
     #[cfg(unix)]
