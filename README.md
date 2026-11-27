@@ -19,6 +19,7 @@
 - Session restore: queue, volume, mute, repeat, and shuffle survive a restart
 - Embedded album art in the TUI (Kitty / Sixel / half-blocks). Stream covers come from the ICY image, AudioAddict, an artist / title search (Deezer, then iTunes, then MusicBrainz and the Cover Art Archive), or the station's art, else the logo
 - MCP server: tools, resources, prompts, and bundled Agent Skills (same live player as the TUI)
+- Spotify control through the Web API: browse, search, play, queue and pick Connect devices in the TUI (`O`), or with `znicz spotify` and MCP. Bring your own Development Mode app; playback needs Premium
 
 ## Install
 

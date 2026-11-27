@@ -222,6 +222,22 @@ and on Linux opens one only with `DISPLAY` or `WAYLAND_DISPLAY` set. `always`
 and `never` override it. The panel and its keys are in
 [TUI: Spotify](TUI.md#spotify).
 
+## The TUI route and Spotify mode
+
+The TUI opens three connections to the player. The **main** connection serves
+the library and the status reads and `Touch`, both on the UI thread. The
+**browse lane** carries the Settings calls, logins, devices, browse and the
+queue. The **transport lane** carries play, pause, next, previous, seek, volume,
+repeat, shuffle, queue add and transfer. Each lane is a background thread with
+its own connection, so a slow search never holds up Pause. The TUI never calls
+the Web API itself.
+
+Spotify mode (`O`, see [TUI: Spotify mode](TUI.md#spotify-mode-o)) is the TUI's
+Spotify view. It reads the status every 500 ms while it is on, and every 3 s
+otherwise when a client ID is set. Leaving the mode sends nothing, so Spotify
+keeps playing. Playback and transfers go through the transport lane, and
+browse and search go through the browse lane.
+
 ## Polling
 
 About every second while someone watches (a `Touch`, or any op in the last

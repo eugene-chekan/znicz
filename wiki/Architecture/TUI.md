@@ -58,16 +58,18 @@ Two views, toggled with `v` or `i`. The TUI always starts on **Browse**.
 - **Browse**: the library, the queue drawer (`]`), and the text transport.
 - **Stage**: full-screen now playing (see [Stage](#stage)).
 
-`O` switches to Spotify mode (a flag beside the view, not a third view). It
-needs a Spotify login; without one it toasts the login line. In the mode the
-keys and footer are Spotify's, and `O znicz` returns. The browser and the
-device list are built up in later steps.
+`O` switches to **Spotify mode**, a flag beside the view, not a third view. In
+the mode `v` / `i` still switch between Browse and Stage. `O` needs a Spotify
+login; without one it toasts the login line and stays out. `O` again, or `O
+znicz`, leaves the mode. The keys, the footer and the list region are Spotify's
+while the mode is on. See [Spotify mode](#spotify-mode-o).
 
-On Stage, `Esc` closes an open modal or the queue drawer first, then returns to
-Browse. Playback keys, `?`, `,`, `P`, `R`, `M`, `]`, and `q` work there. Library
-keys (`/`, `a`, `A`, `J`, `F`, `U`, `h` / `l`, `Tab` column cycling, list
-movement with library focus, Alt-arrow pan) do nothing. The Stage footer is
-`Space pause · n next · v browse · ] queue · ? more`.
+In Znicz mode, on Stage, `Esc` closes an open modal or the queue drawer first,
+then returns to Browse. Playback keys, `?`, `,`, `P`, `R`, `M`, `]`, and `q` work
+there. Library keys (`/`, `a`, `A`, `J`, `F`, `U`, `h` / `l`, `Tab` column
+cycling, list movement with library focus, Alt-arrow pan) do nothing. The Znicz
+Stage footer is `Space pause · n next · v browse · ] queue · ? more`. The
+Spotify Stage footer is in [Spotify mode](#spotify-mode-o).
 
 ## Layout
 
@@ -132,6 +134,12 @@ as many as fit. Wherever `?` opens help, ` ? more ` is right-aligned and always
 kept; search, the prompts, and help itself leave it out because `?` is typed
 text there or help is already open. Each hint carries the key it sends, so
 clicking one runs that key.
+
+In Spotify mode the footer uses the Spotify contexts (browser, search, Stage,
+queue drawer, device list), and the library keys above do not apply: `h` and `l`
+belong to the browser there. The `SPOTIFY` help table in `keys.rs` lists only
+`O`, `v / i` and `Esc` so far, so `?` in the mode does not show the other Spotify
+keys. The full list is in [Spotify mode](#spotify-mode-o).
 
 `?` opens help on the context it was opened from: that context's keys first,
 then Playback and Navigation, then every other context dimmed. `j` / `k`,
@@ -453,13 +461,17 @@ override that guess. If the open fails, one line says `Could not open a browser:
 pasted address.
 
 **Background calls.** Every Spotify call except the status read and `Touch` runs
-on a background thread (`SpotifyWorker`). That thread has its own connection
-to the player, a second `IpcClient`, so no frame waits for Spotify. The status
-is read at most every 500 ms, and only while the Spotify tab or a login panel is
-open. When the player has no Spotify service, or is too old, the status read
-stops and the Account row says why, until the Spotify tab is shown again.
-Devices are read when the tab opens and when a login finishes. The worker thread
-ends when the TUI closes.
+on a background thread (`SpotifyWorker`), so no frame waits for Spotify. There
+are two lanes, each with its own connection to the player (its own
+`IpcClient`): the **browse lane** (Settings calls, logins, devices, browse and
+the queue) and the **transport lane** (play, pause, next, previous, seek,
+volume, repeat, shuffle, queue add and transfer). A slow search never holds up
+Pause. The status is read every 500 ms while the Spotify tab, a login panel or
+Spotify mode shows it, and every 3 s otherwise when a client ID is set. When the
+player has no Spotify service, or is too old, the status reads stop and the
+Account row says why, until the Spotify tab is shown again or `O` is pressed.
+Devices are read when the tab opens, when a login finishes and when `,` opens
+the device list in Spotify mode. The worker threads end when the TUI closes.
 
 ### Stage
 
@@ -508,6 +520,23 @@ height is short, lines drop in this order: the explanation, the Signal panel,
 volume. Streams show the station name and URL, and the seek line reads `● live`
 with the elapsed time. With nothing playing, Stage shows the logo, "Nothing
 playing", and a hint.
+
+**Spotify Stage.** In Spotify mode Stage draws what Spotify plays, from the same
+`StageModel` and `TransportModel` (`stage_model.rs`) that Znicz uses, so the
+layout is the same. The parts that differ:
+
+- **Cover**: the track's album art, fetched by URL through `CoverKey::Url`. If
+  the fetch fails, or the track has no art, the logo shows. The previous art
+  stays only while the next one loads.
+- **Signal panel**: three rows. `source` is `spotify`, `device` is `<name>
+  (<kind>)`, and `path` is `Spotify Connect` (good tone). The explanation is
+  "decoded and played by the Spotify app on that device; Znicz does not touch
+  the audio".
+- **Volume**: the device's percent. While `m` holds a remembered volume, the
+  line shows muted.
+- **Empty state**: with nothing playing the title reads `Nothing playing on
+  Spotify`, the hint reads `/ search · O znicz`, and the logo shows.
+- **Footer**: `Space pause · n next · v browse · O znicz`.
 
 ### Marquee
 
@@ -583,6 +612,126 @@ The footer always ends with the running version: `? more · v0.y.z`, or the
 version alone at the right end where there is no `? more` (Help, prompts).
 Hints give way to it on narrow terminals; it goes only when the row cannot hold
 `? more · v0.y.z`. `znicz --version` prints the same number.
+
+## Spotify mode (`O`)
+
+`O` turns Spotify mode on from Browse or Stage, with no modal open. It needs a
+login: without one it toasts `Spotify: log in under Settings → Spotify (S, 6)`
+and stays out. Once the mode is on, `v` / `i` still switch Browse and Stage.
+`O` again, or `O znicz`, leaves. Leaving sends nothing, so Spotify keeps playing
+where it is. The browser's levels and the search prompt are cleared.
+
+If the login is lost while the mode is on, the mode is left with the toast
+`Spotify: logged out; O again after logging in`.
+
+### Browser
+
+The browser fills the list region, one column. The top level has four entries:
+**Search**, **Playlists**, **Liked songs** and **Albums**. Artists are reached
+through search. The title reads `Spotify · <user> · <device>`.
+
+| Key | Action |
+| --- | --- |
+| `j` / `k`, arrows | Move the cursor. In search results the cursor skips the group headers |
+| `g` / `G` | First / last row |
+| PageUp / PageDown | Page |
+| `Enter` | Act on the row (below) |
+| `l` | Open the row: a playlist or album opens its tracks; an artist opens its albums |
+| `h` | Back one level. Never past the top |
+| `r` | Reload the list from its first page. Not in search results |
+| `/` | Open the search prompt (the Search row does the same) |
+| `Esc` | Close the search prompt first; otherwise back one level; at the top it does nothing |
+| `Tab`, `Shift-Tab` | Nothing: the browser is one column |
+
+**Enter** plays what the row is:
+
+- A playlist or album plays from its first track, as Spotify's context.
+- A track in a playlist or album list plays from that track, in that context.
+- A track from liked songs or from a search group plays the loaded tracks of
+  that list as URIs, starting at the cursor. Liked songs have no context.
+- An artist opens its albums (as `l` does).
+
+**Lists and paging.** A list is fetched 50 rows at a time. The tick asks for
+the next page when the cursor is within 5 rows of the last loaded row and more
+rows exist. Search does not page. A list shows `Loading…` while a request is
+out, and a page that arrives after the user has left that list is dropped.
+
+**Unavailable playlists.** Spotify only lists the tracks of playlists the user
+owns or collaborates on. When a playlist's tracks are refused, the list shows
+the notice `Spotify only lists the tracks of playlists you own or collaborate
+on; Enter still plays it` and stays empty. The app does not know ownership in
+advance, so `Enter` on that playlist still plays it.
+
+**Search.** `/` opens the prompt in the strip, and typing does not search yet.
+`Enter` searches. An empty or spaces-only query sends nothing and keeps the
+prompt open. `Esc` closes it.
+
+A search sends one request per kind (tracks, albums, artists and playlists),
+each for 10 rows at offset 0. The results are grouped under headers in that
+order, at most 10 per group. There is no second page: Spotify's Development
+Mode returns at most 10 per type.
+
+**Mouse.** A click on a browser row moves the cursor there. It does not play or
+load the row. The wheel moves the cursor.
+
+### Playback keys
+
+These work in Browse and in Stage.
+
+| Key | Action |
+| --- | --- |
+| `Space` | Pause while playing. Otherwise resume the device's own track |
+| `n` / `p` | Next / previous track |
+| `→` / `←` | Seek 5 s forward / back; `Shift-→` / `Shift-←` seek 30 s. Clamped to the start and the track end. With nothing playing, a toast |
+| `+` / `-` (also `=` / `_`) | Volume up / down 1 %, clamped to 0–100 %. A device with no volume reading gets a toast |
+| `m` | Mute. Spotify has no mute, so `m` remembers the device's percent and sets 0 %. `m` again restores the remembered percent, or 50 % when none was saved. A device with no volume reading gets a toast and nothing changes |
+| `e` | Repeat: off, then the context, then one track, then off |
+| `z` | Shuffle on / off |
+| `a` | Queue the highlighted track. An album, playlist or artist gets a toast: `Spotify's queue takes one track at a time` |
+| `,` | Spotify Connect device list (a modal). `j` / `k` move, `Enter` moves playback to that device and starts it, `,` or `Esc` closes |
+| `]` | Spotify queue drawer, read-only. It is read again every 3 s while open |
+| `s` | A toast: `Spotify has no stop: Space pauses`. Nothing else changes |
+| `A`, `L`, `F`, `U`, `J` | A toast: `not in Spotify mode`. Library keys only |
+| `P`, `R`, `S`, `M`, `?`, `q`, `v`, `i`, `O` | Keep their global meaning |
+
+The Stage in the mode takes the same transport keys. `r` and `/` belong to the
+browser, so they do nothing in Stage.
+
+### Message row
+
+In the mode the message row shows toasts and scan progress. It does not show
+the `♫ Spotify:` line that Znicz mode shows for a Spotify track.
+
+### Polling
+
+- In the mode the status is read every 500 ms, and each read touches the player
+  so it keeps its fast poll.
+- Outside the mode, with a client ID set, the status is read every 3 s without
+  touching the player. So `O` knows the login state soon after launch. Until
+  the first read, `O` shows the login toast.
+- The queue drawer is read again every 3 s while it is open in the mode.
+- The player polls Spotify on its own schedule too: see [Spotify](Spotify.md#polling).
+
+### Lanes
+
+Playback keys go to the transport lane and browser calls to the browse lane (see
+[Background calls](#spotify)). Playback never waits behind a search.
+
+### Errors
+
+Errors of a change (a key that sends an op) or a read are toasts in the message
+row.
+
+| Case | What shows |
+| --- | --- |
+| The player's own message (for example `needs Spotify Premium`, or no active device) | The message as a toast |
+| No answer in time, on a change | `Spotify did not answer: the change may still happen; the next status read shows the truth`. The status is read again at once |
+| An old player, or a player without Spotify | The message as a toast. Status reads stop until the Spotify tab is shown or `O` is pressed |
+| The request could not be sent (its lane is not running) | `Spotify is not connected in this session` |
+| A browse list is `unavailable` | The notice in the list (above) |
+| Any other browse error | A toast. The list keeps what it had |
+
+A reply for a list the user has left changes nothing.
 
 ## Adding music
 
@@ -680,9 +829,15 @@ top of the player.
 | `settings.rs` | Settings rows, their values, and how a choice steps (pure) |
 | `views/settings.rs` | Settings modal (`S`): list, explanation strip, config path |
 | `spotify_rows.rs` | Spotify rows: account text, device choices, value checks, login panel lines (pure) |
-| `spotify_worker.rs` | `SpotifyWorker<T>`: a thread with its own player connection that runs Spotify calls off the UI thread |
+| `spotify_worker.rs` | `SpotifyWorker<T>`: a thread with its own player connection that runs Spotify calls off the UI thread. Two lanes: browse and transport (`SpotifyAsk` tags both) |
+| `stage_model.rs` | `StageModel` and `TransportModel`, built from `PlayerState` (Znicz) or `SpotifyState` (Spotify). The Stage and the transport draw only these |
+| `spotify_browse.rs` | The Spotify browser as a pure state machine: levels, generations, paging, search groups (pure) |
+| `spotify_mode.rs` | Spotify mode rules: keys, seek and volume arithmetic, mute plan, error plan, lanes, texts (pure) |
+| `views/spotify.rs` | Spotify mode drawing: the browser column, search prompt, queue drawer, device list |
+| `app/spotify_mode.rs` | Spotify mode in `App`: `O`, transport keys, mute, queue drawer, device list, leaving the mode |
+| `app/spotify_browse_ui.rs` | Spotify mode in `App`: browser keys, loading, replies, search prompt, mouse rows |
 | `osc52.rs` | The OSC 52 clipboard sequence that `c` writes in the login panel |
-| `app/spotify_ui.rs` | Spotify tab and login panel: status poll, worker replies, login, logout, copy, browser |
+| `app/spotify_ui.rs` | Spotify tab and login panel: status poll, the lane each request takes, worker replies, login, logout, copy, browser |
 | `help_state.rs` | help context, scroll, and filter text |
 | `footer_hits.rs` | footer hint placement and click targets |
 | `theme.rs` | every colour, in one place (16 ANSI colours, tuned for dark palettes; themes: [#68](https://github.com/eugene-chekan/znicz/issues/68)) |
