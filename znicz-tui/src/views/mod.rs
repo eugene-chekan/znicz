@@ -103,6 +103,7 @@ pub fn render(frame: &mut Frame, app: &mut App, state: &PlayerState) {
             Paragraph::new(now_playing::message_line(
                 &app.toasts,
                 scanning.as_ref(),
+                now_playing::spotify_message(app).as_deref(),
                 usize::from(message_row.width),
             )),
             message_row,

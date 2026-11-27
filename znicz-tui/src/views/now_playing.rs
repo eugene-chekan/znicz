@@ -43,7 +43,12 @@ pub fn render_transport(
                 },
             )
         } else if i == last {
-            message_line(&app.toasts, app.library_status.scanning.as_ref(), width)
+            message_line(
+                &app.toasts,
+                app.library_status.scanning.as_ref(),
+                spotify_message(app).as_deref(),
+                width,
+            )
         } else if show_signal {
             signal_line(model, width)
         } else {
@@ -53,11 +58,22 @@ pub fn render_transport(
     }
 }
 
+/// What Spotify plays, for the message row, in Znicz mode only. In Spotify
+/// mode the row is the mode's own.
+pub(crate) fn spotify_message(app: &App) -> Option<String> {
+    if app.in_spotify_mode() {
+        return None;
+    }
+    crate::spotify_mode::now_playing_line(&app.spotify_state)
+}
+
 /// The transport's message row: the newest live message (with `+N` for the
-/// rest), else the unread-alerts marker, else blank. Always `width` wide.
+/// rest), then scan progress, then what Spotify plays, then the unread-alerts
+/// marker, else blank. Always `width` wide.
 pub(crate) fn message_line(
     toasts: &crate::toast::Toasts,
     scanning: Option<&znicz_core::ScanProgress>,
+    spotify: Option<&str>,
     width: usize,
 ) -> Line<'static> {
     if width == 0 {
@@ -87,6 +103,19 @@ pub(crate) fn message_line(
         let pad = width.saturating_sub(text.chars().count());
         return Line::from(vec![
             Span::styled(text, theme::progress()),
+            Span::raw(" ".repeat(pad)),
+        ]);
+    }
+    if let Some(line) = spotify {
+        // The note mark in the good colour, the rest in the text colour.
+        let text = format::truncate(line, width);
+        let mut chars = text.chars();
+        let mark: String = chars.next().into_iter().collect();
+        let rest: String = chars.collect();
+        let pad = width.saturating_sub(text.chars().count());
+        return Line::from(vec![
+            Span::styled(mark, theme::good()),
+            Span::styled(rest, theme::text()),
             Span::raw(" ".repeat(pad)),
         ]);
     }
@@ -458,7 +487,7 @@ mod tests {
         let mut toasts = crate::toast::Toasts::new();
         toasts.info("first");
         toasts.success("added 4 tracks");
-        let row = text(&message_line(&toasts, None, 40));
+        let row = text(&message_line(&toasts, None, None, 40));
         assert!(row.starts_with("● added 4 tracks"), "{row:?}");
         assert!(row.trim_end().ends_with("+1"), "{row:?}");
         assert_eq!(row.chars().count(), 40);
@@ -470,21 +499,81 @@ mod tests {
         toasts.warn("stream dropped");
         toasts.error("device refused");
         toasts.expire_live_for_test();
-        let row = text(&message_line(&toasts, None, 40));
+        let row = text(&message_line(&toasts, None, None, 40));
         assert!(row.trim_end().ends_with("x 2 unread · M"), "{row:?}");
     }
 
     #[test]
     fn the_message_row_is_blank_with_nothing_to_say() {
         let toasts = crate::toast::Toasts::new();
-        assert_eq!(text(&message_line(&toasts, None, 40)).trim(), "");
+        assert_eq!(text(&message_line(&toasts, None, None, 40)).trim(), "");
+    }
+
+    const SPOTIFY_LINE: &str = "♫ Spotify: So What — Miles Davis · O to switch";
+
+    #[test]
+    fn the_message_row_shows_spotify_playing_when_nothing_newer_is_on_it() {
+        let toasts = crate::toast::Toasts::new();
+        let row = text(&message_line(&toasts, None, Some(SPOTIFY_LINE), 60));
+        assert!(row.starts_with("♫ Spotify: So What"), "{row:?}");
+        assert_eq!(row.chars().count(), 60);
+    }
+
+    #[test]
+    fn a_newer_toast_beats_the_spotify_line() {
+        let mut toasts = crate::toast::Toasts::new();
+        toasts.info("saved");
+        let row = text(&message_line(&toasts, None, Some(SPOTIFY_LINE), 60));
+        assert!(row.starts_with("● saved"), "{row:?}");
+    }
+
+    #[test]
+    fn unread_alerts_come_after_the_spotify_line() {
+        let mut toasts = crate::toast::Toasts::new();
+        toasts.warn("stream dropped");
+        toasts.expire_live_for_test();
+        let row = text(&message_line(&toasts, None, Some(SPOTIFY_LINE), 60));
+        assert!(row.starts_with("♫ Spotify"), "{row:?}");
+        assert!(!row.contains("unread"), "{row:?}");
+    }
+
+    #[test]
+    fn spotify_message_is_the_playing_line_in_znicz_mode_only() {
+        let mut app = crate::app::test_app();
+        app.spotify_state = znicz_core::SpotifyState {
+            login: znicz_core::SpotifyLogin::LoggedIn,
+            playback: Some(znicz_core::SpotifyPlayback {
+                item: Some(znicz_core::SpotifyTrack {
+                    title: "So What".into(),
+                    artists: vec!["Miles Davis".into()],
+                    ..Default::default()
+                }),
+                unsupported: false,
+                is_playing: true,
+                progress_ms: 0,
+                read_at_ms: 0,
+                repeat: znicz_core::SpotifyRepeat::Off,
+                shuffle: false,
+                device: None,
+                context_uri: None,
+            }),
+            devices: Vec::new(),
+            last_error: None,
+            ..Default::default()
+        };
+        assert_eq!(
+            spotify_message(&app).as_deref(),
+            Some("♫ Spotify: So What — Miles Davis · O to switch")
+        );
+        app.spotify_mode = true;
+        assert_eq!(spotify_message(&app), None);
     }
 
     #[test]
     fn a_long_message_is_cut_to_the_row() {
         let mut toasts = crate::toast::Toasts::new();
         toasts.error("player error: playlist had no playable files at all");
-        let row = text(&message_line(&toasts, None, 20));
+        let row = text(&message_line(&toasts, None, None, 20));
         assert_eq!(row.chars().count(), 20);
         assert!(row.ends_with('…'), "{row:?}");
     }
@@ -498,7 +587,7 @@ mod tests {
             added: 3,
             updated: 0,
         };
-        let row = text(&message_line(&toasts, Some(&progress), 60));
+        let row = text(&message_line(&toasts, Some(&progress), None, 60));
         assert!(
             row.starts_with("⟳ scanning /srv/music · 12 files · 3 new"),
             "{row:?}"
@@ -511,7 +600,7 @@ mod tests {
         let mut toasts = crate::toast::Toasts::new();
         toasts.info("added 4 tracks");
         let progress = znicz_core::ScanProgress::default();
-        let row = text(&message_line(&toasts, Some(&progress), 60));
+        let row = text(&message_line(&toasts, Some(&progress), None, 60));
         assert!(row.starts_with("● added 4 tracks"), "{row:?}");
     }
 
