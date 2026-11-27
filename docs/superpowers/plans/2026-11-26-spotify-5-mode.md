@@ -1819,13 +1819,13 @@ Claude-Session: https://claude.ai/code/session_012jyZm3UyFwgZfBtgburioV"
 
 **Interfaces:** none.
 
-- [ ] **Step 1: Write the failing test** (in `keys.rs`): every key listed in the `SPOTIFY` table appears in `help_sections(Context::SpotifyBrowse)`, and `context_hints(SpotifyBrowse)` labels are documented. The existing footer test covers the hints; add `spotify_table_lists_the_mode_keys` asserting the exact `keys` values `"O"`, `"Space"`, `"e"`, `","`, `"]"`, `"/"`, `"m"`.
+- [x] **Step 1: Write the failing test** (in `keys.rs`): every key listed in the `SPOTIFY` table appears in `help_sections(Context::SpotifyBrowse)`, and `context_hints(SpotifyBrowse)` labels are documented. The existing footer test covers the hints; add `spotify_table_lists_the_mode_keys` asserting the exact `keys` values `"O"`, `"Space"`, `"e"`, `","`, `"]"`, `"/"`, `"m"`.
 
-- [ ] **Step 2: Run to see it fail** — `cargo test -p znicz-tui -- keys`.
+- [x] **Step 2: Run to see it fail** — `cargo test -p znicz-tui -- keys`.
 
 - [x] **Step 3: Write the docs.** Follow `.cursor/rules/wiki-sync.mdc`: the wiki says what the code does, nothing invented. The Spotify mode section lists the keys from the `SPOTIFY` table, the browser's levels, the 50-row pages, the search (10 per group, one request per kind), the unavailable notice, and the polling rates (500 ms in the mode, 3 s otherwise). `TUI.md` Stage: the shared `StageModel`/`TransportModel`.
 
-- [ ] **Step 4: Run** — `cargo test -p znicz-tui -- keys` — pass. Also `grep -n "O znicz\|Spotify mode" wiki/Architecture/TUI.md` shows the new section.
+- [x] **Step 4: Run** — `cargo test -p znicz-tui -- keys` — pass. Also `grep -n "O znicz\|Spotify mode" wiki/Architecture/TUI.md` shows the new section.
 
 - [x] **Step 5: Commit**
 

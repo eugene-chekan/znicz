@@ -778,4 +778,54 @@ mod tests {
             SpotifyOp::Playlists { .. }
         )));
     }
+
+    fn ctrl(app: &mut App, c: char) {
+        app.on_key(crossterm::event::KeyEvent::new(
+            KeyCode::Char(c),
+            crossterm::event::KeyModifiers::CONTROL,
+        ));
+    }
+
+    /// Spotify mode with thirty playlists open in the browser.
+    fn thirty_playlists(dir: &tempfile::TempDir, browse: &Arc<FakeHost>) -> App {
+        let items: Vec<SpotifyItem> = (1..=30).map(playlist).collect();
+        *browse.reply.lock().unwrap() = Some(page(items, 30));
+        *browse.state.lock().unwrap() = Some(logged_in());
+        let mut app = browse_app(dir, browse.clone(), Arc::new(FakeHost::default()));
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char('l'));
+        wait_until(&mut app, |app| {
+            app.spotify_browser.level().items.len() == 30
+        });
+        app
+    }
+
+    #[test]
+    fn ctrl_d_and_ctrl_u_half_page_the_browser() {
+        let dir = tempfile::tempdir().unwrap();
+        let browse = Arc::new(FakeHost::default());
+        let mut app = thirty_playlists(&dir, &browse);
+        ctrl(&mut app, 'd');
+        assert_eq!(app.spotify_browser.level().cursor, 10);
+        ctrl(&mut app, 'd');
+        assert_eq!(app.spotify_browser.level().cursor, 20);
+        ctrl(&mut app, 'u');
+        assert_eq!(app.spotify_browser.level().cursor, 10);
+        ctrl(&mut app, 'u');
+        ctrl(&mut app, 'u');
+        assert_eq!(app.spotify_browser.level().cursor, 0, "clamped at the top");
+    }
+
+    #[test]
+    fn ctrl_keys_are_text_in_the_search_prompt_and_do_not_move_the_browser() {
+        let dir = tempfile::tempdir().unwrap();
+        let browse = Arc::new(FakeHost::default());
+        let mut app = thirty_playlists(&dir, &browse);
+        press(&mut app, KeyCode::Char('/'));
+        type_text(&mut app, "ab");
+        ctrl(&mut app, 'd');
+        ctrl(&mut app, 'u');
+        assert_eq!(app.spotify_search.as_ref().unwrap().as_str(), "ab");
+        assert_eq!(app.spotify_browser.level().cursor, 0);
+    }
 }

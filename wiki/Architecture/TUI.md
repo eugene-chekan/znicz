@@ -137,9 +137,9 @@ clicking one runs that key.
 
 In Spotify mode the footer uses the Spotify contexts (browser, search, Stage,
 queue drawer, device list), and the library keys above do not apply: `h` and `l`
-belong to the browser there. The `SPOTIFY` help table in `keys.rs` lists only
-`O`, `v / i` and `Esc` so far, so `?` in the mode does not show the other Spotify
-keys. The full list is in [Spotify mode](#spotify-mode-o).
+belong to the browser there. The `SPOTIFY` help table in `keys.rs` lists every
+Spotify mode key, so `?` in the mode shows them all. The full list is in
+[Spotify mode](#spotify-mode-o).
 
 `?` opens help on the context it was opened from: that context's keys first,
 then Playback and Navigation, then every other context dimmed. `j` / `k`,
@@ -635,6 +635,7 @@ through search. The title reads `Spotify · <user> · <device>`.
 | `j` / `k`, arrows | Move the cursor. In search results the cursor skips the group headers |
 | `g` / `G` | First / last row |
 | PageUp / PageDown | Page |
+| `Ctrl-d` / `Ctrl-u` | Half a page down / up (10 rows), as in the library |
 | `Enter` | Act on the row (below) |
 | `l` | Open the row: a playlist or album opens its tracks; an artist opens its albums |
 | `h` | Back one level. Never past the top |
@@ -664,7 +665,8 @@ advance, so `Enter` on that playlist still plays it.
 
 **Search.** `/` opens the prompt in the strip, and typing does not search yet.
 `Enter` searches. An empty or spaces-only query sends nothing and keeps the
-prompt open. `Esc` closes it.
+prompt open. `Esc` closes it. While the prompt is open, every key is text, Ctrl
+keys included, so `Ctrl-d` / `Ctrl-u` do not move the cursor.
 
 A search sends one request per kind (tracks, albums, artists and playlists),
 each for 10 rows at offset 0. The results are grouped under headers in that

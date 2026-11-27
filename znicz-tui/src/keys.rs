@@ -287,11 +287,30 @@ pub const SETTINGS: &[Binding] = &[
 
 pub const STAGE: &[Binding] = &[b("v / i / Esc", "back to browse")];
 
-/// Spotify mode. Later steps add the browser, search, transport and queue keys.
+/// Spotify mode: the browser's keys, then the transport keys, then the library-only
+/// keys that refuse, then the mode's own.
 pub const SPOTIFY: &[Binding] = &[
+    b("Enter", "play the highlighted item"),
+    b("l", "open the highlighted item"),
+    b("h / Esc", "back one browser level"),
+    b("r", "reload the list"),
+    b("/", "search Spotify"),
+    b("a", "add the track to Spotify's queue"),
+    b("]", "Spotify's queue: open / close"),
+    b("PgDn / PgUp", "page down / up"),
+    b("Space", "pause / resume"),
+    b("n / p", "next / previous track"),
+    b("← / →", "seek 5s back / forward"),
+    b("Shift-← / Shift-→", "seek 30s back / forward"),
+    b("+ / -", "volume up / down 1%"),
+    b("m", "mute / restore (50% if none was saved)"),
+    b("e", "repeat: off, all, one"),
+    b("z", "shuffle"),
+    b(",", "Spotify Connect devices"),
+    b("s", "no stop in Spotify: a toast; Space pauses"),
+    b("A / L / F / U / J", "not in Spotify mode: a toast"),
+    b("v / i", "now playing (stage) / browse"),
     b("O", "leave Spotify mode"),
-    b("v / i", "now playing (stage)"),
-    b("Esc", "back one browser level"),
 ];
 
 pub const MESSAGES: &[Binding] = &[b("C", "clear the history"), b("Esc / M", "close")];
@@ -608,11 +627,12 @@ mod tests {
     #[test]
     fn the_filter_matches_actions_ignoring_case() {
         let sections = filter_sections(help_sections(Context::Library), "VOL");
-        assert_eq!(titles(&sections), ["Playback"]);
+        // The dim Spotify table has a volume row too.
+        assert_eq!(titles(&sections), ["Playback", "Spotify"]);
         assert!(
-            sections[0]
-                .bindings
+            sections
                 .iter()
+                .flat_map(|s| s.bindings.iter())
                 .all(|b| b.action.contains("volume"))
         );
     }
@@ -692,5 +712,68 @@ mod tests {
                 .iter()
                 .any(|b| b.keys == "r" && b.action.contains("rescan"))
         );
+    }
+
+    #[test]
+    fn spotify_table_lists_the_mode_keys() {
+        let mode_keys = [
+            "O",
+            "v",
+            "i",
+            "Esc",
+            "h",
+            "l",
+            "Enter",
+            "r",
+            "/",
+            "a",
+            "]",
+            ",",
+            "Space",
+            "n",
+            "p",
+            "←",
+            "→",
+            "Shift-←",
+            "Shift-→",
+            "+",
+            "-",
+            "m",
+            "e",
+            "z",
+            "s",
+            "A",
+            "L",
+            "F",
+            "U",
+            "J",
+            "PgDn",
+            "PgUp",
+        ];
+        for context in [
+            Context::SpotifyBrowse,
+            Context::SpotifySearch,
+            Context::SpotifyStage,
+            Context::SpotifyQueue,
+            Context::SpotifyDevices,
+        ] {
+            let sections = help_sections(context);
+            let spotify = sections
+                .iter()
+                .find(|s| s.title == "Spotify")
+                .unwrap_or_else(|| panic!("{context:?}: no Spotify section"));
+            assert!(!spotify.dim, "{context:?}: the Spotify section is dim");
+            let documented: Vec<&str> = spotify
+                .bindings
+                .iter()
+                .flat_map(|b| b.keys.split(" / "))
+                .collect();
+            for key in mode_keys {
+                assert!(
+                    documented.contains(&key),
+                    "{context:?}: the Spotify help has no {key:?}"
+                );
+            }
+        }
     }
 }
