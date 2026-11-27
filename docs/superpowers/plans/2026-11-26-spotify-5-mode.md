@@ -1270,7 +1270,7 @@ pub(crate) fn on_browse_done(&mut self, done: Done<SpotifyAsk>);
 pub(crate) fn request_more_rows(&mut self);                             // called from the tick
 ```
 
-- [ ] **Step 1: Write the failing tests** (in `spotify_browse_ui.rs` tests, using `FakeHost` and `wait_for_op`; the FakeHost `reply` is set to a `SpotifyReply::Page { page }` for list ops)
+- [x] **Step 1: Write the failing tests** (in `spotify_browse_ui.rs` tests, using `FakeHost` and `wait_for_op`; the FakeHost `reply` is set to a `SpotifyReply::Page { page }` for list ops)
 
 ```rust
 #[test]
@@ -1311,9 +1311,9 @@ fn a_browse_error_other_than_unavailable_is_a_toast_and_the_list_stays() {
 
 Use `wait_until(app, pred)` from `spotify_ui` tests (`fn wait_until` is private there; make it `pub(crate)`).
 
-- [ ] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- spotify_browse_ui`.
+- [x] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- spotify_browse_ui`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 - `spotify_browser_key(key)`: returns false for keys it does not own. Owns: `j`/Down (`step(1)`), `k`/Up (`step(-1)`), `g`/Home (`first`), `G`/End (`last`), Ctrl-`d`/`u` and PageDown/PageUp (step by 10), `Enter` (`spotify_enter(false)`), `l`/Right? (`l` only; Right is seek), `h` (`spotify_back`), `r` (reload: `reset()` and push the top again is not needed; for a list level re-request page 0 by `spotify_load` with the current generation, for the top do nothing), `/` (open the prompt: `self.spotify_search = Some(LineEdit::new())`), `Tab`/`BackTab` (handled, do nothing).
 - `spotify_enter(open)`: `let action = if open { browser.open() } else { browser.enter() };` then match: `Play(op)` → `spotify_send_play(op)` on the transport lane; `Load{generation, list, op, ..}` → `spotify_load`; `OpenSearch` → open the prompt; `Nothing` → nothing. `open()` is the `pub fn open` added in Task 5 (see its note).
@@ -1325,9 +1325,9 @@ Use `wait_until(app, pred)` from `spotify_ui` tests (`fn wait_until` is private 
 - `step`, `page`, `go_first`, `go_last` in mode: they call the browser instead of `self.library` (Task 11 adds `if self.spotify_mode { ... }` at the top of each).
 - The tick (`App::run` loop) calls `request_more_rows()` after `poll_spotify`.
 
-- [ ] **Step 4: Run** — `cargo test -p znicz-tui -- spotify_browse_ui spotify_ui` — all pass.
+- [x] **Step 4: Run** — `cargo test -p znicz-tui -- spotify_browse_ui spotify_ui` — all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/app.rs znicz-tui/src/app/spotify_browse_ui.rs znicz-tui/src/app/spotify_ui.rs znicz-tui/src/spotify_browse.rs
@@ -1349,7 +1349,7 @@ Claude-Session: https://claude.ai/code/session_012jyZm3UyFwgZfBtgburioV"
 - Consumes: `LineEdit` (`on_key`, `as_str`), `SpotifyBrowser::start_search`.
 - Produces: `pub(crate) fn on_spotify_search_key(&mut self, key: KeyEvent)`; `fn submit_search(&mut self)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 #[test]
@@ -1379,17 +1379,17 @@ fn search_results_arrive_grouped() {
 }
 ```
 
-- [ ] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- search`.
+- [x] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- search`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 - `on_spotify_search_key(key)`: `Enter` → `submit_search()`; `Esc` → `spotify_search = None`; else `spotify_search.as_mut().unwrap().on_key(key)`. The prompt takes every other key (including `O`, `q`, `?`) — the prompt is typed text.
 - `submit_search()`: `let query = prompt.as_str().trim().to_string();` if empty, return (the prompt stays open). Otherwise `spotify_search = None`, and `for (generation, list, op) in browser.start_search(&query)` → `spotify_load(generation, list, op)`.
 - The prompt is drawn by the view (Task 16); the footer context is `SpotifySearch`.
 
-- [ ] **Step 4: Run** — `cargo test -p znicz-tui -- spotify_browse_ui` — all pass.
+- [x] **Step 4: Run** — `cargo test -p znicz-tui -- spotify_browse_ui` — all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/app.rs znicz-tui/src/app/spotify_browse_ui.rs
