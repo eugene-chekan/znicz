@@ -977,7 +977,7 @@ pub enum SpotifyAsk {
 
 `App` gets `pub(crate) spotify_transport: Option<SpotifyWorker<SpotifyAsk>>`. `with_spotify_transport(mut self, host: Arc<dyn SpotifyHost>) -> io::Result<Self>`. `ask_spotify(&self, tag, op) -> bool` picks `self.spotify_transport` for `Lane::Transport` and `self.spotify_worker` for `Lane::Browse`, and returns false when that lane is missing.
 
-- [ ] **Step 1: Write the failing lane tests** (in `spotify_ui.rs` tests, using the existing `FakeHost` and `app_with`)
+- [x] **Step 1: Write the failing lane tests** (in `spotify_ui.rs` tests, using the existing `FakeHost` and `app_with`)
 
 ```rust
 #[test]
@@ -998,9 +998,9 @@ fn a_browse_reply_keeps_its_generation_and_offset() {
 
 For the gated host, use the existing pattern in `spotify_worker.rs` tests (a `Mutex<Receiver<()>>` gate). Put the gated host in the test module of `spotify_ui.rs`.
 
-- [ ] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- transport_op browse_reply`.
+- [x] **Step 2: Run to see them fail** — `cargo test -p znicz-tui -- transport_op browse_reply`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 - `SpotifyAsk` as above. Fix the Settings arms in `on_spotify_done` to match the new variants (they match by name, so only the `Copy` removal needs `.clone()` where a tag is used twice).
 - `on_spotify_done` arms:
@@ -1010,9 +1010,9 @@ For the gated host, use the existing pattern in `spotify_worker.rs` tests (a `Mu
 - Main: `connect_ui` three times at each of the three `run_tui` call sites (lines 898–899, 961–962 and 1004–1005 at `c57a24f`). Name the third `transport`. Pass `run_tui_with_client(player, spotify, transport, library_path, ...)`. Add the parameter `transport: IpcClient` to `run_tui_with_client`, then `.with_spotify_transport(Arc::new(transport))` after `with_spotify_worker`.
 - `spotify_mode::lane` decides the lane.
 
-- [ ] **Step 4: Run** — `cargo test -p znicz-tui -- spotify_ui` and `cargo build -p znicz` — pass.
+- [x] **Step 4: Run** — `cargo test -p znicz-tui -- spotify_ui` and `cargo build -p znicz` — pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add znicz-tui/src/spotify_worker.rs znicz-tui/src/app.rs znicz-tui/src/app/spotify_ui.rs znicz/src/main.rs
