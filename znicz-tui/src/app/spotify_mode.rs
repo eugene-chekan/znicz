@@ -5,7 +5,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use znicz_core::{SpotifyKind, SpotifyLogin, SpotifyOp, SpotifyRepeat};
 
+use crossterm::event::{KeyCode, KeyEvent};
+
 use super::{App, Modal};
+use crate::cursor::Cursor;
 use crate::spotify_browse::Row;
 use crate::spotify_mode::{self, MuteAction, SpotifyKey};
 use crate::spotify_worker::SpotifyAsk;
@@ -99,12 +102,11 @@ impl App {
             SpotifyKey::LibraryOnly => self.toasts.info(spotify_mode::NOT_IN_MODE),
             // `r` is the browser's; in the Stage it does nothing.
             SpotifyKey::Reload => {}
-            // The devices modal, the queue and the search are wired in later steps:
-            // the queue add and drawer in Task 14, the devices modal in Task 15.
             SpotifyKey::QueueAdd => self.spotify_queue_add(),
             SpotifyKey::QueueDrawer => self.toggle_spotify_queue(),
-            // The devices modal is wired in Task 15; `/` is the browser's (Task 12).
-            SpotifyKey::Devices | SpotifyKey::Search => {}
+            SpotifyKey::Devices => self.toggle_spotify_devices(),
+            // `/` is the browser's: the search prompt opens from the browser's keys.
+            SpotifyKey::Search => {}
         }
     }
 
@@ -122,6 +124,63 @@ impl App {
         self.spotify_send_play(SpotifyOp::QueueAdd {
             uri: item.uri.clone(),
         });
+    }
+
+    /// `,` in the mode: open or close the Spotify Connect device list. The list
+    /// asks the player for its devices, so the rows are current when it opens.
+    pub(crate) fn toggle_spotify_devices(&mut self) {
+        if self.modal == Modal::SpotifyDevices {
+            self.modal = Modal::None;
+            return;
+        }
+        if self.modal != Modal::None {
+            return;
+        }
+        let devices = &self.spotify_state.devices;
+        let active = devices.iter().position(|d| d.is_active);
+        self.spotify_devices_cursor = Cursor::new();
+        if let Some(index) = active {
+            self.spotify_devices_cursor.set(index, devices.len());
+        }
+        self.modal = Modal::SpotifyDevices;
+        self.request_devices();
+    }
+
+    /// Keys of the Spotify device list: `j`/`k` and the arrows move, `Enter`
+    /// moves playback to the chosen device, `,` closes. True when the key was
+    /// the list's; `Esc` and the global keys go through their own paths.
+    pub(crate) fn on_spotify_devices_key(&mut self, key: KeyEvent) -> bool {
+        let len = self.spotify_state.devices.len();
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => self.spotify_devices_cursor.step(1, len),
+            KeyCode::Char('k') | KeyCode::Up => self.spotify_devices_cursor.step(-1, len),
+            KeyCode::Enter => self.transfer_to_selected_device(),
+            KeyCode::Char(',') => self.toggle_spotify_devices(),
+            _ => return false,
+        }
+        true
+    }
+
+    /// Enter in the device list: transfer playback to the device under the cursor
+    /// on the transport lane, and close the list. An empty list does nothing.
+    fn transfer_to_selected_device(&mut self) {
+        let len = self.spotify_state.devices.len();
+        let Some(device) = self
+            .spotify_devices_cursor
+            .selected(len)
+            .and_then(|index| self.spotify_state.devices.get(index))
+            .cloned()
+        else {
+            return;
+        };
+        self.modal = Modal::None;
+        let op = SpotifyOp::Transfer {
+            device_id: device.id,
+            play: true,
+        };
+        if !self.ask_spotify(SpotifyAsk::Transfer { name: device.name }, op) {
+            self.toasts.error(spotify_mode::NO_LANE);
+        }
     }
 
     /// `]` in the mode: open or close the drawer. Opening asks Spotify for its queue.
@@ -659,6 +718,124 @@ mod tests {
         assert_eq!(app.context(), Context::SpotifyQueue);
         press(&mut app, KeyCode::Char(']'));
         assert!(!app.queue_open);
+    }
+
+    /// Two devices, Kitchen then Desk, with `active` (a name) marked as playing.
+    fn two_devices(active: &str) -> Vec<SpotifyDevice> {
+        [("k1", "Kitchen"), ("d1", "Desk")]
+            .into_iter()
+            .map(|(id, name)| SpotifyDevice {
+                id: id.into(),
+                name: name.into(),
+                kind: "Speaker".into(),
+                is_active: name == active,
+                volume_percent: Some(40),
+            })
+            .collect()
+    }
+
+    fn transfer_to(device_id: &str) -> SpotifyOp {
+        SpotifyOp::Transfer {
+            device_id: device_id.into(),
+            play: true,
+        }
+    }
+
+    #[test]
+    fn comma_in_the_mode_opens_the_spotify_list_not_the_output_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let mut app = mode_app(&dir, &host);
+        press(&mut app, KeyCode::Char(','));
+        assert_eq!(app.modal, Modal::SpotifyDevices);
+        assert!(wait_for_op(&host, |op| *op == SpotifyOp::Devices));
+    }
+
+    #[test]
+    fn enter_transfers_playback_to_the_chosen_device() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let mut app = mode_app(&dir, &host);
+        app.spotify_state.devices = two_devices("");
+        press(&mut app, KeyCode::Char(','));
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Enter);
+        assert!(wait_for_op(&host, |op| *op == transfer_to("d1")));
+        assert_eq!(app.modal, Modal::None);
+    }
+
+    #[test]
+    fn the_cursor_starts_on_the_active_device() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let mut app = mode_app(&dir, &host);
+        app.spotify_state.devices = two_devices("Desk");
+        press(&mut app, KeyCode::Char(','));
+        press(&mut app, KeyCode::Enter);
+        assert!(wait_for_op(&host, |op| *op == transfer_to("d1")));
+    }
+
+    #[test]
+    fn a_transfer_that_does_not_take_over_shows_the_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        *host.transfer_refusal.lock().unwrap() = Some("device did not take over".into());
+        let mut app = mode_app(&dir, &host);
+        app.spotify_state.devices = two_devices("");
+        press(&mut app, KeyCode::Char(','));
+        press(&mut app, KeyCode::Enter);
+        wait_until(&mut app, |a| {
+            settings_tests::toast_texts(a)
+                .iter()
+                .any(|t| t == "device did not take over")
+        });
+    }
+
+    #[test]
+    fn a_transfer_that_takes_over_says_moved_to_the_device() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let mut app = mode_app(&dir, &host);
+        app.spotify_state.devices = two_devices("");
+        press(&mut app, KeyCode::Char(','));
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Enter);
+        wait_until(&mut app, |a| {
+            settings_tests::toast_texts(a)
+                .iter()
+                .any(|t| t == "Moved to Desk")
+        });
+    }
+
+    #[test]
+    fn esc_closes_the_spotify_list_and_sends_no_transfer() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let mut app = mode_app(&dir, &host);
+        app.spotify_state.devices = two_devices("");
+        press(&mut app, KeyCode::Char(','));
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.modal, Modal::None);
+        assert!(
+            !sent_ops(&host)
+                .iter()
+                .any(|op| matches!(op, SpotifyOp::Transfer { .. }))
+        );
+    }
+
+    #[test]
+    fn enter_on_an_empty_device_list_sends_nothing_and_stays_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(FakeHost::default());
+        let mut app = mode_app(&dir, &host);
+        press(&mut app, KeyCode::Char(','));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.modal, Modal::SpotifyDevices);
+        assert!(
+            !sent_ops(&host)
+                .iter()
+                .any(|op| matches!(op, SpotifyOp::Transfer { .. }))
+        );
     }
 
     #[test]

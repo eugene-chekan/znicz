@@ -275,11 +275,18 @@ impl App {
             // The drawer is re-read every 3 s, so a failed read is logged, not toasted each time.
             (SpotifyAsk::Queue, Err(e)) => tracing::debug!("spotify queue: {e}"),
             // A playback error is the message itself, not the Settings catch-all.
-            (SpotifyAsk::Transport, Err(ZniczError::Spotify { kind, message })) => {
+            (
+                SpotifyAsk::Transport | SpotifyAsk::Transfer { .. },
+                Err(ZniczError::Spotify { kind, message }),
+            ) => {
                 self.toasts
                     .error(spotify_mode::error_plan(kind, &message).text);
             }
             (SpotifyAsk::Transport, Ok(_)) => {}
+            // A device that took over says so; one that did not comes back as the error above.
+            (SpotifyAsk::Transfer { name }, Ok(_)) => {
+                self.toasts.success(format!("Moved to {name}"));
+            }
             (SpotifyAsk::Logout, Ok(_)) => self.toasts.success("Logged out of Spotify"),
             // The player took the file's settings, so it has the file's client ID.
             (SpotifyAsk::Configure, Ok(_)) => self.spotify_player_differs = false,
@@ -461,12 +468,23 @@ pub(crate) mod tests {
         pub reply: Mutex<Option<SpotifyReply>>,
         /// When set, every `Configure` is refused with this kind.
         pub configure_refusal: Mutex<Option<SpotifyErrorKind>>,
+        /// When set, every `Transfer` is refused as `unavailable` with this message.
+        pub transfer_refusal: Mutex<Option<String>>,
     }
 
     impl SpotifyHost for FakeHost {
         fn apply(&self, op: SpotifyOp) -> znicz_core::Result<SpotifyReply> {
             let is_configure = matches!(op, SpotifyOp::Configure { .. });
+            let is_transfer = matches!(op, SpotifyOp::Transfer { .. });
             self.ops.lock().unwrap().push(op);
+            if is_transfer {
+                if let Some(message) = self.transfer_refusal.lock().unwrap().clone() {
+                    return Err(ZniczError::Spotify {
+                        kind: SpotifyErrorKind::Unavailable,
+                        message,
+                    });
+                }
+            }
             if is_configure {
                 if let Some(kind) = *self.configure_refusal.lock().unwrap() {
                     return Err(ZniczError::Spotify {

@@ -26,8 +26,12 @@ pub enum SpotifyAsk {
     },
     /// The queue, for the drawer.
     Queue,
-    /// Any transport op: play, pause, next, previous, seek, volume, repeat, shuffle, queue add, transfer.
+    /// Any transport op: play, pause, next, previous, seek, volume, repeat, shuffle, queue add.
     Transport,
+    /// A move to a Spotify Connect device. `name` is the device's, for the toast.
+    Transfer {
+        name: String,
+    },
 }
 
 /// The answer to one request, with the tag that asked for it.

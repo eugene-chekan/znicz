@@ -473,6 +473,8 @@ pub struct App {
     pub(crate) spotify_login_requested: bool,
     /// A `Devices` request is with the worker; its reply (or error) clears this.
     pub(crate) spotify_devices_requested: bool,
+    /// The cursor of the Spotify Connect device list (`,` in Spotify mode).
+    pub(crate) spotify_devices_cursor: Cursor,
     /// The client ID when the pending `Devices` request was sent.
     pub(crate) spotify_devices_client_id: String,
     /// Writes the clipboard sequence to the terminal. Tests replace it.
@@ -862,6 +864,7 @@ impl App {
             spotify_player_differs: false,
             spotify_login_requested: false,
             spotify_devices_requested: false,
+            spotify_devices_cursor: Cursor::new(),
             spotify_devices_client_id: String::new(),
             clipboard: Box::new(crate::osc52::copy),
             browser: Box::new(znicz_spotify::browser::open),
@@ -1495,6 +1498,12 @@ impl App {
         }
 
         if self.modal == Modal::Messages && self.on_messages_key(key) {
+            return;
+        }
+
+        // The Spotify device list owns its keys before the global map, so `,` closes it
+        // rather than opening Znicz's output list.
+        if self.modal == Modal::SpotifyDevices && self.on_spotify_devices_key(key) {
             return;
         }
 
